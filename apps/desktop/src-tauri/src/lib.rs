@@ -104,6 +104,33 @@ async fn pick_save_target(
 
 /* ── datotečni sustav ────────────────────────────────────────────────── */
 
+/// Preuzima putanje ispuštene u prozor.
+///
+/// Ispuštanje je izričita korisnikova gesta, pa se roditeljska mapa svake
+/// datoteke dodaje kao korijen — inače bi je sandbox odmah odbio. Mapa
+/// ispuštena izravno postaje korijen sama za sebe.
+#[tauri::command]
+fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Stat>, VfsError> {
+    let mut out = Vec::new();
+    for raw in paths {
+        let path = std::path::PathBuf::from(&raw);
+        let stat = with_workspace(&state, |workspace| {
+            if path.is_dir() {
+                workspace.add_root(&path)?;
+            } else if let Some(parent) = path.parent() {
+                workspace.add_root(parent)?;
+            }
+            workspace.stat(&path)
+        });
+        // Jedna neuspjela putanja ne smije srušiti cijelo ispuštanje.
+        match stat {
+            Ok(stat) => out.push(stat),
+            Err(err) => eprintln!("[uleditor] ispuštena putanja odbijena: {raw} — {err}"),
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 fn roots(state: State<'_, AppState>) -> Result<Vec<Stat>, VfsError> {
     with_workspace(&state, |workspace| {
@@ -160,6 +187,7 @@ pub fn run() {
             pick_directory,
             pick_files,
             pick_save_target,
+            adopt_paths,
             roots,
             read_directory,
             stat,

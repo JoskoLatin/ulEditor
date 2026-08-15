@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { Shell } from './host/index.js';
 import { ShellContext } from './shell/context.js';
 import { registerCommands } from './shell/commands.js';
-import { openDocument } from './shell/actions.js';
+import { adoptDropped } from './shell/actions.js';
 import { useWorkspace } from './state/workspace.js';
 
 import { ActivityBar } from './components/ActivityBar.js';
@@ -22,9 +22,12 @@ export function App({ shell }: { shell: Shell }) {
 
   useEffect(() => registerCommands(shell), [shell]);
 
-  // Ispuštanje datoteka u prozor. Radi i bez File System Access API-ja,
-  // pa je u Firefoxu i Safariju jedini put do dokumenta.
+  // Ispuštanje datoteka u prozor — web put preko `File` objekata.
+  // Radi i bez File System Access API-ja, pa je u Firefoxu i Safariju
+  // jedini način da se dokument uopće otvori.
   useEffect(() => {
+    if (shell.platform !== 'web') return;
+
     const onDragOver = (event: DragEvent) => {
       if (!event.dataTransfer?.types.includes('Files')) return;
       event.preventDefault();
@@ -36,14 +39,10 @@ export function App({ shell }: { shell: Shell }) {
     };
     const onDrop = (event: DragEvent) => {
       const files = event.dataTransfer?.files;
-      // Na desktopu Tauri sam hvata ispuštanje i daje putanje, pa web put
-      // preko `File` objekata ondje ne postoji.
-      if (!files?.length || !shell.fs.adoptFiles) return;
+      if (!files?.length) return;
       event.preventDefault();
       setDropActive(false);
-      void shell.fs.adoptFiles(files).then(async (docs) => {
-        for (const doc of docs) await openDocument(shell, doc);
-      });
+      void adoptDropped(shell, { files });
     };
 
     window.addEventListener('dragover', onDragOver);
@@ -53,6 +52,36 @@ export function App({ shell }: { shell: Shell }) {
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
+    };
+  }, [shell]);
+
+  // Ispuštanje na desktopu. WebView2 ne izlaže `File` objekte za sadržaj
+  // izvan preglednika — Tauri hvata gestu na razini prozora i daje putanje.
+  useEffect(() => {
+    if (shell.platform !== 'desktop') return;
+
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      const stop = await getCurrentWebview().onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === 'over') setDropActive(true);
+        else if (payload.type === 'leave') setDropActive(false);
+        else if (payload.type === 'drop') {
+          setDropActive(false);
+          void adoptDropped(shell, { paths: payload.paths });
+        }
+      });
+      // Komponenta se mogla demontirati dok je pretplata bila u tijeku.
+      if (cancelled) stop();
+      else unlisten = stop;
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, [shell]);
 

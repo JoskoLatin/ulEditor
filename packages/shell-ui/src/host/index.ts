@@ -6,16 +6,24 @@
  * a editori iznad toga ne primjećuju razliku.
  */
 
-import type { DocumentHandle, EditorHost, VirtualFileSystem } from '@uleditor/plugin-sdk';
+import type { DirectoryEntry, DocumentHandle, EditorHost, VirtualFileSystem } from '@uleditor/plugin-sdk';
 
 import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
 import { EditorRegistry } from './registry.js';
 import { Commands, NoConversion, Notifications, Settings, Themes, type ThemePreference } from './services.js';
 
-/** VFS uz neobaveznu mogućnost preuzimanja ispuštenih `File` objekata. */
+/**
+ * VFS uz preuzimanje ispuštenog sadržaja. Web dobiva `File` objekte,
+ * desktop putanje — obje mogućnosti su neobavezne, pa pozivatelj provjerava
+ * koja postoji umjesto da grana po platformi.
+ */
 export type ShellFileSystem = VirtualFileSystem & {
   adoptFiles?(files: FileList | File[]): Promise<DocumentHandle[]>;
+  adoptPaths?(paths: string[]): Promise<{
+    documents: DocumentHandle[];
+    directories: DirectoryEntry[];
+  }>;
 };
 
 export type Platform = 'desktop' | 'web';

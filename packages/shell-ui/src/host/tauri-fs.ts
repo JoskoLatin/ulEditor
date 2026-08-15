@@ -139,6 +139,28 @@ export class TauriFileSystem implements VirtualFileSystem {
     return docs;
   }
 
+  /**
+   * Preuzima putanje ispuštene u prozor. Na desktopu Tauri daje putanje, ne
+   * `File` objekte, pa web put kroz `adoptFiles` ovdje ne postoji.
+   *
+   * Ispuštene mape ne postaju kartice nego novi korijeni stabla — zato jedan
+   * poziv vraća oboje razdvojeno.
+   */
+  async adoptPaths(paths: string[]): Promise<{
+    documents: DocumentHandle[];
+    directories: DirectoryEntry[];
+  }> {
+    const stats = await invoke<RawStat[]>('adopt_paths', { paths });
+
+    const documents: DocumentHandle[] = [];
+    const directories: DirectoryEntry[] = [];
+    for (const stat of stats) {
+      if (stat.kind === 'directory') directories.push(toStat(stat) as DirectoryEntry);
+      else documents.push(await this.open(stat.uri));
+    }
+    return { documents, directories };
+  }
+
   async pickDirectory(): Promise<DirectoryEntry | null> {
     const raw = await invoke<RawStat | null>('pick_directory');
     return raw ? (toStat(raw) as DirectoryEntry) : null;

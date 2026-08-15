@@ -90,24 +90,55 @@ export async function openFiles(shell: Shell): Promise<void> {
 export async function openFolder(shell: Shell): Promise<void> {
   try {
     const root = await shell.fs.pickDirectory();
-    if (!root) return;
-
-    const children = await shell.fs.readDirectory(root.uri);
-    const node: TreeNode = {
-      uri: root.uri,
-      name: root.name,
-      kind: 'directory',
-      depth: 0,
-      expanded: true,
-      format: 'unknown',
-      children: children.map((child) => toNode(child, 1)),
-    };
-
-    const { tree, setTree } = useWorkspace.getState();
-    setTree([...tree.filter((n) => n.uri !== node.uri), node]);
+    if (root) await addRoot(shell, root);
   } catch (err) {
     if (isAbort(err)) return;
     shell.notify.show('error', `Otvaranje mape nije uspjelo: ${describe(err)}`);
+  }
+}
+
+/** Dodaje mapu kao korijen stabla i odmah čita prvu razinu. */
+async function addRoot(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
+  const children = await shell.fs.readDirectory(root.uri);
+  const node: TreeNode = {
+    uri: root.uri,
+    name: root.name,
+    kind: 'directory',
+    depth: 0,
+    expanded: true,
+    format: 'unknown',
+    children: children.map((child) => toNode(child, 1)),
+  };
+
+  const { tree, setTree } = useWorkspace.getState();
+  setTree([...tree.filter((n) => n.uri !== node.uri), node]);
+}
+
+/**
+ * Ispuštanje u prozor. Web daje `File` objekte, desktop putanje — razlika je
+ * ovdje, a ne u komponenti koja hvata event.
+ *
+ * Ispuštena mapa postaje korijen stabla, datoteka postaje kartica.
+ */
+export async function adoptDropped(
+  shell: Shell,
+  payload: { files?: FileList | File[]; paths?: string[] },
+): Promise<void> {
+  try {
+    if (payload.paths?.length && shell.fs.adoptPaths) {
+      const { documents, directories } = await shell.fs.adoptPaths(payload.paths);
+      for (const dir of directories) await addRoot(shell, dir);
+      for (const doc of documents) await openDocument(shell, doc);
+      return;
+    }
+
+    if (payload.files && shell.fs.adoptFiles) {
+      for (const doc of await shell.fs.adoptFiles(payload.files)) {
+        await openDocument(shell, doc);
+      }
+    }
+  } catch (err) {
+    shell.notify.show('error', `Otvaranje ispuštenog sadržaja nije uspjelo: ${describe(err)}`);
   }
 }
 
