@@ -155,6 +155,171 @@
   outline: 1px solid rgba(12, 112, 121, 0.9);
 }
 
+/* ── alati za anotiranje ─────────────────────────────────────────────── */
+
+.ul-pdf-tool {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.ul-pdf-swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.ul-pdf-swatch {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--rule-strong);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 130ms, box-shadow 130ms;
+}
+.ul-pdf-swatch:hover {
+  transform: scale(1.15);
+}
+.ul-pdf-swatch[data-active='true'] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent);
+}
+
+.ul-pdf-count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 8px;
+}
+
+/* Sloj anotacija hvata pokazivač samo kad je alat aktivan — inače bi
+   blokirao selekciju teksta ispod sebe. */
+.ul-pdf-annots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ul-pdf[data-tool='note'] .ul-pdf-annots,
+.ul-pdf[data-tool='ink'] .ul-pdf-annots {
+  pointer-events: auto;
+}
+.ul-pdf[data-tool='note'] .ul-pdf-page {
+  cursor: crosshair;
+}
+.ul-pdf[data-tool='ink'] .ul-pdf-page {
+  cursor: crosshair;
+}
+.ul-pdf[data-tool='highlight'] .ul-pdf-text {
+  cursor: text;
+}
+
+/* Tekstualni sloj se mora moći označiti i kad je sloj anotacija iznad. */
+.ul-pdf[data-tool='select'] .ul-pdf-text,
+.ul-pdf[data-tool='highlight'] .ul-pdf-text {
+  pointer-events: auto;
+}
+
+.ul-pdf-ann {
+  position: absolute;
+}
+
+.ul-pdf-ann-highlight {
+  border-radius: 1px;
+  mix-blend-mode: multiply;
+}
+
+.ul-pdf-ann-note {
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 3px 3px 3px 0;
+  color: rgba(0, 0, 0, 0.72);
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  padding: 0;
+}
+.ul-pdf-ann-note:hover {
+  filter: brightness(1.08);
+}
+
+.ul-pdf-ann-ink,
+.ul-pdf-ink-preview {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ul-pdf-hits {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ul-pdf-note-popup {
+  position: absolute;
+  z-index: 3;
+  width: 216px;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.ul-pdf-note-popup textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 7px;
+  outline: none;
+}
+.ul-pdf-note-popup textarea:focus {
+  border-color: var(--accent);
+}
+
+.ul-pdf-note-popup .actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ul-pdf-note-popup button {
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 130ms, border-color 130ms, color 130ms;
+}
+.ul-pdf-note-popup button:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.ul-pdf-note-popup button[data-primary='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--ink-inverse);
+}
+.ul-pdf-note-popup button[data-primary='true']:hover {
+  filter: brightness(1.08);
+}
+
 .ul-pdf-status {
   margin: auto;
   color: var(--ink-faint);

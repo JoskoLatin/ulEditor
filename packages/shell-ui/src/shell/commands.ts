@@ -165,10 +165,20 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     return;
   }
 
+  // Unutar polja za unos (npr. tekst bilješke u PDF-u) Ctrl+Z mora ostati
+  // preglednikovo poništavanje teksta, ne poništavanje u editoru.
+  const target = event.target as HTMLElement | null;
+  const inTextField =
+    target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+
   if (event.shiftKey) {
     if (key === 'tab') {
       event.preventDefault();
       cycleTab(-1);
+    }
+    if (key === 'z' && !inTextField && activeInstance()) {
+      event.preventDefault();
+      activeInstance()?.redo();
     }
     // Ctrl+Shift+F — pretraga koja radi nad svim formatima, uključujući PDF.
     // Ctrl+F ostaje CodeMirroru, koji uz pretragu nudi i zamjenu.
@@ -205,6 +215,20 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     case 'tab':
       event.preventDefault();
       cycleTab(1);
+      break;
+    case 'z':
+      // Isti put za sve formate: editor sam odlučuje što je korak natrag.
+      // Za kod to završi u CodeMirrorovoj povijesti, za PDF u stogu anotacija.
+      if (!inTextField && activeInstance()) {
+        event.preventDefault();
+        activeInstance()?.undo();
+      }
+      break;
+    case 'y':
+      if (!inTextField && activeInstance()) {
+        event.preventDefault();
+        activeInstance()?.redo();
+      }
       break;
     default:
       break;

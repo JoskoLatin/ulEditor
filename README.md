@@ -15,14 +15,17 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | Kod, tekst (13 jezika) | **radi** | CodeMirror 6 |
 | Markdown | **radi** — izvor + živi pregled | CodeMirror 6 + markdown-it |
 | PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga | pdf.js *(desktop → pdfium, faza 1)* |
+| PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
 | Slike | **radi** — pregled, zoom, prozirnost | *(uređivanje → image-rs, faza 1)* |
-| PDF anotacije, stranice | faza 1 | lopdf, qpdf |
+| PDF operacije nad stranicama | faza 1 | lopdf, qpdf |
 | XLSX | faza 2 | Univer |
 | DOCX | faza 2 | ProseMirror + docx-rs |
 | ODF, konverzije | faza 2 | LibreOffice headless |
 | PPTX | faza 5 | Univer Slides |
 
 Formati koji još nemaju editor otvaraju se s **jasnim objašnjenjem što nedostaje i kada stiže**, ne s praznim ekranom.
+
+Anotacije se zapisuju kao **pravi PDF objekti** (`/Highlight`, `/Text`, `/Ink`), ne kao crtež utisnut u stranicu — Acrobat i ostali čitači ih otvaraju, uređuju i brišu kao svoje. Anotacije koje su već u datoteci se učitavaju i prikazuju.
 
 **Pretraga (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown ili PDF. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
 

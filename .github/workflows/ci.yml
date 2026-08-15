@@ -33,6 +33,10 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm --filter @uleditor/shell-ui build
 
+      # Anotacije se provjeravaju bez preglednika: zapisani PDF se ponovno
+      # parsira i gleda sadrži li prave anotacijske objekte.
+      - run: pnpm verify:pdf
+
       # Runtime provjera se vozi pravim preglednikom — statička analiza ne
       # hvata editor koji se ne montira.
       - run: pnpm exec playwright install --with-deps chromium
