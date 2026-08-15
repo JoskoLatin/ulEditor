@@ -61,7 +61,7 @@
 
 .ul-read[data-flow='paged'] .ul-read-view {
   overflow: hidden;
-  padding: 28px 0;
+  padding: 0;
 }
 
 .ul-read[data-flow='scroll'] .ul-read-flow,
@@ -70,8 +70,12 @@
   margin: 0 auto;
 }
 
+/* Razmak je na toku, ne na prozoru: visina toka se postavlja iz
+   `clientHeight`, koji već uključuje padding prozora — pa bi ga isti razmak
+   dvaput ušao u račun i odsjekao zadnji redak svakog stupca. */
 .ul-read[data-flow='paged'] .ul-read-flow {
   column-fill: auto;
+  padding: 28px 0;
 }
 
 /* Zone za listanje klikom uz rub — prozirne, vidi se samo pokazivač. */

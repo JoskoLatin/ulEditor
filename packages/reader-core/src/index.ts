@@ -106,6 +106,9 @@ export class PagedFlow {
     flow.style.columnCount = String(columns);
     flow.style.columnGap = `${COLUMN_GAP}px`;
     flow.style.height = `${height}px`;
+    // Stranice se listaju vodoravno; okomiti pomak zaostao iz svitka bi
+    // odsjekao vrh stupca.
+    view.scrollTop = 0;
 
     this.#pages = Math.max(1, Math.round((view.scrollWidth + COLUMN_GAP) / this.step()));
     this.#settle();

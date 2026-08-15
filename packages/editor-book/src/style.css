@@ -163,7 +163,7 @@
 
 .ul-book[data-flow='paged'] .ul-book-view {
   overflow: hidden;
-  padding: 28px 0;
+  padding: 0;
 }
 
 .ul-book[data-flow='scroll'] .ul-book-flow {
@@ -171,8 +171,12 @@
   margin: 0 auto;
 }
 
+/* Razmak je na toku, ne na prozoru: visina toka se postavlja iz
+   `clientHeight`, koji već uključuje padding prozora — pa bi ga isti razmak
+   dvaput ušao u račun i odsjekao zadnji redak svakog stupca. */
 .ul-book[data-flow='paged'] .ul-book-flow {
   column-fill: auto;
+  padding: 28px 0;
 }
 
 /* Zone za listanje klikom uz rub. Prozirne su — vidi se samo pokazivač. */
