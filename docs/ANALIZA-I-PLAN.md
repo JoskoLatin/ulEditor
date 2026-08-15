@@ -207,7 +207,9 @@ Stanje na dan 15. 8. 2026.
 | Split view | **djelomično** — vodoravna ploča ispod drži jedan dokument; dvije pune grupe kartica ostaju otvorene |
 | `editor-code`: tree-sitter, LSP klijent | odgođeno u fazu 1.1 |
 | `editor-markdown`: mermaid | odgođeno u fazu 1.1 |
-| Globalni search preko `tantivy` | odgođeno u fazu 1.1 |
+| Globalni search preko projekta | **gotovo** — skeniranje u Rustu; `tantivy` odgođen dok skeniranje bude dovoljno |
+| **Pretraga unutar PDF-a, Worda, Excela i e-knjiga** (nije bio u planu) | **gotovo** |
+| **Brzo otvaranje datoteke po imenu (`Ctrl+P`)** | **gotovo** |
 | Auto-update, crash reporting, opt-in telemetrija | traži potpisivanje i backend; ide uz sam release |
 | `editor-pdf` na pdfiumu umjesto pdf.js-a | odgođeno — pdf.js zadovoljava, zamjena je optimizacija |
 
@@ -223,9 +225,15 @@ konverzija koja proizvede nešto što još nije datoteka na disku. Uz to je uša
 neobavezni `EditorInstance.plainText()`, koji je ionako trebao za indeksiranje
 u fazi 1.1.
 
-**Zašto su LSP i tantivy odgođeni:** oboje su velika, zasebna infrastruktura
-(vanjski procesi, indeks na disku, invalidacija) koja ne mijenja tezu projekta.
-Pregled Office dokumenata je mijenja, pa je imao prednost.
+**Zašto je LSP odgođen:** vanjski procesi sa zasebnim životnim ciklusom, velika
+infrastruktura koja ne mijenja tezu projekta.
+
+**Zašto `tantivy` nije uzet:** indeks se isplati kad je korpus velik i upiti
+česti, ali nosi invalidaciju — a invalidacija nema rješenje na pola puta.
+Skeniranje ne može zastarjeti jer stanja ni nema, i za radni prostor od
+nekoliko tisuća datoteka odgovara u desetinkama sekunde. Indeks ostaje u planu
+za trenutak kad to prestane vrijediti, i tada će imati definiran posao umjesto
+da bude prva pretpostavka.
 
 Izlaz: **v0.1** — potpisani instaleri za Windows, macOS, Linux. Javni release radi privlačenja doprinositelja.
 

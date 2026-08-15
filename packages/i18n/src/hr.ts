@@ -70,6 +70,33 @@ export const hr: Catalog = {
   'Previous tab': 'Prethodna kartica',
   'Preferences…': 'Postavke…',
   'Open text in a split below': 'Otvori tekst u splitu ispod',
+  'Open file by name…': 'Otvori datoteku po imenu…',
+  'Open file by name': 'Otvori datoteku po imenu',
+  'Type a file name…': 'Upiši ime datoteke…',
+  'Reading the file list…': 'Čitam popis datoteka…',
+  'Open a folder first.': 'Prvo otvori mapu.',
+  'No matching file.': 'Nema datoteke koja odgovara.',
+
+  /* ── pretraga po projektu ──────────────────────────────────────────── */
+  Search: 'Pretraga',
+  'Search in project': 'Pretraga po projektu',
+  'Search in project…': 'Traži po projektu…',
+  'Search in project (Ctrl+Shift+H)': 'Pretraga po projektu (Ctrl+Shift+H)',
+  'Whole word': 'Cijela riječ',
+  'Searching…': 'Tražim…',
+  'Also search inside PDF, Word, Excel and e-books':
+    'Traži i unutar PDF-a, Worda, Excela i e-knjiga',
+  'Scanning files…': 'Skeniram datoteke…',
+  '{hits} results · reading {n} documents…': '{hits} pogodaka · čitam {n} dokumenata…',
+  'No results in {n} files.': 'Nema pogodaka u {n} datoteka.',
+  '{hits} results in {files} files · {scanned} scanned':
+    '{hits} pogodaka u {files} datoteka · pretraženo {scanned}',
+  'stopped at the limit': 'stalo na ograničenju',
+  'Searching the whole project is available in the desktop app.':
+    'Pretraga po cijelom projektu dostupna je u desktop aplikaciji.',
+  'line {n}': 'red {n}',
+  'page {n}': 'stranica {n}',
+  document: 'dokument',
   'Close the split below': 'Zatvori split ispod',
 
   /* ── pretraga ──────────────────────────────────────────────────────── */

@@ -10,7 +10,7 @@ use tauri::ipc::Response;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-use ul_core::{Detection, DirEntry, Stat, VfsError, Workspace};
+use ul_core::{Detection, DirEntry, SearchOutcome, SearchQuery, Stat, VfsError, Workspace};
 
 struct AppState {
     workspace: Mutex<Workspace>,
@@ -160,6 +160,25 @@ fn detect_format(state: State<'_, AppState>, path: String) -> Result<Detection, 
 
 /// Vraća sirove bajtove kroz `Response` umjesto kao `Vec<u8>`. JSON
 /// serijalizacija polja brojeva na desetmegabajtnom PDF-u traje sekundama.
+/// Pretraga po cijelom radnom prostoru.
+///
+/// Ide u Rust, ne u JS: skeniranje tisuća datoteka preko IPC-a značilo bi
+/// prenošenje njihovog sadržaja u preglednik. Ovamo ide upit, natrag samo
+/// pogoci.
+#[tauri::command]
+async fn search_workspace(
+    state: State<'_, AppState>,
+    query: SearchQuery,
+) -> Result<SearchOutcome, VfsError> {
+    with_workspace(&state, |workspace| workspace.search(&query))
+}
+
+/// Popis datoteka za brzo otvaranje po imenu (`Ctrl+P`).
+#[tauri::command]
+async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat>, VfsError> {
+    with_workspace(&state, |workspace| workspace.list_files(limit))
+}
+
 #[tauri::command]
 fn read_file(state: State<'_, AppState>, path: String) -> Result<Response, VfsError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
@@ -194,6 +213,8 @@ pub fn run() {
             detect_format,
             read_file,
             write_file,
+            search_workspace,
+            list_files,
         ])
         .run(tauri::generate_context!())
         .expect("pokretanje ulEditora nije uspjelo");

@@ -91,6 +91,21 @@ export function registerCommands(shell: Shell): () => void {
       run: () => store().setSidebarView('explorer'),
     }),
     shell.commands.register({
+      id: 'file.quickOpen',
+      title: t('Open file by name…'),
+      category: t('File'),
+      keybinding: ['Ctrl', 'P'],
+      run: () => store().setQuickOpen(true),
+    }),
+
+    shell.commands.register({
+      id: 'view.search',
+      title: t('Search in project'),
+      category: t('View'),
+      keybinding: ['Ctrl', 'Shift', 'H'],
+      run: () => store().setSidebarView('search'),
+    }),
+    shell.commands.register({
       id: 'view.formats',
       title: t('Show supported formats'),
       category: t('View'),
@@ -247,6 +262,12 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       toggleReading(shell);
       return;
     }
+    // Ctrl+Shift+H — pretraga po projektu. Ctrl+Shift+F ostaje dokumentu.
+    if (key === 'h') {
+      event.preventDefault();
+      store.setSidebarView('search');
+      return;
+    }
 
     if (key === 'tab') {
       event.preventDefault();
@@ -297,6 +318,10 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     case ',':
       event.preventDefault();
       store.setPreferencesOpen(!store.preferencesOpen);
+      break;
+    case 'p':
+      event.preventDefault();
+      store.setQuickOpen(!store.quickOpen);
       break;
     case 'z':
       // Isti put za sve formate: editor sam odlučuje što je korak natrag.

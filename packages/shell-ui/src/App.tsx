@@ -16,6 +16,7 @@ import { CommandPalette } from './components/CommandPalette.js';
 import { EditorSurface } from './components/EditorSurface.js';
 import { FindPanel } from './components/FindPanel.js';
 import { Preferences } from './components/Preferences.js';
+import { QuickOpen } from './components/QuickOpen.js';
 import { ReaderBar } from './components/ReaderBar.js';
 import { SplitPane } from './components/SplitPane.js';
 import { Sidebar, SidebarResizer } from './components/Sidebar.js';
@@ -148,6 +149,7 @@ export function App({ shell }: { shell: Shell }) {
       </div>
 
       <CommandPalette />
+      <QuickOpen />
       <Preferences />
       <Toasts />
 

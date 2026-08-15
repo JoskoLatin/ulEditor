@@ -45,7 +45,32 @@ Word i Excel se za sada **samo čitaju**, i to piše na samom dokumentu. Uređiv
 
 Sve to ide kroz `EditorInstance.beginReading()` u plugin ugovoru: editor kaže što je kod njega "stranica" i "poglavlje", a čitaonicu piše shell — jednom, za sve formate.
 
-**Pretraga (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown, PDF, e-knjiga, Word ili Excel. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
+## Pretraga po projektu
+
+`Ctrl+Shift+H` traži kroz cijeli radni prostor. Skeniranje se odvija u Rustu —
+sadržaj datoteka ne prelazi preko IPC-a, gore ide upit, natrag samo pogoci.
+
+Uz kvačicu **„Traži i unutar PDF-a, Worda, Excela i e-knjiga"** ide drugi
+prolaz: dokumenti se otvaraju **istim parserima koje editori koriste za
+prikaz**, pa rečenica iz ugovora u PDF-u stigne u istu listu kao pogodak iz
+koda. Pogodak u tablici nosi adresu ćelije (`Promet!B4`), u PDF-u broj
+stranice, u knjizi naslov poglavlja. To je razlika prema `grep`-u i prema
+svakom editoru koda.
+
+Drugi prolaz je skuplji, pa se bira, ne pretpostavlja.
+
+**Zašto skeniranje, a ne `tantivy`.** Indeks se isplati kad je korpus velik i
+upiti česti, ali donosi problem bez rješenja na pola puta: invalidaciju.
+`git checkout` koji promijeni tisuću datoteka, izmjena izvan programa, mapa
+dodana pa maknuta — svaki od tih slučajeva mora ažurirati indeks, inače
+pretraga tiho laže. Skeniranje ne može zastarjeti jer stanja ni nema. Indeks
+postaje opravdan tek kad odgovor prestane biti trenutan.
+
+`Ctrl+P` otvara datoteku po imenu. Popis dolazi iz Rusta, ne iz stabla: stablo
+se učitava lijeno, pa bi datoteka u nerazgranatoj mapi bila nevidljiva — a
+upravo se nju najčešće traži.
+
+**Pretraga u dokumentu (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown, PDF, e-knjiga, Word ili Excel. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
 
 Otvorene kartice i korijeni stabla se pamte i vraćaju pri sljedećem pokretanju (desktop).
 
@@ -90,7 +115,13 @@ pnpm verify:ocr       # OCR, ploča ispod, promjena jezika sučelja
 pnpm verify:export    # izvoz teksta u txt / md / docx / pdf
 pnpm verify:pdf       # anotacije i operacije nad stranicama (bez preglednika)
 pnpm verify:all       # sve gore — 180 provjera
+
+pnpm verify:search    # pretraga po projektu, u PRAVOJ desktop aplikaciji
 ```
+
+`verify:search` diže sam program s otvorenim WebView2 debug portom i spaja se
+na njega preko CDP-a. Pretraga živi u Rustu i dostupna je samo kroz Tauri
+naredbu, pa bi provjera u pregledniku testirala ljepilo umjesto posla.
 
 `verify:ocr` pri prvom pokretanju preuzima jezični model; bez mreže se
 prijavljuje kao preskočen, ne kao prolaz.
@@ -123,7 +154,7 @@ Dodavanje formata znači napisati provider i registrirati ga u [main.tsx](packag
 | [packages/shell-ui/](packages/shell-ui/) | Tabovi, explorer, paleta naredbi, teme, host usluge |
 | [packages/editor-*/](packages/) | Po jedan editor po formatu |
 | [crates/ul-formats/](crates/ul-formats/) | Detekcija formata po sadržaju. Gradi se i za WASM |
-| [crates/ul-core/](crates/ul-core/) | VFS sa sandboxom |
+| [crates/ul-core/](crates/ul-core/) | VFS sa sandboxom i pretraga po radnom prostoru |
 | [apps/desktop/](apps/desktop/) | Tauri v2 ljuska |
 | [packages/reader-core/](packages/reader-core/) | Zajednički motor listanja i čitaonička tipografija |
 | [packages/i18n/](packages/i18n/) | Prijevodi sučelja; ključ je engleski izvornik |

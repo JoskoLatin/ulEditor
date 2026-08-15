@@ -125,7 +125,7 @@ const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/m
 
 /**
  * EPUB se, kao i ostalo ovdje, sastavlja u kodu — tako je vidljivo što točno
- * provjeravamo i nema binarnog assetа u repozitoriju.
+ * provjeravamo i nema binarnog asseta u repozitoriju.
  *
  * `mimetype` mora biti prvi i nekomprimiran; po tome ga detekcija prepoznaje
  * bez raspakiravanja.

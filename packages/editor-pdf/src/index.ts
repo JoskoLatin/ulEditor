@@ -1594,6 +1594,38 @@ export const pdfEditorProvider: EditorProvider = {
   },
 };
 
+/**
+ * Tekst PDF-a, stranicu po stranicu, bez montiranja editora.
+ *
+ * Postoji zbog pretrage po projektu: ondje se otvara desetak dokumenata za
+ * koje nitko ne gleda prikaz, pa bi puni editor bio čista cijena. Dokument se
+ * uredno zatvara — inače svaka pretraga ostavi pdf.js worker za sobom.
+ */
+export async function extractPdfText(
+  bytes: Uint8Array,
+): Promise<{ page: number; text: string }[]> {
+  const doc = await getDocument({ data: new Uint8Array(bytes) }).promise;
+  const out: { page: number; text: string }[] = [];
+
+  try {
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ('str' in item ? item.str : ''))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      page.cleanup();
+      if (text) out.push({ page: n, text });
+    }
+  } finally {
+    void doc.destroy();
+  }
+
+  return out;
+}
+
 export default pdfEditorProvider;
 export * from './annotations.js';
 export * from './document.js';

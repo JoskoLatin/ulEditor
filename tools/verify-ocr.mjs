@@ -46,7 +46,7 @@ try {
 
   /* ── slika s poznatim tekstom ──────────────────────────────────────── */
 
-  // Crta se u pregledniku pa ispušta kao datoteka — tako nema binarnog assetа
+  // Crta se u pregledniku pa ispušta kao datoteka — tako nema binarnog asseta
   // u repozitoriju, a OCR dobiva pravi PNG.
   const bytes = await page.evaluate(async (phrase) => {
     const canvas = document.createElement('canvas');

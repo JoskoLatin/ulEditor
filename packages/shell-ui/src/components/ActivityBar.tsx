@@ -2,11 +2,12 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { useWorkspace, type SidebarView } from '../state/workspace.js';
-import { IconFiles, IconLayers, IconMonitor, IconMoon, IconSun } from './Icons.js';
+import { IconFiles, IconLayers, IconMonitor, IconMoon, IconSearch, IconSun } from './Icons.js';
 
 /** Funkcija, ne konstanta: prijevod se mora dogoditi pri renderu. */
 const views = (): { id: SidebarView; label: string; icon: typeof IconFiles }[] => [
   { id: 'explorer', label: t('Explorer (Ctrl+B)'), icon: IconFiles },
+  { id: 'search', label: t('Search in project (Ctrl+Shift+H)'), icon: IconSearch },
   { id: 'formats', label: t('Supported formats'), icon: IconLayers },
 ];
 

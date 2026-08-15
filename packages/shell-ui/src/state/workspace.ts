@@ -37,7 +37,7 @@ export interface TabState {
   ready: boolean;
 }
 
-export type SidebarView = 'explorer' | 'formats';
+export type SidebarView = 'explorer' | 'search' | 'formats';
 
 interface WorkspaceState {
   tree: TreeNode[];
@@ -50,6 +50,7 @@ interface WorkspaceState {
   paletteOpen: boolean;
   findOpen: boolean;
   preferencesOpen: boolean;
+  quickOpen: boolean;
 
   setTree(tree: TreeNode[]): void;
   updateNode(uri: Uri, patch: Partial<TreeNode>): void;
@@ -65,6 +66,7 @@ interface WorkspaceState {
   setPaletteOpen(open: boolean): void;
   setFindOpen(open: boolean): void;
   setPreferencesOpen(open: boolean): void;
+  setQuickOpen(open: boolean): void;
 }
 
 /** Rekurzivno mapiranje stabla — čuva reference čvorova koji se nisu mijenjali. */
@@ -98,6 +100,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   paletteOpen: false,
   findOpen: false,
   preferencesOpen: false,
+  quickOpen: false,
 
   setTree: (tree) => set({ tree }),
 
@@ -145,6 +148,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setFindOpen: (findOpen) => set({ findOpen }),
   setPreferencesOpen: (preferencesOpen) => set({ preferencesOpen }),
+  setQuickOpen: (quickOpen) => set({ quickOpen }),
 }));
 
 /* ── imperativni registri ────────────────────────────────────────────── */

@@ -33,7 +33,7 @@ import { renderDocx, type Preview } from './docx.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
 
 export { renderDocx } from './docx.js';
-export { readXlsx, renderSheet } from './xlsx.js';
+export { columnName, readXlsx, renderSheet } from './xlsx.js';
 export type { Preview } from './docx.js';
 export type { Sheet, Workbook } from './xlsx.js';
 

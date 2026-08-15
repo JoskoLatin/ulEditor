@@ -64,6 +64,11 @@ const NOISE: &[&str] = &[
     ".venv",
 ];
 
+/// Direktorij koji se nikad ne obilazi — ni u stablu ni u pretrazi.
+pub(crate) fn is_noise(name: &str) -> bool {
+    NOISE.contains(&name)
+}
+
 #[derive(Debug, Default)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
@@ -127,7 +132,7 @@ impl Workspace {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
 
-            if NOISE.contains(&name.as_str()) {
+            if is_noise(&name) {
                 continue;
             }
             if is_dir && name.starts_with('.') {
@@ -201,8 +206,18 @@ impl Workspace {
 
 /* ── pomoćno ─────────────────────────────────────────────────────────── */
 
-fn display(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+/// Putanja kakvu vidi korisnik.
+///
+/// `fs::canonicalize` na Windowsu vraća verbatim oblik (`\\?\C:\...`), koji je
+/// detalj Win32 API-ja i nema što raditi u naslovu kartice ni u rezultatu
+/// pretrage. `resolve` ga svejedno vraća kad zatreba, pa je skidanje na
+/// granici prema UI-u sigurno.
+pub(crate) fn display(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => format!(r"\\{rest}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned(),
+    }
 }
 
 /// Leksička normalizacija: uklanja `.` i razrješava `..` bez diranja diska.
@@ -220,7 +235,7 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-fn stat_of(path: &Path) -> Result<Stat, VfsError> {
+pub(crate) fn stat_of(path: &Path) -> Result<Stat, VfsError> {
     let meta = fs::metadata(path)?;
     let modified = meta
         .modified()
