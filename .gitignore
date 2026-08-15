@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.vite/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+tools/screenshots/
+*.local
+.env
+.env.*
+!.env.example

@@ -1,0 +1,166 @@
+/*
+ * PDF preglednik.
+ *
+ * Stranica se prikazuje na neutralnoj podlozi s mekom sjenom — papir mora
+ * čitljivo odskakati od pozadine u obje teme, bez lažnog "skeuomorfnog" ruba.
+ */
+
+.ul-pdf {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ground);
+}
+
+.ul-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 34px;
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+.ul-pdf-toolbar .sep {
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+  margin: 0 6px;
+}
+
+.ul-pdf-toolbar .spacer {
+  flex: 1;
+}
+
+.ul-pdf-btn {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: 3px;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: background 130ms, color 130ms;
+}
+.ul-pdf-btn:hover:not(:disabled) {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.ul-pdf-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ul-pdf-btn[data-active='true'] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.ul-pdf-page-input {
+  width: 44px;
+  height: 22px;
+  text-align: right;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  font: inherit;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+.ul-pdf-page-input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.ul-pdf-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 0 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.ul-pdf-page {
+  position: relative;
+  background: #ffffff;
+  box-shadow: var(--shadow-md);
+  border-radius: 2px;
+  flex: none;
+  /* Rezervira mjesto prije nego se stranica renderira, pa scrollbar ne skače. */
+  contain: layout paint;
+}
+
+.ul-pdf-page canvas {
+  display: block;
+  border-radius: 2px;
+}
+
+.ul-pdf-page[data-rendered='false']::after {
+  content: attr(data-page);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #b6c5cb;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* Nevidljivi tekstualni sloj povrh canvasa — omogućuje selekciju i pretragu.
+   Glifovi se poravnavaju s otisnutima, pa selekcija izgleda kao prava. */
+.ul-pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.22;
+  line-height: 1;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.ul-pdf-text > span {
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0 0;
+  color: transparent;
+  cursor: text;
+}
+.ul-pdf-text ::selection {
+  background: rgba(12, 112, 121, 0.45);
+}
+
+.ul-pdf-hit {
+  position: absolute;
+  background: rgba(217, 162, 74, 0.42);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.ul-pdf-hit[data-current='true'] {
+  background: rgba(12, 112, 121, 0.5);
+  outline: 1px solid rgba(12, 112, 121, 0.9);
+}
+
+.ul-pdf-status {
+  margin: auto;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: center;
+  padding: 40px;
+  line-height: 1.7;
+}

@@ -1,0 +1,187 @@
+/**
+ * Ugrađene naredbe i globalne tipkovne kratice.
+ *
+ * Svaka radnja postoji kao naredba prije nego dobije gumb — tako je sve
+ * dostupno iz palete, a UI ostaje tanak sloj nad istim ulazom.
+ */
+
+import type { Shell } from '../host/index.js';
+import { activeInstance, useWorkspace } from '../state/workspace.js';
+import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
+
+export function registerCommands(shell: Shell): () => void {
+  const store = () => useWorkspace.getState();
+
+  const disposables = [
+    shell.commands.register({
+      id: 'file.openFolder',
+      title: 'Otvori mapu…',
+      category: 'Datoteka',
+      keybinding: ['Ctrl', 'K'],
+      run: () => openFolder(shell),
+    }),
+    shell.commands.register({
+      id: 'file.openFiles',
+      title: 'Otvori datoteke…',
+      category: 'Datoteka',
+      keybinding: ['Ctrl', 'O'],
+      run: () => openFiles(shell),
+    }),
+    shell.commands.register({
+      id: 'file.save',
+      title: 'Spremi',
+      category: 'Datoteka',
+      keybinding: ['Ctrl', 'S'],
+      when: () => store().activeTabId !== null,
+      run: () => saveActive(shell),
+    }),
+    shell.commands.register({
+      id: 'file.close',
+      title: 'Zatvori karticu',
+      category: 'Datoteka',
+      keybinding: ['Ctrl', 'W'],
+      when: () => store().activeTabId !== null,
+      run: () => {
+        const id = store().activeTabId;
+        if (id) void closeTab(shell, id);
+      },
+    }),
+
+    shell.commands.register({
+      id: 'edit.undo',
+      title: 'Poništi',
+      category: 'Uređivanje',
+      keybinding: ['Ctrl', 'Z'],
+      when: () => !!activeInstance(),
+      run: () => activeInstance()?.undo(),
+    }),
+    shell.commands.register({
+      id: 'edit.redo',
+      title: 'Ponovi',
+      category: 'Uređivanje',
+      keybinding: ['Ctrl', 'Shift', 'Z'],
+      when: () => !!activeInstance(),
+      run: () => activeInstance()?.redo(),
+    }),
+
+    shell.commands.register({
+      id: 'view.toggleSidebar',
+      title: 'Prikaži/sakrij bočnu ploču',
+      category: 'Prikaz',
+      keybinding: ['Ctrl', 'B'],
+      run: () => store().setSidebarVisible(!store().sidebarVisible),
+    }),
+    shell.commands.register({
+      id: 'view.explorer',
+      title: 'Prikaži istraživač datoteka',
+      category: 'Prikaz',
+      run: () => store().setSidebarView('explorer'),
+    }),
+    shell.commands.register({
+      id: 'view.formats',
+      title: 'Prikaži podržane formate',
+      category: 'Prikaz',
+      run: () => store().setSidebarView('formats'),
+    }),
+    shell.commands.register({
+      id: 'view.cycleTheme',
+      title: 'Promijeni temu (svijetla / tamna / sistemska)',
+      category: 'Prikaz',
+      run: () => {
+        const next = shell.theme.cycle();
+        shell.settings.set('theme', next);
+      },
+    }),
+
+    shell.commands.register({
+      id: 'nav.nextTab',
+      title: 'Sljedeća kartica',
+      category: 'Navigacija',
+      keybinding: ['Ctrl', 'Tab'],
+      when: () => store().tabs.length > 1,
+      run: () => cycleTab(1),
+    }),
+    shell.commands.register({
+      id: 'nav.prevTab',
+      title: 'Prethodna kartica',
+      category: 'Navigacija',
+      keybinding: ['Ctrl', 'Shift', 'Tab'],
+      when: () => store().tabs.length > 1,
+      run: () => cycleTab(-1),
+    }),
+  ];
+
+  const onKeyDown = (event: KeyboardEvent) => handleKey(shell, event);
+  window.addEventListener('keydown', onKeyDown, { capture: true });
+
+  return () => {
+    window.removeEventListener('keydown', onKeyDown, { capture: true });
+    for (const d of disposables) d.dispose();
+  };
+}
+
+function cycleTab(direction: number): void {
+  const { tabs, activeTabId, activateTab } = useWorkspace.getState();
+  if (tabs.length < 2) return;
+  const index = tabs.findIndex((t) => t.id === activeTabId);
+  const next = tabs[(index + direction + tabs.length) % tabs.length];
+  if (next) activateTab(next.id);
+}
+
+/**
+ * Globalne kratice. Namjerno kratak popis: sve što editor sam veže
+ * (Ctrl+F u CodeMirroru, Ctrl+Z unutar teksta) ovdje se ne presreće.
+ */
+function handleKey(shell: Shell, event: KeyboardEvent): void {
+  const mod = event.ctrlKey || event.metaKey;
+  if (!mod) return;
+
+  const store = useWorkspace.getState();
+  const key = event.key.toLowerCase();
+
+  // Ctrl+Shift+P — paleta. Radi i kad je fokus unutar editora.
+  if (event.shiftKey && key === 'p') {
+    event.preventDefault();
+    store.setPaletteOpen(!store.paletteOpen);
+    return;
+  }
+
+  if (event.shiftKey) {
+    if (key === 'tab') {
+      event.preventDefault();
+      cycleTab(-1);
+    }
+    return;
+  }
+
+  switch (key) {
+    case 's':
+      event.preventDefault();
+      void saveActive(shell);
+      break;
+    case 'o':
+      event.preventDefault();
+      void openFiles(shell);
+      break;
+    case 'k':
+      event.preventDefault();
+      void openFolder(shell);
+      break;
+    case 'b':
+      event.preventDefault();
+      store.setSidebarVisible(!store.sidebarVisible);
+      break;
+    case 'w': {
+      event.preventDefault();
+      const id = store.activeTabId;
+      if (id) void closeTab(shell, id);
+      break;
+    }
+    case 'tab':
+      event.preventDefault();
+      cycleTab(1);
+      break;
+    default:
+      break;
+  }
+}

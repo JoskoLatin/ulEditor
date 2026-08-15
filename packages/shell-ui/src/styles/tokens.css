@@ -1,0 +1,177 @@
+/*
+ * Dizajn tokeni.
+ *
+ * Neutrali nose blagi cijan pomak prema akcentu — čisto siva izgleda
+ * neodabrano. Boje formata su odvojene od akcenta i pojavljuju se samo
+ * ondje gdje se format zaista imenuje (ikone, tabovi, statusna traka).
+ *
+ * Tema se razrješava na tri načina: eksplicitan izbor (data-theme),
+ * sistemska preferencija, i zadana svijetla. Nijedna boja se ne smije
+ * definirati SAMO unutar media queryja ili [data-theme] bloka.
+ */
+
+:root {
+  /* ── površine ── */
+  --ground: #eef2f4;
+  --chrome: #e4eaed;
+  --surface: #f7fafb;
+  --surface-raised: #ffffff;
+  --overlay: #ffffff;
+  --overlay-scrim: rgba(16, 22, 25, 0.32);
+
+  /* ── tekst ── */
+  --ink: #101619;
+  --ink-soft: #4e5f66;
+  --ink-faint: #7d8f97;
+  --ink-ghost: #a3b2b9;
+  --ink-inverse: #f7fafb;
+
+  /* ── linije ── */
+  --rule: #cfdade;
+  --rule-soft: #dfe7ea;
+  --rule-strong: #b6c5cb;
+
+  /* ── akcent ── */
+  --accent: #0c7079;
+  --accent-hover: #0a5f67;
+  --accent-ink: #085259;
+  --accent-wash: #d8ecee;
+  --accent-glow: rgba(12, 112, 121, 0.16);
+
+  /* ── boje formata ── */
+  --fmt-code: #a96a12;
+  --fmt-document: #2a5b9e;
+  --fmt-sheet: #2a7048;
+  --fmt-slides: #b5591f;
+  --fmt-fixed: #b03a2b;
+  --fmt-media: #6b5aa6;
+  --fmt-other: #6c7b82;
+
+  /* ── semantika ── */
+  --ok: #2a7048;
+  --warn: #a96a12;
+  --danger: #b03a2b;
+  --warn-wash: #f6ecd9;
+  --danger-wash: #f8e3df;
+
+  /* ── sjene ── */
+  --shadow-sm: 0 1px 2px rgba(16, 22, 25, 0.07);
+  --shadow-md: 0 2px 6px rgba(16, 22, 25, 0.08), 0 12px 28px -18px rgba(16, 22, 25, 0.4);
+  --shadow-lg: 0 8px 20px rgba(16, 22, 25, 0.1), 0 32px 64px -28px rgba(16, 22, 25, 0.45);
+
+  /* ── tipografija ── */
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --serif: "Iowan Old Style", Charter, Cambria, Georgia, serif;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+
+  /* ── mjere ── */
+  --titlebar-h: 36px;
+  --statusbar-h: 24px;
+  --activitybar-w: 48px;
+  --tab-h: 36px;
+  --radius: 4px;
+  --radius-lg: 8px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 130ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0a1013;
+    --chrome: #0e161a;
+    --surface: #121b1f;
+    --surface-raised: #172228;
+    --overlay: #172228;
+    --overlay-scrim: rgba(0, 0, 0, 0.58);
+
+    --ink: #e4ecee;
+    --ink-soft: #9aacb3;
+    --ink-faint: #71838b;
+    --ink-ghost: #556770;
+    --ink-inverse: #0a1013;
+
+    --rule: #223037;
+    --rule-soft: #1a252b;
+    --rule-strong: #2e3f47;
+
+    --accent: #3fb2bb;
+    --accent-hover: #55c3cb;
+    --accent-ink: #77d0d7;
+    --accent-wash: #11292d;
+    --accent-glow: rgba(63, 178, 187, 0.2);
+
+    --fmt-code: #d9a24a;
+    --fmt-document: #6fa0de;
+    --fmt-sheet: #5cb183;
+    --fmt-slides: #e08a52;
+    --fmt-fixed: #e0705e;
+    --fmt-media: #a594d9;
+    --fmt-other: #7e8f97;
+
+    --ok: #5cb183;
+    --warn: #d9a24a;
+    --danger: #e0705e;
+    --warn-wash: #2a2216;
+    --danger-wash: #2c1a17;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
+    --shadow-lg: 0 8px 20px rgba(0, 0, 0, 0.55), 0 32px 64px -28px rgba(0, 0, 0, 0.95);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0a1013;
+  --chrome: #0e161a;
+  --surface: #121b1f;
+  --surface-raised: #172228;
+  --overlay: #172228;
+  --overlay-scrim: rgba(0, 0, 0, 0.58);
+
+  --ink: #e4ecee;
+  --ink-soft: #9aacb3;
+  --ink-faint: #71838b;
+  --ink-ghost: #556770;
+  --ink-inverse: #0a1013;
+
+  --rule: #223037;
+  --rule-soft: #1a252b;
+  --rule-strong: #2e3f47;
+
+  --accent: #3fb2bb;
+  --accent-hover: #55c3cb;
+  --accent-ink: #77d0d7;
+  --accent-wash: #11292d;
+  --accent-glow: rgba(63, 178, 187, 0.2);
+
+  --fmt-code: #d9a24a;
+  --fmt-document: #6fa0de;
+  --fmt-sheet: #5cb183;
+  --fmt-slides: #e08a52;
+  --fmt-fixed: #e0705e;
+  --fmt-media: #a594d9;
+  --fmt-other: #7e8f97;
+
+  --ok: #5cb183;
+  --warn: #d9a24a;
+  --danger: #e0705e;
+  --warn-wash: #2a2216;
+  --danger-wash: #2c1a17;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
+  --shadow-lg: 0 8px 20px rgba(0, 0, 0, 0.55), 0 32px 64px -28px rgba(0, 0, 0, 0.95);
+
+  color-scheme: dark;
+}

@@ -1,0 +1,29 @@
+{
+  "name": "uleditor",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Jedan open-source editor za kod, Markdown, PDF, Word i Excel.",
+  "scripts": {
+    "dev": "pnpm --filter @uleditor/shell-ui dev",
+    "desktop": "pnpm --filter @uleditor/desktop dev",
+    "build": "pnpm -r --filter=!@uleditor/desktop build",
+    "build:desktop": "pnpm --filter @uleditor/desktop build",
+    "typecheck": "pnpm -r typecheck",
+    "verify": "node tools/verify-ui.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "rust:test": "cargo test --workspace",
+    "rust:lint": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "rust:wasm": "cargo build -p ul-formats --target wasm32-unknown-unknown --release",
+    "check": "pnpm typecheck && pnpm build && pnpm rust:lint && pnpm rust:test",
+    "clean": "pnpm -r exec rimraf dist node_modules/.vite"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

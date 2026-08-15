@@ -1,0 +1,183 @@
+/*
+ * Markdown editor: izvor lijevo, pregled desno.
+ *
+ * Pregled koristi serifni stup jer je to tekst za čitanje, a ne za
+ * skeniranje — jedina površina u aplikaciji koja to zaslužuje.
+ */
+
+.ul-md {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  height: 100%;
+  min-height: 0;
+  background: var(--ground);
+}
+
+.ul-md[data-mode='source'] {
+  grid-template-columns: 1fr 0 0;
+}
+.ul-md[data-mode='preview'] {
+  grid-template-columns: 0 0 1fr;
+}
+
+.ul-md-source {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ul-md-source .cm-editor {
+  height: 100%;
+}
+
+.ul-md-divider {
+  background: var(--rule);
+}
+
+.ul-md-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 32px 40px 40vh;
+  background: var(--surface);
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.68;
+  color: var(--ink);
+}
+
+.ul-md-preview > .inner {
+  max-width: 68ch;
+  margin: 0 auto;
+}
+
+.ul-md-preview h1,
+.ul-md-preview h2,
+.ul-md-preview h3,
+.ul-md-preview h4 {
+  font-family: var(--sans);
+  font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
+  margin: 1.8em 0 0.6em;
+  color: var(--ink);
+}
+.ul-md-preview > .inner > :first-child {
+  margin-top: 0;
+}
+.ul-md-preview h1 {
+  font-size: 1.7em;
+  letter-spacing: -0.02em;
+}
+.ul-md-preview h2 {
+  font-size: 1.32em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ul-md-preview h3 {
+  font-size: 1.1em;
+}
+.ul-md-preview h4 {
+  font-size: 1em;
+  color: var(--ink-soft);
+}
+
+.ul-md-preview p,
+.ul-md-preview ul,
+.ul-md-preview ol,
+.ul-md-preview blockquote,
+.ul-md-preview pre,
+.ul-md-preview table {
+  margin: 0 0 1.1em;
+}
+
+.ul-md-preview a {
+  color: var(--accent-ink);
+  text-underline-offset: 2px;
+}
+
+.ul-md-preview code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+.ul-md-preview pre {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  line-height: 1.65;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+.ul-md-preview pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.ul-md-preview blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-wash);
+  border-radius: 0 4px 4px 0;
+  padding: 12px 18px;
+  color: var(--ink-soft);
+}
+.ul-md-preview blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.ul-md-preview hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 2em 0;
+}
+
+.ul-md-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.88em;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  overflow-x: auto;
+}
+.ul-md-preview th {
+  font-family: var(--mono);
+  font-size: 0.78em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--rule);
+  padding: 9px 12px;
+}
+.ul-md-preview td {
+  border-bottom: 1px solid var(--rule-soft);
+  padding: 9px 12px;
+  color: var(--ink-soft);
+  vertical-align: top;
+}
+
+.ul-md-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.ul-md-preview li {
+  margin-bottom: 0.3em;
+}
+
+.ul-md-preview input[type='checkbox'] {
+  margin-right: 6px;
+  accent-color: var(--accent);
+}

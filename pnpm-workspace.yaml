@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+# esbuild isporučuje predkompilirani binary preko install skripte; Vite bez
+# njega ne radi. Ostale skripte ostaju blokirane.
+allowBuilds:
+  esbuild: true

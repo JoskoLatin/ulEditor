@@ -1,0 +1,110 @@
+/*
+ * Boje sintakse.
+ *
+ * Zaseban set od tokena shella: sintaksa treba širu paletu nego chrome, a
+ * paket mora biti samostalan. Nijansiranje prati istu logiku — hladni
+ * neutrali, prigušene boje, akcent rezerviran za ono što se stvarno ističe.
+ */
+
+:root {
+  --syn-keyword: #9a3f6c;
+  --syn-string: #2a7048;
+  --syn-number: #a4551d;
+  --syn-comment: #7d8f97;
+  --syn-function: #2a5b9e;
+  --syn-type: #0c7079;
+  --syn-variable: #35464d;
+  --syn-constant: #7a4bb5;
+  --syn-operator: #5c6f77;
+  --syn-tag: #b03a2b;
+  --syn-attribute: #a4551d;
+  --syn-invalid: #b03a2b;
+
+  --cm-cursor: #0c7079;
+  --cm-selection: rgba(12, 112, 121, 0.18);
+  --cm-active-line: rgba(12, 112, 121, 0.05);
+  --cm-gutter: #93a4ab;
+  --cm-gutter-active: #0c7079;
+  --cm-match: rgba(169, 106, 18, 0.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --syn-keyword: #e08bb0;
+    --syn-string: #7fc79c;
+    --syn-number: #e0a06e;
+    --syn-comment: #63757d;
+    --syn-function: #7fb0e8;
+    --syn-type: #4fc4cd;
+    --syn-variable: #c3d0d5;
+    --syn-constant: #bda6ea;
+    --syn-operator: #8fa1a9;
+    --syn-tag: #e88b7b;
+    --syn-attribute: #e0a06e;
+    --syn-invalid: #e0705e;
+
+    --cm-cursor: #3fb2bb;
+    --cm-selection: rgba(63, 178, 187, 0.24);
+    --cm-active-line: rgba(63, 178, 187, 0.06);
+    --cm-gutter: #5b6d75;
+    --cm-gutter-active: #3fb2bb;
+    --cm-match: rgba(217, 162, 74, 0.3);
+  }
+}
+
+:root[data-theme='dark'] {
+  --syn-keyword: #e08bb0;
+  --syn-string: #7fc79c;
+  --syn-number: #e0a06e;
+  --syn-comment: #63757d;
+  --syn-function: #7fb0e8;
+  --syn-type: #4fc4cd;
+  --syn-variable: #c3d0d5;
+  --syn-constant: #bda6ea;
+  --syn-operator: #8fa1a9;
+  --syn-tag: #e88b7b;
+  --syn-attribute: #e0a06e;
+  --syn-invalid: #e0705e;
+
+  --cm-cursor: #3fb2bb;
+  --cm-selection: rgba(63, 178, 187, 0.24);
+  --cm-active-line: rgba(63, 178, 187, 0.06);
+  --cm-gutter: #5b6d75;
+  --cm-gutter-active: #3fb2bb;
+  --cm-match: rgba(217, 162, 74, 0.3);
+}
+
+/* Panel pretrage dolazi iz @codemirror/search s vlastitim izgledom —
+   usklađujemo ga s ostatkom aplikacije. */
+.cm-panels {
+  background: var(--surface-raised) !important;
+  color: var(--ink) !important;
+  border-top: 1px solid var(--rule) !important;
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.cm-panel.cm-search input,
+.cm-panel.cm-search button,
+.cm-panel.cm-search label {
+  font-family: inherit;
+  font-size: inherit;
+}
+.cm-panel.cm-search input {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+.cm-panel.cm-search button {
+  background: var(--surface);
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.cm-panel.cm-search button:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
