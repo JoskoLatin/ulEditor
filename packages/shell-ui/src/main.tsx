@@ -25,6 +25,10 @@ const shell = createShell();
  */
 setLocale(shell.locale);
 
+/* Dokument mora prijaviti stvarni jezik, ne onaj upisan u `index.html`:
+   o njemu ovise čitači ekrana i pravila za rastavljanje riječi. */
+document.documentElement.lang = shell.locale;
+
 /*
  * Registracija editora — jedino mjesto u shellu koje uopće spominje pojedine
  * formate. Metapodaci su statični (registar mora odmah znati tko što otvara),

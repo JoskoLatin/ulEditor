@@ -79,10 +79,41 @@ button {
 
 /* ── okvir ──────────────────────────────────────────────────────────── */
 
+/*
+ * Umetci sigurnog područja: na telefonu webview dobiva cijeli ekran, pa
+ * sistemska statusna traka i navigacijska traka crtaju **preko** aplikacije.
+ * Bez ovoga sat sjedne na naslovnu traku, a u pejzažu navigacijska traka
+ * pojede desni rub.
+ *
+ * Trake nose umetak kao vlastiti padding umjesto da se okvir odmakne, da
+ * njihova boja i dalje ide do samog ruba ekrana — inače se ispod sata vidi
+ * pruga pozadine.
+ *
+ * Na desktopu su sve četiri vrijednosti nula i pravilo ne radi ništa.
+ */
+/*
+ * `width` i `overflow` nisu ukras nego ograda.
+ *
+ * Bez njih sadržaj koji se ne da stisnuti — alatna traka editora s previše
+ * kontrola — razvuče grid preko širine ekrana. Na desktopu se to vidi kao
+ * vodoravni scrollbar, na Androidu je gore: WebView odzumira **cijelu**
+ * stranicu, pa `innerWidth` naraste s 392 na 591 px, sve se pomakne i dodiri
+ * padaju pokraj gumba. Izmjereno upravo tako s otvorenim PDF-om.
+ *
+ * Ovdje se lomi lanac: shell je uvijek točno širok koliko i ekran, a što se
+ * unutra ne da stisnuti neka se lista samo.
+ */
 .shell {
   height: 100%;
+  width: 100%;
+  overflow: hidden;
   display: grid;
-  grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--statusbar-h);
+  grid-template-rows:
+    calc(var(--titlebar-h) + env(safe-area-inset-top))
+    minmax(0, 1fr)
+    calc(var(--statusbar-h) + env(safe-area-inset-bottom));
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   background: var(--ground);
 }
 
@@ -91,6 +122,9 @@ button {
   display: grid;
   grid-template-columns: var(--activitybar-w) auto auto minmax(0, 1fr);
   min-height: 0;
+  /* Automatska najmanja veličina grid stavke je min-content; bez ovoga tijelo
+     naraste na širinu najšire alatne trake i povuče shell za sobom. */
+  min-width: 0;
 }
 
 .shell-body[data-sidebar="hidden"] {
@@ -104,7 +138,7 @@ button {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
-  padding: 0 10px;
+  padding: env(safe-area-inset-top) 10px 0;
   background: var(--chrome);
   border-bottom: 1px solid var(--rule);
   user-select: none;
@@ -233,6 +267,9 @@ button {
 /* ── bočna ploča ────────────────────────────────────────────────────── */
 
 .sidebar {
+  /* Vrijednost postavlja komponenta; zamjenska je tu da ploča ima širinu i
+     ako se stil učita prije prvog rendera. */
+  width: var(--sidebar-w, 264px);
   background: var(--surface);
   border-right: 1px solid var(--rule);
   display: flex;
@@ -283,6 +320,39 @@ button {
   overflow: auto;
   padding: 6px 0 16px;
   min-height: 0;
+}
+
+/* Na širokom ekranu ploča nikoga ne prekriva, pa zatamnjenja nema. */
+.sidebar-scrim {
+  display: none;
+  border: none;
+  padding: 0;
+}
+
+/*
+ * Prekidač pogleda u naslovnoj traci postoji samo na uskom ekranu; na desktopu
+ * isti pogledi stoje u okomitoj traci uz lijevi rub.
+ */
+.view-switch {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+}
+
+.view-btn {
+  width: 36px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--ink-faint);
+  -webkit-app-region: no-drag;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.view-btn[data-active='true'] {
+  color: var(--accent-ink);
+  background: var(--accent-wash);
 }
 
 .resizer {
@@ -655,7 +725,7 @@ button {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 6px;
+  padding: 0 6px env(safe-area-inset-bottom);
   background: var(--chrome);
   border-top: 1px solid var(--rule);
   font-family: var(--mono);
@@ -1059,6 +1129,10 @@ button.status-item:hover {
    naslovne trake i dobilo njezinih 36 px visine. */
 .shell[data-reading="true"] {
   grid-template-rows: minmax(0, 1fr);
+  /* Trake su skrivene, pa umetke sigurnog područja mora nositi sam okvir —
+     inače bi u čitaonici tekst išao pod sistemsku traku. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .shell[data-reading="true"] .shell-body {
@@ -1665,4 +1739,325 @@ button.status-item:hover {
 
 .search-hit:hover .what {
   color: var(--ink);
+}
+
+/* ── uski ekran ─────────────────────────────────────────────────────── */
+
+/*
+ * Shell je građen za desktop: aktivnosna traka 48 px, bočna ploča 264 px, pa
+ * glavno područje. Na telefonu je CSS širina oko 390 px, pa glavnom području
+ * ostane sedamdesetak piksela i opis se lomi na jednu riječ po retku.
+ *
+ * Ovo **nije** touch redizajn iz faze 4 — nema gesta, ni kontekstnog toolbara,
+ * ni upravljanja tipkovnicom. Cilj je uži: da se sadržaj vidi i da ga se može
+ * dohvatiti. Bočna ploča prelazi preko sadržaja umjesto da ga stišće, a s
+ * naslovne trake se miču stvari koje na telefonu ionako ništa ne znače.
+ *
+ * Prag je 720 px, a ne širina konkretnog uređaja: isto vrijedi za usku ploču
+ * na desktopu, gdje je problem identičan.
+ */
+@media (max-width: 720px) {
+  /*
+   * Ploča više nije stupac nego sloj preko sadržaja, a hvatište za širinu
+   * nestaje s njom.
+   *
+   * Oboje ispada iz toka — `position: absolute` i `display: none` — pa se
+   * mjesta u gridu **moraju** dodijeliti izrijekom. Bez toga auto-raspoređivanje
+   * pomakne glavno područje u stupac koji je ostao prazan i ono dobije nula
+   * piksela širine. Ista zamka vrijedi i za prazne divove koje shell renderira
+   * umjesto skrivene ploče: oni ostaju u toku i odlaze u implicitne stupce.
+   */
+  /*
+   * Navigacija ide gore, uz rub ostaju alati otvorenog dokumenta.
+   *
+   * Okomita traka pogleda nestaje: na telefonu troši 48 px širine na nešto što
+   * u naslovnoj traci ionako stoji, a lijevi rub je vredniji kao mjesto za
+   * alate formata koji je upravo otvoren.
+   */
+  .activitybar {
+    display: none;
+  }
+
+  .shell-body,
+  .shell-body[data-sidebar="hidden"],
+  .shell-body[data-sidebar="visible"] {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    /* Prazni divovi nemaju eksplicitan položaj pa ih auto-raspoređivanje šalje
+       u implicitni red. Bez nulte visine taj red gurne raspored prema dolje. */
+    grid-auto-rows: 0;
+  }
+
+  /* Red **i** stupac, ne samo stupac: uz zadan samo stupac ostaje slobodan
+     redak, pa prazni divovi zauzmu prvi red i glavno područje padne u drugi. */
+  .main {
+    grid-area: 1 / 1;
+  }
+
+  /* Prekidač pogleda živi u naslovnoj traci, a mape se na telefonu ne nude. */
+  .view-switch {
+    display: flex;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  /*
+   * Ploča pada odozgo, punom širinom, i staje prije dna.
+   *
+   * Prije je izlazila sa strane i ostavljala uski pojas sadržaja po kojem se
+   * zatvarala — 38 px, manje nego što palac pouzdano pogodi. Odozgo je i bliže
+   * gumbu koji ju je otvorio, pa je put oko-ruka kraći, a ispod nje ostaje
+   * široka ploha za zatvaranje.
+   */
+  .shell-body[data-sidebar="visible"] .sidebar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    width: auto;
+    max-height: 68%;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    border-radius: 0 0 12px 12px;
+    box-shadow: 0 10px 24px rgb(0 0 0 / 0.22);
+  }
+
+  /* Ispod ploče, iznad sadržaja — i prima dodir, za razliku od sjene. */
+  .sidebar-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: rgb(0 0 0 / 0.32);
+  }
+
+  .resizer {
+    display: none;
+  }
+
+  /*
+   * Ciljevi za prst. Chrome je građen za miš i pokazivač od jednog piksela;
+   * na dodir su 24 px visoki redovi promašaj koji korisnik doživi kao „ne
+   * reagira”, a ne kao „promašio sam”.
+   */
+  .chrome-btn {
+    height: 34px;
+    padding: 0 10px;
+  }
+
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .tree-row {
+    height: 34px;
+  }
+
+  .tab {
+    min-height: 38px;
+  }
+
+  .status-item {
+    height: 22px;
+    padding: 0 9px;
+  }
+
+  /* Naziv dokumenta već stoji u kartici; ovdje bi se samo sudarao s gumbima. */
+  .titlebar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .titlebar-title {
+    display: none;
+  }
+
+  /* Kratica za paletu na telefonu nema tipkovnicu iza sebe. */
+  .titlebar .chrome-btn kbd {
+    display: none;
+  }
+
+  /*
+   * Pozdravni ekran je centriran s `margin: auto`. Kad naraste preko visine
+   * spremnika, taj centrirani višak se u flexboxu odreže s vrha i ne da se
+   * doskrolati. Na uskom ekranu zato pada na vrh i spremnik dobiva skrol.
+   */
+  .surface {
+    overflow-y: auto;
+  }
+
+  .welcome {
+    margin: 0 auto;
+    padding: 22px 18px 32px;
+    gap: 24px;
+  }
+
+  .welcome-cols {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+}
+
+/* ── knjižnica ──────────────────────────────────────────────────────── */
+
+/*
+ * Popis, ne stablo. Mapa je podatak uz datoteku, a ne način kretanja — zato
+ * nema uvlaka ni strelica za razgranavanje.
+ */
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 6px;
+}
+
+.library-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.library-filter {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.library-filter:disabled {
+  opacity: 0.5;
+}
+
+.library-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px;
+}
+.library-formats button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  color: var(--ink-faint);
+  font-size: var(--fs-xs);
+}
+.library-formats button[data-active='true'] {
+  border-color: transparent;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+.library-formats button span {
+  color: var(--ink-ghost);
+  font-family: var(--mono);
+}
+
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.library-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 9px;
+  align-items: center;
+  width: 100%;
+  /* Visoko dovoljno da se pogodi prstom bez zumiranja. */
+  min-height: 46px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  text-align: left;
+}
+.library-item:hover {
+  background: var(--rule-soft);
+}
+
+.library-item svg {
+  grid-row: 1 / 3;
+  flex: none;
+}
+
+.library-name {
+  grid-column: 2;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-meta {
+  grid-column: 2;
+  color: var(--ink-ghost);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-note {
+  margin: 4px 8px;
+  color: var(--ink-faint);
+  font-size: var(--fs-sm);
+}
+
+/*
+ * Uskraćen pristup nije prazna lista. Android tu ne javlja grešku, pa bi bez
+ * ovoga aplikacija tvrdila da dokumenata nema — a ima ih stotine.
+ */
+.library-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 2px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.library-blocked strong {
+  color: var(--ink);
+  font-size: var(--fs-md);
+}
+.library-blocked p {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--fs-sm);
+}
+.library-steps {
+  font-family: var(--mono);
+  font-size: var(--fs-xs) !important;
+  color: var(--ink-soft) !important;
+}
+.library-retry {
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+.library-retry:hover {
+  background: var(--rule-soft);
 }

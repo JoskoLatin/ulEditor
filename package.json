@@ -23,6 +23,7 @@
     "verify:ocr": "node tools/verify-ocr.mjs",
     "verify:export": "node tools/verify-export.mjs",
     "verify:search": "node tools/verify-project-search.mjs",
+    "verify:mobile": "node tools/verify-mobile-layout.mjs",
     "verify:library": "node tools/verify-mobile-library.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"

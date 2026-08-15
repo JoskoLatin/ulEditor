@@ -4,8 +4,41 @@ import { t } from '@uleditor/i18n';
 import { useShell } from '../shell/context.js';
 import { openFiles, openFolder, saveActive } from '../shell/actions.js';
 import { formatLabel } from '../shell/formats.js';
+import { visibleViews } from '../shell/views.js';
 import { useWorkspace } from '../state/workspace.js';
 import { IconCommand, IconFolderOpen, IconSave } from './Icons.js';
+
+/**
+ * Prekidač pogleda u naslovnoj traci.
+ *
+ * Postoji samo na uskom ekranu, gdje okomite trake uz rub nema — CSS ga na
+ * desktopu skriva. Ploča se otvara **prema dolje ispod trake**, jer je na
+ * telefonu vrh jedino mjesto koje palac dosegne bez preslagivanja hvata.
+ */
+function ViewSwitch() {
+  const view = useWorkspace((s) => s.sidebarView);
+  const visible = useWorkspace((s) => s.sidebarVisible);
+  const setView = useWorkspace((s) => s.setSidebarView);
+  const setVisible = useWorkspace((s) => s.setSidebarVisible);
+
+  return (
+    <div className="view-switch">
+      {visibleViews().map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className="view-btn"
+          data-active={visible && view === id}
+          title={label}
+          aria-label={label}
+          aria-expanded={visible && view === id}
+          onClick={() => (visible && view === id ? setVisible(false) : setView(id))}
+        >
+          <Icon size={18} />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function TitleBar() {
   const shell = useShell();
@@ -23,8 +56,16 @@ export function TitleBar() {
           <span>ul</span>
           <b>Editor</b>
         </div>
+
+        <ViewSwitch />
+
+        {/*
+          Otvaranje mape i biranje datoteka su desktop radnje: na telefonu ih
+          knjižnica pokriva u cijelosti, pa bi bile drugi put do istog. CSS ih
+          ondje skriva.
+        */}
         <button
-          className="chrome-btn"
+          className="chrome-btn desktop-only"
           onClick={() => void openFolder(shell)}
           title={t('Open folder (Ctrl+K)')}
         >
@@ -32,7 +73,7 @@ export function TitleBar() {
           {t('Folder')}
         </button>
         <button
-          className="chrome-btn"
+          className="chrome-btn desktop-only"
           onClick={() => void openFiles(shell)}
           title={t('Open files (Ctrl+O)')}
         >

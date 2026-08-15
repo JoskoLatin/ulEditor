@@ -26,8 +26,13 @@ export function Sidebar() {
   const view = useWorkspace((s) => s.sidebarView);
   const width = useWorkspace((s) => s.sidebarWidth);
 
+  /*
+   * Širina ide kao CSS varijabla, ne kao `width`. Inline `width` bi imao veću
+   * specifičnost od svakog pravila u tablici stilova, pa se na uskom ekranu
+   * ploča ne bi mogla pretvoriti u preklopnu bez `!important`.
+   */
   return (
-    <aside className="sidebar" style={{ width }}>
+    <aside className="sidebar" style={{ '--sidebar-w': `${width}px` } as React.CSSProperties}>
       <div className="sidebar-head">
         <h2>{title(view)}</h2>
         {view === 'explorer' && (
@@ -43,6 +48,28 @@ export function Sidebar() {
         {view === 'formats' && <FormatsPanel />}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Zatamnjenje iza preklopne ploče.
+ *
+ * Na uskom ekranu ploča prekriva sadržaj, pa mora imati i način da se zatvori
+ * ondje gdje ju korisnik pokušava zatvoriti — dodirom pokraj nje. Prije je
+ * zatamnjenje bilo `box-shadow` same ploče, što izgleda isto ali ne prima
+ * dodir, pa je ploča djelovala kao da se ne da maknuti.
+ *
+ * Na širokom ekranu ga CSS sakriva: ondje ploča nikoga ne prekriva.
+ */
+export function SidebarScrim() {
+  const setVisible = useWorkspace((s) => s.setSidebarVisible);
+  return (
+    <button
+      className="sidebar-scrim"
+      aria-label={t('Close panel')}
+      tabIndex={-1}
+      onClick={() => setVisible(false)}
+    />
   );
 }
 

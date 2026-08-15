@@ -19,7 +19,7 @@ import { Preferences } from './components/Preferences.js';
 import { QuickOpen } from './components/QuickOpen.js';
 import { ReaderBar } from './components/ReaderBar.js';
 import { SplitPane } from './components/SplitPane.js';
-import { Sidebar, SidebarResizer } from './components/Sidebar.js';
+import { Sidebar, SidebarResizer, SidebarScrim } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { TabBar } from './components/TabBar.js';
 import { TitleBar } from './components/TitleBar.js';
@@ -135,6 +135,9 @@ export function App({ shell }: { shell: Shell }) {
               stupca, pa se prijelaz ne vidi kao preslagivanje layouta. */}
           {sidebarVisible ? <Sidebar /> : <div />}
           {sidebarVisible ? <SidebarResizer /> : <div />}
+          {/* Zatamnjenje ide izvan toka i vidi se samo na uskom ekranu, gdje
+              ploča prekriva sadržaj i mora se dati zatvoriti dodirom pokraj. */}
+          {sidebarVisible ? <SidebarScrim /> : null}
           <main className="main">
             {reading ? <ReaderBar /> : null}
             <TabBar />

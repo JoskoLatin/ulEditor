@@ -1,8 +1,11 @@
 <!doctype html>
-<html lang="hr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` je uvjet da `env(safe-area-inset-*)` uopće dobije
+         vrijednost različitu od nule; bez njega webview ostaje unutar
+         sistemskih traka i umetci su mrtvo slovo. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>ulEditor</title>
   </head>

@@ -22,6 +22,13 @@
   flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--rule);
+  /* Traka se lista umjesto da gura: bez ovoga njezina najmanja veličina
+     razvuče cijeli shell, a na telefonu to odzumira stranicu i dodiri
+     promaše gumbe. */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-faint);
@@ -256,6 +263,10 @@
 }
 
 /* ── alati za anotiranje ─────────────────────────────────────────────── */
+
+.ul-pdf-tools {
+  display: inline-flex;
+}
 
 .ul-pdf-tool {
   font-size: 13px;
@@ -526,4 +537,69 @@
 
 .ul-pdf[data-reading='true'][data-tint='night'] .ul-pdf-page {
   box-shadow: none;
+}
+
+.ul-pdf-toolbar::-webkit-scrollbar {
+  height: 0;
+}
+
+/* Kontrole zadržavaju svoju širinu — stisnute do nečitljivosti nikome ne služe. */
+.ul-pdf-toolbar > * {
+  flex: none;
+}
+
+/* ── uski ekran ─────────────────────────────────────────────────────── */
+
+/* Isti razlog kao kod preglednika slika: navigacija je gore, bok je slobodan
+   za alate, a vodoravna traka bi na 392 px pojela pola širine. */
+@media (max-width: 720px) {
+  .ul-pdf {
+    flex-direction: row;
+  }
+
+  .ul-pdf-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    width: 58px;
+    height: auto;
+    padding: 8px 5px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-bottom: none;
+    border-right: 1px solid var(--rule);
+  }
+
+  /* Samo izravna djeca trake: ugniježđeni gumbi (kvačice boja) imaju
+     vlastitu veličinu, a nametnuta visina ih pretvori u elipse. */
+  .ul-pdf-toolbar > button {
+    height: 36px;
+  }
+
+  .ul-pdf-toolbar .sep {
+    width: 100%;
+    height: 1px;
+  }
+
+  .ul-pdf-toolbar .spacer {
+    display: none;
+  }
+
+  .ul-pdf-toolbar .readout {
+    display: none;
+  }
+
+  /* Ni alati ni kvačice ne stanu u red od 48 px, pa se slažu u dva. */
+  .ul-pdf-tools {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .ul-pdf-swatches {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-left: 0;
+  }
 }

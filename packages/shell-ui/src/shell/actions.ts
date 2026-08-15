@@ -11,6 +11,7 @@ import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
+import { isNarrow } from './views.js';
 import {
   tabDocuments,
   tabInstances,
@@ -24,8 +25,19 @@ const nextId = () => `tab-${++counter}`;
 
 /* ── otvaranje ───────────────────────────────────────────────────────── */
 
+/**
+ * Na uskom ekranu ploča prekriva dokument, pa se mora maknuti čim je odabir
+ * napravljen — inače korisnik otvori datoteku i gleda u popis iz kojeg ju je
+ * upravo otvorio. Na desktopu ploča ostaje: ondje stoji uz sadržaj, ne preko
+ * njega, i sljedeći se dokument bira iz istog popisa.
+ */
+function dismissPanelOnNarrow(): void {
+  if (isNarrow()) useWorkspace.getState().setSidebarVisible(false);
+}
+
 export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<void> {
   const store = useWorkspace.getState();
+  dismissPanelOnNarrow();
 
   const existing = store.tabs.find((t) => t.uri === doc.uri);
   if (existing) {

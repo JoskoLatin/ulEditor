@@ -22,6 +22,13 @@
   flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--rule);
+  /* Traka se lista umjesto da gura: bez ovoga njezina najmanja veličina
+     razvuče cijeli shell, a na telefonu to odzumira stranicu i dodiri
+     promaše gumbe. */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-faint);
@@ -133,4 +140,77 @@
 .ul-img-ocr:disabled {
   opacity: 0.5;
   cursor: progress;
+}
+
+.ul-img-toolbar::-webkit-scrollbar {
+  height: 0;
+}
+
+/* Kontrole zadržavaju svoju širinu — stisnute do nečitljivosti nikome ne služe. */
+.ul-img-toolbar > * {
+  flex: none;
+}
+
+/* ── uski ekran ─────────────────────────────────────────────────────── */
+
+/*
+ * Alati idu uz lijevi rub, uspravno.
+ *
+ * Na telefonu navigacija stoji u naslovnoj traci, pa je bok slobodan — i bolji
+ * je za alate nego vodoravna traka, koja bi na 392 px pojela pola širine ili
+ * se morala listati. Uz rub su alati stalno vidljivi i pod palcem.
+ *
+ * Traka se okreće, ne prepisuje: isti elementi, drugi smjer.
+ */
+@media (max-width: 720px) {
+  .ul-img {
+    flex-direction: row;
+  }
+
+  .ul-img-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    width: 58px;
+    height: auto;
+    padding: 8px 5px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-bottom: none;
+    border-right: 1px solid var(--rule);
+  }
+
+  /* Samo izravna djeca trake: ugniježđeni gumbi (kvačice boja) imaju
+     vlastitu veličinu, a nametnuta visina ih pretvori u elipse. */
+  .ul-img-toolbar > button {
+    height: 36px;
+  }
+
+  /* Razdjelnik prati smjer trake. */
+  .ul-img-toolbar .sep {
+    width: 100%;
+    height: 1px;
+  }
+
+  /* Razmaknica gura sadržaj udesno kad je traka vodoravna; uspravno bi je
+     rastegnula preko cijele visine i razbila raspored. */
+  .ul-img-toolbar .spacer {
+    display: none;
+  }
+
+  .ul-img-toolbar .readout {
+    display: none;
+  }
+
+  .ul-img-toolbar .zoom {
+    min-width: 0 !important;
+    font-size: 10px;
+  }
+
+  .ul-img-select {
+    width: 100%;
+    min-width: 0;
+    padding: 0 2px;
+    font-size: 10px;
+  }
 }

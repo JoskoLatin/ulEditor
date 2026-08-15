@@ -1,16 +1,16 @@
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
-import { useWorkspace, type SidebarView } from '../state/workspace.js';
-import { IconFiles, IconLayers, IconMonitor, IconMoon, IconSearch, IconSun } from './Icons.js';
+import { visibleViews } from '../shell/views.js';
+import { useWorkspace } from '../state/workspace.js';
+import { IconMonitor, IconMoon, IconSun } from './Icons.js';
 
-/** Funkcija, ne konstanta: prijevod se mora dogoditi pri renderu. */
-const views = (): { id: SidebarView; label: string; icon: typeof IconFiles }[] => [
-  { id: 'explorer', label: t('Explorer (Ctrl+B)'), icon: IconFiles },
-  { id: 'search', label: t('Search in project (Ctrl+Shift+H)'), icon: IconSearch },
-  { id: 'formats', label: t('Supported formats'), icon: IconLayers },
-];
-
+/**
+ * Okomita traka pogleda uz lijevi rub.
+ *
+ * Postoji samo na širokom ekranu; na telefonu ju CSS skriva, a isti pogledi
+ * stoje u naslovnoj traci gore — vidi [`ViewSwitch`](./TitleBar.tsx).
+ */
 export function ActivityBar() {
   const shell = useShell();
   const view = useWorkspace((s) => s.sidebarView);
@@ -25,7 +25,7 @@ export function ActivityBar() {
 
   return (
     <nav className="activitybar" aria-label={t('Panels')}>
-      {views().map(({ id, label, icon: Icon }) => (
+      {visibleViews().map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           className="act-btn"

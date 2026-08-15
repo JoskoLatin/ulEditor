@@ -290,8 +290,10 @@ class PdfEditor implements EditorInstance {
       { tool: 'ink', label: '〰', title: t('Freehand drawing') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
+    /* Klasa, ne inline stil: na uskom ekranu se traka okreće uspravno i grupa
+       se mora prelomiti, a inline stil bi to nadjačao. */
     const toolGroup = document.createElement('span');
-    toolGroup.style.display = 'inline-flex';
+    toolGroup.className = 'ul-pdf-tools';
     for (const { tool, label, title } of tools) {
       const b = button(label, title, () => this.setTool(tool));
       b.classList.add('ul-pdf-tool');

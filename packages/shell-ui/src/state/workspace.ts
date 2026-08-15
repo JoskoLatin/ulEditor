@@ -37,7 +37,20 @@ export interface TabState {
   ready: boolean;
 }
 
-export type SidebarView = 'explorer' | 'search' | 'formats';
+export type SidebarView = 'library' | 'explorer' | 'search' | 'formats';
+
+/**
+ * Na uskom ekranu knjižnica je zadani pogled, na širokom explorer.
+ *
+ * Nije stvar veličine nego navike: na telefonu se do dokumenta dolazi tako da
+ * ga program nađe, na računalu tako da korisnik otvori mapu koju već poznaje.
+ * Isti prag kao u CSS-u; obnovljena sesija ovo nadjačava, jer je izričit izbor
+ * jači od pretpostavke.
+ */
+function defaultSidebarView(): SidebarView {
+  if (typeof window === 'undefined') return 'explorer';
+  return window.matchMedia('(max-width: 720px)').matches ? 'library' : 'explorer';
+}
 
 interface WorkspaceState {
   tree: TreeNode[];
@@ -96,7 +109,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
 
   sidebarVisible: true,
   sidebarWidth: 264,
-  sidebarView: 'explorer',
+  sidebarView: defaultSidebarView(),
   paletteOpen: false,
   findOpen: false,
   preferencesOpen: false,
