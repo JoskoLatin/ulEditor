@@ -1,10 +1,13 @@
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import { useWorkspace, type SidebarView } from '../state/workspace.js';
 import { IconFiles, IconLayers, IconMonitor, IconMoon, IconSun } from './Icons.js';
 
-const VIEWS: { id: SidebarView; label: string; icon: typeof IconFiles }[] = [
-  { id: 'explorer', label: 'Istraživač (Ctrl+B)', icon: IconFiles },
-  { id: 'formats', label: 'Podržani formati', icon: IconLayers },
+/** Funkcija, ne konstanta: prijevod se mora dogoditi pri renderu. */
+const views = (): { id: SidebarView; label: string; icon: typeof IconFiles }[] => [
+  { id: 'explorer', label: t('Explorer (Ctrl+B)'), icon: IconFiles },
+  { id: 'formats', label: t('Supported formats'), icon: IconLayers },
 ];
 
 export function ActivityBar() {
@@ -17,11 +20,11 @@ export function ActivityBar() {
   const preference = shell.theme.preference;
   const ThemeIcon = preference === 'light' ? IconSun : preference === 'dark' ? IconMoon : IconMonitor;
   const themeLabel =
-    preference === 'light' ? 'Svijetla tema' : preference === 'dark' ? 'Tamna tema' : 'Prati sustav';
+    preference === 'light' ? t('Light') : preference === 'dark' ? t('Dark') : t('Follow system');
 
   return (
-    <nav className="activitybar" aria-label="Ploče">
-      {VIEWS.map(({ id, label, icon: Icon }) => (
+    <nav className="activitybar" aria-label={t('Panels')}>
+      {views().map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           className="act-btn"
@@ -38,8 +41,8 @@ export function ActivityBar() {
 
       <button
         className="act-btn"
-        title={`Tema: ${themeLabel}`}
-        aria-label={`Tema: ${themeLabel}`}
+        title={t('Theme: {name}', { name: themeLabel })}
+        aria-label={t('Theme: {name}', { name: themeLabel })}
         onClick={() => void shell.commands.execute('view.cycleTheme')}
       >
         <ThemeIcon size={17} />

@@ -19,7 +19,9 @@
     "check": "pnpm typecheck && pnpm build && pnpm rust:lint && pnpm rust:test",
     "clean": "pnpm -r exec rimraf dist node_modules/.vite",
     "verify:reading": "node tools/verify-reading.mjs",
-    "verify:all": "node tools/verify-ui.mjs && node tools/verify-reading.mjs && pnpm verify:pdf"
+    "verify:all": "node tools/verify-ui.mjs && node tools/verify-reading.mjs && node tools/verify-ocr.mjs && node tools/verify-export.mjs && pnpm verify:pdf",
+    "verify:ocr": "node tools/verify-ocr.mjs",
+    "verify:export": "node tools/verify-export.mjs"
   },
   "devDependencies": {
     "fflate": "^0.8.2",

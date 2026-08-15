@@ -9,6 +9,7 @@
  */
 
 import { PDFDocument, degrees } from 'pdf-lib';
+import { t } from '@uleditor/i18n';
 
 import { writeAnnotations, type Annotation } from './annotations.js';
 
@@ -65,13 +66,13 @@ export function describePlan(plan: PagePlan[], pageCount: number): string[] {
   const changes: string[] = [];
 
   const removed = pageCount - plan.length;
-  if (removed > 0) changes.push(`${removed} obrisanih stranica`);
+  if (removed > 0) changes.push(t('{n} pages deleted', { n: removed }));
 
   const rotated = plan.filter((e) => e.rotate !== 0).length;
-  if (rotated > 0) changes.push(`${rotated} rotiranih`);
+  if (rotated > 0) changes.push(t('{n} rotated', { n: rotated }));
 
   const reordered = plan.some((entry, index) => entry.source !== index + 1);
-  if (reordered && removed === 0) changes.push('promijenjen redoslijed');
+  if (reordered && removed === 0) changes.push(t('order changed'));
 
   return changes;
 }
@@ -138,7 +139,7 @@ export async function saveDocument(
     rebuilt.setAuthor(original.getAuthor() ?? '');
     rebuilt.setSubject(original.getSubject() ?? '');
 
-    lost.push('Preslagivanje stranica ne zadržava oznake (bookmarks), obrasce ni priloge.');
+    lost.push(t('Reordering pages does not preserve bookmarks, forms or attachments.'));
     working = await rebuilt.save({ useObjectStreams: false });
   } else {
     // Samo rotacije i brisanja — radi se na izvorniku, bez gubitka.
@@ -187,7 +188,7 @@ export async function mergeInto(
   for (const page of pages) base.addPage(page);
 
   const added = pages.length;
-  if (added === 0) throw new Error('Odabrani PDF nema nijednu stranicu.');
+  if (added === 0) throw new Error(t('The chosen PDF has no pages.'));
 
   // Nove stranice su na kraju izvornika, ali u planu idu na traženo mjesto.
   const inserted: PagePlan[] = Array.from({ length: added }, (_, i) => ({
@@ -202,7 +203,7 @@ export async function mergeInto(
     bytes: await base.save({ useObjectStreams: false }),
     plan: next,
     added,
-    lost: ['Spajanje ne prenosi oznake (bookmarks), obrasce ni priloge iz umetnutog dokumenta.'],
+    lost: [t('Merging does not carry over bookmarks, forms or attachments from the inserted document.')],
   };
 }
 
@@ -218,7 +219,7 @@ export async function extractPages(
 ): Promise<Uint8Array> {
   const wanted = [...new Set(positions)].sort((a, b) => a - b);
   const entries = wanted.map((position) => plan[position - 1]).filter((e): e is PagePlan => !!e);
-  if (entries.length === 0) throw new Error('Nijedna stranica nije odabrana.');
+  if (entries.length === 0) throw new Error(t('No page selected.'));
 
   const original = await PDFDocument.load(source, { ignoreEncryption: true });
   const out = await PDFDocument.create();

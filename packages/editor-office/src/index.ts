@@ -27,6 +27,7 @@ import {
 } from '@uleditor/plugin-sdk';
 
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
+import { t } from '@uleditor/i18n';
 
 import { renderDocx, type Preview } from './docx.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
@@ -48,20 +49,20 @@ function buildNotes(notes: string[]): HTMLElement {
   bar.className = 'ul-office-notes';
 
   const label = document.createElement('strong');
-  label.textContent = 'Pregled samo za čitanje — uređivanje stiže u fazi 2.';
+  label.textContent = t('Read-only preview — editing arrives in phase 2.');
   bar.appendChild(label);
 
   const list = document.createElement('ul');
   for (const note of notes) {
     const li = document.createElement('li');
-    li.textContent = note;
+    li.textContent = t(note);
     list.appendChild(li);
   }
   bar.appendChild(list);
 
   const close = document.createElement('button');
   close.type = 'button';
-  close.textContent = 'U redu';
+  close.textContent = t('OK');
   close.addEventListener('click', () => bar.remove());
   bar.appendChild(close);
 
@@ -152,7 +153,7 @@ class DocxPreviewEditor implements EditorInstance {
       const edge = document.createElement('button');
       edge.type = 'button';
       edge.className = `ul-read-edge ${side}`;
-      edge.setAttribute('aria-label', side === 'prev' ? 'Prethodna stranica' : 'Sljedeća stranica');
+      edge.setAttribute('aria-label', side === 'prev' ? t('Previous page') : t('Next page'));
       edge.addEventListener('click', () => this.#flow?.page(side === 'prev' ? -1 : 1));
       view.appendChild(edge);
     }
@@ -170,13 +171,16 @@ class DocxPreviewEditor implements EditorInstance {
         this.#progressEmitter.fire(progress);
         this.#statusEmitter.fire(
           this.#reading
-            ? `${progress.label} · još ~${progress.minutesLeft} min`
-            : `${this.#words} riječi · ~${progress.minutesLeft} min čitanja`,
+            ? `${progress.label} · ${t('~{n} min left', { n: progress.minutesLeft ?? 0 })}`
+            : t('{words} words · ~{minutes} min read', {
+                words: this.#words,
+                minutes: progress.minutesLeft ?? 0,
+              }),
         );
       },
     });
 
-    this.#statusEmitter.fire(`${this.#words} riječi · samo za čitanje`);
+    this.#statusEmitter.fire(t('{n} words · read-only', { n: this.#words }));
   }
 
   unmount(): void {
@@ -194,7 +198,7 @@ class DocxPreviewEditor implements EditorInstance {
   }
 
   async save(): Promise<SaveResult> {
-    throw new Error('Word dokumenti su za sada samo za čitanje — uređivanje stiže u fazi 2.');
+    throw new Error(t('Word documents are read-only for now — editing arrives in phase 2.'));
   }
 
   undo(): void {}
@@ -258,7 +262,7 @@ class DocxPreviewEditor implements EditorInstance {
         this.#root.dataset.reading = 'false';
         // Izvan čitanja dokument se vraća u svitak s bojama aplikacije.
         this.#flow?.apply({ ...(this.#flow.options ?? options), flow: 'scroll' }, this.#root);
-        this.#statusEmitter.fire(`${this.#words} riječi · samo za čitanje`);
+        this.#statusEmitter.fire(t('{n} words · read-only', { n: this.#words }));
       },
     };
   }
@@ -347,7 +351,12 @@ class XlsxPreviewEditor implements EditorInstance {
     }
 
     this.#statusEmitter.fire(
-      `${sheet.name} · ${sheet.rows} × ${columnName(Math.max(0, sheet.cols - 1))} · ${sheet.cells.size} ćelija`,
+      t('{sheet} · {rows} × {cols} · {cells} cells', {
+        sheet: sheet.name,
+        rows: sheet.rows,
+        cols: columnName(Math.max(0, sheet.cols - 1)),
+        cells: sheet.cells.size,
+      }),
     );
   }
 
@@ -364,7 +373,7 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   async save(): Promise<SaveResult> {
-    throw new Error('Excel tablice su za sada samo za čitanje — uređivanje stiže u fazi 2.');
+    throw new Error(t('Excel spreadsheets are read-only for now — editing arrives in phase 2.'));
   }
 
   undo(): void {}
@@ -447,7 +456,7 @@ class XlsxPreviewEditor implements EditorInstance {
 
 export const docxPreviewProvider: EditorProvider = {
   id: 'org.uleditor.docx',
-  displayName: 'Word pregled',
+  displayName: 'Word preview',
   matches: {
     extensions: ['docx'],
     mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
@@ -462,7 +471,7 @@ export const docxPreviewProvider: EditorProvider = {
 
 export const xlsxPreviewProvider: EditorProvider = {
   id: 'org.uleditor.xlsx',
-  displayName: 'Excel pregled',
+  displayName: 'Excel preview',
   matches: {
     extensions: ['xlsx'],
     mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],

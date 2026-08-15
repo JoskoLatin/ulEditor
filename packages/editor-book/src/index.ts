@@ -31,6 +31,7 @@ import {
 } from '@uleditor/plugin-sdk';
 
 import { showHit, textNodesOf } from '@uleditor/reader-core';
+import { t } from '@uleditor/i18n';
 
 import { openEpub, WORDS_PER_MINUTE, type Book, type BookChapter } from './epub.js';
 
@@ -134,7 +135,7 @@ class BookEditor implements EditorInstance {
       const cover = document.createElement('img');
       cover.className = 'ul-book-cover';
       cover.src = this.book.cover;
-      cover.alt = `Naslovnica: ${this.book.title}`;
+      cover.alt = t('Cover: {title}', { title: this.book.title });
       head.appendChild(cover);
     }
     toc.appendChild(head);
@@ -172,7 +173,7 @@ class BookEditor implements EditorInstance {
       const edge = document.createElement('button');
       edge.type = 'button';
       edge.className = `ul-book-edge ${side}`;
-      edge.setAttribute('aria-label', side === 'prev' ? 'Prethodna stranica' : 'Sljedeća stranica');
+      edge.setAttribute('aria-label', side === 'prev' ? t('Previous page') : t('Next page'));
       edge.addEventListener('click', () => this.#turn(side === 'prev' ? -1 : 1));
       view.appendChild(edge);
     }
@@ -199,12 +200,12 @@ class BookEditor implements EditorInstance {
     const notes = document.createElement('div');
     notes.className = 'ul-book-notes';
     const label = document.createElement('span');
-    label.textContent = 'Pregled ne reproducira sve iz knjige:';
+    label.textContent = t('The preview does not reproduce everything from the book:');
     notes.appendChild(label);
     const list = document.createElement('ul');
     for (const note of this.book.notes) {
       const li = document.createElement('li');
-      li.textContent = note;
+      li.textContent = t(note);
       list.appendChild(li);
     }
     notes.appendChild(list);
@@ -212,7 +213,7 @@ class BookEditor implements EditorInstance {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'ul-book-notes-close';
-    close.textContent = 'U redu';
+    close.textContent = t('OK');
     close.addEventListener('click', () => notes.remove());
     notes.appendChild(close);
     return notes;
@@ -539,13 +540,13 @@ class BookEditor implements EditorInstance {
 
     const place =
       this.#options.flow === 'paged'
-        ? `str. ${this.#page + 1}/${this.#pages}`
+        ? t('p. {n}/{total}', { n: this.#page + 1, total: this.#pages })
         : `${Math.round(fraction * 100)} %`;
-    const label = `${chapter?.title ?? 'Poglavlje'} · ${place}`;
+    const label = `${chapter?.title ?? t('Chapter')} · ${place}`;
 
     this.#progressEmitter.fire({ fraction, label, minutesLeft: left });
     this.#statusEmitter.fire(
-      `${this.#chapter + 1}/${this.book.chapters.length} · ${place} · još ~${left} min`,
+      `${this.#chapter + 1}/${this.book.chapters.length} · ${place} · ${t('~{n} min left', { n: left })}`,
     );
   }
 
@@ -657,7 +658,7 @@ class BookEditor implements EditorInstance {
   }
 
   async save(): Promise<SaveResult> {
-    throw new Error('E-knjige se za sada samo čitaju — uređivanje EPUB-a nije podržano.');
+    throw new Error(t('E-books are read-only for now — editing EPUB is not supported.'));
   }
 
   undo(): void {}
@@ -749,7 +750,7 @@ class BookEditor implements EditorInstance {
 
 export const bookEditorProvider: EditorProvider = {
   id: 'org.uleditor.book',
-  displayName: 'Čitač e-knjiga',
+  displayName: 'E-book reader',
   matches: {
     extensions: ['epub'],
     mimeTypes: ['application/epub+zip'],

@@ -36,6 +36,7 @@ import {
 } from '@uleditor/plugin-sdk';
 
 import { PagedFlow, headingOutline, wordCount } from '@uleditor/reader-core';
+import { t } from '@uleditor/i18n';
 
 export type MarkdownViewMode = 'split' | 'source' | 'preview';
 
@@ -221,7 +222,7 @@ class MarkdownEditor implements EditorInstance {
    */
   beginReading(options: ReadingOptions): ReadingSession {
     const root = this.#root;
-    if (!root) throw new Error('Način čitanja traži montiran editor.');
+    if (!root) throw new Error('Reading mode needs a mounted editor.');
 
     const layer = document.createElement('div');
     layer.className = 'ul-md-reading ul-read';
@@ -243,7 +244,7 @@ class MarkdownEditor implements EditorInstance {
       const edge = document.createElement('button');
       edge.type = 'button';
       edge.className = `ul-read-edge ${side}`;
-      edge.setAttribute('aria-label', side === 'prev' ? 'Prethodna stranica' : 'Sljedeća stranica');
+      edge.setAttribute('aria-label', side === 'prev' ? t('Previous page') : t('Next page'));
       edge.addEventListener('click', () => this.#paged?.page(side === 'prev' ? -1 : 1));
       view.appendChild(edge);
     }
@@ -260,7 +261,9 @@ class MarkdownEditor implements EditorInstance {
       words: wordCount(doc.textContent ?? ''),
       onProgress: (progress) => {
         this.#progressEmitter.fire(progress);
-        this.#statusEmitter.fire(`${progress.label} · još ~${progress.minutesLeft} min`);
+        this.#statusEmitter.fire(
+          `${progress.label} · ${t('~{n} min left', { n: progress.minutesLeft ?? 0 })}`,
+        );
       },
     });
     this.#paged = paged;
@@ -299,9 +302,9 @@ class MarkdownEditor implements EditorInstance {
     const words = text.trim() ? text.trim().split(/\s+/).length : 0;
     const view = this.#view;
     const position = view
-      ? `Red ${view.state.doc.lineAt(view.state.selection.main.head).number}  ·  `
+      ? `${t('Line {n}', { n: view.state.doc.lineAt(view.state.selection.main.head).number })}  ·  `
       : '';
-    this.#statusEmitter.fire(`${position}${words} riječi`);
+    this.#statusEmitter.fire(`${position}${t('{n} words', { n: words })}`);
   }
 
   setMode(mode: MarkdownViewMode): void {
@@ -356,7 +359,7 @@ class MarkdownEditor implements EditorInstance {
       const line = view.state.doc.lineAt(index);
       const to = index + query.query.length;
       results.push({
-        label: `Red ${line.number}`,
+        label: t('Line {n}', { n: line.number }),
         preview: line.text.trim().slice(0, 120),
         reveal: () => {
           view.dispatch({
@@ -402,6 +405,10 @@ class MarkdownEditor implements EditorInstance {
       selection: { anchor: from + insert.length },
     });
     return true;
+  }
+
+  async plainText(): Promise<string> {
+    return this.#text();
   }
 
   focus(): void {

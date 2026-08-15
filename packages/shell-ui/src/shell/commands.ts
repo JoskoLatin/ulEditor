@@ -5,10 +5,13 @@
  * dostupno iz palete, a UI ostaje tanak sloj nad istim ulazom.
  */
 
+import { t } from '@uleditor/i18n';
+
 import type { Shell } from '../host/index.js';
 import { activeInstance, useWorkspace } from '../state/workspace.js';
 import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
+import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -16,30 +19,30 @@ export function registerCommands(shell: Shell): () => void {
   const disposables = [
     shell.commands.register({
       id: 'file.openFolder',
-      title: 'Otvori mapu…',
-      category: 'Datoteka',
+      title: t('Open folder…'),
+      category: t('File'),
       keybinding: ['Ctrl', 'K'],
       run: () => openFolder(shell),
     }),
     shell.commands.register({
       id: 'file.openFiles',
-      title: 'Otvori datoteke…',
-      category: 'Datoteka',
+      title: t('Open files…'),
+      category: t('File'),
       keybinding: ['Ctrl', 'O'],
       run: () => openFiles(shell),
     }),
     shell.commands.register({
       id: 'file.save',
-      title: 'Spremi',
-      category: 'Datoteka',
+      title: t('Save'),
+      category: t('File'),
       keybinding: ['Ctrl', 'S'],
       when: () => store().activeTabId !== null,
       run: () => saveActive(shell),
     }),
     shell.commands.register({
       id: 'file.close',
-      title: 'Zatvori karticu',
-      category: 'Datoteka',
+      title: t('Close tab'),
+      category: t('File'),
       keybinding: ['Ctrl', 'W'],
       when: () => store().activeTabId !== null,
       run: () => {
@@ -50,16 +53,16 @@ export function registerCommands(shell: Shell): () => void {
 
     shell.commands.register({
       id: 'edit.undo',
-      title: 'Poništi',
-      category: 'Uređivanje',
+      title: t('Undo'),
+      category: t('Edit'),
       keybinding: ['Ctrl', 'Z'],
       when: () => !!activeInstance(),
       run: () => activeInstance()?.undo(),
     }),
     shell.commands.register({
       id: 'edit.redo',
-      title: 'Ponovi',
-      category: 'Uređivanje',
+      title: t('Redo'),
+      category: t('Edit'),
       keybinding: ['Ctrl', 'Shift', 'Z'],
       when: () => !!activeInstance(),
       run: () => activeInstance()?.redo(),
@@ -67,8 +70,8 @@ export function registerCommands(shell: Shell): () => void {
 
     shell.commands.register({
       id: 'find.inDocument',
-      title: 'Traži u dokumentu',
-      category: 'Uređivanje',
+      title: t('Find in document'),
+      category: t('Edit'),
       keybinding: ['Ctrl', 'Shift', 'F'],
       when: () => !!activeInstance(),
       run: () => store().setFindOpen(true),
@@ -76,27 +79,27 @@ export function registerCommands(shell: Shell): () => void {
 
     shell.commands.register({
       id: 'view.toggleSidebar',
-      title: 'Prikaži/sakrij bočnu ploču',
-      category: 'Prikaz',
+      title: t('Toggle side panel'),
+      category: t('View'),
       keybinding: ['Ctrl', 'B'],
       run: () => store().setSidebarVisible(!store().sidebarVisible),
     }),
     shell.commands.register({
       id: 'view.explorer',
-      title: 'Prikaži istraživač datoteka',
-      category: 'Prikaz',
+      title: t('Show file explorer'),
+      category: t('View'),
       run: () => store().setSidebarView('explorer'),
     }),
     shell.commands.register({
       id: 'view.formats',
-      title: 'Prikaži podržane formate',
-      category: 'Prikaz',
+      title: t('Show supported formats'),
+      category: t('View'),
       run: () => store().setSidebarView('formats'),
     }),
     shell.commands.register({
       id: 'view.cycleTheme',
-      title: 'Promijeni temu (svijetla / tamna / sistemska)',
-      category: 'Prikaz',
+      title: t('Cycle theme (light / dark / system)'),
+      category: t('View'),
       run: () => {
         const next = shell.theme.cycle();
         shell.settings.set('theme', next);
@@ -105,25 +108,57 @@ export function registerCommands(shell: Shell): () => void {
 
     shell.commands.register({
       id: 'view.reading',
-      title: 'Način čitanja',
-      category: 'Prikaz',
+      title: t('Reading mode'),
+      category: t('View'),
       keybinding: ['Ctrl', 'Shift', 'R'],
       when: () => canRead() || useReading.getState().active,
       run: () => toggleReading(shell),
     }),
 
+    /*
+     * Seam kroz koji plugin objavljuje rezultat koji nije datoteka na disku —
+     * prvi korisnik je OCR nad slikom. Editor ne zna ništa o ploči ispod, zna
+     * samo ime naredbe.
+     */
+    shell.commands.register({
+      id: 'scratch.openText',
+      title: t('Open text in a split below'),
+      category: t('View'),
+      when: () => false,
+      run: (payload) => {
+        const options = payload as { name?: string; text?: string } | undefined;
+        if (!options?.text) return;
+        return openScratch(shell, { name: options.name ?? t('Untitled'), text: options.text });
+      },
+    }),
+    shell.commands.register({
+      id: 'scratch.close',
+      title: t('Close the split below'),
+      category: t('View'),
+      when: () => useScratch.getState().open,
+      run: () => closeScratch(shell),
+    }),
+
+    shell.commands.register({
+      id: 'view.preferences',
+      title: t('Preferences…'),
+      category: t('View'),
+      keybinding: ['Ctrl', ','],
+      run: () => store().setPreferencesOpen(true),
+    }),
+
     shell.commands.register({
       id: 'nav.nextTab',
-      title: 'Sljedeća kartica',
-      category: 'Navigacija',
+      title: t('Next tab'),
+      category: t('Navigation'),
       keybinding: ['Ctrl', 'Tab'],
       when: () => store().tabs.length > 1,
       run: () => cycleTab(1),
     }),
     shell.commands.register({
       id: 'nav.prevTab',
-      title: 'Prethodna kartica',
-      category: 'Navigacija',
+      title: t('Previous tab'),
+      category: t('Navigation'),
       keybinding: ['Ctrl', 'Shift', 'Tab'],
       when: () => store().tabs.length > 1,
       run: () => cycleTab(-1),
@@ -233,7 +268,9 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   switch (key) {
     case 's':
       event.preventDefault();
-      void saveActive(shell);
+      // Fokus unutar ploče ispod znači da se sprema ona, ne kartica iznad.
+      if (target?.closest('.split')) void saveScratch(shell);
+      else void saveActive(shell);
       break;
     case 'o':
       event.preventDefault();
@@ -256,6 +293,10 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     case 'tab':
       event.preventDefault();
       cycleTab(1);
+      break;
+    case ',':
+      event.preventDefault();
+      store.setPreferencesOpen(!store.preferencesOpen);
       break;
     case 'z':
       // Isti put za sve formate: editor sam odlučuje što je korak natrag.

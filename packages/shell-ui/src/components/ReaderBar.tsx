@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReadingFlow, ReadingTint } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import {
@@ -22,15 +23,16 @@ import {
 } from '../shell/reading.js';
 import { IconArrow, IconClose, IconList, IconType } from './Icons.js';
 
-const TINTS: { id: ReadingTint; label: string }[] = [
-  { id: 'day', label: 'Dnevno' },
-  { id: 'sepia', label: 'Sepija' },
-  { id: 'night', label: 'Noć' },
+/** Funkcije, ne konstante: prijevod se mora dogoditi pri renderu. */
+const tints = (): { id: ReadingTint; label: string }[] => [
+  { id: 'day', label: t('Day') },
+  { id: 'sepia', label: t('Sepia') },
+  { id: 'night', label: t('Night') },
 ];
 
-const FLOWS: { id: ReadingFlow; label: string }[] = [
-  { id: 'paged', label: 'Stranice' },
-  { id: 'scroll', label: 'Svitak' },
+const flows = (): { id: ReadingFlow; label: string }[] => [
+  { id: 'paged', label: t('Pages') },
+  { id: 'scroll', label: t('Scroll') },
 ];
 
 export function ReaderBar() {
@@ -43,18 +45,18 @@ export function ReaderBar() {
   return (
     <div className="reader">
       <div className="reader-bar">
-        <button className="reader-btn" onClick={exitReading} title="Izađi iz čitanja (Esc)">
+        <button className="reader-btn" onClick={exitReading} title={t('Leave reading mode (Esc)')}>
           <IconClose size={14} />
-          <span>Izađi</span>
+          <span>{t('Close')}</span>
         </button>
 
         <div className="reader-title">{title}</div>
 
         <div className="reader-nav">
-          <button className="reader-icon" onClick={() => readerPage(-1)} title="Prethodna stranica">
+          <button className="reader-icon" onClick={() => readerPage(-1)} title={t('Previous page')}>
             <IconArrow dir="left" size={14} />
           </button>
-          <button className="reader-icon" onClick={() => readerPage(1)} title="Sljedeća stranica">
+          <button className="reader-icon" onClick={() => readerPage(1)} title={t('Next page')}>
             <IconArrow dir="right" size={14} />
           </button>
         </div>
@@ -64,19 +66,19 @@ export function ReaderBar() {
             className="reader-btn"
             data-active={panel === 'outline'}
             onClick={() => setPanel('outline')}
-            title="Sadržaj"
+            title={t('Contents')}
           >
             <IconList size={14} />
-            <span>Sadržaj</span>
+            <span>{t('Contents')}</span>
           </button>
           <button
             className="reader-btn"
             data-active={panel === 'type'}
             onClick={() => setPanel('type')}
-            title="Tipografija"
+            title={t('Typography')}
           >
             <IconType size={14} />
-            <span>Izgled</span>
+            <span>{t('Layout')}</span>
           </button>
         </div>
       </div>
@@ -86,7 +88,7 @@ export function ReaderBar() {
       <div className="reader-status">
         <span>{progress.label}</span>
         {progress.minutesLeft !== undefined && (
-          <span className="reader-left">još ~{progress.minutesLeft} min</span>
+          <span className="reader-left">{t('~{n} min left', { n: progress.minutesLeft })}</span>
         )}
       </div>
 
@@ -113,7 +115,7 @@ function ProgressRail() {
       max={1000}
       step={1}
       value={Math.round(value * 1000)}
-      aria-label="Napredak čitanja"
+      aria-label={t('Reading progress')}
       onChange={(event) => {
         const next = Number(event.target.value) / 1000;
         setDragging(next);
@@ -136,7 +138,7 @@ function OutlinePanel() {
   if (outline.length === 0) {
     return (
       <div className="reader-panel" ref={ref}>
-        <p className="reader-empty">Ovaj dokument nema sadržaj.</p>
+        <p className="reader-empty">{t('This document has no table of contents.')}</p>
       </div>
     );
   }
@@ -164,7 +166,7 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
   return (
     <div className="reader-panel reader-type">
       <label>
-        <span>Pismo</span>
+        <span>{t('Typeface')}</span>
         <div className="reader-seg">
           {(['serif', 'sans'] as const).map((face) => (
             <button
@@ -172,14 +174,14 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
               data-active={options.typeface === face}
               onClick={() => change({ typeface: face })}
             >
-              {face === 'serif' ? 'Serifno' : 'Bezserifno'}
+              {face === 'serif' ? t('Serif') : t('Sans')}
             </button>
           ))}
         </div>
       </label>
 
       <label>
-        <span>Veličina — {options.fontSize} px</span>
+        <span>{t('Size — {n} px', { n: options.fontSize })}</span>
         <input
           type="range"
           min={14}
@@ -191,7 +193,7 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
       </label>
 
       <label>
-        <span>Prored — {options.lineHeight.toFixed(2)}</span>
+        <span>{t('Line height — {n}', { n: options.lineHeight.toFixed(2) })}</span>
         <input
           type="range"
           min={1.2}
@@ -203,7 +205,7 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
       </label>
 
       <label>
-        <span>Širina stupca — {options.measure} znakova</span>
+        <span>{t('Column width — {n} characters', { n: options.measure })}</span>
         <input
           type="range"
           min={40}
@@ -215,9 +217,9 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
       </label>
 
       <label>
-        <span>Podloga</span>
+        <span>{t('Background')}</span>
         <div className="reader-seg">
-          {TINTS.map((tint) => (
+          {tints().map((tint) => (
             <button
               key={tint.id}
               data-active={options.tint === tint.id}
@@ -230,9 +232,9 @@ function TypePanel({ onCommit }: { onCommit: () => void }) {
       </label>
 
       <label>
-        <span>Tok</span>
+        <span>{t('Flow')}</span>
         <div className="reader-seg">
-          {FLOWS.map((flow) => (
+          {flows().map((flow) => (
             <button
               key={flow.id}
               data-active={options.flow === flow.id}

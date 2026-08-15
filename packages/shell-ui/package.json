@@ -10,15 +10,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
     "@uleditor/editor-book": "workspace:*",
     "@uleditor/editor-code": "workspace:*",
     "@uleditor/editor-image": "workspace:*",
     "@uleditor/editor-markdown": "workspace:*",
     "@uleditor/editor-office": "workspace:*",
     "@uleditor/editor-pdf": "workspace:*",
+    "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
     "@uleditor/reader-core": "workspace:*",
-    "@tauri-apps/api": "^2.1.1",
+    "@uleditor/text-export": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.2"

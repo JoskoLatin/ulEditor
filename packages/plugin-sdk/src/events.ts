@@ -29,7 +29,7 @@ export class Emitter<T> {
       try {
         listener(value);
       } catch (err) {
-        console.error('[uleditor] greška u event listeneru', err);
+        console.error('[uleditor] error inside an event listener', err);
       }
     }
   }

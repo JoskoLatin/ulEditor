@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { FORMATS } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import { closeTab } from '../shell/actions.js';
 import { tabInstances, useWorkspace } from '../state/workspace.js';
@@ -47,8 +49,8 @@ export function TabBar() {
           <span className="name">{tab.name}</span>
           <button
             className="close"
-            aria-label={`Zatvori ${tab.name}`}
-            title={tab.dirty ? 'Nespremljene promjene' : 'Zatvori'}
+            aria-label={t('Close {name}', { name: tab.name })}
+            title={tab.dirty ? t('Unsaved changes') : t('Close')}
             onClick={(e) => {
               e.stopPropagation();
               void closeTab(shell, tab.id);

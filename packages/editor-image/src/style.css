@@ -106,3 +106,31 @@
   font-size: 12px;
   line-height: 1.7;
 }
+
+/* Odabir jezika za OCR — stoji uz gumb jer se bira prije svakog pokretanja. */
+.ul-img-select {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.ul-img-select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ul-img-ocr {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.ul-img-ocr:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}

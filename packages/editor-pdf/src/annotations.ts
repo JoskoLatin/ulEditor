@@ -64,11 +64,11 @@ export interface InkAnnotation extends Base {
 export type Annotation = HighlightAnnotation | NoteAnnotation | InkAnnotation;
 
 export const PALETTE: { name: string; color: Rgb }[] = [
-  { name: 'Žuta', color: [0.98, 0.79, 0.29] },
-  { name: 'Tirkizna', color: [0.25, 0.7, 0.73] },
-  { name: 'Zelena', color: [0.36, 0.69, 0.51] },
-  { name: 'Crvena', color: [0.88, 0.44, 0.37] },
-  { name: 'Ljubičasta', color: [0.65, 0.58, 0.85] },
+  { name: 'Yellow', color: [0.98, 0.79, 0.29] },
+  { name: 'Teal', color: [0.25, 0.7, 0.73] },
+  { name: 'Green', color: [0.36, 0.69, 0.51] },
+  { name: 'Red', color: [0.88, 0.44, 0.37] },
+  { name: 'Purple', color: [0.65, 0.58, 0.85] },
 ];
 
 /** Veličina ikone bilješke u PDF točkama. */
@@ -429,7 +429,7 @@ export async function writeAnnotations(
 export function fidelityGaps(annotations: Annotation[]): string[] {
   const gaps: string[] = [];
   if (annotations.some((a) => a.kind === 'note' && a.text.length > 0)) {
-    gaps.push('Bilješke se spremaju bez vlastitog izgleda (/AP) — neki čitači prikazuju zadanu ikonu.');
+    gaps.push('Notes are saved without their own appearance stream (/AP) — some readers show a default icon.');
   }
   return gaps;
 }

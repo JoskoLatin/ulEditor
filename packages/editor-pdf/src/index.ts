@@ -31,6 +31,7 @@ import {
   type SaveResult,
   type SaveTarget,
 } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import {
   PALETTE,
@@ -250,18 +251,18 @@ class PdfEditor implements EditorInstance {
       return s;
     };
 
-    const railToggle = button('▤', 'Stranice — rotiranje, brisanje, preslagivanje', () =>
+    const railToggle = button('▤', t('Pages — rotate, delete, reorder'), () =>
       this.toggleRail(),
     );
 
-    const prev = button('‹', 'Prethodna stranica', () => this.goToPage(this.#current - 1));
-    const next = button('›', 'Sljedeća stranica', () => this.goToPage(this.#current + 1));
+    const prev = button('‹', t('Previous page'), () => this.goToPage(this.#current - 1));
+    const next = button('›', t('Next page'), () => this.goToPage(this.#current + 1));
 
     const input = document.createElement('input');
     input.className = 'ul-pdf-page-input';
     input.value = '1';
     input.inputMode = 'numeric';
-    input.setAttribute('aria-label', 'Broj stranice');
+    input.setAttribute('aria-label', t('Page number'));
     input.addEventListener('change', () => this.goToPage(Number(input.value)));
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.goToPage(Number(input.value));
@@ -272,21 +273,21 @@ class PdfEditor implements EditorInstance {
     total.className = 'ul-pdf-total';
     total.style.padding = '0 4px';
 
-    const zoomOut = button('−', 'Smanji (Ctrl + kotačić)', () => this.zoomBy(-1));
-    const zoomIn = button('+', 'Povećaj (Ctrl + kotačić)', () => this.zoomBy(1));
+    const zoomOut = button('−', t('Zoom out (Ctrl + wheel)'), () => this.zoomBy(-1));
+    const zoomIn = button('+', t('Zoom in (Ctrl + wheel)'), () => this.zoomBy(1));
     const zoomLabel = document.createElement('span');
     zoomLabel.style.minWidth = '44px';
     zoomLabel.style.textAlign = 'center';
     this.#zoomLabel = zoomLabel;
 
-    const fitWidth = button('Širina', 'Prilagodi širini', () => this.setZoomMode('fit-width'));
-    const fitPage = button('Stranica', 'Prilagodi stranici', () => this.setZoomMode('fit-page'));
+    const fitWidth = button(t('Width'), t('Fit width'), () => this.setZoomMode('fit-width'));
+    const fitPage = button(t('Page'), t('Fit page'), () => this.setZoomMode('fit-page'));
 
     const tools: { tool: Tool; label: string; title: string }[] = [
-      { tool: 'select', label: '⌖', title: 'Odabir i selekcija teksta' },
-      { tool: 'highlight', label: '▬', title: 'Istakni označeni tekst' },
-      { tool: 'note', label: '✎', title: 'Bilješka — klikni na stranicu' },
-      { tool: 'ink', label: '〰', title: 'Crtanje slobodnom rukom' },
+      { tool: 'select', label: '⌖', title: t('Select and highlight text') },
+      { tool: 'highlight', label: '▬', title: t('Highlight selected text') },
+      { tool: 'note', label: '✎', title: t('Note — click the page') },
+      { tool: 'ink', label: '〰', title: t('Freehand drawing') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
     const toolGroup = document.createElement('span');
@@ -421,7 +422,7 @@ class PdfEditor implements EditorInstance {
 
   deletePage(position: number): void {
     if (this.#plan.length <= 1) {
-      this.host.notify.show('warning', 'Dokument mora imati barem jednu stranicu.');
+      this.host.notify.show('warning', t('A document must keep at least one page.'));
       return;
     }
     this.#setPlan(removePage(this.#plan, position - 1));
@@ -480,13 +481,16 @@ class PdfEditor implements EditorInstance {
       const added = await this.mergeFrom(await picked.bytes());
       this.host.notify.show(
         'info',
-        `Umetnuto ${added} stranica iz ${picked.name}. Oznake i obrasci umetnutog dokumenta se ne prenose.`,
+        t('Inserted {n} pages from {name}. Bookmarks and forms of the inserted document are not carried over.', {
+          n: added,
+          name: picked.name,
+        }),
       );
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       this.host.notify.show(
         'error',
-        `Umetanje nije uspjelo: ${err instanceof Error ? err.message : String(err)}`,
+        t('Insert failed: {reason}', { reason: err instanceof Error ? err.message : String(err) }),
       );
     }
   }
@@ -499,22 +503,25 @@ class PdfEditor implements EditorInstance {
   async extractTo(ranges: string): Promise<void> {
     const positions = parseRanges(ranges, this.#plan.length);
     if (positions.length === 0) {
-      this.host.notify.show('warning', `Raspon "${ranges}" ne pokriva nijednu postojeću stranicu.`);
+      this.host.notify.show(
+        'warning',
+        t('The range "{range}" covers no existing page.', { range: ranges }),
+      );
       return;
     }
 
     try {
       const base = this.docHandle.name.replace(/\.pdf$/i, '');
-      const target = await this.host.fs.pickSaveTarget(`${base} - stranice.pdf`, ['pdf']);
+      const target = await this.host.fs.pickSaveTarget(`${base} - ${t('pages')}.pdf`, ['pdf']);
       if (!target) return;
 
       await this.host.fs.writeBytes(target, await extractPages(this.source, [...this.#plan], positions));
-      this.host.notify.show('info', `Izdvojeno ${positions.length} stranica.`);
+      this.host.notify.show('info', t('Extracted {n} pages.', { n: positions.length }));
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       this.host.notify.show(
         'error',
-        `Izdvajanje nije uspjelo: ${err instanceof Error ? err.message : String(err)}`,
+        t('Extract failed: {reason}', { reason: err instanceof Error ? err.message : String(err) }),
       );
     }
   }
@@ -600,11 +607,11 @@ class PdfEditor implements EditorInstance {
       };
 
       actions.append(
-        action('↺', 'Rotiraj ulijevo', () => this.rotate(index + 1, -90)),
-        action('↻', 'Rotiraj udesno', () => this.rotate(index + 1, 90)),
-        action('↑', 'Pomakni gore', () => this.movePageTo(index + 1, -1), index === 0),
-        action('↓', 'Pomakni dolje', () => this.movePageTo(index + 1, 1), index === this.#plan.length - 1),
-        action('✕', 'Obriši stranicu', () => this.deletePage(index + 1), this.#plan.length <= 1),
+        action('↺', t('Rotate left'), () => this.rotate(index + 1, -90)),
+        action('↻', t('Rotate right'), () => this.rotate(index + 1, 90)),
+        action('↑', t('Move up'), () => this.movePageTo(index + 1, -1), index === 0),
+        action('↓', t('Move down'), () => this.movePageTo(index + 1, 1), index === this.#plan.length - 1),
+        action('✕', t('Delete page'), () => this.deletePage(index + 1), this.#plan.length <= 1),
       );
       item.appendChild(actions);
       fragment.appendChild(item);
@@ -623,8 +630,8 @@ class PdfEditor implements EditorInstance {
 
     const insert = document.createElement('button');
     insert.className = 'ul-pdf-rail-btn';
-    insert.textContent = 'Umetni PDF…';
-    insert.title = 'Umeće stranice drugog PDF-a iza trenutne';
+    insert.textContent = t('Insert PDF…');
+    insert.title = t('Inserts the pages of another PDF after the current one');
     insert.addEventListener('click', () => void this.insertPdf());
 
     const row = document.createElement('div');
@@ -633,13 +640,13 @@ class PdfEditor implements EditorInstance {
     const input = document.createElement('input');
     input.type = 'text';
     input.placeholder = `npr. 1-3, 7`;
-    input.title = 'Rasponi stranica za izdvajanje';
+    input.title = t('Page ranges to extract');
     input.value = String(this.#current);
 
     const extract = document.createElement('button');
     extract.className = 'ul-pdf-rail-btn';
-    extract.textContent = 'Izdvoji';
-    extract.title = 'Sprema odabrane stranice u novu datoteku; izvornik ostaje netaknut';
+    extract.textContent = t('Extract');
+    extract.title = t('Saves the chosen pages to a new file; the original stays untouched');
     extract.addEventListener('click', () => void this.extractTo(input.value));
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') void this.extractTo(input.value);
@@ -926,7 +933,7 @@ class PdfEditor implements EditorInstance {
         el.style.width = `${NOTE_ICON_PX}px`;
         el.style.height = `${NOTE_ICON_PX}px`;
         el.style.background = cssRgb(annotation.color);
-        el.title = annotation.text || 'Bilješka';
+        el.title = annotation.text || t('Note');
         el.textContent = '✎';
         el.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -1223,21 +1230,21 @@ class PdfEditor implements EditorInstance {
 
     const textarea = document.createElement('textarea');
     textarea.value = annotation.text;
-    textarea.placeholder = 'Bilješka…';
+    textarea.placeholder = t('Note…');
     textarea.rows = 4;
 
     const actions = document.createElement('div');
     actions.className = 'actions';
 
     const remove = document.createElement('button');
-    remove.textContent = 'Obriši';
+    remove.textContent = t('Delete');
     remove.addEventListener('click', () => {
       this.#closePopup();
       this.#remove(id);
     });
 
     const save = document.createElement('button');
-    save.textContent = 'Spremi';
+    save.textContent = t('Save');
     save.dataset.primary = 'true';
     save.addEventListener('click', () => {
       const text = textarea.value;
@@ -1303,10 +1310,10 @@ class PdfEditor implements EditorInstance {
 
   #emitStatus(): void {
     if (this.#pageInput) this.#pageInput.value = String(this.#current);
-    const parts = [`Stranica ${this.#current} od ${this.#plan.length}`];
+    const parts = [t('Page {n} of {total}', { n: this.#current, total: this.#plan.length })];
 
     const mine = this.#annotations.filter((a) => !a.imported).length;
-    if (mine > 0) parts.push(`${mine} novih anotacija`);
+    if (mine > 0) parts.push(t('{n} new annotations', { n: mine }));
     parts.push(...describePlan(this.#plan, this.pdf.numPages));
 
     this.#statusEmitter.fire(parts.join('  ·  '));
@@ -1524,7 +1531,7 @@ class PdfEditor implements EditorInstance {
       for (const node of nodes) {
         if (items.length >= 500) return;
         const id = `dest-${items.length}`;
-        items.push({ id, label: node.title || 'Bez naslova', depth: Math.min(depth, 3) });
+        items.push({ id, label: node.title || t('Untitled'), depth: Math.min(depth, 3) });
         targets.set(id, (await pageOf(node.dest)) ?? 1);
         if (node.items?.length) await walk(node.items, depth + 1);
       }
@@ -1541,7 +1548,7 @@ class PdfEditor implements EditorInstance {
       const limit = Math.min(this.#plan.length, 500);
       for (let i = 1; i <= limit; i++) {
         const id = `page-${i}`;
-        items.push({ id, label: `Stranica ${i}`, depth: 0 });
+        items.push({ id, label: t('Page {n}', { n: i }), depth: 0 });
         targets.set(id, this.#plan[i - 1]?.source ?? i);
       }
     }
@@ -1567,7 +1574,7 @@ class PdfEditor implements EditorInstance {
 
 export const pdfEditorProvider: EditorProvider = {
   id: 'org.uleditor.pdf',
-  displayName: 'PDF preglednik',
+  displayName: 'PDF viewer',
   matches: {
     extensions: ['pdf'],
     mimeTypes: ['application/pdf'],

@@ -7,6 +7,7 @@
  */
 
 import type { DirectoryEntry, DocumentHandle, EditorHost, VirtualFileSystem } from '@uleditor/plugin-sdk';
+import { isLocale, type Locale } from '@uleditor/i18n';
 
 import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
@@ -38,11 +39,14 @@ export interface Shell extends EditorHost {
   readonly platform: Platform;
   /** Može li se spremati natrag na disk. */
   readonly canPersist: boolean;
+  /** Jezik sučelja iz postavki; engleski kad nije odabran. */
+  readonly locale: Locale;
 }
 
 export function createShell(): Shell {
   const settings = new Settings();
   const preference = settings.get<ThemePreference>('theme', 'system');
+  const stored = settings.get<string>('locale', 'en');
   const desktop = isTauri();
 
   return {
@@ -55,6 +59,7 @@ export function createShell(): Shell {
     registry: new EditorRegistry(),
     platform: desktop ? 'desktop' : 'web',
     canPersist: desktop || hasFileSystemAccess(),
+    locale: isLocale(stored) ? stored : 'en',
   };
 }
 

@@ -33,6 +33,7 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.35.0",
     "@lezer/highlight": "^1.2.1",
+    "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*"
   },
   "devDependencies": {

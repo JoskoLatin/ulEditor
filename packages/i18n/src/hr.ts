@@ -1,0 +1,338 @@
+/**
+ * Hrvatski prijevod sučelja.
+ *
+ * Ključ je engleski izvorni tekst. Niz koji ovdje ne postoji prikazuje se na
+ * engleskom — namjerno, da nedostatak prijevoda nikad ne završi kao prazan
+ * gumb. Zato je i dopušteno da ovaj katalog zaostaje za engleskim.
+ */
+
+import type { Catalog } from './index.js';
+
+export const hr: Catalog = {
+  /* ── okvir ─────────────────────────────────────────────────────────── */
+  'Open folder': 'Otvori mapu',
+  'Open folder…': 'Otvori mapu…',
+  'Open folder (Ctrl+K)': 'Otvori mapu (Ctrl+K)',
+  'Open files': 'Otvori datoteke',
+  'Open files…': 'Otvori datoteke…',
+  'Open files (Ctrl+O)': 'Otvori datoteke (Ctrl+O)',
+  Folder: 'Mapa',
+  Files: 'Datoteke',
+  Save: 'Spremi',
+  'Save (Ctrl+S)': 'Spremi (Ctrl+S)',
+  'Save anyway': 'Svejedno spremi',
+  Cancel: 'Odustani',
+  Discard: 'Odbaci',
+  Delete: 'Obriši',
+  OK: 'U redu',
+  Close: 'Zatvori',
+  'Close tab': 'Zatvori karticu',
+  'Close {name}': 'Zatvori {name}',
+  'Close (Esc)': 'Zatvori (Esc)',
+  'Close search': 'Zatvori pretragu',
+  'Unsaved changes': 'Nespremljene promjene',
+  'No documents open': 'Nema otvorenih dokumenata',
+  'Command palette': 'Paleta naredbi',
+  'Command palette (Ctrl+Shift+P)': 'Paleta naredbi (Ctrl+Shift+P)',
+  'Type a command…': 'Upiši naredbu…',
+  'Search commands': 'Pretraži naredbe',
+  'No matching command.': 'Nema naredbe koja odgovara.',
+  'Drop files to open them': 'Ispusti datoteke za otvaranje',
+
+  /* ── ploče ─────────────────────────────────────────────────────────── */
+  Panels: 'Ploče',
+  Explorer: 'Istraživač',
+  'Explorer (Ctrl+B)': 'Istraživač (Ctrl+B)',
+  Formats: 'Formati',
+  'Supported formats': 'Podržani formati',
+  'Registered editors': 'Učitani editori',
+  'Resize panel': 'Promijeni širinu ploče',
+  'No folder open. Open one to get a file tree, or drop files straight into the window.':
+    'Nema otvorene mape. Otvori mapu da dobiješ stablo datoteka, ili povuci datoteke izravno u prozor.',
+  'This browser has no File System Access API — files can be read but not saved. The desktop build has no such limit.':
+    'Ovaj preglednik nema File System Access API — datoteke se mogu čitati, ali ne i spremati. Na desktopu to ograničenje ne postoji.',
+
+  /* ── naredbe ───────────────────────────────────────────────────────── */
+  File: 'Datoteka',
+  Edit: 'Uređivanje',
+  View: 'Prikaz',
+  Navigation: 'Navigacija',
+  Undo: 'Poništi',
+  Redo: 'Ponovi',
+  'Find in document': 'Traži u dokumentu',
+  'Find in document…': 'Traži u dokumentu…',
+  'Toggle side panel': 'Prikaži/sakrij bočnu ploču',
+  'Show file explorer': 'Prikaži istraživač datoteka',
+  'Show supported formats': 'Prikaži podržane formate',
+  'Cycle theme (light / dark / system)': 'Promijeni temu (svijetla / tamna / sistemska)',
+  'Reading mode': 'Način čitanja',
+  'Next tab': 'Sljedeća kartica',
+  'Previous tab': 'Prethodna kartica',
+  'Preferences…': 'Postavke…',
+  'Open text in a split below': 'Otvori tekst u splitu ispod',
+  'Close the split below': 'Zatvori split ispod',
+
+  /* ── pretraga ──────────────────────────────────────────────────────── */
+  'searching…': 'tražim…',
+  'no results': 'nema pogodaka',
+  'Match case': 'Razlikuj velika i mala slova',
+  'Regular expression': 'Regularni izraz',
+  'Previous (Shift+Enter)': 'Prethodni (Shift+Enter)',
+  'Next (Enter)': 'Sljedeći (Enter)',
+  '…and {n} more results': '…i još {n} pogodaka',
+
+  /* ── statusna traka ────────────────────────────────────────────────── */
+  commands: 'naredbe',
+  'Format: {name}': 'Format: {name}',
+  'read-only': 'samo čitanje',
+  unsaved: 'nespremljeno',
+  disk: 'disk',
+  'Saving is not available for this document': 'Spremanje nije dostupno za ovaj dokument',
+  'Saving to disk is available': 'Spremanje na disk je dostupno',
+  'No write permission': 'Bez dozvole za pisanje',
+
+  /* ── pozdravni ekran ───────────────────────────────────────────────── */
+  Start: 'Počni',
+  'Working now': 'Radi sada',
+  'Code, Markdown, PDF, e-books, Word and Excel in one place.':
+    'Kod, Markdown, PDF, e-knjige, Word i Excel na jednom mjestu.',
+  'You can also drag files straight into the window.':
+    'Datoteke možeš i povući izravno u prozor.',
+  preview: 'pregled',
+  'phase 1': 'faza 1',
+  'phase 2': 'faza 2',
+  'phase 5': 'faza 5',
+  'plain text': 'običan tekst',
+  'CodeMirror 6, 13 languages': 'CodeMirror 6, 13 jezika',
+  'source + live preview': 'izvor + živi pregled',
+  'view, annotate, pages': 'pregled, anotacije, stranice',
+  'reading, contents, search': 'čitanje, sadržaj, pretraga',
+  'view, OCR': 'pregled, OCR',
+  'preview (editing: phase 2)': 'pregled (uređivanje: faza 2)',
+  'LibreOffice conversion': 'LibreOffice konverzija',
+
+  /* ── formati ───────────────────────────────────────────────────────── */
+  'Plain text': 'Tekst',
+  Code: 'Kod',
+  'E-book (EPUB)': 'E-knjiga (EPUB)',
+  'Word document': 'Word dokument',
+  'Excel spreadsheet': 'Excel tablica',
+  'PowerPoint presentation': 'PowerPoint prezentacija',
+  Image: 'Slika',
+  Archive: 'Arhiva',
+  'Binary file': 'Binarna datoteka',
+  Unknown: 'Nepoznato',
+  Untitled: 'Bez naslova',
+
+  /* ── poruke ────────────────────────────────────────────────────────── */
+  'This document could not be opened': 'Ovaj dokument nije moguće otvoriti',
+  'Loading {name}…': 'Učitavam {name}…',
+  'Could not open the document: {reason}': 'Otvaranje nije uspjelo: {reason}',
+  'Could not open the files: {reason}': 'Otvaranje datoteka nije uspjelo: {reason}',
+  'Could not open the folder: {reason}': 'Otvaranje mape nije uspjelo: {reason}',
+  'Could not open what was dropped: {reason}': 'Otvaranje ispuštenog sadržaja nije uspjelo: {reason}',
+  'Could not read the folder: {reason}': 'Čitanje mape nije uspjelo: {reason}',
+  '{name} has unsaved changes.': '{name} ima nespremljene promjene.',
+  '{name} is open read-only.': '{name} je otvorena samo za čitanje.',
+  'Saved: {name}': 'Spremljeno: {name}',
+  'Save failed: {reason}': 'Spremanje nije uspjelo: {reason}',
+  'Saving {name} cannot reproduce everything from the original.':
+    'Spremanje datoteke {name} ne može reproducirati sve iz originala.',
+  'Converting to {format} needs the LibreOffice backend, which arrives in phase 2.':
+    'Konverzija u {format} traži LibreOffice backend, koji stiže u fazi 2.',
+  'No editor is registered for the "{format}" format yet.':
+    'Za format "{format}" još nema registriranog editora.',
+  'PowerPoint arrives in phase 5.': 'PowerPoint stiže u fazi 5.',
+  'OpenDocument arrives in phase 2, via LibreOffice conversion.':
+    'OpenDocument stiže u fazi 2, uz LibreOffice konverziju.',
+  'Browsing archives is not planned — ulEditor opens documents, it does not pack them.':
+    'Pregled arhiva nije u planu — ulEditor otvara dokumente, ne pakira ih.',
+  'Supported files': 'Podržane datoteke',
+  'The browser did not grant permission to write this file.':
+    'Preglednik nije dao dozvolu za pisanje u ovu datoteku.',
+  'This browser cannot open files.': 'Preglednik ne podržava otvaranje datoteka.',
+  'This browser cannot open folders.': 'Preglednik ne podržava otvaranje mape.',
+  'The file is open read-only.': 'Datoteka je otvorena samo za čitanje.',
+
+  /* ── čitaonica ─────────────────────────────────────────────────────── */
+  'Leave reading mode (Esc)': 'Izađi iz čitanja (Esc)',
+  'Previous page': 'Prethodna stranica',
+  'Next page': 'Sljedeća stranica',
+  Contents: 'Sadržaj',
+  Typography: 'Tipografija',
+  Layout: 'Izgled',
+  'Reading progress': 'Napredak čitanja',
+  '~{n} min left': 'još ~{n} min',
+  'This document has no table of contents.': 'Ovaj dokument nema sadržaj.',
+  Typeface: 'Pismo',
+  Serif: 'Serifno',
+  Sans: 'Bezserifno',
+  'Size — {n} px': 'Veličina — {n} px',
+  'Line height — {n}': 'Prored — {n}',
+  'Column width — {n} characters': 'Širina stupca — {n} znakova',
+  Background: 'Podloga',
+  Flow: 'Tok',
+  Day: 'Dnevno',
+  Sepia: 'Sepija',
+  Night: 'Noć',
+  Pages: 'Stranice',
+  Scroll: 'Svitak',
+  Chapter: 'Poglavlje',
+  'p. {n}/{total}': 'str. {n}/{total}',
+  'Cover: {title}': 'Naslovnica: {title}',
+  'Reading mode works for e-books, PDF, Word and Markdown. This format does not support it yet.':
+    'Način čitanja radi za e-knjige, PDF, Word i Markdown. Ovaj format ga još ne podržava.',
+
+  /* ── postavke ──────────────────────────────────────────────────────── */
+  Preferences: 'Postavke',
+  Language: 'Jezik',
+  Theme: 'Tema',
+  Light: 'Svijetla',
+  Dark: 'Tamna',
+  'Follow system': 'Prati sustav',
+  'Theme: {name}': 'Tema: {name}',
+  'Changing the language reloads the window.': 'Promjena jezika ponovno učitava prozor.',
+  'Reading defaults': 'Zadane postavke čitanja',
+  'Typeface {face}, {size} px, background {tint}. Change these in the reader itself.':
+    'Pismo {face}, {size} px, podloga {tint}. Mijenjaju se u samoj čitaonici.',
+  'Reset reading settings': 'Vrati zadane postavke čitanja',
+
+  /* ── e-knjiga ──────────────────────────────────────────────────────── */
+  'The preview does not reproduce everything from the book:':
+    'Pregled ne reproducira sve iz knjige:',
+  'Publisher stylesheets are not applied — the text uses the reader typography.':
+    'Izdavačevi stilovi se ne primjenjuju — tekst nosi tipografiju čitaonice.',
+  'Embedded fonts are not loaded.': 'Ugrađeni fontovi se ne učitavaju.',
+  'Audio and video content is not shown.': 'Audio i video sadržaj nije prikazan.',
+  'E-books are read-only for now — editing EPUB is not supported.':
+    'E-knjige se za sada samo čitaju — uređivanje EPUB-a nije podržano.',
+  'The archive has no OPF file — this is not an EPUB book.':
+    'Arhiva nema OPF datoteku — ovo nije EPUB knjiga.',
+  'Invalid XML inside the archive.': 'Neispravan XML u arhivi.',
+  'The book is DRM-protected, so its content cannot be read. ulEditor deliberately does not circumvent protection.':
+    'Knjiga je zaštićena DRM-om, pa se sadržaj ne može pročitati. ulEditor namjerno ne zaobilazi zaštitu.',
+  'The OPF file {path} is missing from the archive.': 'OPF datoteka {path} nedostaje u arhivi.',
+  'The book has no chapters in its reading order (spine).':
+    'Knjiga nema nijedno poglavlje u redoslijedu čitanja (spine).',
+
+  /* ── Office pregled ────────────────────────────────────────────────── */
+  'Read-only preview — editing arrives in phase 2.':
+    'Pregled samo za čitanje — uređivanje stiže u fazi 2.',
+  'Word documents are read-only for now — editing arrives in phase 2.':
+    'Word dokumenti su za sada samo za čitanje — uređivanje stiže u fazi 2.',
+  'Excel spreadsheets are read-only for now — editing arrives in phase 2.':
+    'Excel tablice su za sada samo za čitanje — uređivanje stiže u fazi 2.',
+  'Footnotes and endnotes are not shown.': 'Fusnote i bilješke na kraju nisu prikazane.',
+  'Embedded objects (equations, OLE) are not shown.':
+    'Ugrađeni objekti (jednadžbe, OLE) nisu prikazani.',
+  'Images linked from outside the document are not loaded.':
+    'Slike izvan dokumenta nisu učitane.',
+  'Some images use a format the browser cannot render (EMF/WMF).':
+    'Neke slike su u formatu koji preglednik ne prikazuje (EMF/WMF).',
+  'Tracked changes are shown as accepted; deleted text is not visible.':
+    'Praćene promjene su prikazane kao prihvaćene; obrisani tekst nije vidljiv.',
+  'Page headers and footers are not shown.': 'Zaglavlja i podnožja stranica nisu prikazana.',
+  'Comments are not shown.': 'Komentari nisu prikazani.',
+  'Charts are not shown.': 'Grafikoni nisu prikazani.',
+  'Images inside sheets are not shown.': 'Slike u listovima nisu prikazane.',
+  'Filters and frozen panes are not applied.': 'Filtri i zamrznuta zaglavlja nisu primijenjeni.',
+  'Formulas are not recalculated — the value stored in the file is shown.':
+    'Formule se ne računaju — prikazana je vrijednost spremljena u datoteci.',
+  'This is not a valid Office archive — it is probably damaged or incompletely downloaded.':
+    'Datoteka nije ispravna Office arhiva — vjerojatno je oštećena ili nepotpuno preuzeta.',
+  'The file has no `word/document.xml`. The older binary `.doc` is not supported — save it as .docx.':
+    'Datoteka nema `word/document.xml`. Stariji binarni `.doc` nije podržan — spremi ga kao .docx.',
+  'The file has no `xl/workbook.xml`. The older binary `.xls` is not supported — save it as .xlsx.':
+    'Datoteka nema `xl/workbook.xml`. Stariji binarni `.xls` nije podržan — spremi ga kao .xlsx.',
+  'The workbook has no readable sheet.': 'Radna knjiga nema nijedan čitljiv list.',
+  TRUE: 'TOČNO',
+  FALSE: 'NETOČNO',
+  '{n} words · read-only': '{n} riječi · samo čitanje',
+  '{words} words · ~{minutes} min read': '{words} riječi · ~{minutes} min čitanja',
+  '{sheet} · {rows} × {cols} · {cells} cells': '{sheet} · {rows} × {cols} · {cells} ćelija',
+  '{n} words': '{n} riječi',
+  'Line {n}': 'Red {n}',
+  'Line {line}, column {column}': 'Red {line}, stup {column}',
+  '{n} selected': '{n} znak. označeno',
+
+  /* ── PDF ───────────────────────────────────────────────────────────── */
+  'Pages — rotate, delete, reorder': 'Stranice — rotiranje, brisanje, preslagivanje',
+  'Page number': 'Broj stranice',
+  'Zoom out (Ctrl + wheel)': 'Smanji (Ctrl + kotačić)',
+  'Zoom in (Ctrl + wheel)': 'Povećaj (Ctrl + kotačić)',
+  Width: 'Širina',
+  'Fit width': 'Prilagodi širini',
+  Page: 'Stranica',
+  'Fit page': 'Prilagodi stranici',
+  'Select and highlight text': 'Odabir i selekcija teksta',
+  'Highlight selected text': 'Istakni označeni tekst',
+  'Note — click the page': 'Bilješka — klikni na stranicu',
+  'Freehand drawing': 'Crtanje slobodnom rukom',
+  Note: 'Bilješka',
+  'Note…': 'Bilješka…',
+  'A document must keep at least one page.': 'Dokument mora imati barem jednu stranicu.',
+  'Rotate left': 'Rotiraj ulijevo',
+  'Rotate right': 'Rotiraj udesno',
+  'Move up': 'Pomakni gore',
+  'Move down': 'Pomakni dolje',
+  'Delete page': 'Obriši stranicu',
+  'Insert PDF…': 'Umetni PDF…',
+  'Inserts the pages of another PDF after the current one':
+    'Umeće stranice drugog PDF-a iza trenutne',
+  'Page ranges to extract': 'Rasponi stranica za izdvajanje',
+  Extract: 'Izdvoji',
+  pages: 'stranice',
+  'Saves the chosen pages to a new file; the original stays untouched':
+    'Sprema odabrane stranice u novu datoteku; izvornik ostaje netaknut',
+  'Inserted {n} pages from {name}. Bookmarks and forms of the inserted document are not carried over.':
+    'Umetnuto {n} stranica iz {name}. Oznake i obrasci umetnutog dokumenta se ne prenose.',
+  'Insert failed: {reason}': 'Umetanje nije uspjelo: {reason}',
+  'Extract failed: {reason}': 'Izdvajanje nije uspjelo: {reason}',
+  'The range "{range}" covers no existing page.': 'Raspon "{range}" ne pokriva nijednu postojeću stranicu.',
+  'Extracted {n} pages.': 'Izdvojeno {n} stranica.',
+  'Page {n} of {total}': 'Stranica {n} od {total}',
+  'Page {n}': 'Stranica {n}',
+  '{n} new annotations': '{n} novih anotacija',
+  '{n} pages deleted': '{n} obrisanih stranica',
+  '{n} rotated': '{n} rotiranih',
+  'order changed': 'promijenjen redoslijed',
+  'Reordering pages does not preserve bookmarks, forms or attachments.':
+    'Preslagivanje stranica ne zadržava oznake (bookmarks), obrasce ni priloge.',
+  'Merging does not carry over bookmarks, forms or attachments from the inserted document.':
+    'Spajanje ne prenosi oznake (bookmarks), obrasce ni priloge iz umetnutog dokumenta.',
+  'The chosen PDF has no pages.': 'Odabrani PDF nema nijednu stranicu.',
+  'No page selected.': 'Nijedna stranica nije odabrana.',
+
+  /* ── slike i OCR ───────────────────────────────────────────────────── */
+  'Could not load the image': 'Neuspješno učitavanje slike',
+  '{name} cannot be displayed. This browser may not support the format.':
+    '{name} se ne može prikazati. Format možda nije podržan u ovom pregledniku.',
+  Fit: 'Prilagodi',
+  'Fit to window': 'Prilagodi prozoru',
+  Croatian: 'Hrvatski',
+  English: 'Engleski',
+  'Actual size': 'Stvarna veličina',
+  'Image editing (crop, rotate) arrives via image-rs in phase 1.':
+    'Uređivanje slika (kadriranje, rotacija) stiže preko image-rs u fazi 1.',
+  'Read text (OCR)': 'Pročitaj tekst (OCR)',
+  'Recognises text in the image and opens it in an editor below':
+    'Prepoznaje tekst na slici i otvara ga u editoru ispod',
+  'Reading text…': 'Čitam tekst…',
+  'Reading text… {percent}%': 'Čitam tekst… {percent}%',
+  'Recognition language': 'Jezik prepoznavanja',
+  'No text found in the image.': 'Na slici nije pronađen tekst.',
+  'Recognised {n} characters — confidence {confidence}%.':
+    'Prepoznato {n} znakova — pouzdanost {confidence}%.',
+  'Text recognition failed: {reason}': 'Prepoznavanje teksta nije uspjelo: {reason}',
+  'OCR needs to download the language data on first use, which requires an internet connection.':
+    'OCR pri prvoj upotrebi preuzima jezične podatke, za što je potrebna internetska veza.',
+  'Text from {name}': 'Tekst iz {name}',
+
+  /* ── neimenovani dokumenti i split ─────────────────────────────────── */
+  'Save as': 'Spremi kao',
+  'Choose the format this document is saved in': 'Odaberi format u koji se dokument sprema',
+  'Not saved yet': 'Još nije spremljeno',
+  'Nothing to save.': 'Nema se što spremiti.',
+  'Split below': 'Split ispod',
+  'Resize split': 'Promijeni visinu splita',
+};

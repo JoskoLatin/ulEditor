@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import { openFolder } from '../shell/actions.js';
 import { useWorkspace } from '../state/workspace.js';
@@ -7,10 +9,8 @@ import { Explorer } from './Explorer.js';
 import { FormatsPanel } from './FormatsPanel.js';
 import { IconFolderOpen } from './Icons.js';
 
-const TITLES = {
-  explorer: 'Istraživač',
-  formats: 'Formati',
-} as const;
+const title = (view: 'explorer' | 'formats'): string =>
+  view === 'explorer' ? t('Explorer') : t('Formats');
 
 export function Sidebar() {
   const shell = useShell();
@@ -20,9 +20,9 @@ export function Sidebar() {
   return (
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-head">
-        <h2>{TITLES[view]}</h2>
+        <h2>{title(view)}</h2>
         {view === 'explorer' && (
-          <button className="icon-btn" title="Otvori mapu" onClick={() => void openFolder(shell)}>
+          <button className="icon-btn" title={t('Open folder')} onClick={() => void openFolder(shell)}>
             <IconFolderOpen size={14} />
           </button>
         )}
@@ -76,7 +76,7 @@ export function SidebarResizer() {
       data-dragging={dragging}
       role="separator"
       aria-orientation="vertical"
-      aria-label="Promijeni širinu ploče"
+      aria-label={t('Resize panel')}
       onPointerDown={onPointerDown}
       onDoubleClick={() => setWidth(264)}
     />

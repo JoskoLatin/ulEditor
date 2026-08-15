@@ -130,12 +130,12 @@ try {
 
   check(
     'procjena preostalog vremena',
-    /još ~\d+ min/.test(await page.locator('.reader-left').innerText()),
+    /~\d+ min left/.test(await page.locator('.reader-left').innerText()),
     await page.locator('.reader-left').innerText(),
   );
 
   /* — sadržaj iz čitaonice — */
-  await page.locator('.reader-btn', { hasText: 'Sadržaj' }).click();
+  await page.locator('.reader-btn', { hasText: 'Contents' }).click();
   await page.waitForSelector('.reader-outline', { timeout: 5000 });
   const outlineCount = await page.locator('.reader-outline button').count();
   check('sadržaj u čitaonici', outlineCount === 4, `${outlineCount} stavki`);
@@ -143,13 +143,14 @@ try {
   await page.locator('.reader-outline button').nth(2).click();
   await page.waitForTimeout(400);
   const jumped = await page.locator('.reader-status span').first().innerText();
+  // Naslov poglavlja dolazi iz same knjige, ne iz sučelja — ostaje kakav jest.
   check('skok na poglavlje iz sadržaja', jumped.includes('Poglavlje 3'), jumped);
 
   /* — tipografija — */
-  await page.locator('.reader-btn', { hasText: 'Izgled' }).click();
+  await page.locator('.reader-btn', { hasText: 'Layout' }).click();
   await page.waitForSelector('.reader-type', { timeout: 5000 });
 
-  await page.locator('.reader-seg button', { hasText: 'Noć' }).click();
+  await page.locator('.reader-seg button', { hasText: 'Night' }).click();
   await page.waitForTimeout(250);
   const tint = await page.locator('.ul-book').getAttribute('data-tint');
   check('podloga "noć" primijenjena', tint === 'night', `data-tint=${tint}`);
@@ -165,15 +166,15 @@ try {
   );
   check('veličina slova se mijenja', sizeBefore !== sizeAfter, `${sizeBefore} → ${sizeAfter}`);
 
-  await page.locator('.reader-seg button', { hasText: 'Svitak' }).click();
+  await page.locator('.reader-seg button', { hasText: 'Scroll' }).click();
   await page.waitForTimeout(300);
   const scrollFlow = await page.locator('.ul-book').getAttribute('data-flow');
   const allChapters = await page.locator('.ul-book-chapter').count();
   check('prebacivanje u svitak', scrollFlow === 'scroll', `data-flow=${scrollFlow}`);
   check('svitak montira sva poglavlja', allChapters === 4, `${allChapters} poglavlja`);
 
-  await page.locator('.reader-seg button', { hasText: 'Stranice' }).click();
-  await page.locator('.reader-seg button', { hasText: 'Dnevno' }).click();
+  await page.locator('.reader-seg button', { hasText: 'Pages' }).click();
+  await page.locator('.reader-seg button', { hasText: 'Day' }).click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: resolve(SHOTS, 'citanje.png') });
 
@@ -223,7 +224,7 @@ try {
   await page.waitForSelector('.reader', { timeout: 10000 });
   const docxReading = await page.locator('.ul-office').getAttribute('data-reading');
   check('Word se može čitati kao knjiga', docxReading === 'true');
-  await page.locator('.reader-btn', { hasText: 'Sadržaj' }).click();
+  await page.locator('.reader-btn', { hasText: 'Contents' }).click();
   const docxOutline = await page.locator('.reader-outline button').count();
   check('sadržaj iz naslova dokumenta', docxOutline === 3, `${docxOutline} naslova`);
   await page.screenshot({ path: resolve(SHOTS, 'word.png') });
@@ -255,7 +256,7 @@ try {
   check('formula vidljiva u opisu ćelije', formulaTitle === '=SUM(B2:B3)', String(formulaTitle));
 
   const boolCell = await cell(4, 0).innerText();
-  check('logička vrijednost prevedena', boolCell === 'TOČNO', boolCell);
+  check('logička vrijednost prevedena', boolCell === 'TRUE', boolCell);
 
   const merged = await cell(4, 0).getAttribute('colspan');
   check('spojene ćelije zadržane', merged === '2', `colspan=${merged}`);
@@ -286,8 +287,8 @@ try {
   const pdfLabel = await page.locator('.reader-status span').first().innerText();
   check('listanje po stranicama PDF-a', pdfLabel.includes('2/5'), pdfLabel);
 
-  await page.locator('.reader-btn', { hasText: 'Izgled' }).click();
-  await page.locator('.reader-seg button', { hasText: 'Noć' }).click();
+  await page.locator('.reader-btn', { hasText: 'Layout' }).click();
+  await page.locator('.reader-seg button', { hasText: 'Night' }).click();
   await page.waitForTimeout(300);
   const pdfFilter = await page.evaluate(() => {
     const canvas = document.querySelector('.mount:not([style*="none"]) .ul-pdf-page canvas');
@@ -308,11 +309,11 @@ try {
   await page.waitForTimeout(400);
   check(
     'traka sa stranicama nudi umetanje PDF-a',
-    await page.locator('.ul-pdf-rail-actions button', { hasText: 'Umetni PDF' }).isVisible(),
+    await page.locator('.ul-pdf-rail-actions button', { hasText: 'Insert PDF' }).isVisible(),
   );
   check(
     'traka sa stranicama nudi izdvajanje',
-    await page.locator('.ul-pdf-rail-actions button', { hasText: 'Izdvoji' }).isVisible(),
+    await page.locator('.ul-pdf-rail-actions button', { hasText: 'Extract' }).isVisible(),
   );
 
   /* ── konzola ───────────────────────────────────────────────────────── */

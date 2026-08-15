@@ -20,6 +20,7 @@ import {
   type ThemeService,
   type Uri,
 } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 /* ── naredbe ─────────────────────────────────────────────────────────── */
 
@@ -30,7 +31,7 @@ export class Commands implements CommandRegistry {
 
   register(command: Command): Disposable {
     if (this.#map.has(command.id)) {
-      console.warn(`[uleditor] naredba ${command.id} je već registrirana — prepisujem`);
+      console.warn(`[uleditor] command ${command.id} is already registered — overwriting`);
     }
     this.#map.set(command.id, command);
     this.#changed.fire();
@@ -44,7 +45,7 @@ export class Commands implements CommandRegistry {
 
   async execute(id: string, ...args: unknown[]): Promise<void> {
     const command = this.#map.get(id);
-    if (!command) throw new Error(`Nepoznata naredba: ${id}`);
+    if (!command) throw new Error(`Unknown command: ${id}`);
     await command.run(...args);
   }
 
@@ -224,19 +225,19 @@ export class Notifications implements NotificationService {
       const record: ToastRecord = {
         id: this.#next++,
         level: 'warning',
-        message: `Spremanje datoteke ${name} ne može reproducirati sve iz originala.`,
+        message: t('Saving {name} cannot reproduce everything from the original.', { name }),
         details: unsupported,
         sticky: true,
         actions: [
           {
-            label: 'Odustani',
+            label: t('Cancel'),
             run: () => {
               this.dismiss(record.id);
               resolve('cancel');
             },
           },
           {
-            label: 'Svejedno spremi',
+            label: t('Save anyway'),
             run: () => {
               this.dismiss(record.id);
               resolve('save');
@@ -263,7 +264,9 @@ export class NoConversion implements ConversionService {
 
   async convert(_source: Uri, target: ConvertFormat): Promise<Uint8Array> {
     throw new Error(
-      `Konverzija u ${target} traži LibreOffice backend, koji stiže u fazi 2 (crates/ul-convert).`,
+      t('Converting to {format} needs the LibreOffice backend, which arrives in phase 2.', {
+        format: target,
+      }),
     );
   }
 }

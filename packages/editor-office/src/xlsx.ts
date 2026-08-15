@@ -8,6 +8,7 @@
  */
 
 import { attr, attrNum, openArchive, readRelationships, readXml, tag, tags, type Archive } from './ooxml.js';
+import { t } from '@uleditor/i18n';
 
 export type CellKind = 'number' | 'text' | 'bool' | 'error' | 'date';
 
@@ -171,7 +172,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
   const workbook = readXml(archive, 'xl/workbook.xml');
   if (!workbook) {
     throw new Error(
-      'Datoteka nema `xl/workbook.xml`. Stariji binarni `.xls` nije podržan — spremi ga kao .xlsx.',
+      t('The file has no `xl/workbook.xml`. The older binary `.xls` is not supported — save it as .xlsx.'),
     );
   }
 
@@ -216,7 +217,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
     }
 
     if (truncated) {
-      notes.add(`Prikazano je prvih ${MAX_ROWS} redaka i ${MAX_COLS} stupaca po listu.`);
+      notes.add(`Only the first ${MAX_ROWS} rows and ${MAX_COLS} columns of each sheet are shown.`);
     }
 
     const merges: Merge[] = [];
@@ -255,18 +256,18 @@ export function readXlsx(bytes: Uint8Array): Workbook {
     });
   }
 
-  if (sheets.length === 0) throw new Error('Radna knjiga nema nijedan čitljiv list.');
+  if (sheets.length === 0) throw new Error(t('The workbook has no readable sheet.'));
 
   if (Object.keys(archive).some((n) => n.startsWith('xl/charts/'))) {
-    notes.add('Grafikoni nisu prikazani.');
+    notes.add('Charts are not shown.');
   }
   if (Object.keys(archive).some((n) => n.startsWith('xl/media/'))) {
-    notes.add('Slike u listovima nisu prikazane.');
+    notes.add('Images inside sheets are not shown.');
   }
   if (tags(workbook, 'definedName').some((n) => (attr(n, 'name') ?? '').startsWith('_xlnm.'))) {
-    notes.add('Filtri i zamrznuta zaglavlja nisu primijenjeni.');
+    notes.add('Filters and frozen panes are not applied.');
   }
-  notes.add('Formule se ne računaju — prikazana je vrijednost spremljena u datoteci.');
+  notes.add('Formulas are not recalculated — the value stored in the file is shown.');
 
   return { sheets, notes: [...notes] };
 }
@@ -304,7 +305,7 @@ function readCell(
     case 'str':
       return { text: raw, kind: 'text', ...(formula ? { formula } : {}) };
     case 'b':
-      return { text: raw === '1' ? 'TOČNO' : 'NETOČNO', kind: 'bool', ...(formula ? { formula } : {}) };
+      return { text: raw === '1' ? t('TRUE') : t('FALSE'), kind: 'bool', ...(formula ? { formula } : {}) };
     case 'e':
       return { text: raw, kind: 'error', ...(formula ? { formula } : {}) };
     default: {

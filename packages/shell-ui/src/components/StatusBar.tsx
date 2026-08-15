@@ -1,6 +1,9 @@
 import { FORMATS } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
+import { formatLabel } from '../shell/formats.js';
 import { useWorkspace } from '../state/workspace.js';
 import { familyColor } from './Icons.js';
 
@@ -18,20 +21,20 @@ export function StatusBar() {
 
   return (
     <footer className="statusbar">
-      <button className="status-item" onClick={() => setPaletteOpen(true)} title="Paleta naredbi">
-        ⌘ naredbe
+      <button className="status-item" onClick={() => setPaletteOpen(true)} title={t('Command palette')}>
+        ⌘ {t('commands')}
       </button>
 
       {descriptor && (
-        <span className="status-item" title={`Format: ${descriptor.label}`}>
+        <span className="status-item" title={t('Format: {name}', { name: formatLabel(descriptor.id) })}>
           <span className="swatch" style={{ background: familyColor(descriptor.family) }} />
-          {descriptor.label}
+          {formatLabel(descriptor.id)}
         </span>
       )}
 
       {active?.readonly && (
-        <span className="status-item" title="Spremanje nije dostupno za ovaj dokument">
-          samo čitanje
+        <span className="status-item" title={t('Saving is not available for this document')}>
+          {t('read-only')}
         </span>
       )}
 
@@ -49,12 +52,15 @@ export function StatusBar() {
 
       {active?.dirty && (
         <span className="status-item" data-tone="accent">
-          nespremljeno
+          {t('unsaved')}
         </span>
       )}
 
-      <span className="status-item" title={shell.canPersist ? 'Spremanje na disk je dostupno' : 'Bez dozvole za pisanje'}>
-        {shell.canPersist ? 'disk' : 'read-only'}
+      <span
+        className="status-item"
+        title={shell.canPersist ? t('Saving to disk is available') : t('No write permission')}
+      >
+        {shell.canPersist ? t('disk') : t('read-only')}
       </span>
     </footer>
   );

@@ -18,6 +18,7 @@
 
 import { unzipSync, strFromU8 } from 'fflate';
 import DOMPurify from 'dompurify';
+import { t } from '@uleditor/i18n';
 
 export interface BookChapter {
   /** `id` iz OPF manifesta. */
@@ -86,7 +87,7 @@ function anchorOf(href: string): string | null {
 
 function parseXml(source: string): Document {
   const doc = new DOMParser().parseFromString(source, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('Neispravan XML u arhivi.');
+  if (doc.querySelector('parsererror')) throw new Error(t('Invalid XML inside the archive.'));
   return doc;
 }
 
@@ -122,7 +123,7 @@ function findOpfPath(files: Record<string, Uint8Array>): string {
   }
   // Neke knjige nemaju ispravan kontejner; OPF je ipak jedinstven po ekstenziji.
   const guess = Object.keys(files).find((name) => name.toLowerCase().endsWith('.opf'));
-  if (!guess) throw new Error('Arhiva nema OPF datoteku — ovo nije EPUB knjiga.');
+  if (!guess) throw new Error(t('The archive has no OPF file — this is not an EPUB book.'));
   return guess;
 }
 
@@ -268,14 +269,14 @@ export function openEpub(bytes: Uint8Array): Book {
   // DRM se ne zaobilazi. Bolje reći odmah nego prikazati kašu.
   if (files['META-INF/encryption.xml']) {
     throw new Error(
-      'Knjiga je zaštićena DRM-om, pa se sadržaj ne može pročitati. ulEditor namjerno ne zaobilazi zaštitu.',
+      t('The book is DRM-protected, so its content cannot be read. ulEditor deliberately does not circumvent protection.'),
     );
   }
 
   const opfPath = findOpfPath(files);
   const opfDir = dirname(opfPath);
   const opfBytes = files[opfPath];
-  if (!opfBytes) throw new Error(`OPF datoteka ${opfPath} nedostaje u arhivi.`);
+  if (!opfBytes) throw new Error(t('The OPF file {path} is missing from the archive.', { path: opfPath }));
   const opf = parseXml(strFromU8(opfBytes));
 
   const metadata = firstTag(opf, 'metadata');
@@ -322,7 +323,7 @@ export function openEpub(bytes: Uint8Array): Book {
     }
   }
   if (order.length === 0) {
-    throw new Error('Knjiga nema nijedno poglavlje u redoslijedu čitanja (spine).');
+    throw new Error(t('The book has no chapters in its reading order (spine).'));
   }
 
   const chapters: BookChapter[] = order.map((item, index) => {
@@ -331,7 +332,7 @@ export function openEpub(bytes: Uint8Array): Book {
     return {
       id: item.id,
       href: item.path,
-      title: titleOf(body, `Poglavlje ${index + 1}`),
+      title: titleOf(body, `${t('Chapter')} ${index + 1}`),
       body,
       text,
     };
@@ -396,17 +397,17 @@ export function openEpub(bytes: Uint8Array): Book {
   /* Što pregled ne reproducira. */
   const notes: string[] = [];
   if ([...items.values()].some((item) => item.mediaType === 'text/css')) {
-    notes.push('Izdavačevi stilovi se ne primjenjuju — tekst nosi tipografiju čitaonice.');
+    notes.push('Publisher stylesheets are not applied — the text uses the reader typography.');
   }
   if ([...items.values()].some((item) => item.mediaType.startsWith('font/') || /font/.test(item.mediaType))) {
-    notes.push('Ugrađeni fontovi se ne učitavaju.');
+    notes.push('Embedded fonts are not loaded.');
   }
   if ([...items.values()].some((item) => /^(audio|video)\//.test(item.mediaType))) {
-    notes.push('Audio i video sadržaj knjige nije prikazan.');
+    notes.push('Audio and video content is not shown.');
   }
 
   return {
-    title: meta('title') || 'Bez naslova',
+    title: meta('title') || t('Untitled'),
     author: meta('creator'),
     language: meta('language'),
     cover,

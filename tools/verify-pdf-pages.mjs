@@ -106,7 +106,7 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
   check('preslagivanje mijenja stvarni redoslijed', labels.join(',') === '3,1,2', labels.join(','));
   check(
     'preslagivanje pošteno prijavljuje gubitak',
-    lost.length === 1 && lost[0].includes('oznake'),
+    lost.length === 1 && lost[0].includes('bookmarks'),
     lost.join(' | '),
   );
 }
@@ -200,7 +200,7 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
   check('plan naraste', merged.plan.length === 5, `${merged.plan.length} stranica`);
   check(
     'spajanje prijavljuje što ne prenosi',
-    merged.lost.some((m) => m.includes('oznake')),
+    merged.lost.some((m) => m.includes('bookmarks')),
     merged.lost.join(' | '),
   );
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FindResult } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { activeInstance, useWorkspace } from '../state/workspace.js';
 import { IconClose, IconSearch } from './Icons.js';
@@ -136,10 +137,10 @@ export function FindPanel() {
   };
 
   const count = searching
-    ? 'tražim…'
+    ? t('searching…')
     : query
       ? results.length === 0
-        ? 'nema pogodaka'
+        ? t('no results')
         : `${selected + 1} / ${results.length}`
       : '';
 
@@ -150,8 +151,8 @@ export function FindPanel() {
         <input
           ref={inputRef}
           value={query}
-          placeholder="Traži u dokumentu…"
-          aria-label="Traži u dokumentu"
+          placeholder={t('Find in document…')}
+          aria-label={t('Find in document')}
           onChange={(e) => setQuery(e.target.value)}
         />
 
@@ -160,7 +161,7 @@ export function FindPanel() {
         <button
           className="findpanel-toggle"
           data-active={caseSensitive}
-          title="Razlikuj velika i mala slova"
+          title={t('Match case')}
           aria-pressed={caseSensitive}
           onClick={() => setCaseSensitive((v) => !v)}
         >
@@ -169,23 +170,23 @@ export function FindPanel() {
         <button
           className="findpanel-toggle"
           data-active={regex}
-          title="Regularni izraz"
+          title={t('Regular expression')}
           aria-pressed={regex}
           onClick={() => setRegex((v) => !v)}
         >
           .*
         </button>
 
-        <button className="findpanel-toggle" title="Prethodni (Shift+Enter)" onClick={() => step(-1)}>
+        <button className="findpanel-toggle" title={t('Previous (Shift+Enter)')} onClick={() => step(-1)}>
           ↑
         </button>
-        <button className="findpanel-toggle" title="Sljedeći (Enter)" onClick={() => step(1)}>
+        <button className="findpanel-toggle" title={t('Next (Enter)')} onClick={() => step(1)}>
           ↓
         </button>
         <button
           className="findpanel-toggle"
-          title="Zatvori (Esc)"
-          aria-label="Zatvori pretragu"
+          title={t('Close (Esc)')}
+          aria-label={t('Close search')}
           onClick={() => {
             setOpen(false);
             activeInstance()?.focus();
@@ -209,7 +210,9 @@ export function FindPanel() {
             </button>
           ))}
           {results.length > 200 && (
-            <div className="findpanel-more">…i još {results.length - 200} pogodaka</div>
+            <div className="findpanel-more">
+              {t('…and {n} more results', { n: results.length - 200 })}
+            </div>
           )}
         </div>
       )}

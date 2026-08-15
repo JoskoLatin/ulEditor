@@ -17,6 +17,9 @@ import {
   type FindResult,
   type SaveResult,
 } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
+
+import { OCR_LANGUAGES, disposeOcr, recogniseImage, type OcrLanguage } from './ocr.js';
 
 const ZOOM_STEPS = [0.1, 0.25, 0.5, 0.67, 1, 1.5, 2, 3, 4, 8, 16];
 const MARGIN = 48;
@@ -57,15 +60,22 @@ class ImageEditor implements EditorInstance {
   #fit = true;
   #natural = { width: 0, height: 0 };
 
+  #ocrButton: HTMLButtonElement | null = null;
+  #ocrLanguage: OcrLanguage;
+  #ocrBusy = false;
+
   #statusEmitter = new Emitter<string>();
   #dirtyEmitter = new Emitter<boolean>();
   readonly onStatusChange = this.#statusEmitter.event;
   readonly onDirtyChange = this.#dirtyEmitter.event;
 
   constructor(
+    private readonly host: EditorHost,
     private readonly doc: DocumentHandle,
     private readonly bytes: Uint8Array,
-  ) {}
+  ) {
+    this.#ocrLanguage = host.settings.get<OcrLanguage>('ocr.language', 'hrv');
+  }
 
   async mount(container: HTMLElement): Promise<void> {
     const root = document.createElement('div');
@@ -106,10 +116,12 @@ class ImageEditor implements EditorInstance {
       stage.replaceChildren();
       const error = document.createElement('div');
       error.className = 'ul-img-error';
-      error.textContent = `Slika ${this.doc.name} se ne može prikazati.\nFormat možda nije podržan u ovom pregledniku.`;
+      error.textContent = t('{name} cannot be displayed. This browser may not support the format.', {
+        name: this.doc.name,
+      });
       error.style.whiteSpace = 'pre-line';
       stage.appendChild(error);
-      this.#statusEmitter.fire('Neuspješno učitavanje');
+      this.#statusEmitter.fire(t('Could not load the image'));
       return;
     }
 
@@ -137,39 +149,127 @@ class ImageEditor implements EditorInstance {
       return b;
     };
 
-    const zoomOut = button('−', 'Smanji (Ctrl + kotačić)', () => this.zoomBy(-1));
-    const zoomIn = button('+', 'Povećaj (Ctrl + kotačić)', () => this.zoomBy(1));
+    const zoomOut = button('−', t('Zoom out (Ctrl + wheel)'), () => this.zoomBy(-1));
+    const zoomIn = button('+', t('Zoom in (Ctrl + wheel)'), () => this.zoomBy(1));
 
     const label = document.createElement('span');
     label.style.minWidth = '48px';
     label.style.textAlign = 'center';
     this.#zoomLabel = label;
 
-    const fit = button('Prilagodi', 'Prilagodi prozoru', () => this.setFit(true));
-    const actual = button('1:1', 'Stvarna veličina', () => {
+    const fit = button(t('Fit'), t('Fit to window'), () => this.setFit(true));
+    const actual = button('1:1', t('Actual size'), () => {
       this.#fit = false;
       this.#scale = 1;
       this.#applyZoom();
     });
 
-    const sep = document.createElement('span');
-    sep.className = 'sep';
+    const sep = () => {
+      const element = document.createElement('span');
+      element.className = 'sep';
+      return element;
+    };
     const spacer = document.createElement('span');
     spacer.className = 'spacer';
 
     const info = document.createElement('span');
     info.textContent = humanBytes(this.doc.stat.size);
 
-    bar.append(zoomOut, label, zoomIn, sep, fit, actual, spacer, info);
+    /* Prepoznavanje teksta: jezik pa gumb. Jezik stoji uz gumb jer se bira
+       prije pokretanja, a ne u postavkama — ista slika zna imati oba jezika. */
+    const language = document.createElement('select');
+    language.className = 'ul-img-select';
+    language.title = t('Recognition language');
+    for (const entry of OCR_LANGUAGES) {
+      const option = document.createElement('option');
+      option.value = entry.id;
+      option.textContent = t(entry.label);
+      option.selected = entry.id === this.#ocrLanguage;
+      language.appendChild(option);
+    }
+    language.addEventListener('change', () => {
+      this.#ocrLanguage = language.value as OcrLanguage;
+      this.host.settings.set('ocr.language', this.#ocrLanguage);
+    });
+
+    const ocr = button('OCR', t('Recognises text in the image and opens it in an editor below'), () =>
+      void this.readText(),
+    );
+    ocr.classList.add('ul-img-ocr');
+    this.#ocrButton = ocr;
+
+    bar.append(zoomOut, label, zoomIn, sep(), fit, actual, spacer, language, ocr, sep(), info);
 
     this.#syncButtons = () => {
       fit.dataset.active = String(this.#fit);
+      ocr.disabled = this.#ocrBusy;
       if (this.#zoomLabel) this.#zoomLabel.textContent = `${Math.round(this.#scale * 100)}%`;
     };
     return bar;
   }
 
   #syncButtons: () => void = () => {};
+
+  /* ── prepoznavanje teksta ──────────────────────────────────────────── */
+
+  /**
+   * Pročita tekst sa slike i preda ga shellu, koji ga otvara u ploči ispod.
+   *
+   * Editor ne zna ništa o toj ploči — javlja se naredbom. To je isti seam
+   * kojim bi svaki drugi plugin objavio rezultat koji nije datoteka na disku.
+   */
+  async readText(): Promise<void> {
+    if (this.#ocrBusy) return;
+
+    this.#ocrBusy = true;
+    this.#syncButtons();
+    this.#statusEmitter.fire(t('Reading text…'));
+
+    try {
+      const result = await recogniseImage(
+        this.bytes,
+        mimeFor(this.doc.name),
+        this.#ocrLanguage,
+        (progress) => {
+          if (progress.stage === 'recognizing text') {
+            this.#statusEmitter.fire(
+              t('Reading text… {percent}%', { percent: Math.round(progress.fraction * 100) }),
+            );
+          }
+        },
+      );
+
+      if (!result.text) {
+        this.host.notify.show('warning', t('No text found in the image.'));
+        return;
+      }
+
+      await this.host.commands.execute('scratch.openText', {
+        name: t('Text from {name}', { name: this.doc.name.replace(/\.[^.]+$/, '') }),
+        text: result.text,
+      });
+
+      this.host.notify.show(
+        'info',
+        t('Recognised {n} characters — confidence {confidence}%.', {
+          n: result.text.length,
+          confidence: result.confidence,
+        }),
+      );
+    } catch (err) {
+      this.host.notify.show(
+        'error',
+        `${t('Text recognition failed: {reason}', {
+          reason: err instanceof Error ? err.message : String(err),
+        })} ${t('OCR needs to download the language data on first use, which requires an internet connection.')}`,
+      );
+    } finally {
+      this.#ocrBusy = false;
+      this.#syncButtons();
+      // Vraća uobičajeni status (dimenzije, zoom, veličina).
+      this.#applyZoom();
+    }
+  }
 
   setFit(fit: boolean): void {
     this.#fit = fit;
@@ -217,6 +317,8 @@ class ImageEditor implements EditorInstance {
   }
 
   unmount(): void {
+    // Wasm jezgra drži worker; bez ovoga ostaje živ i nakon zatvaranja slike.
+    void disposeOcr();
     this.#resize?.disconnect();
     this.#stage?.removeEventListener('wheel', this.#onWheel);
     if (this.#objectUrl) URL.revokeObjectURL(this.#objectUrl);
@@ -230,7 +332,7 @@ class ImageEditor implements EditorInstance {
   }
 
   async save(): Promise<SaveResult> {
-    throw new Error('Uređivanje slika (kadriranje, rotacija) stiže preko image-rs u fazi 1.');
+    throw new Error(t('Image editing (crop, rotate) arrives via image-rs in phase 1.'));
   }
 
   undo(): void {}
@@ -264,7 +366,7 @@ class ImageEditor implements EditorInstance {
 
 export const imageEditorProvider: EditorProvider = {
   id: 'org.uleditor.image',
-  displayName: 'Preglednik slika',
+  displayName: 'Image viewer',
   matches: {
     extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
     mimeTypes: Object.values(MIME),
@@ -272,8 +374,8 @@ export const imageEditorProvider: EditorProvider = {
   capabilities: ['view'],
   priority: 30,
 
-  async createInstance(_host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new ImageEditor(doc, await doc.bytes());
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new ImageEditor(host, doc, await doc.bytes());
   },
 };
 

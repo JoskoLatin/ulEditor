@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+import { t } from '@uleditor/i18n';
+
 import { tabInstances, useWorkspace, type TabState } from '../state/workspace.js';
 import { Welcome } from './Welcome.js';
 import { IconWarning } from './Icons.js';
@@ -52,7 +54,7 @@ function Pane({ tab, active }: { tab: TabState; active: boolean }) {
       <div className="mount" style={{ display: active ? 'flex' : 'none' }}>
         <div className="surface-error">
           <IconWarning size={22} />
-          <strong>Ovaj format još nije podržan</strong>
+          <strong>{t('This document could not be opened')}</strong>
           <p style={{ margin: 0 }}>{tab.error}</p>
           <code>{tab.name}</code>
         </div>
@@ -63,7 +65,9 @@ function Pane({ tab, active }: { tab: TabState; active: boolean }) {
   return (
     <div className="mount" style={{ display: active ? 'flex' : 'none' }}>
       <div ref={ref} style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }} />
-      {!tab.ready && <div className="surface-loading">Učitavam {tab.name}…</div>}
+      {!tab.ready && (
+        <div className="surface-loading">{t('Loading {name}…', { name: tab.name })}</div>
+      )}
     </div>
   );
 }

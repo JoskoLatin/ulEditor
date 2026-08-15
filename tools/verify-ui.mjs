@@ -107,13 +107,13 @@ try {
   await dropFile(page, 'ugovor.docx', makeFakeDocx());
   await page.waitForSelector('.surface-error', { timeout: 10000 });
   const message = await page.locator('.surface-error p').innerText();
-  check('oštećen DOCX daje razumljivu poruku', message.includes('oštećena'), message.slice(0, 70));
+  check('oštećen DOCX daje razumljivu poruku', message.includes('damaged'), message.slice(0, 70));
 
   /* — anotacije nad PDF-om — */
   await page.locator('.tab').nth(2).click();
   await page.waitForTimeout(300);
 
-  await page.locator('.ul-pdf-tool[title*="Istakni"]').click();
+  await page.locator('.ul-pdf-tool[title*="Highlight"]').click();
   // Selekcija se pravi programski: pravo povlačenje mišem preko nevidljivog
   // tekstualnog sloja nije pouzdano na jednom retku teksta.
   await page.evaluate(() => {
@@ -133,7 +133,7 @@ try {
     await page.locator('.ul-pdf-count').innerText(),
   );
 
-  await page.locator('.ul-pdf-tool[title*="Bilješka"]').click();
+  await page.locator('.ul-pdf-tool[title*="Note"]').click();
   await page.locator('.ul-pdf-page').first().click({ position: { x: 200, y: 60 } });
   await page.waitForSelector('.ul-pdf-note-popup', { timeout: 5000 });
   await page.locator('.ul-pdf-note-popup textarea').fill('Provjeriti čćžšđ');
@@ -154,7 +154,7 @@ try {
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(250);
   const titleAfterOne = await page.locator('.ul-pdf-ann-note').first().getAttribute('title');
-  check('prvi undo vraća tekst bilješke', titleAfterOne === 'Bilješka', String(titleAfterOne));
+  check('prvi undo vraća tekst bilješke', titleAfterOne === 'Note', String(titleAfterOne));
 
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(250);
@@ -171,7 +171,7 @@ try {
   await page.waitForTimeout(250);
   check('redo vraća bilješku', (await page.locator('.ul-pdf-ann-note').count()) === 1);
 
-  await page.locator('.ul-pdf-tool[title*="Odabir"]').click();
+  await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
   /* — slika — */
   const png = await readFile(resolve(ROOT, 'apps/desktop/src-tauri/icons/128x128.png'));
@@ -234,7 +234,7 @@ try {
   const paletteInput = page.locator('.palette-input input');
   check('paleta se sama fokusira', await paletteInput.evaluate((el) => el === document.activeElement));
 
-  await paletteInput.pressSequentially('promijeni temu');
+  await paletteInput.pressSequentially('cycle theme');
   const paletteHits = await page.locator('.palette-item').count();
   check(
     'paleta filtrira naredbe',
@@ -266,12 +266,12 @@ try {
   const pdf = page.locator('.mount:visible');
   await pdf.locator('.ul-pdf-page[data-rendered="true"]').first().waitFor({ timeout: 20000 });
 
-  await pdf.locator('.ul-pdf-btn[title*="Stranice"]').click();
+  await pdf.locator('.ul-pdf-btn[title*="Pages"]').click();
   await pdf.locator('.ul-pdf-thumb').first().waitFor({ timeout: 10000 });
   check('traka pokazuje tri stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
 
   await pdf.locator('.ul-pdf-thumb').first().hover();
-  await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="udesno"]').click();
+  await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="Rotate right"]').click();
   await page.waitForTimeout(400);
   check(
     'rotirana stranica je označena kao izmijenjena',
@@ -279,7 +279,7 @@ try {
   );
 
   await pdf.locator('.ul-pdf-thumb').nth(1).hover();
-  await pdf.locator('.ul-pdf-thumb').nth(1).locator('button[title*="Obriši"]').click();
+  await pdf.locator('.ul-pdf-thumb').nth(1).locator('button[title*="Delete page"]').click();
   await page.waitForTimeout(500);
   check('brisanje ostavlja dvije stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 2);
   check(
@@ -289,7 +289,7 @@ try {
   );
   check(
     'izmjene stranica su opisane',
-    (await pdf.locator('.ul-pdf-count').innerText()).includes('obrisan'),
+    (await pdf.locator('.ul-pdf-count').innerText()).includes('deleted'),
     await pdf.locator('.ul-pdf-count').innerText(),
   );
 

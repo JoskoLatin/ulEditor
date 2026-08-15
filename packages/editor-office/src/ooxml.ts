@@ -10,6 +10,7 @@
  */
 
 import { unzipSync, strFromU8 } from 'fflate';
+import { t } from '@uleditor/i18n';
 
 export type Archive = Record<string, Uint8Array>;
 
@@ -19,7 +20,7 @@ export function openArchive(bytes: Uint8Array): Archive {
   } catch {
     // Poruka iz fflate ("invalid zip data") korisniku ne znači ništa.
     throw new Error(
-      'Datoteka nije ispravna Office arhiva — vjerojatno je oštećena ili nepotpuno preuzeta.',
+      t('This is not a valid Office archive — it is probably damaged or incompletely downloaded.'),
     );
   }
 }

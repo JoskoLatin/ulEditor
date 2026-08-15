@@ -17,6 +17,8 @@ import {
   type ReadingSession,
 } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import type { Shell } from '../host/index.js';
 import { activeInstance, activeTab, useWorkspace } from '../state/workspace.js';
 
@@ -73,7 +75,7 @@ export function enterReading(shell: Shell): void {
   if (!instance?.beginReading || !tab) {
     shell.notify.show(
       'info',
-      'Način čitanja je dostupan za e-knjige, PDF i Markdown. Ovaj format ga još ne podržava.',
+      t('Reading mode works for e-books, PDF, Word and Markdown. This format does not support it yet.'),
     );
     return;
   }

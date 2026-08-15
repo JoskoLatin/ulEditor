@@ -201,7 +201,10 @@ Stanje na dan 15. 8. 2026.
 | `editor-pdf`: render, tekstualni sloj, anotacije, stranice (rotate / delete / reorder / merge / split) | **gotovo** |
 | **Read-only pregled DOCX i XLSX** | **gotovo** |
 | **EPUB čitač + način čitanja** (nije bio u izvornom planu) | **gotovo** |
-| Split view | odgođeno — dvije kartice jedna uz drugu, bez novih ugovora |
+| **OCR nad slikom + ploča ispod** (nije bio u izvornom planu) | **gotovo** |
+| **Izvoz teksta u txt / md / docx / pdf** (nije bio u izvornom planu) | **gotovo** |
+| **Engleski kao zadani jezik sučelja, hrvatski u postavkama** | **gotovo** |
+| Split view | **djelomično** — vodoravna ploča ispod drži jedan dokument; dvije pune grupe kartica ostaju otvorene |
 | `editor-code`: tree-sitter, LSP klijent | odgođeno u fazu 1.1 |
 | `editor-markdown`: mermaid | odgođeno u fazu 1.1 |
 | Globalni search preko `tantivy` | odgođeno u fazu 1.1 |
@@ -213,6 +216,12 @@ najbolje brani cijelu tezu projekta: `EditorInstance.beginReading()` znači da
 jedna čitaonica u shellu opslužuje EPUB, PDF, Markdown i Word, a svaki od njih
 sam definira što je kod njega "stranica" i "poglavlje". Isto što je pretraga
 dokazala za `find()`.
+
+**OCR je dokazao treći seam.** Preglednik slika ne zna ništa o ploči ispod —
+objavi rezultat naredbom `scratch.openText`. Isti put kasnije koristi svaka
+konverzija koja proizvede nešto što još nije datoteka na disku. Uz to je ušao
+neobavezni `EditorInstance.plainText()`, koji je ionako trebao za indeksiranje
+u fazi 1.1.
 
 **Zašto su LSP i tantivy odgođeni:** oboje su velika, zasebna infrastruktura
 (vanjski procesi, indeks na disku, invalidacija) koja ne mijenja tezu projekta.

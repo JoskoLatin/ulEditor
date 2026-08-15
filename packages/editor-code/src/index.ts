@@ -43,6 +43,7 @@ import {
   type SaveResult,
   type SaveTarget,
 } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { loadLanguage } from './languages.js';
 import { ulTheme } from './theme.js';
@@ -150,8 +151,8 @@ class CodeEditor implements EditorInstance {
     const line = state.doc.lineAt(head);
     const column = head - line.from + 1;
     const selected = state.selection.ranges.reduce((sum, r) => sum + (r.to - r.from), 0);
-    const suffix = selected > 0 ? `  ·  ${selected} znak.` : '';
-    this.#statusEmitter.fire(`Red ${line.number}, stup ${column}${suffix}`);
+    const suffix = selected > 0 ? `  ·  ${t('{n} selected', { n: selected })}` : '';
+    this.#statusEmitter.fire(`${t('Line {line}, column {column}', { line: line.number, column })}${suffix}`);
   }
 
   isDirty(): boolean {
@@ -201,7 +202,7 @@ class CodeEditor implements EditorInstance {
       const to = index + query.query.length;
       const line = view.state.doc.lineAt(index);
       results.push({
-        label: `Red ${line.number}`,
+        label: t('Line {n}', { n: line.number }),
         preview: line.text.trim().slice(0, 120),
         reveal: () => {
           view.dispatch({
@@ -238,6 +239,10 @@ class CodeEditor implements EditorInstance {
       selection: { anchor: from + text.length },
     });
     return true;
+  }
+
+  async plainText(): Promise<string> {
+    return this.#text();
   }
 
   focus(): void {

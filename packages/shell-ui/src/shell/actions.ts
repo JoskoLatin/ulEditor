@@ -7,6 +7,7 @@
  */
 
 import { hasCapability, type DocumentHandle, type Uri } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
@@ -80,7 +81,7 @@ export async function openUri(
     // Obnova sesije otvara datoteke koje korisnik nije upravo tražio; ako
     // koja više ne postoji, to nije greška vrijedna prekidanja pokretanja.
     if (opts?.quiet) return;
-    shell.notify.show('error', `Otvaranje nije uspjelo: ${describe(err)}`);
+    shell.notify.show('error', t('Could not open the document: {reason}', { reason: describe(err) }));
   }
 }
 
@@ -90,7 +91,7 @@ export async function openFiles(shell: Shell): Promise<void> {
     for (const doc of docs) await openDocument(shell, doc);
   } catch (err) {
     if (isAbort(err)) return;
-    shell.notify.show('error', `Otvaranje datoteka nije uspjelo: ${describe(err)}`);
+    shell.notify.show('error', t('Could not open the files: {reason}', { reason: describe(err) }));
   }
 }
 
@@ -100,7 +101,7 @@ export async function openFolder(shell: Shell): Promise<void> {
     if (root) await addRoot(shell, root);
   } catch (err) {
     if (isAbort(err)) return;
-    shell.notify.show('error', `Otvaranje mape nije uspjelo: ${describe(err)}`);
+    shell.notify.show('error', t('Could not open the folder: {reason}', { reason: describe(err) }));
   }
 }
 
@@ -145,7 +146,10 @@ export async function adoptDropped(
       }
     }
   } catch (err) {
-    shell.notify.show('error', `Otvaranje ispuštenog sadržaja nije uspjelo: ${describe(err)}`);
+    shell.notify.show(
+      'error',
+      t('Could not open what was dropped: {reason}', { reason: describe(err) }),
+    );
   }
 }
 
@@ -183,7 +187,7 @@ export async function toggleDirectory(shell: Shell, node: TreeNode): Promise<voi
       children: entries.map((entry) => toNode(entry, node.depth + 1)),
     });
   } catch (err) {
-    shell.notify.show('error', `Čitanje mape nije uspjelo: ${describe(err)}`);
+    shell.notify.show('error', t('Could not read the folder: {reason}', { reason: describe(err) }));
   }
 }
 
@@ -210,11 +214,15 @@ export async function closeTab(shell: Shell, id: string): Promise<void> {
 
 function confirmDiscard(shell: Shell, tab: TabState): Promise<'save' | 'discard' | 'cancel'> {
   return new Promise((resolve) => {
-    const handle = shell.notify.show('warning', `${tab.name} ima nespremljene promjene.`, [
-      { label: 'Odustani', run: () => (handle.dispose(), resolve('cancel')) },
-      { label: 'Odbaci', run: () => (handle.dispose(), resolve('discard')) },
-      { label: 'Spremi', run: () => (handle.dispose(), resolve('save')) },
-    ]);
+    const handle = shell.notify.show(
+      'warning',
+      t('{name} has unsaved changes.', { name: tab.name }),
+      [
+        { label: t('Cancel'), run: () => (handle.dispose(), resolve('cancel')) },
+        { label: t('Discard'), run: () => (handle.dispose(), resolve('discard')) },
+        { label: t('Save'), run: () => (handle.dispose(), resolve('save')) },
+      ],
+    );
   });
 }
 
@@ -227,7 +235,7 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
   if (!tab || !instance) return false;
 
   if (tab.readonly) {
-    shell.notify.show('warning', `${tab.name} je otvorena samo za čitanje.`);
+    shell.notify.show('warning', t('{name} is open read-only.', { name: tab.name }));
     return false;
   }
 
@@ -241,10 +249,10 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
       if (answer === 'cancel') return false;
     }
 
-    shell.notify.show('info', `Spremljeno: ${tab.name}`);
+    shell.notify.show('info', t('Saved: {name}', { name: tab.name }));
     return true;
   } catch (err) {
-    shell.notify.show('error', `Spremanje nije uspjelo: ${describe(err)}`);
+    shell.notify.show('error', t('Save failed: {reason}', { reason: describe(err) }));
     return false;
   }
 }

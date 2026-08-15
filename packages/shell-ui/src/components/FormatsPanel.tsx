@@ -1,6 +1,9 @@
 import { FORMATS, type FormatId } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
+import { formatLabel } from '../shell/formats.js';
 import { FormatIcon } from './Icons.js';
 
 /**
@@ -17,16 +20,16 @@ interface Row {
 }
 
 const ROADMAP: Row[] = [
-  { format: 'code', note: 'CodeMirror 6, 13 jezika', phase: '' },
-  { format: 'text', note: 'običan tekst', phase: '' },
-  { format: 'markdown', note: 'izvor + živi pregled', phase: '' },
-  { format: 'pdf', note: 'pregled, anotacije, stranice', phase: '' },
-  { format: 'epub', note: 'čitanje, sadržaj, pretraga', phase: '' },
-  { format: 'image', note: 'pregled', phase: 'faza 1' },
-  { format: 'docx', note: 'pregled (uređivanje: faza 2)', phase: 'faza 2' },
-  { format: 'xlsx', note: 'pregled (uređivanje: faza 2)', phase: 'faza 2' },
-  { format: 'odf', note: 'LibreOffice konverzija', phase: 'faza 2' },
-  { format: 'pptx', note: 'Univer Slides', phase: 'faza 5' },
+  { format: 'code', note: 'CodeMirror 6, 13 languages', phase: '' },
+  { format: 'text', note: 'plain text', phase: '' },
+  { format: 'markdown', note: 'source + live preview', phase: '' },
+  { format: 'pdf', note: 'view, annotate, pages', phase: '' },
+  { format: 'epub', note: 'reading, contents, search', phase: '' },
+  { format: 'image', note: 'view, OCR', phase: 'phase 1' },
+  { format: 'docx', note: 'preview (editing: phase 2)', phase: 'phase 2' },
+  { format: 'xlsx', note: 'preview (editing: phase 2)', phase: 'phase 2' },
+  { format: 'odf', note: 'LibreOffice conversion', phase: 'phase 2' },
+  { format: 'pptx', note: 'Univer Slides', phase: 'phase 5' },
 ];
 
 export function FormatsPanel() {
@@ -52,7 +55,7 @@ export function FormatsPanel() {
             fontWeight: 500,
           }}
         >
-          Formati
+          {t('Formats')}
         </h3>
 
         {ROADMAP.map((row) => {
@@ -61,8 +64,8 @@ export function FormatsPanel() {
           return (
             <div key={row.format} className="fmt-line" data-planned={!live}>
               <FormatIcon family={descriptor.family} size={15} />
-              <span>{descriptor.label}</span>
-              <span className="tag">{live ? row.note : row.phase}</span>
+              <span>{formatLabel(descriptor.id)}</span>
+              <span className="tag">{t(live ? row.note : row.phase)}</span>
             </div>
           );
         })}
@@ -80,7 +83,7 @@ export function FormatsPanel() {
             fontWeight: 500,
           }}
         >
-          Učitani editori
+          {t('Registered editors')}
         </h3>
         {providers.map((provider) => (
           <div key={provider.id} className="fmt-line">

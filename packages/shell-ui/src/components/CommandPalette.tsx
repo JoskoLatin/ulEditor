@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Command } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import { useWorkspace } from '../state/workspace.js';
 import { IconSearch } from './Icons.js';
 
-/** Podniz-podudaranje s razmacima: "otvm" pronalazi "Otvori mapu". */
+/** Podniz-podudaranje s razmacima: "opfo" pronalazi "Open folder". */
 function fuzzy(text: string, query: string): number[] | null {
   if (!query) return [];
   const lower = text.toLowerCase();
@@ -129,21 +131,21 @@ export function CommandPalette() {
         if (e.target === e.currentTarget) setOpen(false);
       }}
     >
-      <div className="palette" role="dialog" aria-label="Paleta naredbi" onKeyDown={onKeyDown}>
+      <div className="palette" role="dialog" aria-label={t('Command palette')} onKeyDown={onKeyDown}>
         <div className="palette-input">
           <IconSearch size={15} />
           <input
             ref={inputRef}
             value={query}
-            placeholder="Upiši naredbu…"
-            aria-label="Pretraži naredbe"
+            placeholder={t('Type a command…')}
+            aria-label={t('Search commands')}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
 
         <div className="palette-list" ref={listRef}>
           {matches.length === 0 ? (
-            <div className="palette-empty">Nema naredbe koja odgovara.</div>
+            <div className="palette-empty">{t('No matching command.')}</div>
           ) : (
             matches.map(({ command, positions }, index) => {
               const label = command.category ? `${command.category}: ${command.title}` : command.title;

@@ -85,6 +85,15 @@ export interface EditorInstance {
   focus(): void;
 
   /**
+   * Cijeli dokument kao čist tekst.
+   *
+   * Postoji odvojeno od `copySelection` jer se traži bez selekcije: izvoz u
+   * drugi format i, kasnije, indeksiranje za pretragu preko projekta. Editori
+   * kojima dokument nije tekst (PDF, slika) ovo ne implementiraju.
+   */
+  plainText?(): Promise<string | null>;
+
+  /**
    * Ulazak u način čitanja. Editori bez sposobnosti `read` ovo ne
    * implementiraju, pa shell naredbu uopće ne nudi.
    */

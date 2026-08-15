@@ -1,22 +1,20 @@
 {
-  "name": "@uleditor/editor-image",
+  "name": "@uleditor/text-export",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./style.css": "./src/style.css"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@uleditor/i18n": "workspace:*",
-    "@uleditor/plugin-sdk": "workspace:*",
-    "tesseract.js": "^7.0.0"
+    "fflate": "^0.8.2",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

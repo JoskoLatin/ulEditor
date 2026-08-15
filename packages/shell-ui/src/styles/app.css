@@ -1302,3 +1302,186 @@ button.status-item:hover {
   border-color: var(--rule);
   background: none;
 }
+
+/* ── postavke ────────────────────────────────────────────────────────── */
+
+.prefs {
+  width: min(520px, 92vw);
+  margin-top: 12vh;
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--overlay);
+  box-shadow: var(--shadow-lg);
+  animation: rise 160ms var(--ease);
+  overflow: hidden;
+}
+
+.prefs header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 12px 18px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.prefs h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.prefs section {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.prefs section:last-child {
+  border-bottom: 0;
+}
+
+.prefs h3 {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.prefs-note {
+  margin: 0 0 10px;
+  font-size: var(--fs-sm);
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
+.prefs-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.prefs-seg button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.prefs-seg button:hover {
+  color: var(--ink);
+}
+
+.prefs-seg button[data-active="true"] {
+  background: var(--accent);
+  color: var(--ink-inverse);
+}
+
+/* ── split ispod ─────────────────────────────────────────────────────── */
+
+.split-resizer {
+  height: 4px;
+  margin-top: -2px;
+  margin-bottom: -2px;
+  flex: none;
+  cursor: row-resize;
+  position: relative;
+  z-index: 5;
+  background: transparent;
+  transition: background var(--dur) var(--ease);
+}
+
+.split-resizer:hover,
+.split-resizer[data-dragging="true"] {
+  background: var(--accent);
+}
+
+.split {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.split-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--tab-h);
+  flex: none;
+  padding: 0 8px 0 12px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.split-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.split-format {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.split-format select {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.split-format select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.split-mount {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.split-status {
+  flex: none;
+  height: var(--statusbar-h);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}

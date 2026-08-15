@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { setLocale } from '@uleditor/i18n';
 
 import './styles/app.css';
 import '@uleditor/reader-core/style.css';
@@ -15,6 +16,14 @@ import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
 
 const shell = createShell();
+
+/*
+ * Jezik se postavlja prije prvog rendera i prije registracije naredbi — nazivi
+ * naredbi se prevode jednom, pri registraciji. Promjena jezika u postavkama
+ * ponovno učita prozor umjesto da pokušava zamijeniti nizove u živom DOM-u
+ * koji su imperativni editori sami izgradili.
+ */
+setLocale(shell.locale);
 
 /*
  * Registracija editora — jedino mjesto u shellu koje uopće spominje pojedine
@@ -35,7 +44,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.code',
-      displayName: 'Editor koda',
+      displayName: 'Code editor',
       matches: { extensions: [...CODE_EXTENSIONS, 'code', 'text'] },
       capabilities: ['view', 'edit', 'search'],
       priority: 20,
@@ -61,7 +70,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.image',
-      displayName: 'Preglednik slika',
+      displayName: 'Image viewer',
       matches: {
         extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
       },
@@ -76,7 +85,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.book',
-      displayName: 'Čitač e-knjiga',
+      displayName: 'E-book reader',
       matches: {
         extensions: ['epub'],
         mimeTypes: ['application/epub+zip'],
@@ -92,7 +101,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.docx',
-      displayName: 'Word pregled',
+      displayName: 'Word preview',
       matches: {
         extensions: ['docx'],
         mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
@@ -108,7 +117,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.xlsx',
-      displayName: 'Excel pregled',
+      displayName: 'Excel preview',
       matches: {
         extensions: ['xlsx'],
         mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
@@ -124,7 +133,7 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.pdf',
-      displayName: 'PDF preglednik',
+      displayName: 'PDF viewer',
       matches: {
         extensions: ['pdf'],
         mimeTypes: ['application/pdf'],

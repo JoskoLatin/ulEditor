@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { t } from '@uleditor/i18n';
+
 import type { Shell } from './host/index.js';
 import { ShellContext } from './shell/context.js';
 import { registerCommands } from './shell/commands.js';
@@ -13,7 +15,9 @@ import { ActivityBar } from './components/ActivityBar.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { EditorSurface } from './components/EditorSurface.js';
 import { FindPanel } from './components/FindPanel.js';
+import { Preferences } from './components/Preferences.js';
 import { ReaderBar } from './components/ReaderBar.js';
+import { SplitPane } from './components/SplitPane.js';
 import { Sidebar, SidebarResizer } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { TabBar } from './components/TabBar.js';
@@ -135,6 +139,8 @@ export function App({ shell }: { shell: Shell }) {
             <TabBar />
             <FindPanel />
             <EditorSurface />
+            {/* Ploča ispod: vlastiti izlaz programa, ne druga grupa kartica. */}
+            <SplitPane />
           </main>
         </div>
 
@@ -142,6 +148,7 @@ export function App({ shell }: { shell: Shell }) {
       </div>
 
       <CommandPalette />
+      <Preferences />
       <Toasts />
 
       {dropActive && (
@@ -160,7 +167,7 @@ export function App({ shell }: { shell: Shell }) {
             color: 'var(--accent-ink)',
           }}
         >
-          Ispusti datoteke za otvaranje
+          {t('Drop files to open them')}
         </div>
       )}
     </ShellContext.Provider>

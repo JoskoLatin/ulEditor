@@ -21,6 +21,7 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.35.0",
     "@uleditor/editor-code": "workspace:*",
+    "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
     "@uleditor/reader-core": "workspace:*",
     "dompurify": "^3.2.3",

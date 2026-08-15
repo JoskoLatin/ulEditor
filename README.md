@@ -2,7 +2,7 @@
 
 > Jedan open-source editor za sve formate — kod, Markdown, PDF, Word, Excel — na jednom mjestu.
 
-**Status:** faza 0 završena, faza 1 na okupu. Desktop se pokreće, sedam editora radi, e-knjige i Office dokumenti se čitaju.
+**Status:** faza 0 završena, faza 1 na okupu. Desktop se pokreće, sedam editora radi, e-knjige i Office dokumenti se čitaju. Sučelje je na engleskom, hrvatski se bira u postavkama.
 
 ## Teza
 
@@ -20,7 +20,7 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
 | **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
 | **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
-| Slike | **radi** — pregled, zoom, prozirnost | *(uređivanje → image-rs, faza 1)* |
+| Slike | **radi** — pregled, zoom, prozirnost, **OCR** | Tesseract (wasm) *(uređivanje → image-rs, faza 1)* |
 | ODF, konverzije | faza 2 | LibreOffice headless |
 | PPTX | faza 5 | Univer Slides |
 
@@ -49,6 +49,33 @@ Sve to ide kroz `EditorInstance.beginReading()` u plugin ugovoru: editor kaže �
 
 Otvorene kartice i korijeni stabla se pamte i vraćaju pri sljedećem pokretanju (desktop).
 
+## Prepoznavanje teksta sa slike (OCR)
+
+Gumb **OCR** u pregledniku slika pročita tekst i otvori ga u **ploči ispod** —
+vodoravnom splitu koji ostaje uz sliku, pa se prepoznato može odmah usporediti
+s originalom.
+
+Ploča nije obična kartica: taj tekst nema datoteku na disku, pa u njezinoj traci
+stoji **izbor formata u koji se sprema** — `.txt`, `.md`, `.docx` ili `.pdf`.
+DOCX i PDF se sastavljaju u programu, bez vanjskog alata. PDF koristi ugrađeni
+font bez hrvatskih dijakritika, pa se to prijavljuje **prije** spremanja, po
+istom pravilu po kojem se prijavljuje svaki drugi gubitak.
+
+Jezik prepoznavanja (hrvatski / engleski) bira se uz gumb, jer ista slika zna
+imati oba. Jezični model se preuzima pri prvoj upotrebi i ostaje u predmemoriji
+— prvi put treba mreža, poslije radi bez nje.
+
+## Jezik sučelja
+
+Zadano je **engleski**, hrvatski se bira u postavkama (`Ctrl+,`). Promjena
+ponovno učita prozor: PDF, knjiga i Office pregled grade DOM izravno, pa bi
+zamjena nizova u letu tražila demontažu svakog otvorenog dokumenta — a sesija
+se ionako vraća pri pokretanju.
+
+Prijevodi su ključevani **engleskim izvornim tekstom**, ne apstraktnim
+oznakama. Neprevedeni niz zato pada natrag na čitljiv engleski umjesto na
+`shell.tab.close.tooltip`.
+
 ## Brzi start
 
 ```bash
@@ -57,11 +84,16 @@ pnpm install
 pnpm dev          # web verzija na http://localhost:5273
 pnpm desktop      # Tauri desktop aplikacija
 
-pnpm verify       # runtime provjera shella (traži pokrenut pnpm dev)
+pnpm verify           # runtime provjera shella (traži pokrenut pnpm dev)
 pnpm verify:reading   # čitaonica, EPUB, Word i Excel pregled
+pnpm verify:ocr       # OCR, ploča ispod, promjena jezika sučelja
+pnpm verify:export    # izvoz teksta u txt / md / docx / pdf
 pnpm verify:pdf       # anotacije i operacije nad stranicama (bez preglednika)
-pnpm verify:all       # sve gore
+pnpm verify:all       # sve gore — 180 provjera
 ```
+
+`verify:ocr` pri prvom pokretanju preuzima jezični model; bez mreže se
+prijavljuje kao preskočen, ne kao prolaz.
 
 Preduvjeti: Node 20+, pnpm 11+, Rust stable, a na Windowsu Visual Studio Build Tools i WebView2.
 
@@ -70,7 +102,7 @@ Preduvjeti: Node 20+, pnpm 11+, Rust stable, a na Windowsu Visual Studio Build T
 ```
 shell-ui (React)  →  plugin-sdk  →  editori (code · markdown · book · office · pdf · image)
                           ↓            ↑
-                          ↓        reader-core (listanje dugog teksta)
+                          ↓        reader-core · i18n · text-export
                           ↓
                        ul-ffi
                           ↓
@@ -94,6 +126,8 @@ Dodavanje formata znači napisati provider i registrirati ga u [main.tsx](packag
 | [crates/ul-core/](crates/ul-core/) | VFS sa sandboxom |
 | [apps/desktop/](apps/desktop/) | Tauri v2 ljuska |
 | [packages/reader-core/](packages/reader-core/) | Zajednički motor listanja i čitaonička tipografija |
+| [packages/i18n/](packages/i18n/) | Prijevodi sučelja; ključ je engleski izvornik |
+| [packages/text-export/](packages/text-export/) | Tekst → txt / md / docx / pdf, bez vanjskog alata |
 | [tools/verify-ui.mjs](tools/verify-ui.mjs) | Runtime provjera shella kroz Chromium |
 | [tools/verify-reading.mjs](tools/verify-reading.mjs) | Runtime provjera čitaonice i Office pregleda |
 

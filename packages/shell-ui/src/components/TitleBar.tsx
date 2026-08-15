@@ -1,7 +1,9 @@
 import { FORMATS } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { openFiles, openFolder, saveActive } from '../shell/actions.js';
+import { formatLabel } from '../shell/formats.js';
 import { useWorkspace } from '../state/workspace.js';
 import { IconCommand, IconFolderOpen, IconSave } from './Icons.js';
 
@@ -21,21 +23,29 @@ export function TitleBar() {
           <span>ul</span>
           <b>Editor</b>
         </div>
-        <button className="chrome-btn" onClick={() => void openFolder(shell)} title="Otvori mapu (Ctrl+K)">
+        <button
+          className="chrome-btn"
+          onClick={() => void openFolder(shell)}
+          title={t('Open folder (Ctrl+K)')}
+        >
           <IconFolderOpen size={14} />
-          Mapa
+          {t('Folder')}
         </button>
-        <button className="chrome-btn" onClick={() => void openFiles(shell)} title="Otvori datoteke (Ctrl+O)">
-          Datoteke
+        <button
+          className="chrome-btn"
+          onClick={() => void openFiles(shell)}
+          title={t('Open files (Ctrl+O)')}
+        >
+          {t('Files')}
         </button>
         <button
           className="chrome-btn"
           onClick={() => void saveActive(shell)}
           disabled={!active || active.readonly}
-          title="Spremi (Ctrl+S)"
+          title={t('Save (Ctrl+S)')}
         >
           <IconSave size={14} />
-          Spremi
+          {t('Save')}
         </button>
       </div>
 
@@ -43,11 +53,11 @@ export function TitleBar() {
         {active ? (
           <>
             <b>{active.name}</b>
-            {format ? ` — ${format.label}` : null}
+            {format ? ` — ${formatLabel(format.id)}` : null}
             {active.dirty ? ' •' : ''}
           </>
         ) : (
-          'Nema otvorenih dokumenata'
+          t('No documents open')
         )}
       </div>
 
@@ -55,7 +65,7 @@ export function TitleBar() {
         <button
           className="chrome-btn"
           onClick={() => setPaletteOpen(true)}
-          title="Paleta naredbi (Ctrl+Shift+P)"
+          title={t('Command palette (Ctrl+Shift+P)')}
         >
           <IconCommand size={13} />
           <kbd>Ctrl ⇧ P</kbd>

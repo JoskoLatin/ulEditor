@@ -18,6 +18,7 @@ import type {
   VirtualFileSystem,
   WriteOptions,
 } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { detect, detectByName } from './detect.js';
 
@@ -85,7 +86,7 @@ function acceptFor(extensions?: string[]) {
     const mime = MIME_BY_EXT[clean] ?? 'application/octet-stream';
     (accept[mime] ??= []).push(`.${clean}`);
   }
-  return [{ description: 'Podržane datoteke', accept }];
+  return [{ description: t('Supported files'), accept }];
 }
 
 /** Direktoriji koji nikad ne zaslužuju mjesto u stablu. */
@@ -242,7 +243,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     if (!handle.queryPermission || !handle.requestPermission) return;
     if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return;
     if ((await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
-      throw new Error('Preglednik nije dao dozvolu za pisanje u ovu datoteku.');
+      throw new Error(t('The browser did not grant permission to write this file.'));
     }
   }
 
@@ -262,7 +263,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
   /* — dijalozi — */
 
   async pickFiles(opts?: { multiple?: boolean; extensions?: string[] }): Promise<DocumentHandle[]> {
-    if (!picker.showOpenFilePicker) throw new Error('Preglednik ne podržava otvaranje datoteka.');
+    if (!picker.showOpenFilePicker) throw new Error(t('This browser cannot open files.'));
 
     const types = acceptFor(opts?.extensions);
     const handles = await picker.showOpenFilePicker(
@@ -279,7 +280,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
   }
 
   async pickDirectory(): Promise<DirectoryEntry | null> {
-    if (!picker.showDirectoryPicker) throw new Error('Preglednik ne podržava otvaranje mape.');
+    if (!picker.showDirectoryPicker) throw new Error(t('This browser cannot open folders.'));
     const handle = await picker.showDirectoryPicker({ mode: 'readwrite' });
     const uri = `ul:/${handle.name}`;
     this.#register(uri, handle, null);
@@ -316,7 +317,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
         name: file.name,
         getFile: async () => file,
         createWritable: async () => {
-          throw new Error('Datoteka je otvorena samo za čitanje.');
+          throw new Error(t('The file is open read-only.'));
         },
       };
       this.#register(uri, handle, null);

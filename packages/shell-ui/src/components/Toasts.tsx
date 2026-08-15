@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import type { ToastRecord } from '../host/index.js';
 
@@ -46,7 +48,7 @@ export function Toasts() {
           {toast.actions.length === 0 && !toast.sticky && (
             <div className="toast-actions">
               <button className="toast-btn" onClick={() => shell.notify.dismiss(toast.id)}>
-                U redu
+                {t('OK')}
               </button>
             </div>
           )}

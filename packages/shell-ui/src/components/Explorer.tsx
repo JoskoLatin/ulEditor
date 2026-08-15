@@ -1,6 +1,8 @@
 import { Fragment } from 'react';
 import { FORMATS } from '@uleditor/plugin-sdk';
 
+import { t } from '@uleditor/i18n';
+
 import { useShell } from '../shell/context.js';
 import { openFolder, openUri, toggleDirectory } from '../shell/actions.js';
 import { useWorkspace, type TreeNode } from '../state/workspace.js';
@@ -12,7 +14,7 @@ export function Explorer() {
   if (tree.length === 0) return <EmptyState />;
 
   return (
-    <div role="tree" aria-label="Datoteke">
+    <div role="tree" aria-label={t('Files')}>
       {tree.map((node) => (
         <Branch key={node.uri} node={node} />
       ))}
@@ -26,15 +28,16 @@ function EmptyState() {
   return (
     <div className="empty-note">
       <p style={{ margin: 0 }}>
-        Nema otvorene mape. Otvori mapu da dobiješ stablo datoteka, ili povuci datoteke izravno u prozor.
+        {t('No folder open. Open one to get a file tree, or drop files straight into the window.')}
       </p>
       <button className="ghost-btn" onClick={() => void openFolder(shell)}>
-        <IconFolderOpen size={13} /> Otvori mapu
+        <IconFolderOpen size={13} /> {t('Open folder')}
       </button>
       {!shell.canPersist && (
         <p style={{ margin: 0, color: 'var(--warn)' }}>
-          Ovaj preglednik nema File System Access API — datoteke se mogu čitati, ali ne i spremati.
-          Na desktopu (Tauri) to ograničenje ne postoji.
+          {t(
+            'This browser has no File System Access API — files can be read but not saved. The desktop build has no such limit.',
+          )}
         </p>
       )}
     </div>

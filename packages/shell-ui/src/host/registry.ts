@@ -7,14 +7,15 @@
  */
 
 import type { DocumentHandle, EditorProvider, FormatId } from '@uleditor/plugin-sdk';
+import { t } from '@uleditor/i18n';
 
 import { extensionOf } from './detect.js';
 
 /** Formati koje ćemo podržavati, ali još nemaju providera. */
 const PLANNED: Partial<Record<FormatId, string>> = {
-  pptx: 'PowerPoint stiže u fazi 5.',
-  odf: 'OpenDocument stiže u fazi 2, uz LibreOffice konverziju.',
-  archive: 'Pregled arhiva nije u planu — ulEditor otvara dokumente, ne pakira ih.',
+  pptx: 'PowerPoint arrives in phase 5.',
+  odf: 'OpenDocument arrives in phase 2, via LibreOffice conversion.',
+  archive: 'Browsing archives is not planned — ulEditor opens documents, it does not pack them.',
 };
 
 export class EditorRegistry {
@@ -46,8 +47,10 @@ export class EditorRegistry {
   /** Objašnjenje zašto format nije podržan — bolje od praznog ekrana. */
   explainMissing(doc: DocumentHandle): string {
     const planned = PLANNED[doc.detection.format];
-    if (planned) return planned;
-    return `Za format "${doc.detection.format}" još nema registriranog editora.`;
+    if (planned) return t(planned);
+    return t('No editor is registered for the "{format}" format yet.', {
+      format: doc.detection.format,
+    });
   }
 
   #matches(provider: EditorProvider, doc: DocumentHandle, ext: string): boolean {

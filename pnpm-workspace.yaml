@@ -5,3 +5,5 @@ packages:
 # njega ne radi. Ostale skripte ostaju blokirane.
 allowBuilds:
   esbuild: true
+  # Skripta dohvaća wasm jezgru u vlastiti `dist`. Bez nje OCR nema što učitati.
+  tesseract.js: true

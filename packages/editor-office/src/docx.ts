@@ -24,6 +24,7 @@ import {
   type Archive,
   type Relationships,
 } from './ooxml.js';
+import { t } from '@uleditor/i18n';
 
 export interface PreviewOutline {
   id: string;
@@ -100,10 +101,10 @@ function buildRun(run: Element, ctx: Context): Node[] {
       }
       case 'footnoteReference':
       case 'endnoteReference':
-        ctx.notes.add('Fusnote i bilješke na kraju nisu prikazane.');
+        ctx.notes.add('Footnotes and endnotes are not shown.');
         break;
       case 'object':
-        ctx.notes.add('Ugrađeni objekti (npr. jednadžbe, OLE) nisu prikazani.');
+        ctx.notes.add('Embedded objects (equations, OLE) are not shown.');
         break;
       default:
         break;
@@ -154,13 +155,13 @@ function buildImage(node: Element, ctx: Context): HTMLElement | null {
   const target = id ? ctx.rels.get(id) : undefined;
 
   if (!target || target.external) {
-    ctx.notes.add('Slike izvan dokumenta nisu učitane.');
+    ctx.notes.add('Images linked from outside the document are not loaded.');
     return null;
   }
 
   const url = imageUrl(ctx.archive, target.target);
   if (!url) {
-    ctx.notes.add('Neke slike su u formatu koji preglednik ne prikazuje (EMF/WMF).');
+    ctx.notes.add('Some images use a format the browser cannot render (EMF/WMF).');
     return null;
   }
   ctx.urls.push(url);
@@ -203,7 +204,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
         for (const run of children(node, 'r')) out.push(...buildRun(run, ctx));
         break;
       case 'del':
-        ctx.notes.add('Praćene promjene su prikazane kao prihvaćene; obrisani tekst nije vidljiv.');
+        ctx.notes.add('Tracked changes are shown as accepted; deleted text is not visible.');
         break;
       case 'fldSimple':
       case 'sdt':
@@ -276,7 +277,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
   const doc = readXml(archive, 'word/document.xml');
   if (!doc) {
     throw new Error(
-      'Datoteka nema `word/document.xml`. Stariji `.doc` (binarni Word 97) nije podržan — spremi ga kao .docx.',
+      t('The file has no `word/document.xml`. The older binary `.doc` is not supported — save it as .docx.'),
     );
   }
 
@@ -380,9 +381,9 @@ export function renderDocx(bytes: Uint8Array): Preview {
 
   /* Dijelovi dokumenta koje pregled ne pokazuje. */
   if (Object.keys(archive).some((name) => /^word\/(header|footer)\d*\.xml$/.test(name))) {
-    ctx.notes.add('Zaglavlja i podnožja stranica nisu prikazana.');
+    ctx.notes.add('Page headers and footers are not shown.');
   }
-  if (archive['word/comments.xml']) ctx.notes.add('Komentari nisu prikazani.');
+  if (archive['word/comments.xml']) ctx.notes.add('Comments are not shown.');
 
   const core = readXml(archive, 'docProps/core.xml');
   const title = (core ? tag(core, 'title')?.textContent : '')?.trim() ?? '';
