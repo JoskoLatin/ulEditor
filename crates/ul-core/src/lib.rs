@@ -6,9 +6,11 @@
 
 #![deny(clippy::all)]
 
+pub mod library;
 pub mod search;
 pub mod vfs;
 
+pub use library::{default_roots, LibraryEntry, LibraryScan};
 pub use search::{DocumentCandidate, SearchHit, SearchOutcome, SearchQuery};
 pub use ul_formats::{detect, detect_by_name, Detection, FormatId, PROBE_LEN};
 pub use vfs::{DirEntry, Stat, VfsError, Workspace};

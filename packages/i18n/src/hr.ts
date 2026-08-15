@@ -362,4 +362,21 @@ export const hr: Catalog = {
   'Nothing to save.': 'Nema se što spremiti.',
   'Split below': 'Split ispod',
   'Resize split': 'Promijeni visinu splita',
+
+  /* ── knjižnica ─────────────────────────────────────────────────────── */
+  Library: 'Knjižnica',
+  'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',
+  'Filter by name': 'Filtriraj po imenu',
+  'Close panel': 'Zatvori ploču',
+  'Scan again': 'Pregledaj ponovno',
+  All: 'Sve',
+  'Looking for documents…': 'Tražim dokumente…',
+  'No documents found on this device.': 'Na ovom uređaju nema dokumenata.',
+  'Nothing matches.': 'Ništa ne odgovara.',
+  'Showing the newest results only.': 'Prikazani su samo najnoviji rezultati.',
+  'Documents are hidden': 'Dokumenti su skriveni',
+  'Android hides files from apps that do not have all-files access. The folders are visible, the documents are not.':
+    'Android skriva datoteke od programa koji nemaju pristup svim datotekama. Mape se vide, dokumenti ne.',
+  'Settings → Apps → ulEditor → Permissions → All files access':
+    'Postavke → Aplikacije → ulEditor → Dozvole → Pristup svim datotekama',
 };

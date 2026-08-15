@@ -34,6 +34,15 @@ export const IconFiles = (p: IconProps) => (
   </Svg>
 );
 
+export const IconRefresh = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M13.5 6.5A5.5 5.5 0 0 0 3.4 4.4" />
+    <path d="M2.5 9.5a5.5 5.5 0 0 0 10.1 2.1" />
+    <path d="M3.25 1.75v2.75H6" />
+    <path d="M12.75 14.25V11.5H10" />
+  </Svg>
+);
+
 export const IconLayers = (p: IconProps) => (
   <Svg {...p}>
     <path d="M8 1.75 1.75 5 8 8.25 14.25 5 8 1.75Z" />

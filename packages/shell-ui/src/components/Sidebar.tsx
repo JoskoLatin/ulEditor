@@ -7,11 +7,19 @@ import { openFolder } from '../shell/actions.js';
 import { useWorkspace } from '../state/workspace.js';
 import { Explorer } from './Explorer.js';
 import { FormatsPanel } from './FormatsPanel.js';
+import { Library } from './Library.js';
 import { SearchPanel } from './SearchPanel.js';
 import { IconFolderOpen } from './Icons.js';
+import type { SidebarView } from '../state/workspace.js';
 
-const title = (view: 'explorer' | 'search' | 'formats'): string =>
-  view === 'explorer' ? t('Explorer') : view === 'search' ? t('Search') : t('Formats');
+const title = (view: SidebarView): string =>
+  view === 'library'
+    ? t('Library')
+    : view === 'explorer'
+      ? t('Explorer')
+      : view === 'search'
+        ? t('Search')
+        : t('Formats');
 
 export function Sidebar() {
   const shell = useShell();
@@ -29,6 +37,7 @@ export function Sidebar() {
         )}
       </div>
       <div className="sidebar-scroll">
+        {view === 'library' && <Library />}
         {view === 'explorer' && <Explorer />}
         {view === 'search' && <SearchPanel />}
         {view === 'formats' && <FormatsPanel />}

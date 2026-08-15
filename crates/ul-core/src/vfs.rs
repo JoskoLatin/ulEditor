@@ -19,6 +19,9 @@ pub enum VfsError {
     OutsideWorkspace(String),
     #[error("nije otvoren nijedan radni prostor")]
     NoWorkspace,
+    /// Radnja koju platforma ne podržava — npr. odabir mape na Androidu.
+    #[error("{0}")]
+    Unsupported(String),
     #[error("nije direktorij: {0}")]
     NotADirectory(String),
     #[error("greška datotečnog sustava: {0}")]
@@ -72,6 +75,7 @@ pub(crate) fn is_noise(name: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
+    library_roots: Vec<PathBuf>,
 }
 
 impl Workspace {
@@ -79,6 +83,7 @@ impl Workspace {
         Self::default()
     }
 
+    /// Mape koje je korisnik izričito otvorio. Ovo je ono što explorer prikazuje.
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
@@ -94,12 +99,30 @@ impl Workspace {
         Ok(canonical)
     }
 
+    /// Mjesto koje je pregledala knjižnica.
+    ///
+    /// Odvojeno od `roots` s razlogom: dokument iz knjižnice se mora dati
+    /// otvoriti, pa njegova mapa mora proći kroz `resolve` — ali ne smije se
+    /// pojaviti u explorer stablu. Inače bi na desktopu jedan pogled u
+    /// knjižnicu tiho ubacio Documents, Downloads, Desktop i Pictures među
+    /// korisnikove otvorene mape, što nitko nije tražio.
+    pub fn add_library_root(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        let canonical = fs::canonicalize(path.as_ref())?;
+        if !canonical.is_dir() {
+            return Err(VfsError::NotADirectory(display(&canonical)));
+        }
+        if !self.library_roots.contains(&canonical) {
+            self.library_roots.push(canonical.clone());
+        }
+        Ok(canonical)
+    }
+
     /// Razrješava putanju i provjerava da ostaje unutar nekog korijena.
     ///
     /// Ne oslanja se na `canonicalize` za nepostojeće datoteke (spremanje pod
     /// novim imenom), pa se `..` uklanja leksički prije provjere.
     pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
-        if self.roots.is_empty() {
+        if self.roots.is_empty() && self.library_roots.is_empty() {
             return Err(VfsError::NoWorkspace);
         }
 
@@ -108,7 +131,13 @@ impl Workspace {
         // Simbolički link može voditi van; za postojeće putanje provjeravamo i stvarnu.
         let effective = fs::canonicalize(&normalized).unwrap_or_else(|_| normalized.clone());
 
-        if self.roots.iter().any(|root| effective.starts_with(root)) {
+        let allowed = self
+            .roots
+            .iter()
+            .chain(self.library_roots.iter())
+            .any(|root| effective.starts_with(root));
+
+        if allowed {
             Ok(effective)
         } else {
             Err(VfsError::OutsideWorkspace(display(&normalized)))

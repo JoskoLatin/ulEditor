@@ -10,7 +10,9 @@ use tauri::ipc::Response;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-use ul_core::{Detection, DirEntry, SearchOutcome, SearchQuery, Stat, VfsError, Workspace};
+use ul_core::{
+    Detection, DirEntry, LibraryScan, SearchOutcome, SearchQuery, Stat, VfsError, Workspace,
+};
 
 struct AppState {
     workspace: Mutex<Workspace>,
@@ -28,6 +30,14 @@ fn with_workspace<T>(
 
 /* ── dijalozi ────────────────────────────────────────────────────────── */
 
+/// Odabir mape.
+///
+/// **Samo desktop.** Android nema izbornik direktorija koji bi vratio putanju
+/// — Storage Access Framework daje `content://` URI nad kojim datotečni
+/// sandbox `ul-core`-a nema smisla. Mobilna verzija zato radi s pojedinačnim
+/// dokumentima, a ne s radnim prostorom; ograda je `cfg`, ne runtime greška,
+/// da se nemoguć poziv vidi pri kompajliranju.
+#[cfg(desktop)]
 #[tauri::command]
 async fn pick_directory(
     app: tauri::AppHandle,
@@ -49,6 +59,18 @@ async fn pick_directory(
         let root = workspace.add_root(&path)?;
         workspace.stat(&root).map(Some)
     })
+}
+
+/// Mobilni parnjak: javlja se pošteno umjesto da šuti.
+#[cfg(mobile)]
+#[tauri::command]
+async fn pick_directory(
+    _app: tauri::AppHandle,
+    _state: State<'_, AppState>,
+) -> Result<Option<Stat>, VfsError> {
+    Err(VfsError::Unsupported(
+        "Odabir mape nije dostupan na mobilnim uređajima.".into(),
+    ))
 }
 
 #[tauri::command]
@@ -179,6 +201,32 @@ async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat
     with_workspace(&state, |workspace| workspace.list_files(limit))
 }
 
+/// Pregled uređaja u potrazi za dokumentima.
+///
+/// Mjesta koja se gledaju dolaze iz `ul_core::default_roots()` i ovise o
+/// platformi. Pregledana mapa postaje **korijen knjižnice**, ne obični korijen:
+/// dokument iz popisa se mora dati otvoriti, ali te mape nemaju što raditi u
+/// explorer stablu — inače bi jedan pogled u knjižnicu na desktopu ubacio
+/// Documents, Downloads i Desktop među korisnikove otvorene mape.
+#[tauri::command]
+async fn scan_library(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<LibraryScan, VfsError> {
+    let roots = ul_core::default_roots();
+
+    with_workspace(&state, |workspace| {
+        let mut usable = Vec::new();
+        for root in &roots {
+            // Nepostojeće mape su očekivane — popis je isti za sve uređaje.
+            if workspace.add_library_root(root).is_ok() {
+                usable.push(root.clone());
+            }
+        }
+        workspace.scan_library(&usable, limit)
+    })
+}
+
 #[tauri::command]
 fn read_file(state: State<'_, AppState>, path: String) -> Result<Response, VfsError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
@@ -215,6 +263,7 @@ pub fn run() {
             write_file,
             search_workspace,
             list_files,
+            scan_library,
         ])
         .run(tauri::generate_context!())
         .expect("pokretanje ulEditora nije uspjelo");
