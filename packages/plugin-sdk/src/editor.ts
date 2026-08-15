@@ -9,6 +9,7 @@ import type { Event } from './events.js';
 import type { ClipboardPayload } from './clipboard.js';
 import type { DocumentHandle, Uri } from './fs.js';
 import type { EditorHost } from './host.js';
+import type { ReadingOptions, ReadingSession } from './reading.js';
 
 export type Capability =
   /** Može prikazati sadržaj. Svaki editor mora imati barem ovo. */
@@ -21,6 +22,8 @@ export type Capability =
   | 'export'
   /** Podržava pretragu unutar dokumenta. */
   | 'search'
+  /** Nudi način čitanja — vidi `beginReading`. */
+  | 'read'
   /** Spreman za realtime kolaboraciju (faza 5). */
   | 'collab';
 
@@ -80,6 +83,12 @@ export interface EditorInstance {
 
   /** Fokusira uređivačku površinu — shell zove pri prebacivanju taba. */
   focus(): void;
+
+  /**
+   * Ulazak u način čitanja. Editori bez sposobnosti `read` ovo ne
+   * implementiraju, pa shell naredbu uopće ne nudi.
+   */
+  beginReading?(options: ReadingOptions): ReadingSession;
 
   readonly onDirtyChange: Event<boolean>;
   /** Poruka za statusnu traku, npr. "Red 12, Stup 4" ili "Stranica 3 od 18". */

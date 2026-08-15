@@ -28,9 +28,14 @@ import {
   type EditorProvider,
   type FindQuery,
   type FindResult,
+  type ReadingOptions,
+  type ReadingProgress,
+  type ReadingSession,
   type SaveResult,
   type SaveTarget,
 } from '@uleditor/plugin-sdk';
+
+import { PagedFlow, headingOutline, wordCount } from '@uleditor/reader-core';
 
 export type MarkdownViewMode = 'split' | 'source' | 'preview';
 
@@ -80,8 +85,14 @@ class MarkdownEditor implements EditorInstance {
   /** Sprječava povratnu petlju kad sinkroniziramo scroll dviju ploča. */
   #syncing = false;
 
+  /** Sloj čitanja živi paralelno s uređivanjem — izvor se ne demontira. */
+  #readingLayer: HTMLElement | null = null;
+  #readingDoc: HTMLElement | null = null;
+  #paged: PagedFlow | null = null;
+
   #dirtyEmitter = new Emitter<boolean>();
   #statusEmitter = new Emitter<string>();
+  #progressEmitter = new Emitter<ReadingProgress>();
   readonly onDirtyChange = this.#dirtyEmitter.event;
   readonly onStatusChange = this.#statusEmitter.event;
 
@@ -177,6 +188,10 @@ class MarkdownEditor implements EditorInstance {
   }
 
   unmount(): void {
+    this.#paged?.destroy();
+    this.#paged = null;
+    this.#readingLayer = null;
+    this.#readingDoc = null;
     this.#view?.destroy();
     this.#view = null;
     this.#root?.remove();
@@ -190,6 +205,86 @@ class MarkdownEditor implements EditorInstance {
 
   #renderPreview(): void {
     if (this.#preview) this.#preview.innerHTML = render(this.#text());
+    // Dok se čita, izvor je i dalje uređiv u pozadini — pregled mora pratiti.
+    if (this.#readingDoc) {
+      this.#readingDoc.innerHTML = render(this.#text());
+      this.#paged?.relayout();
+    }
+  }
+
+  /* ── način čitanja ─────────────────────────────────────────────────── */
+
+  /**
+   * Dugi Markdown (README, dokumentacija, rukopis) čita se kao knjiga. Umjesto
+   * da se editor pretvara u čitaonicu, iznad njega se podigne zaseban sloj —
+   * CodeMirror ostaje montiran s kursorom i poviješću na mjestu.
+   */
+  beginReading(options: ReadingOptions): ReadingSession {
+    const root = this.#root;
+    if (!root) throw new Error('Način čitanja traži montiran editor.');
+
+    const layer = document.createElement('div');
+    layer.className = 'ul-md-reading ul-read';
+    layer.dataset.reading = 'true';
+
+    const view = document.createElement('div');
+    view.className = 'ul-read-view';
+
+    const flow = document.createElement('article');
+    flow.className = 'ul-read-flow';
+
+    const doc = document.createElement('div');
+    doc.className = 'ul-read-doc';
+    doc.innerHTML = render(this.#text());
+    flow.appendChild(doc);
+    view.appendChild(flow);
+
+    for (const side of ['prev', 'next'] as const) {
+      const edge = document.createElement('button');
+      edge.type = 'button';
+      edge.className = `ul-read-edge ${side}`;
+      edge.setAttribute('aria-label', side === 'prev' ? 'Prethodna stranica' : 'Sljedeća stranica');
+      edge.addEventListener('click', () => this.#paged?.page(side === 'prev' ? -1 : 1));
+      view.appendChild(edge);
+    }
+
+    layer.appendChild(view);
+    root.appendChild(layer);
+
+    this.#readingLayer = layer;
+    this.#readingDoc = doc;
+
+    const paged = new PagedFlow({
+      view,
+      flow,
+      words: wordCount(doc.textContent ?? ''),
+      onProgress: (progress) => {
+        this.#progressEmitter.fire(progress);
+        this.#statusEmitter.fire(`${progress.label} · još ~${progress.minutesLeft} min`);
+      },
+    });
+    this.#paged = paged;
+    paged.apply(options, layer);
+
+    return {
+      apply: (next) => paged.apply(next, layer),
+      page: (delta) => paged.page(delta),
+      seek: (fraction) => paged.seek(fraction),
+      outline: () => headingOutline(doc),
+      goTo: (id) => {
+        const target = doc.querySelector(`#${CSS.escape(id)}`);
+        if (target instanceof HTMLElement) paged.scrollTo(target);
+      },
+      onProgress: this.#progressEmitter.event,
+      end: () => {
+        paged.destroy();
+        layer.remove();
+        this.#paged = null;
+        this.#readingLayer = null;
+        this.#readingDoc = null;
+        this.#emitStatus();
+      },
+    };
   }
 
   #recomputeDirty(): void {
@@ -321,7 +416,7 @@ export const markdownEditorProvider: EditorProvider = {
     extensions: ['md', 'markdown', 'mdx', 'markdown'],
     mimeTypes: ['text/markdown'],
   },
-  capabilities: ['view', 'edit', 'search', 'export'],
+  capabilities: ['view', 'edit', 'search', 'export', 'read'],
   // Viši od editora koda, da .md ne završi kao običan tekst.
   priority: 30,
 

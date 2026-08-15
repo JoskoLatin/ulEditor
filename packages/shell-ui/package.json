@@ -10,11 +10,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@uleditor/editor-book": "workspace:*",
     "@uleditor/editor-code": "workspace:*",
     "@uleditor/editor-image": "workspace:*",
     "@uleditor/editor-markdown": "workspace:*",
+    "@uleditor/editor-office": "workspace:*",
     "@uleditor/editor-pdf": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
+    "@uleditor/reader-core": "workspace:*",
     "@tauri-apps/api": "^2.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

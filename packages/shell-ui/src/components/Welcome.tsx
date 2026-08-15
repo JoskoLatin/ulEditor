@@ -5,10 +5,14 @@ import { openFiles, openFolder } from '../shell/actions.js';
 import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon } from './Icons.js';
 
-const LIVE = ['code', 'markdown', 'pdf'] as const;
+const LIVE = ['code', 'markdown', 'pdf', 'epub', 'image'] as const;
+/** Formati koji se otvore, ali samo za čitanje — razlika je bitna prije otvaranja. */
+const READ_ONLY: { format: keyof typeof FORMATS; note: string }[] = [
+  { format: 'docx', note: 'pregled' },
+  { format: 'xlsx', note: 'pregled' },
+];
 const PLANNED: { format: keyof typeof FORMATS; phase: string }[] = [
-  { format: 'xlsx', phase: 'faza 2' },
-  { format: 'docx', phase: 'faza 2' },
+  { format: 'odf', phase: 'faza 2' },
   { format: 'pptx', phase: 'faza 5' },
 ];
 
@@ -23,8 +27,9 @@ export function Welcome() {
           <div className="welcome-mark">
             ul<b>Editor</b>
           </div>
+          <p className="welcome-origin">made in Vodice</p>
           <p className="welcome-sub">
-            Kod, Markdown i PDF na jednom mjestu. Office dolazi u fazi 2.
+            Kod, Markdown, PDF, e-knjige, Word i Excel na jednom mjestu.
           </p>
         </div>
 
@@ -41,6 +46,9 @@ export function Welcome() {
               <button className="welcome-action" onClick={() => setPaletteOpen(true)}>
                 Paleta naredbi <span className="k">Ctrl ⇧ P</span>
               </button>
+              <div className="welcome-action" data-static="true">
+                Način čitanja <span className="k">Ctrl ⇧ R</span>
+              </div>
             </div>
           </div>
 
@@ -50,6 +58,13 @@ export function Welcome() {
               <div key={id} className="fmt-line">
                 <FormatIcon family={FORMATS[id].family} size={15} />
                 <span>{FORMATS[id].label}</span>
+              </div>
+            ))}
+            {READ_ONLY.map(({ format, note }) => (
+              <div key={format} className="fmt-line">
+                <FormatIcon family={FORMATS[format].family} size={15} />
+                <span>{FORMATS[format].label}</span>
+                <span className="tag">{note}</span>
               </div>
             ))}
             {PLANNED.map(({ format, phase }) => (

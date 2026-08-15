@@ -189,14 +189,34 @@ Izlaz: `docs/adr/0001-runtime.md` s go/no-go odlukom.
 
 ### Faza 1 — MVP desktop (mjeseci 1–4)
 
-- Shell: tabovi, split view, file explorer, command palette (`Ctrl+Shift+P`), postavke, teme, obnova sesije
-- `plugin-sdk` v0.1 + registry + lazy loading editora
-- `editor-code`: CodeMirror 6, tree-sitter highlight, LSP klijent (TS, Python, Rust, JSON, YAML), multi-cursor, find/replace preko projekta
-- `editor-markdown`: split live preview, mermaid
-- `editor-pdf`: pdfium render s virtualizacijom scrolla, selekcija teksta, anotacije (highlight / bilješka / crtanje), operacije nad stranicama (rotate / reorder / delete / merge / split)
-- **Read-only preview za DOCX i XLSX** — teza "sve na jednom mjestu" vrijedi već u v0.1
-- Globalni search preko `tantivy`
-- Auto-update, crash reporting, opt-in telemetrija
+Stanje na dan 15. 8. 2026.
+
+| Stavka | Stanje |
+|---|---|
+| Shell: tabovi, explorer, paleta (`Ctrl+Shift+P`), postavke, teme | **gotovo** |
+| Obnova sesije (kartice + korijeni stabla) | **gotovo** (desktop) |
+| `plugin-sdk` v0.1 + registry + lijeno učitavanje editora | **gotovo** |
+| `editor-code`: CodeMirror 6, bojanje sintakse, find/replace | **gotovo** |
+| `editor-markdown`: izvor + živi pregled | **gotovo** |
+| `editor-pdf`: render, tekstualni sloj, anotacije, stranice (rotate / delete / reorder / merge / split) | **gotovo** |
+| **Read-only pregled DOCX i XLSX** | **gotovo** |
+| **EPUB čitač + način čitanja** (nije bio u izvornom planu) | **gotovo** |
+| Split view | odgođeno — dvije kartice jedna uz drugu, bez novih ugovora |
+| `editor-code`: tree-sitter, LSP klijent | odgođeno u fazu 1.1 |
+| `editor-markdown`: mermaid | odgođeno u fazu 1.1 |
+| Globalni search preko `tantivy` | odgođeno u fazu 1.1 |
+| Auto-update, crash reporting, opt-in telemetrija | traži potpisivanje i backend; ide uz sam release |
+| `editor-pdf` na pdfiumu umjesto pdf.js-a | odgođeno — pdf.js zadovoljava, zamjena je optimizacija |
+
+**Način čitanja nije bio u planu, a ušao je u ugovor.** Pokazao se kao stavka koja
+najbolje brani cijelu tezu projekta: `EditorInstance.beginReading()` znači da
+jedna čitaonica u shellu opslužuje EPUB, PDF, Markdown i Word, a svaki od njih
+sam definira što je kod njega "stranica" i "poglavlje". Isto što je pretraga
+dokazala za `find()`.
+
+**Zašto su LSP i tantivy odgođeni:** oboje su velika, zasebna infrastruktura
+(vanjski procesi, indeks na disku, invalidacija) koja ne mijenja tezu projekta.
+Pregled Office dokumenata je mijenja, pa je imao prednost.
 
 Izlaz: **v0.1** — potpisani instaleri za Windows, macOS, Linux. Javni release radi privlačenja doprinositelja.
 

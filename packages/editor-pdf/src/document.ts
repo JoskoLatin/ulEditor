@@ -162,3 +162,104 @@ export async function saveDocument(
   const { bytes } = await writeAnnotations(working, annotations, pageMapOf(plan));
   return { bytes, lost };
 }
+
+/* ── spajanje i izdvajanje ───────────────────────────────────────────── */
+
+/**
+ * Spaja stranice drugog PDF-a u postojeći plan.
+ *
+ * Vraća **nove bajtove izvornika** uz prošireni plan: spajanje se, za razliku
+ * od rotacije i brisanja, ne može opisati planom nad starim izvornikom, jer
+ * stranice koje se dodaju u njemu ne postoje. Zato je ovo jedina operacija nad
+ * stranicama koja odmah mijenja izvornik u memoriji.
+ */
+export async function mergeInto(
+  source: Uint8Array,
+  plan: PagePlan[],
+  incoming: Uint8Array,
+  at: number,
+): Promise<{ bytes: Uint8Array; plan: PagePlan[]; added: number; lost: string[] }> {
+  const base = await PDFDocument.load(source, { ignoreEncryption: true });
+  const extra = await PDFDocument.load(incoming, { ignoreEncryption: true });
+
+  const before = base.getPageCount();
+  const pages = await base.copyPages(extra, extra.getPageIndices());
+  for (const page of pages) base.addPage(page);
+
+  const added = pages.length;
+  if (added === 0) throw new Error('Odabrani PDF nema nijednu stranicu.');
+
+  // Nove stranice su na kraju izvornika, ali u planu idu na traženo mjesto.
+  const inserted: PagePlan[] = Array.from({ length: added }, (_, i) => ({
+    source: before + i + 1,
+    rotate: 0,
+  }));
+
+  const index = Math.max(0, Math.min(at, plan.length));
+  const next = [...plan.slice(0, index), ...inserted, ...plan.slice(index)];
+
+  return {
+    bytes: await base.save({ useObjectStreams: false }),
+    plan: next,
+    added,
+    lost: ['Spajanje ne prenosi oznake (bookmarks), obrasce ni priloge iz umetnutog dokumenta.'],
+  };
+}
+
+/**
+ * Izdvaja podskup stranica u novi dokument. Izvornik ostaje netaknut — zato
+ * "izdvajanje", a ne "razdvajanje": nitko ne želi da mu se dokument raspolovi
+ * na disku zato što je htio izvući tri stranice.
+ */
+export async function extractPages(
+  source: Uint8Array,
+  plan: PagePlan[],
+  positions: number[],
+): Promise<Uint8Array> {
+  const wanted = [...new Set(positions)].sort((a, b) => a - b);
+  const entries = wanted.map((position) => plan[position - 1]).filter((e): e is PagePlan => !!e);
+  if (entries.length === 0) throw new Error('Nijedna stranica nije odabrana.');
+
+  const original = await PDFDocument.load(source, { ignoreEncryption: true });
+  const out = await PDFDocument.create();
+
+  const copied = await out.copyPages(
+    original,
+    entries.map((entry) => entry.source - 1),
+  );
+  copied.forEach((page, index) => {
+    const entry = entries[index]!;
+    if (entry.rotate !== 0) {
+      page.setRotation(degrees((page.getRotation().angle + entry.rotate) % 360));
+    }
+    out.addPage(page);
+  });
+
+  out.setTitle(original.getTitle() ?? '');
+  return out.save({ useObjectStreams: false });
+}
+
+/** `1-3, 7, 10-12` → `[1,2,3,7,10,11,12]`, ograničeno na postojeće stranice. */
+export function parseRanges(input: string, max: number): number[] {
+  const out = new Set<number>();
+
+  for (const part of input.split(',')) {
+    const piece = part.trim();
+    if (!piece) continue;
+
+    const range = /^(\d+)\s*[-–]\s*(\d+)$/.exec(piece);
+    if (range) {
+      const from = Number(range[1]);
+      const to = Number(range[2]);
+      for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+        if (i >= 1 && i <= max) out.add(i);
+      }
+      continue;
+    }
+
+    const single = Number(piece);
+    if (Number.isInteger(single) && single >= 1 && single <= max) out.add(single);
+  }
+
+  return [...out].sort((a, b) => a - b);
+}

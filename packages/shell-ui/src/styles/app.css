@@ -563,6 +563,16 @@ button {
   font-weight: 600;
 }
 
+/* Potpis pod logotipom — poravnat s riječju, ne s rubom. */
+.welcome-origin {
+  margin: 7px 0 0;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+}
+
 .welcome-sub {
   color: var(--ink-faint);
   font-size: var(--fs-lg);
@@ -641,6 +651,7 @@ button {
 /* ── statusna traka ─────────────────────────────────────────────────── */
 
 .statusbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -651,6 +662,29 @@ button {
   font-size: var(--fs-xs);
   color: var(--ink-faint);
   user-select: none;
+}
+
+/*
+ * Potpis je centriran u odnosu na traku, ne u odnosu na sadržaj oko sebe —
+ * inače bi šetao lijevo-desno kako se mijenja status editora. Ne prima
+ * klikove, pa ne otima gumbe ispod sebe.
+ */
+.status-origin {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Na uskom prozoru bi se sudarao sa statusom dokumenta. */
+@media (max-width: 900px) {
+  .status-origin {
+    display: none;
+  }
 }
 
 .statusbar .spacer {
@@ -1003,4 +1037,268 @@ button.status-item:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   color: var(--ink-inverse);
+}
+
+/* ── čitaonica ───────────────────────────────────────────────────────── */
+
+/*
+ * U načinu čitanja okvir programa nestaje. Ne mijenja se stablo komponenti,
+ * samo se skriva sve što ne sudjeluje u čitanju — pa editor ostaje montiran
+ * i zadržava mjesto na kojem se stalo.
+ */
+.shell[data-reading="true"] .titlebar,
+.shell[data-reading="true"] .activitybar,
+.shell[data-reading="true"] .sidebar,
+.shell[data-reading="true"] .resizer,
+.shell[data-reading="true"] .tabbar,
+.shell[data-reading="true"] .statusbar {
+  display: none;
+}
+
+/* Skriveni redovi ne nestaju iz grida sami: bez ovoga bi tijelo palo u red
+   naslovne trake i dobilo njezinih 36 px visine. */
+.shell[data-reading="true"] {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.shell[data-reading="true"] .shell-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.reader {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--rule);
+}
+
+.reader-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px;
+}
+
+.reader-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 550;
+  color: var(--ink);
+  text-align: center;
+}
+
+.reader-nav,
+.reader-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reader-btn,
+.reader-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.reader-icon {
+  padding: 0 7px;
+}
+
+.reader-btn:hover,
+.reader-icon:hover {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.reader-btn[data-active="true"] {
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--accent-ink);
+}
+
+/* Traka napretka. Izgleda kao crta, ponaša se kao klizač. */
+.reader-rail {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: var(--rule-soft);
+  cursor: pointer;
+}
+
+.reader-rail::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+}
+
+.reader-rail::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.reader-rail:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.reader-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 6px;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+}
+
+.reader-left {
+  margin-left: auto;
+}
+
+/* ── ploče čitaonice ─────────────────────────────────────────────────── */
+
+.reader-panel {
+  position: absolute;
+  top: 100%;
+  right: 10px;
+  z-index: 6;
+  max-height: min(62vh, 520px);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--overlay);
+  box-shadow: var(--shadow-lg);
+}
+
+.reader-outline {
+  width: min(380px, 80vw);
+}
+
+.reader-outline button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reader-outline button[data-depth="1"] {
+  padding-left: 24px;
+}
+.reader-outline button[data-depth="2"] {
+  padding-left: 38px;
+}
+.reader-outline button[data-depth="3"] {
+  padding-left: 52px;
+}
+
+.reader-outline button:hover,
+.reader-outline button:focus-visible {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  outline: none;
+}
+
+.reader-empty {
+  margin: 6px 10px;
+  font-size: var(--fs-sm);
+  color: var(--ink-faint);
+}
+
+.reader-type {
+  display: grid;
+  gap: 12px;
+  width: min(340px, 88vw);
+  padding: 14px;
+}
+
+.reader-type label {
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.reader-type input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.reader-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.reader-seg button {
+  flex: 1;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.reader-seg button:hover {
+  color: var(--ink);
+}
+
+.reader-seg button[data-active="true"] {
+  background: var(--accent);
+  color: var(--ink-inverse);
+}
+
+/* Podsjetnik na kraticu, ne gumb — nema radnje bez otvorenog dokumenta. */
+.welcome-action[data-static="true"] {
+  cursor: default;
+  color: var(--ink-faint);
+}
+
+.welcome-action[data-static="true"]:hover {
+  border-color: var(--rule);
+  background: none;
 }

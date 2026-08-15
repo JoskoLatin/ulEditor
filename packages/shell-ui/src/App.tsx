@@ -6,10 +6,14 @@ import { registerCommands } from './shell/commands.js';
 import { adoptDropped } from './shell/actions.js';
 import { useWorkspace } from './state/workspace.js';
 
+import { exitReading, useReading } from './shell/reading.js';
+import { restoreSession, watchSession } from './shell/session.js';
+
 import { ActivityBar } from './components/ActivityBar.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { EditorSurface } from './components/EditorSurface.js';
 import { FindPanel } from './components/FindPanel.js';
+import { ReaderBar } from './components/ReaderBar.js';
 import { Sidebar, SidebarResizer } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { TabBar } from './components/TabBar.js';
@@ -18,9 +22,28 @@ import { Toasts } from './components/Toasts.js';
 
 export function App({ shell }: { shell: Shell }) {
   const sidebarVisible = useWorkspace((s) => s.sidebarVisible);
+  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const reading = useReading((s) => s.active);
+  const readingTabId = useReading((s) => s.tabId);
   const [dropActive, setDropActive] = useState(false);
 
   useEffect(() => registerCommands(shell), [shell]);
+
+  // Obnova sesije ide prije praćenja, da sam čin obnove ne prepiše zapis
+  // djelomično obnovljenim stanjem.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void restoreSession(shell).then(() => {
+      stop = watchSession(shell);
+    });
+    return () => stop?.();
+  }, [shell]);
+
+  // Čitaonica pripada jednom dokumentu. Prebacivanje kartice je izlazak, a ne
+  // tiho nastavljanje čitanja nečeg drugog s tuđim postavkama.
+  useEffect(() => {
+    if (reading && readingTabId !== activeTabId) exitReading();
+  }, [reading, readingTabId, activeTabId]);
 
   // Ispuštanje datoteka u prozor — web put preko `File` objekata.
   // Radi i bez File System Access API-ja, pa je u Firefoxu i Safariju
@@ -96,7 +119,9 @@ export function App({ shell }: { shell: Shell }) {
 
   return (
     <ShellContext.Provider value={shell}>
-      <div className="shell">
+      {/* Čitaonica ne prerađuje stablo komponenti — samo skriva okvir. Drukčije
+          stablo bi demontiralo editor i izgubilo mjesto na kojem se čita. */}
+      <div className="shell" data-reading={reading ? 'true' : 'false'}>
         <TitleBar />
 
         <div className="shell-body" data-sidebar={sidebarVisible ? 'visible' : 'hidden'}>
@@ -106,6 +131,7 @@ export function App({ shell }: { shell: Shell }) {
           {sidebarVisible ? <Sidebar /> : <div />}
           {sidebarVisible ? <SidebarResizer /> : <div />}
           <main className="main">
+            {reading ? <ReaderBar /> : null}
             <TabBar />
             <FindPanel />
             <EditorSurface />

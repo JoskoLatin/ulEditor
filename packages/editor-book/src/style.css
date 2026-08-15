@@ -1,0 +1,393 @@
+/*
+ * Čitač e-knjiga.
+ *
+ * Podloga čitaonice je namjerno odvojena od teme aplikacije: knjiga se čita
+ * satima, pa "sepija" i "noć" moraju vrijediti bez obzira na to je li ostatak
+ * programa svijetao ili taman. Zato se boje ovdje vežu na `data-tint`, a ne
+ * na `data-theme`.
+ */
+
+.ul-book {
+  --book-bg: #f6f3ec;
+  --book-ink: #23201b;
+  --book-soft: #6a6357;
+  --book-rule: #ddd6c7;
+  --book-link: #7a4a1c;
+
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  background: var(--book-bg);
+  color: var(--book-ink);
+  outline: none;
+}
+
+.ul-book[data-tint='night'] {
+  --book-bg: #14171a;
+  --book-ink: #d6d3cd;
+  --book-soft: #8e8b85;
+  --book-rule: #2a2f34;
+  --book-link: #cfa76a;
+}
+
+.ul-book[data-tint='day'] {
+  --book-bg: #fdfdfc;
+  --book-ink: #1a1d20;
+  --book-soft: #626a70;
+  --book-rule: #e3e6e8;
+  --book-link: #0c5e79;
+}
+
+/* U čitaonici nestaje sve osim teksta. */
+.ul-book[data-reading='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ul-book[data-reading='true'] .ul-book-toc {
+  display: none;
+}
+
+/* ── sadržaj knjige ──────────────────────────────────────────────────── */
+
+.ul-book-toc {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--book-rule);
+  background: color-mix(in srgb, var(--book-bg) 88%, var(--book-ink) 4%);
+}
+
+.ul-book-toc header {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--book-rule);
+}
+
+.ul-book-toc h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--book-ink);
+}
+
+.ul-book-toc header p {
+  margin: 4px 0 0;
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  color: var(--book-soft);
+}
+
+.ul-book-cover {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  border-radius: 3px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.ul-book-toc-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 6px 16px;
+}
+
+.ul-book-toc-list button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--book-soft);
+  font: inherit;
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ul-book-toc-list button[data-depth='1'] {
+  padding-left: 24px;
+}
+.ul-book-toc-list button[data-depth='2'] {
+  padding-left: 38px;
+}
+.ul-book-toc-list button[data-depth='3'] {
+  padding-left: 52px;
+}
+
+.ul-book-toc-list button:hover {
+  background: color-mix(in srgb, var(--book-ink) 7%, transparent);
+  color: var(--book-ink);
+}
+
+.ul-book-toc-list button[data-active='true'] {
+  background: color-mix(in srgb, var(--book-ink) 10%, transparent);
+  color: var(--book-ink);
+  font-weight: 600;
+}
+
+/* ── prostor za čitanje ──────────────────────────────────────────────── */
+
+.ul-book-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ul-book-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 12px;
+  font-family: var(--book-font, var(--serif));
+  font-size: var(--book-size, 19px);
+  line-height: var(--book-leading, 1.65);
+}
+
+.ul-book[data-flow='scroll'] .ul-book-view {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 32px 24px 96px;
+}
+
+.ul-book[data-flow='paged'] .ul-book-view {
+  overflow: hidden;
+  padding: 28px 0;
+}
+
+.ul-book[data-flow='scroll'] .ul-book-flow {
+  max-width: var(--book-measure, 68ch);
+  margin: 0 auto;
+}
+
+.ul-book[data-flow='paged'] .ul-book-flow {
+  column-fill: auto;
+}
+
+/* Zone za listanje klikom uz rub. Prozirne su — vidi se samo pokazivač. */
+.ul-book-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8%;
+  min-width: 44px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.ul-book-edge.prev {
+  left: 0;
+}
+.ul-book-edge.next {
+  right: 0;
+}
+
+.ul-book[data-flow='scroll'] .ul-book-edge {
+  display: none;
+}
+
+/* ── tipografija sadržaja ────────────────────────────────────────────── */
+
+.ul-book-chapter {
+  color: var(--book-ink);
+  hyphens: auto;
+  text-align: justify;
+  text-wrap: pretty;
+}
+
+.ul-book[data-flow='scroll'] .ul-book-chapter + .ul-book-chapter {
+  margin-top: 64px;
+  padding-top: 48px;
+  border-top: 1px solid var(--book-rule);
+}
+
+.ul-book-chapter p {
+  margin: 0;
+  text-indent: 1.4em;
+  orphans: 2;
+  widows: 2;
+}
+
+/* Prvi odlomak poglavlja i odlomak iza naslova ne uvlače se — tipografsko pravilo. */
+.ul-book-chapter > p:first-child,
+.ul-book-chapter h1 + p,
+.ul-book-chapter h2 + p,
+.ul-book-chapter h3 + p,
+.ul-book-chapter h4 + p,
+.ul-book-chapter blockquote + p,
+.ul-book-chapter figure + p,
+.ul-book-chapter hr + p {
+  text-indent: 0;
+}
+
+.ul-book-chapter h1,
+.ul-book-chapter h2,
+.ul-book-chapter h3,
+.ul-book-chapter h4,
+.ul-book-chapter h5,
+.ul-book-chapter h6 {
+  margin: 1.6em 0 0.7em;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  text-indent: 0;
+  break-after: avoid;
+  hyphens: none;
+}
+
+.ul-book-chapter h1 {
+  font-size: 1.55em;
+}
+.ul-book-chapter h2 {
+  font-size: 1.3em;
+}
+.ul-book-chapter h3 {
+  font-size: 1.12em;
+}
+
+.ul-book-chapter blockquote {
+  margin: 1.1em 0 1.1em 1.4em;
+  padding-left: 1em;
+  border-left: 2px solid var(--book-rule);
+  color: var(--book-soft);
+  font-style: italic;
+}
+
+.ul-book-chapter img,
+.ul-book-chapter svg {
+  display: block;
+  max-width: 100%;
+  /* Bez ovoga slika viša od stupca nestane u prijelomu. */
+  max-height: 86%;
+  margin: 1.2em auto;
+  break-inside: avoid;
+}
+
+.ul-book-chapter figure {
+  margin: 1.4em 0;
+  break-inside: avoid;
+}
+
+.ul-book-chapter figcaption {
+  margin-top: 0.5em;
+  font-family: var(--sans);
+  font-size: 0.78em;
+  color: var(--book-soft);
+  text-align: center;
+  text-indent: 0;
+}
+
+.ul-book-chapter a,
+.ul-book-chapter [data-link] {
+  color: var(--book-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ul-book-chapter hr {
+  width: 30%;
+  margin: 2em auto;
+  border: 0;
+  border-top: 1px solid var(--book-rule);
+}
+
+.ul-book-chapter ul,
+.ul-book-chapter ol {
+  margin: 1em 0;
+  padding-left: 1.6em;
+  text-align: left;
+}
+
+.ul-book-chapter li {
+  margin: 0.3em 0;
+}
+
+.ul-book-chapter table {
+  width: 100%;
+  margin: 1.2em 0;
+  border-collapse: collapse;
+  font-family: var(--sans);
+  font-size: 0.82em;
+  text-align: left;
+  break-inside: avoid;
+}
+
+.ul-book-chapter th,
+.ul-book-chapter td {
+  padding: 5px 8px;
+  border: 1px solid var(--book-rule);
+  text-indent: 0;
+}
+
+.ul-book-chapter pre,
+.ul-book-chapter code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  hyphens: none;
+  text-align: left;
+}
+
+.ul-book-chapter pre {
+  padding: 0.8em 1em;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--book-ink) 6%, transparent);
+  overflow-x: auto;
+  break-inside: avoid;
+}
+
+/* ── napomene o vjernosti ────────────────────────────────────────────── */
+
+.ul-book-notes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--book-rule);
+  background: color-mix(in srgb, var(--book-bg) 80%, var(--warn) 12%);
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  color: var(--book-soft);
+}
+
+.ul-book-notes ul {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ul-book-notes li::before {
+  content: '· ';
+}
+
+.ul-book-notes-close {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--book-rule);
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ul-book-notes-close:hover {
+  background: color-mix(in srgb, var(--book-ink) 8%, transparent);
+}

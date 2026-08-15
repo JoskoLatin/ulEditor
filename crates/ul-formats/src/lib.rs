@@ -21,6 +21,7 @@ pub enum FormatId {
     Code,
     Markdown,
     Pdf,
+    Epub,
     Docx,
     Xlsx,
     Pptx,
@@ -38,6 +39,7 @@ impl FormatId {
             Self::Code => "code",
             Self::Markdown => "markdown",
             Self::Pdf => "pdf",
+            Self::Epub => "epub",
             Self::Docx => "docx",
             Self::Xlsx => "xlsx",
             Self::Pptx => "pptx",
@@ -178,6 +180,7 @@ pub fn detect_by_name(name: &str) -> Detection {
 
     let format = match ext {
         "pdf" => FormatId::Pdf,
+        "epub" => FormatId::Epub,
         "docx" | "doc" => FormatId::Docx,
         "xlsx" | "xls" => FormatId::Xlsx,
         "pptx" | "ppt" => FormatId::Pptx,
@@ -203,11 +206,14 @@ fn find_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// DOCX, XLSX, PPTX i ODF su sve ZIP arhive. Razlikuju se po unutarnjim
+/// DOCX, XLSX, PPTX, EPUB i ODF su sve ZIP arhive. Razlikuju se po unutarnjim
 /// putanjama, koje se u ZIP zaglavljima pojavljuju kao čist ASCII — dovoljno
 /// za razlikovanje bez raspakiravanja.
 fn classify_zip(bytes: &[u8]) -> FormatId {
     let head = &bytes[..bytes.len().min(128)];
+    if find_ascii(head, b"mimetypeapplication/epub+zip") {
+        return FormatId::Epub;
+    }
     if find_ascii(head, b"mimetypeapplication/vnd.oasis.opendocument") {
         return FormatId::Odf;
     }
@@ -221,6 +227,11 @@ fn classify_zip(bytes: &[u8]) -> FormatId {
     }
     if find_ascii(window, b"ppt/presentation.xml") || find_ascii(window, b"ppt/") {
         return FormatId::Pptx;
+    }
+    // EPUB bez nekomprimiranog `mimetype` unosa — kontejner je obavezan pa
+    // služi kao rezervni potpis.
+    if find_ascii(window, b"META-INF/container.xml") {
+        return FormatId::Epub;
     }
     FormatId::Archive
 }
@@ -331,6 +342,19 @@ mod tests {
         let mut xlsx = b"PK\x03\x04".to_vec();
         xlsx.extend_from_slice(b"........xl/workbook.xml");
         assert_eq!(detect("a.bin", &xlsx).format, FormatId::Xlsx);
+    }
+
+    #[test]
+    fn epub_is_not_just_another_zip() {
+        // Bez ovoga bi e-knjiga završila kao "arhiva" i ne bi je nitko otvorio.
+        let mut epub = b"PK\x03\x04".to_vec();
+        epub.extend_from_slice(b"mimetypeapplication/epub+zip");
+        assert_eq!(detect("knjiga.bin", &epub).format, FormatId::Epub);
+
+        // Varijanta bez nekomprimiranog `mimetype` unosa.
+        let mut loose = b"PK\x03\x04".to_vec();
+        loose.extend_from_slice(b"........META-INF/container.xml");
+        assert_eq!(detect("knjiga.bin", &loose).format, FormatId::Epub);
     }
 
     #[test]

@@ -2,9 +2,12 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import './styles/app.css';
+import '@uleditor/reader-core/style.css';
+import '@uleditor/editor-book/style.css';
 import '@uleditor/editor-code/style.css';
 import '@uleditor/editor-image/style.css';
 import '@uleditor/editor-markdown/style.css';
+import '@uleditor/editor-office/style.css';
 import '@uleditor/editor-pdf/style.css';
 
 import { App } from './App.js';
@@ -72,6 +75,54 @@ shell.registry.register(
 shell.registry.register(
   lazyProvider(
     {
+      id: 'org.uleditor.book',
+      displayName: 'Čitač e-knjiga',
+      matches: {
+        extensions: ['epub'],
+        mimeTypes: ['application/epub+zip'],
+      },
+      capabilities: ['view', 'search', 'read'],
+      priority: 30,
+    },
+    () => import('@uleditor/editor-book'),
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.docx',
+      displayName: 'Word pregled',
+      matches: {
+        extensions: ['docx'],
+        mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+      },
+      capabilities: ['view', 'search', 'read'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).docxPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.xlsx',
+      displayName: 'Excel pregled',
+      matches: {
+        extensions: ['xlsx'],
+        mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      },
+      capabilities: ['view', 'search'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).xlsxPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
       id: 'org.uleditor.pdf',
       displayName: 'PDF preglednik',
       matches: {
@@ -79,7 +130,7 @@ shell.registry.register(
         mimeTypes: ['application/pdf'],
         magic: [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
       },
-      capabilities: ['view', 'search'],
+      capabilities: ['view', 'edit', 'annotate', 'search', 'read'],
       priority: 30,
     },
     () => import('@uleditor/editor-pdf'),

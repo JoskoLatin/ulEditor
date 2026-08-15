@@ -11,6 +11,7 @@ export * from './format.js';
 export * from './fs.js';
 export * from './clipboard.js';
 export * from './host.js';
+export * from './reading.js';
 export * from './editor.js';
 
 /** Verzija ugovora. Editori je smiju provjeriti pri registraciji. */

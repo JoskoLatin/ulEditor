@@ -8,6 +8,7 @@
 import type { Shell } from '../host/index.js';
 import { activeInstance, useWorkspace } from '../state/workspace.js';
 import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
+import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -103,6 +104,15 @@ export function registerCommands(shell: Shell): () => void {
     }),
 
     shell.commands.register({
+      id: 'view.reading',
+      title: 'Način čitanja',
+      category: 'Prikaz',
+      keybinding: ['Ctrl', 'Shift', 'R'],
+      when: () => canRead() || useReading.getState().active,
+      run: () => toggleReading(shell),
+    }),
+
+    shell.commands.register({
       id: 'nav.nextTab',
       title: 'Sljedeća kartica',
       category: 'Navigacija',
@@ -145,6 +155,10 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   const store = useWorkspace.getState();
   const key = event.key.toLowerCase();
 
+  const target = event.target as HTMLElement | null;
+  const inTextField =
+    target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+
   // Escape zatvara pretragu odakle god da je fokus — ploča, editor ili tab.
   // Vezanje samo na ploču znači da Escape iz editora ne radi, što je upravo
   // mjesto s kojeg ga se najčešće pritisne.
@@ -155,7 +169,32 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     return;
   }
 
+  // Iz čitanja se izlazi istom tipkom kojom se izlazi iz svega ostalog.
+  if (event.key === 'Escape' && useReading.getState().active && !store.paletteOpen) {
+    event.preventDefault();
+    exitReading();
+    return;
+  }
+
   const mod = event.ctrlKey || event.metaKey;
+
+  // Listanje bez modifikatora radi i kad je fokus na traci čitaonice, ne samo
+  // na tekstu — inače nakon svakog klika na gumb treba vratiti fokus rukom.
+  if (!mod && useReading.getState().active && !inTextField) {
+    const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' '];
+    const back = ['ArrowLeft', 'ArrowUp', 'PageUp'];
+    if (forward.includes(event.key)) {
+      event.preventDefault();
+      readerPage(event.shiftKey && event.key === ' ' ? -1 : 1);
+      return;
+    }
+    if (back.includes(event.key)) {
+      event.preventDefault();
+      readerPage(-1);
+      return;
+    }
+  }
+
   if (!mod) return;
 
   // Ctrl+Shift+P — paleta. Radi i kad je fokus unutar editora.
@@ -167,11 +206,13 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
 
   // Unutar polja za unos (npr. tekst bilješke u PDF-u) Ctrl+Z mora ostati
   // preglednikovo poništavanje teksta, ne poništavanje u editoru.
-  const target = event.target as HTMLElement | null;
-  const inTextField =
-    target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-
   if (event.shiftKey) {
+    if (key === 'r') {
+      event.preventDefault();
+      toggleReading(shell);
+      return;
+    }
+
     if (key === 'tab') {
       event.preventDefault();
       cycleTab(-1);

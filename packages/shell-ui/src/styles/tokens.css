@@ -44,6 +44,7 @@
   --fmt-sheet: #2a7048;
   --fmt-slides: #b5591f;
   --fmt-fixed: #b03a2b;
+  --fmt-book: #7a4a1c;
   --fmt-media: #6b5aa6;
   --fmt-other: #6c7b82;
 
@@ -114,6 +115,7 @@
     --fmt-sheet: #5cb183;
     --fmt-slides: #e08a52;
     --fmt-fixed: #e0705e;
+    --fmt-book: #cfa76a;
     --fmt-media: #a594d9;
     --fmt-other: #7e8f97;
 
@@ -160,6 +162,7 @@
   --fmt-sheet: #5cb183;
   --fmt-slides: #e08a52;
   --fmt-fixed: #e0705e;
+  --fmt-book: #cfa76a;
   --fmt-media: #a594d9;
   --fmt-other: #7e8f97;
 

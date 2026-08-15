@@ -69,10 +69,17 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
   }
 }
 
-export async function openUri(shell: Shell, uri: Uri): Promise<void> {
+export async function openUri(
+  shell: Shell,
+  uri: Uri,
+  opts?: { quiet?: boolean },
+): Promise<void> {
   try {
     await openDocument(shell, await shell.fs.open(uri));
   } catch (err) {
+    // Obnova sesije otvara datoteke koje korisnik nije upravo tražio; ako
+    // koja više ne postoji, to nije greška vrijedna prekidanja pokretanja.
+    if (opts?.quiet) return;
     shell.notify.show('error', `Otvaranje nije uspjelo: ${describe(err)}`);
   }
 }
@@ -98,7 +105,7 @@ export async function openFolder(shell: Shell): Promise<void> {
 }
 
 /** Dodaje mapu kao korijen stabla i odmah čita prvu razinu. */
-async function addRoot(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
+export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
   const children = await shell.fs.readDirectory(root.uri);
   const node: TreeNode = {
     uri: root.uri,

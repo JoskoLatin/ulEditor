@@ -2,7 +2,7 @@
 
 > Jedan open-source editor za sve formate — kod, Markdown, PDF, Word, Excel — na jednom mjestu.
 
-**Status:** faza 0 završena, faza 1 u tijeku. Desktop se pokreće, tri editora rade.
+**Status:** faza 0 završena, faza 1 na okupu. Desktop se pokreće, sedam editora radi, e-knjige i Office dokumenti se čitaju.
 
 ## Teza
 
@@ -13,13 +13,14 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | Format | Stanje | Engine |
 |---|---|---|
 | Kod, tekst (13 jezika) | **radi** | CodeMirror 6 |
-| Markdown | **radi** — izvor + živi pregled | CodeMirror 6 + markdown-it |
-| PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga | pdf.js *(desktop → pdfium, faza 1)* |
+| Markdown | **radi** — izvor + živi pregled + način čitanja | CodeMirror 6 + markdown-it |
+| **EPUB** | **radi** — poglavlja, stranice, sadržaj, pamćenje mjesta | vlastiti čitač (fflate + DOMPurify) |
+| PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga, čitanje | pdf.js *(desktop → pdfium, faza 1)* |
 | PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
-| PDF stranice | **radi** — rotiranje, brisanje, preslagivanje | pdf-lib |
+| PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
+| **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
+| **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
 | Slike | **radi** — pregled, zoom, prozirnost | *(uređivanje → image-rs, faza 1)* |
-| XLSX | faza 2 | Univer |
-| DOCX | faza 2 | ProseMirror + docx-rs |
 | ODF, konverzije | faza 2 | LibreOffice headless |
 | PPTX | faza 5 | Univer Slides |
 
@@ -29,7 +30,24 @@ Anotacije se zapisuju kao **pravi PDF objekti** (`/Highlight`, `/Text`, `/Ink`),
 
 Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 
-**Pretraga (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown ili PDF. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
+Word i Excel se za sada **samo čitaju**, i to piše na samom dokumentu. Uređivanje bez fidelity harnessa znači tiho gubljenje tuđeg formatiranja, pa ovi editori nemaju sposobnost `edit` — umjesto da je imaju i javljaju grešku pri spremanju. Sve što pregled ne prikazuje (zaglavlja, fusnote, komentari, grafikoni) navedeno je u traci iznad dokumenta.
+
+## Način čitanja
+
+`Ctrl+Shift+R` skriva cijeli okvir programa i ostavlja samo tekst.
+
+- **Stranice ili svitak.** Stranice se dobivaju CSS stupcima, pa preglednik sam pazi da ne razdvoji naslov od odlomka. Listanje: razmaknica, strelice, klik uz rub.
+- **Tipografija:** serifno/bezserifno pismo, veličina, prored, širina stupca u znakovima.
+- **Podloga:** dnevno, sepija, noć — neovisno o temi aplikacije, jer se knjiga čita satima. Kod PDF-a "noć" invertira prikaz stranice.
+- **Sadržaj** iz knjige (EPUB nav/NCX), naslova (Markdown, Word) ili oznaka dokumenta (PDF).
+- **Napredak i procjena preostalog vremena**, po broju riječi a ne po broju poglavlja.
+- **Mjesto na kojem si stao** se pamti po dokumentu i preživi zatvaranje.
+
+Sve to ide kroz `EditorInstance.beginReading()` u plugin ugovoru: editor kaže što je kod njega "stranica" i "poglavlje", a čitaonicu piše shell — jednom, za sve formate.
+
+**Pretraga (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown, PDF, e-knjiga, Word ili Excel. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
+
+Otvorene kartice i korijeni stabla se pamte i vraćaju pri sljedećem pokretanju (desktop).
 
 ## Brzi start
 
@@ -39,7 +57,10 @@ pnpm install
 pnpm dev          # web verzija na http://localhost:5273
 pnpm desktop      # Tauri desktop aplikacija
 
-pnpm verify       # runtime provjera pravim preglednikom (traži pokrenut pnpm dev)
+pnpm verify       # runtime provjera shella (traži pokrenut pnpm dev)
+pnpm verify:reading   # čitaonica, EPUB, Word i Excel pregled
+pnpm verify:pdf       # anotacije i operacije nad stranicama (bez preglednika)
+pnpm verify:all       # sve gore
 ```
 
 Preduvjeti: Node 20+, pnpm 11+, Rust stable, a na Windowsu Visual Studio Build Tools i WebView2.
@@ -47,7 +68,9 @@ Preduvjeti: Node 20+, pnpm 11+, Rust stable, a na Windowsu Visual Studio Build T
 ## Arhitektura
 
 ```
-shell-ui (React)  →  plugin-sdk  →  editori (code · markdown · pdf)
+shell-ui (React)  →  plugin-sdk  →  editori (code · markdown · book · office · pdf · image)
+                          ↓            ↑
+                          ↓        reader-core (listanje dugog teksta)
                           ↓
                        ul-ffi
                           ↓
@@ -70,7 +93,9 @@ Dodavanje formata znači napisati provider i registrirati ga u [main.tsx](packag
 | [crates/ul-formats/](crates/ul-formats/) | Detekcija formata po sadržaju. Gradi se i za WASM |
 | [crates/ul-core/](crates/ul-core/) | VFS sa sandboxom |
 | [apps/desktop/](apps/desktop/) | Tauri v2 ljuska |
-| [tools/verify-ui.mjs](tools/verify-ui.mjs) | Runtime provjera kroz Chromium |
+| [packages/reader-core/](packages/reader-core/) | Zajednički motor listanja i čitaonička tipografija |
+| [tools/verify-ui.mjs](tools/verify-ui.mjs) | Runtime provjera shella kroz Chromium |
+| [tools/verify-reading.mjs](tools/verify-reading.mjs) | Runtime provjera čitaonice i Office pregleda |
 
 ## Licenca
 

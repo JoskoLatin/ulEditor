@@ -24,6 +24,10 @@ import {
   type EditorProvider,
   type FindQuery,
   type FindResult,
+  type ReadingOptions,
+  type ReadingOutlineItem,
+  type ReadingProgress,
+  type ReadingSession,
   type SaveResult,
   type SaveTarget,
 } from '@uleditor/plugin-sdk';
@@ -41,11 +45,15 @@ import {
 } from './annotations.js';
 import {
   describePlan,
+  extractPages,
   identityPlan,
   isIdentity,
+  mergeInto,
   movePage,
+  parseRanges,
   removePage,
   rotatePage,
+  pageMapOf,
   saveDocument,
   type PagePlan,
 } from './document.js';
@@ -98,6 +106,12 @@ interface PageView {
 interface Snapshot {
   annotations: Annotation[];
   plan: PagePlan[];
+  /**
+   * Bajtovi izvornika u trenutku snimke. Isti su za sve korake osim spajanja,
+   * koje jedino ne može biti opisano planom nad starim izvornikom — pa se
+   * referenca nosi da bi i spajanje imalo poništavanje.
+   */
+  source: Uint8Array;
 }
 
 function cssRgb(color: Rgb, alpha = 1): string {
@@ -140,6 +154,11 @@ class PdfEditor implements EditorInstance {
   #dirty = false;
   #railOpen = false;
 
+  #reading = false;
+  #outline: ReadingOutlineItem[] = [];
+  /** Sadržaj cilja IZVORNE stranice; plan ih može premjestiti. */
+  #outlineTargets = new Map<string, number>();
+
   #tool: Tool = 'select';
   #color: Rgb = PALETTE[0]!.color;
 
@@ -147,14 +166,16 @@ class PdfEditor implements EditorInstance {
 
   #statusEmitter = new Emitter<string>();
   #dirtyEmitter = new Emitter<boolean>();
+  #progressEmitter = new Emitter<ReadingProgress>();
   readonly onStatusChange = this.#statusEmitter.event;
   readonly onDirtyChange = this.#dirtyEmitter.event;
 
   constructor(
     private readonly host: EditorHost,
     private readonly docHandle: DocumentHandle,
-    private readonly pdf: PDFDocumentProxy,
-    private readonly source: Uint8Array,
+    /** Nije `readonly`: spajanje zamjenjuje i dokument i njegove bajtove. */
+    private pdf: PDFDocumentProxy,
+    private source: Uint8Array,
   ) {
     this.#plan = identityPlan(pdf.numPages);
   }
@@ -410,6 +431,94 @@ class PdfEditor implements EditorInstance {
     this.#setPlan(movePage(this.#plan, position - 1, delta));
   }
 
+  /* ── spajanje i izdvajanje ─────────────────────────────────────────── */
+
+  /**
+   * Ponovno učitavanje dokumenta iz novih bajtova.
+   *
+   * Traži ga samo spajanje: nakon njega postoje stranice koje u učitanom
+   * pdf.js dokumentu ne postoje, pa se plan nad njim više ne može razriješiti.
+   * Rotacija, brisanje i preslagivanje i dalje rade nad istim dokumentom.
+   */
+  async #reload(bytes: Uint8Array, plan: PagePlan[]): Promise<void> {
+    const scroll = this.#scroll;
+    if (!scroll) return;
+
+    this.#observer?.disconnect();
+    for (const view of this.#pages) {
+      view.page.cleanup();
+      view.el.remove();
+    }
+    this.#pages = [];
+
+    const previous = this.pdf;
+    this.source = bytes;
+    // pdf.js preuzima i detachira svoj buffer, pa dobiva vlastitu kopiju.
+    this.pdf = await getDocument({ data: new Uint8Array(bytes) }).promise;
+    void previous.destroy();
+
+    this.#plan = plan;
+    await this.#buildPages();
+    for (const view of this.#pages) this.#observer?.observe(view.el);
+    await this.#applyPlan();
+  }
+
+  /** Umeće stranice drugog PDF-a iza trenutne. */
+  async mergeFrom(incoming: Uint8Array, at = this.#current): Promise<number> {
+    const result = await mergeInto(this.source, this.#plan, incoming, at);
+    this.#snapshot();
+    await this.#reload(result.bytes, result.plan);
+    return result.added;
+  }
+
+  /** Otvara odabir datoteke i umeće je — radnja iz trake sa stranicama. */
+  async insertPdf(): Promise<void> {
+    try {
+      const [picked] = await this.host.fs.pickFiles({ extensions: ['pdf'] });
+      if (!picked) return;
+
+      const added = await this.mergeFrom(await picked.bytes());
+      this.host.notify.show(
+        'info',
+        `Umetnuto ${added} stranica iz ${picked.name}. Oznake i obrasci umetnutog dokumenta se ne prenose.`,
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      this.host.notify.show(
+        'error',
+        `Umetanje nije uspjelo: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Izdvaja raspon stranica u novu datoteku. Izvornik ostaje netaknut — nitko
+   * ne želi da mu se dokument raspolovi na disku zato što je htio izvući tri
+   * stranice.
+   */
+  async extractTo(ranges: string): Promise<void> {
+    const positions = parseRanges(ranges, this.#plan.length);
+    if (positions.length === 0) {
+      this.host.notify.show('warning', `Raspon "${ranges}" ne pokriva nijednu postojeću stranicu.`);
+      return;
+    }
+
+    try {
+      const base = this.docHandle.name.replace(/\.pdf$/i, '');
+      const target = await this.host.fs.pickSaveTarget(`${base} - stranice.pdf`, ['pdf']);
+      if (!target) return;
+
+      await this.host.fs.writeBytes(target, await extractPages(this.source, [...this.#plan], positions));
+      this.host.notify.show('info', `Izdvojeno ${positions.length} stranica.`);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      this.host.notify.show(
+        'error',
+        `Izdvajanje nije uspjelo: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   /** Usklađuje DOM i stanje pogleda s trenutnim planom. */
   async #applyPlan(): Promise<void> {
     const scroll = this.#scroll;
@@ -455,6 +564,7 @@ class PdfEditor implements EditorInstance {
     if (!rail) return;
 
     const fragment = document.createDocumentFragment();
+    fragment.appendChild(this.#buildRailActions());
 
     for (const [index, entry] of this.#plan.entries()) {
       const view = this.#pages.find((v) => v.source === entry.source);
@@ -504,6 +614,40 @@ class PdfEditor implements EditorInstance {
     }
 
     rail.replaceChildren(fragment);
+  }
+
+  /** Radnje nad cijelim dokumentom, iznad minijatura. */
+  #buildRailActions(): HTMLElement {
+    const box = document.createElement('div');
+    box.className = 'ul-pdf-rail-actions';
+
+    const insert = document.createElement('button');
+    insert.className = 'ul-pdf-rail-btn';
+    insert.textContent = 'Umetni PDF…';
+    insert.title = 'Umeće stranice drugog PDF-a iza trenutne';
+    insert.addEventListener('click', () => void this.insertPdf());
+
+    const row = document.createElement('div');
+    row.className = 'ul-pdf-rail-extract';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = `npr. 1-3, 7`;
+    input.title = 'Rasponi stranica za izdvajanje';
+    input.value = String(this.#current);
+
+    const extract = document.createElement('button');
+    extract.className = 'ul-pdf-rail-btn';
+    extract.textContent = 'Izdvoji';
+    extract.title = 'Sprema odabrane stranice u novu datoteku; izvornik ostaje netaknut';
+    extract.addEventListener('click', () => void this.extractTo(input.value));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') void this.extractTo(input.value);
+    });
+
+    row.append(input, extract);
+    box.append(insert, row);
+    return box;
   }
 
   async #renderThumb(view: PageView, canvas: HTMLCanvasElement, rotate: number): Promise<void> {
@@ -600,6 +744,8 @@ class PdfEditor implements EditorInstance {
       );
     }
 
+    const anchor = this.#current;
+
     for (const view of visible) {
       const size = this.#sizeOf(view);
       view.el.style.width = `${Math.round(size.width * this.#scale)}px`;
@@ -608,6 +754,12 @@ class PdfEditor implements EditorInstance {
       view.el.dataset.rendered = 'false';
       view.hitsEl.replaceChildren();
     }
+
+    // Nakon promjene mjerila stranice imaju druge visine, pa isti `scrollTop`
+    // više ne pokazuje na istu stranicu. Bez ovoga svaka promjena zooma i svaka
+    // promjena veličine prozora izbaci čitatelja s mjesta na kojem je stao.
+    const target = visible[anchor - 1];
+    if (target) scroll.scrollTop = Math.max(0, target.el.offsetTop - 20);
 
     this.#syncToolbar();
     await this.#renderVisible();
@@ -821,10 +973,7 @@ class PdfEditor implements EditorInstance {
   /* ── povijest ──────────────────────────────────────────────────────── */
 
   #snapshot(): void {
-    this.#undoStack.push({
-      annotations: this.#annotations.map((a) => ({ ...a })),
-      plan: this.#plan.map((p) => ({ ...p })),
-    });
+    this.#undoStack.push(this.#capture());
     this.#redoStack = [];
     if (this.#undoStack.length > 30) this.#undoStack.shift();
   }
@@ -833,10 +982,18 @@ class PdfEditor implements EditorInstance {
     return {
       annotations: this.#annotations.map((a) => ({ ...a })),
       plan: this.#plan.map((p) => ({ ...p })),
+      source: this.source,
     };
   }
 
   #restore(snapshot: Snapshot): void {
+    // Poništavanje spajanja vraća i sam dokument, ne samo plan.
+    if (snapshot.source !== this.source) {
+      this.#annotations = snapshot.annotations;
+      void this.#reload(snapshot.source, snapshot.plan);
+      return;
+    }
+
     const planChanged =
       snapshot.plan.length !== this.#plan.length ||
       snapshot.plan.some((entry, i) => {
@@ -1136,7 +1293,7 @@ class PdfEditor implements EditorInstance {
     this.#emitStatus();
 
     if (this.#railOpen && this.#rail) {
-      for (const item of this.#rail.children) {
+      for (const item of this.#rail.querySelectorAll('.ul-pdf-thumb')) {
         (item as HTMLElement).dataset.current = String(
           Number((item as HTMLElement).dataset.position) === this.#current,
         );
@@ -1153,6 +1310,14 @@ class PdfEditor implements EditorInstance {
     parts.push(...describePlan(this.#plan, this.pdf.numPages));
 
     this.#statusEmitter.fire(parts.join('  ·  '));
+
+    if (this.#reading) {
+      const total = this.#plan.length;
+      this.#progressEmitter.fire({
+        fraction: total > 1 ? (this.#current - 1) / (total - 1) : 0,
+        label: `str. ${this.#current}/${total}`,
+      });
+    }
   }
 
   /* ── ugovor ────────────────────────────────────────────────────────── */
@@ -1284,6 +1449,107 @@ class PdfEditor implements EditorInstance {
     });
   }
 
+  /* ── način čitanja ─────────────────────────────────────────────────── */
+
+  /**
+   * PDF je fiksni prijelom, pa se čitaonica ovdje ponaša drukčije nego kod
+   * teksta: tipografija se ne može mijenjati (stranica je slika), ali sve
+   * ostalo vrijedi — okvir nestaje, stranica se uklapa u ekran, listanje ide
+   * po stvarnim stranicama, a "noć" i "sepija" se primjenjuju kao filtar nad
+   * prikazom, kao u čitačima koje ljudi već koriste.
+   */
+  beginReading(options: ReadingOptions): ReadingSession {
+    const previousZoom = this.#zoomMode;
+    this.#reading = true;
+    if (this.#root) this.#root.dataset.reading = 'true';
+    this.#applyReading(options);
+    void this.#loadOutline();
+
+    return {
+      apply: (next) => this.#applyReading(next),
+      page: (delta) => this.goToPage(this.#current + delta),
+      seek: (fraction) => this.goToPage(Math.round(fraction * (this.#plan.length - 1)) + 1),
+      outline: () => this.#outline,
+      goTo: (id) => {
+        const source = this.#outlineTargets.get(id);
+        if (source === undefined) return;
+        const index = pageMapOf(this.#plan).get(source);
+        if (index !== undefined) this.goToPage(index + 1);
+      },
+      onProgress: this.#progressEmitter.event,
+      end: () => {
+        if (!this.#reading) return;
+        this.#reading = false;
+        if (this.#root) {
+          this.#root.dataset.reading = 'false';
+          this.#root.removeAttribute('data-tint');
+        }
+        this.setZoomMode(previousZoom);
+      },
+    };
+  }
+
+  #applyReading(options: ReadingOptions): void {
+    if (this.#root) {
+      this.#root.dataset.tint = options.tint;
+      this.#root.dataset.flow = options.flow;
+    }
+    // "Stranice" kod PDF-a nisu metafora — cijela stranica stane u ekran.
+    this.setZoomMode(options.flow === 'paged' ? 'fit-page' : 'fit-width');
+  }
+
+  /** Oznake iz dokumenta; kad ih nema, popis stranica je bolji od praznog sadržaja. */
+  async #loadOutline(): Promise<void> {
+    const targets = new Map<string, number>();
+    const items: ReadingOutlineItem[] = [];
+
+    interface RawItem {
+      title: string;
+      dest: string | unknown[] | null;
+      items?: RawItem[];
+    }
+
+    const pageOf = async (dest: string | unknown[] | null): Promise<number | null> => {
+      try {
+        const resolved = typeof dest === 'string' ? await this.pdf.getDestination(dest) : dest;
+        const ref = Array.isArray(resolved) ? resolved[0] : null;
+        if (!ref || typeof ref !== 'object') return null;
+        return (await this.pdf.getPageIndex(ref as Parameters<PDFDocumentProxy['getPageIndex']>[0])) + 1;
+      } catch {
+        return null;
+      }
+    };
+
+    const walk = async (nodes: RawItem[], depth: number): Promise<void> => {
+      for (const node of nodes) {
+        if (items.length >= 500) return;
+        const id = `dest-${items.length}`;
+        items.push({ id, label: node.title || 'Bez naslova', depth: Math.min(depth, 3) });
+        targets.set(id, (await pageOf(node.dest)) ?? 1);
+        if (node.items?.length) await walk(node.items, depth + 1);
+      }
+    };
+
+    try {
+      const raw = (await this.pdf.getOutline()) as RawItem[] | null;
+      if (raw?.length) await walk(raw, 0);
+    } catch {
+      // Oštećeno stablo oznaka ne smije spriječiti čitanje.
+    }
+
+    if (items.length === 0) {
+      const limit = Math.min(this.#plan.length, 500);
+      for (let i = 1; i <= limit; i++) {
+        const id = `page-${i}`;
+        items.push({ id, label: `Stranica ${i}`, depth: 0 });
+        targets.set(id, this.#plan[i - 1]?.source ?? i);
+      }
+    }
+
+    this.#outline = items;
+    this.#outlineTargets = targets;
+  }
+
   async copySelection(): Promise<ClipboardPayload | null> {
     const text = window.getSelection()?.toString().trim();
     if (!text) return null;
@@ -1307,7 +1573,7 @@ export const pdfEditorProvider: EditorProvider = {
     mimeTypes: ['application/pdf'],
     magic: [new Uint8Array([0x25, 0x50, 0x44, 0x46])], // %PDF
   },
-  capabilities: ['view', 'edit', 'annotate', 'search'],
+  capabilities: ['view', 'edit', 'annotate', 'search', 'read'],
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {

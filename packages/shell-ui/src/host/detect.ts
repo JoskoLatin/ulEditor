@@ -106,13 +106,18 @@ function containsAscii(bytes: Uint8Array, needle: string, limit = 4096): boolean
  * za detekciju bez raspakiravanja.
  */
 function classifyZip(bytes: Uint8Array): FormatId {
-  // ODF drži `mimetype` kao prvi, nekomprimirani unos.
+  // EPUB i ODF drže `mimetype` kao prvi, nekomprimirani unos — potpis stoji
+  // odmah iza ZIP zaglavlja, pa je dovoljno pogledati prvih 128 bajtova.
+  if (containsAscii(bytes, 'mimetypeapplication/epub+zip', 128)) return 'epub';
   if (containsAscii(bytes, 'mimetypeapplication/vnd.oasis.opendocument', 128)) return 'odf';
 
   const head = bytes.subarray(0, Math.min(bytes.length, 65536));
   if (containsAscii(head, 'word/document.xml', head.length)) return 'docx';
   if (containsAscii(head, 'xl/workbook.xml', head.length)) return 'xlsx';
   if (containsAscii(head, 'ppt/presentation.xml', head.length)) return 'pptx';
+  // EPUB bez nekomprimiranog `mimetype` unosa (nije po specifikaciji, ali
+  // postoji u divljini) — prepoznaje se po obaveznom kontejneru.
+  if (containsAscii(head, 'META-INF/container.xml', head.length)) return 'epub';
   // Kraći oblici — kad je centralni direktorij izvan prozora koji smo pročitali.
   if (containsAscii(head, 'word/', head.length)) return 'docx';
   if (containsAscii(head, 'xl/', head.length)) return 'xlsx';
@@ -149,6 +154,7 @@ export function detectByName(name: string): FormatDetection {
 
   if (MARKDOWN.has(ext)) return { format: 'markdown', via: 'extension', language: 'markdown' };
   if (ext === 'pdf') return { format: 'pdf', via: 'extension' };
+  if (ext === 'epub') return { format: 'epub', via: 'extension' };
   if (ext === 'docx' || ext === 'doc') return { format: 'docx', via: 'extension' };
   if (ext === 'xlsx' || ext === 'xls') return { format: 'xlsx', via: 'extension' };
   if (ext === 'pptx' || ext === 'ppt') return { format: 'pptx', via: 'extension' };

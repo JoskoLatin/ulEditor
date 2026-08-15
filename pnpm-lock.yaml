@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -27,6 +30,25 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2.1.0
         version: 2.11.4
+
+  packages/editor-book:
+    dependencies:
+      '@uleditor/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      '@uleditor/reader-core':
+        specifier: workspace:*
+        version: link:../reader-core
+      dompurify:
+        specifier: ^3.2.3
+        version: 3.4.13
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/editor-code:
     dependencies:
@@ -131,6 +153,9 @@ importers:
       '@uleditor/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      '@uleditor/reader-core':
+        specifier: workspace:*
+        version: link:../reader-core
       dompurify:
         specifier: ^3.2.3
         version: 3.4.13
@@ -141,6 +166,22 @@ importers:
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/editor-office:
+    dependencies:
+      '@uleditor/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      '@uleditor/reader-core':
+        specifier: workspace:*
+        version: link:../reader-core
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -170,11 +211,24 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/reader-core:
+    dependencies:
+      '@uleditor/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/shell-ui:
     dependencies:
       '@tauri-apps/api':
         specifier: ^2.1.1
         version: 2.11.1
+      '@uleditor/editor-book':
+        specifier: workspace:*
+        version: link:../editor-book
       '@uleditor/editor-code':
         specifier: workspace:*
         version: link:../editor-code
@@ -184,12 +238,18 @@ importers:
       '@uleditor/editor-markdown':
         specifier: workspace:*
         version: link:../editor-markdown
+      '@uleditor/editor-office':
+        specifier: workspace:*
+        version: link:../editor-office
       '@uleditor/editor-pdf':
         specifier: workspace:*
         version: link:../editor-pdf
       '@uleditor/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      '@uleditor/reader-core':
+        specifier: workspace:*
+        version: link:../reader-core
       react:
         specifier: ^19.0.0
         version: 19.2.8
@@ -985,6 +1045,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
 
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
@@ -1924,6 +1987,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  fflate@0.8.3: {}
 
   fsevents@2.3.2:
     optional: true

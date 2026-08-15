@@ -12,10 +12,9 @@ import { extensionOf } from './detect.js';
 
 /** Formati koje ćemo podržavati, ali još nemaju providera. */
 const PLANNED: Partial<Record<FormatId, string>> = {
-  docx: 'Uređivanje Word dokumenata stiže u fazi 2 (ProseMirror + docx-rs).',
-  xlsx: 'Uređivanje Excel tablica stiže u fazi 2 (Univer).',
   pptx: 'PowerPoint stiže u fazi 5.',
   odf: 'OpenDocument stiže u fazi 2, uz LibreOffice konverziju.',
+  archive: 'Pregled arhiva nije u planu — ulEditor otvara dokumente, ne pakira ih.',
 };
 
 export class EditorRegistry {

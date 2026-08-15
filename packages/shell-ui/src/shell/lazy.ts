@@ -14,9 +14,12 @@ import type { DocumentHandle, EditorHost, EditorInstance, EditorProvider } from 
 
 type ProviderMeta = Omit<EditorProvider, 'createInstance'>;
 
+/** Modul s jednim editorom nudi ga kao `default`; paket s više njih (Office) imenovano. */
+type LoadedProvider = EditorProvider | { default: EditorProvider };
+
 export function lazyProvider(
   meta: ProviderMeta,
-  load: () => Promise<{ default: EditorProvider }>,
+  load: () => Promise<LoadedProvider>,
 ): EditorProvider {
   let pending: Promise<EditorProvider> | null = null;
 
@@ -24,7 +27,7 @@ export function lazyProvider(
     ...meta,
     async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
       // Jedan dohvat po editoru, čak i kad se otvori više dokumenata odjednom.
-      pending ??= load().then((module) => module.default);
+      pending ??= load().then((module) => ('default' in module ? module.default : module));
       const provider = await pending;
       return provider.createInstance(host, doc);
     },

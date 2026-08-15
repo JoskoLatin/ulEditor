@@ -18,8 +18,18 @@ import { makeMultiPagePdf } from './fixtures.mjs';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { saveDocument, identityPlan, movePage, removePage, rotatePage, isIdentity, pageMapOf } =
-  await import(pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/document.ts')).href);
+const {
+  saveDocument,
+  identityPlan,
+  movePage,
+  removePage,
+  rotatePage,
+  isIdentity,
+  pageMapOf,
+  mergeInto,
+  extractPages,
+  parseRanges,
+} = await import(pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/document.ts')).href);
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -166,6 +176,70 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
     withAnnots.length === 0,
     `${withAnnots.length} stranica s anotacijama`,
   );
+}
+
+/* ── rasponi stranica ────────────────────────────────────────────────── */
+
+{
+  check('raspon "1-3" se širi', String(parseRanges('1-3', 5)) === '1,2,3');
+  check('nabrajanje i raspon zajedno', String(parseRanges('1, 3-4', 5)) === '1,3,4');
+  check('obrnuti raspon se ispravlja', String(parseRanges('4-2', 5)) === '2,3,4');
+  check('duplikati se stapaju', String(parseRanges('2,2,2-3', 5)) === '2,3');
+  check('izvan dokumenta se odbacuje', String(parseRanges('0, 4, 99', 3)) === '');
+  check('smeće ne ruši parsiranje', String(parseRanges('abc, , 2', 3)) === '2');
+}
+
+/* ── spajanje ────────────────────────────────────────────────────────── */
+
+{
+  const other = new TextEncoder().encode(makeMultiPagePdf(2));
+  // Umeće se iza prve stranice: 1, [A, B], 2, 3.
+  const merged = await mergeInto(SOURCE, base, other, 1);
+
+  check('spajanje javlja koliko je stranica dodano', merged.added === 2, `${merged.added}`);
+  check('plan naraste', merged.plan.length === 5, `${merged.plan.length} stranica`);
+  check(
+    'spajanje prijavljuje što ne prenosi',
+    merged.lost.some((m) => m.includes('oznake')),
+    merged.lost.join(' | '),
+  );
+
+  const { bytes } = await saveDocument(merged.bytes, merged.plan, [], 5);
+  const labels = await pageLabels(bytes);
+  // Umetnute stranice dolaze iz drugog dokumenta i nose vlastite oznake 1 i 2.
+  check('umetnute stranice su na traženom mjestu', String(labels) === '1,1,2,2,3', String(labels));
+}
+
+/* ── izdvajanje ──────────────────────────────────────────────────────── */
+
+{
+  const extracted = await extractPages(SOURCE, base, [3, 1]);
+  const labels = await pageLabels(extracted);
+  check('izdvajanje poštuje redoslijed stranica', String(labels) === '1,3', String(labels));
+
+  const doc = await PDFDocument.load(extracted);
+  check('izdvojeni dokument ima samo tražene stranice', doc.getPageCount() === 2);
+
+  // Izvornik se ne smije promijeniti — to je razlika između izdvajanja i rezanja.
+  const original = await PDFDocument.load(SOURCE);
+  check('izvornik ostaje netaknut', original.getPageCount() === PAGE_COUNT);
+
+  const rotated = rotatePage(base, 0, 90);
+  const withRotation = await extractPages(SOURCE, rotated, [1]);
+  const rotatedDoc = await PDFDocument.load(withRotation);
+  check(
+    'izdvajanje nosi rotaciju iz plana',
+    rotatedDoc.getPage(0).getRotation().angle === 90,
+    `${rotatedDoc.getPage(0).getRotation().angle}°`,
+  );
+
+  let refused = false;
+  try {
+    await extractPages(SOURCE, base, [99]);
+  } catch {
+    refused = true;
+  }
+  check('prazan odabir se odbija', refused);
 }
 
 /* ── ishod ───────────────────────────────────────────────────────────── */

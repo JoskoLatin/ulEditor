@@ -101,11 +101,13 @@ try {
   const textSpans = await page.locator('.ul-pdf-text span').count();
   check('tekstualni sloj izgrađen', textSpans > 0, `${textSpans} fragmenata`);
 
-  /* — nepodržan format — */
+  /* — oštećena datoteka — */
+  // ZIP koji to nije: editor postoji, ali sadržaj se ne da pročitati. Poruka
+  // mora biti ljudska, ne ono što je dobacila biblioteka za raspakiravanje.
   await dropFile(page, 'ugovor.docx', makeFakeDocx());
   await page.waitForSelector('.surface-error', { timeout: 10000 });
   const message = await page.locator('.surface-error p').innerText();
-  check('DOCX daje objašnjenje umjesto praznog ekrana', message.includes('faz'), message.slice(0, 60));
+  check('oštećen DOCX daje razumljivu poruku', message.includes('oštećena'), message.slice(0, 70));
 
   /* — anotacije nad PDF-om — */
   await page.locator('.tab').nth(2).click();

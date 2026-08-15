@@ -17,9 +17,12 @@
     "rust:lint": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
     "rust:wasm": "cargo build -p ul-formats --target wasm32-unknown-unknown --release",
     "check": "pnpm typecheck && pnpm build && pnpm rust:lint && pnpm rust:test",
-    "clean": "pnpm -r exec rimraf dist node_modules/.vite"
+    "clean": "pnpm -r exec rimraf dist node_modules/.vite",
+    "verify:reading": "node tools/verify-reading.mjs",
+    "verify:all": "node tools/verify-ui.mjs && node tools/verify-reading.mjs && pnpm verify:pdf"
   },
   "devDependencies": {
+    "fflate": "^0.8.2",
     "pdf-lib": "^1.17.1",
     "playwright": "^1.62.1",
     "typescript": "^5.7.2"

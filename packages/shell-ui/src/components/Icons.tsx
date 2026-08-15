@@ -107,6 +107,31 @@ export const IconWarning = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBook = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 3.2c1.9-.8 3.9-.7 5.5.4 1.6-1.1 3.6-1.2 5.5-.4v9c-1.9-.8-3.9-.7-5.5.4-1.6-1.1-3.6-1.2-5.5-.4Z" />
+    <path d="M8 3.6v9" />
+  </Svg>
+);
+
+export const IconList = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 4.5h8M6 8h8M6 11.5h8M2.6 4.5h.1M2.6 8h.1M2.6 11.5h.1" />
+  </Svg>
+);
+
+export const IconType = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 12.5 5.6 3.5l3.6 9M3.1 9.8h5M11 12.5V7.2M11 7.2c1.8-.6 3 .1 3 1.7v3.6" />
+  </Svg>
+);
+
+export const IconArrow = ({ dir = 'left', ...p }: IconProps & { dir?: 'left' | 'right' }) => (
+  <Svg {...p}>
+    {dir === 'left' ? <path d="M10 3 5 8l5 5" /> : <path d="m6 3 5 5-5 5" />}
+  </Svg>
+);
+
 /* ── ikone formata ───────────────────────────────────────────────────── */
 
 const FAMILY_COLOR: Record<FormatFamily, string> = {
@@ -115,6 +140,7 @@ const FAMILY_COLOR: Record<FormatFamily, string> = {
   sheet: 'var(--fmt-sheet)',
   slides: 'var(--fmt-slides)',
   fixed: 'var(--fmt-fixed)',
+  book: 'var(--fmt-book)',
   media: 'var(--fmt-media)',
   other: 'var(--fmt-other)',
 };
@@ -140,6 +166,8 @@ export function FormatIcon({ family, size = 16 }: { family: FormatFamily; size?:
         return <path d="M5.5 7.75h2a1.1 1.1 0 0 1 0 2.2h-2v-2.2Zm0 4.1v-1.9M9.5 11.85V7.75h1.4" strokeWidth="1.2" />;
       case 'code':
         return <path d="m6.4 8.2-1.5 1.6 1.5 1.6M9.6 8.2l1.5 1.6-1.5 1.6" strokeWidth="1.2" />;
+      case 'book':
+        return <path d="M5.4 7.4v4.9M5.4 7.4c1.5-.6 3.6-.5 5.3.3M5.4 12.3c1.5-.6 3.6-.5 5.3.3" strokeWidth="1.2" />;
       case 'media':
         return <path d="M5.25 11.5 7 9.4l1.4 1.6 1.4-1.9 1.95 2.4Z" strokeWidth="1.2" />;
       case 'slides':

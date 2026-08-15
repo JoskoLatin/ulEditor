@@ -35,6 +35,8 @@ export function StatusBar() {
         </span>
       )}
 
+      <span className="status-origin">made in Vodice</span>
+
       <span className="spacer" />
 
       {active?.status && <span className="status-item">{active.status}</span>}

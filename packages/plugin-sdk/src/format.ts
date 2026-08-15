@@ -9,6 +9,7 @@ export type FormatId =
   | 'code'
   | 'markdown'
   | 'pdf'
+  | 'epub'
   | 'docx'
   | 'xlsx'
   | 'pptx'
@@ -19,7 +20,15 @@ export type FormatId =
   | 'unknown';
 
 /** Obitelj kojoj format pripada — nosi boju i ikonu u UI-u. */
-export type FormatFamily = 'code' | 'document' | 'sheet' | 'slides' | 'fixed' | 'media' | 'other';
+export type FormatFamily =
+  | 'code'
+  | 'document'
+  | 'sheet'
+  | 'slides'
+  | 'fixed'
+  | 'book'
+  | 'media'
+  | 'other';
 
 export interface FormatDescriptor {
   id: FormatId;
@@ -35,6 +44,7 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   code: { id: 'code', family: 'code', label: 'Kod', textual: true },
   markdown: { id: 'markdown', family: 'document', label: 'Markdown', textual: true },
   pdf: { id: 'pdf', family: 'fixed', label: 'PDF', textual: false },
+  epub: { id: 'epub', family: 'book', label: 'E-knjiga (EPUB)', textual: false },
   docx: { id: 'docx', family: 'document', label: 'Word dokument', textual: false },
   xlsx: { id: 'xlsx', family: 'sheet', label: 'Excel tablica', textual: false },
   pptx: { id: 'pptx', family: 'slides', label: 'PowerPoint prezentacija', textual: false },

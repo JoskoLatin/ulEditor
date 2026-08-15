@@ -429,3 +429,101 @@
   padding: 40px;
   line-height: 1.7;
 }
+
+/* ── radnje nad cijelim dokumentom (vrh trake sa stranicama) ─────────── */
+
+.ul-pdf-rail-actions {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--chrome);
+}
+
+.ul-pdf-rail-btn {
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.ul-pdf-rail-btn:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.ul-pdf-rail-extract {
+  display: flex;
+  gap: 4px;
+}
+
+.ul-pdf-rail-extract input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+
+.ul-pdf-rail-extract input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── način čitanja ───────────────────────────────────────────────────── */
+
+/*
+ * PDF je fiksni prijelom, pa čitaonica ovdje ne dira tipografiju — mijenja
+ * okvir i podlogu. "Noć" je invertirani prikaz, kao u svakom čitaču: bijela
+ * stranica u mračnoj sobi je jedini razlog zbog kojeg ljudi traže tamnu temu.
+ */
+
+.ul-pdf[data-reading='true'] .ul-pdf-toolbar,
+.ul-pdf[data-reading='true'] .ul-pdf-rail {
+  display: none;
+}
+
+.ul-pdf[data-reading='true'] .ul-pdf-scroll {
+  background: #2a2f33;
+  padding: 0;
+}
+
+.ul-pdf[data-reading='true'][data-flow='paged'] .ul-pdf-scroll {
+  scroll-snap-type: y mandatory;
+}
+
+.ul-pdf[data-reading='true'][data-flow='paged'] .ul-pdf-page {
+  scroll-snap-align: center;
+}
+
+.ul-pdf[data-reading='true'][data-tint='sepia'] .ul-pdf-scroll {
+  background: #3a3227;
+}
+
+.ul-pdf[data-reading='true'][data-tint='sepia'] .ul-pdf-page canvas {
+  filter: sepia(0.32) saturate(1.08) brightness(0.98);
+}
+
+.ul-pdf[data-reading='true'][data-tint='night'] .ul-pdf-scroll {
+  background: #0b0e10;
+}
+
+.ul-pdf[data-reading='true'][data-tint='night'] .ul-pdf-page canvas {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92);
+}
+
+.ul-pdf[data-reading='true'][data-tint='night'] .ul-pdf-page {
+  box-shadow: none;
+}
