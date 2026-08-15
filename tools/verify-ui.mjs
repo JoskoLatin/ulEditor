@@ -171,6 +171,60 @@ try {
   await page.waitForTimeout(250);
   check('redo vraća bilješku', (await page.locator('.ul-pdf-ann-note').count()) === 1);
 
+  /* — tekst upisan u PDF — */
+  await page.locator('.ul-pdf-tool[title*="Add text"]').click();
+  check('postavke fonta se pojave tek uz alat za tekst', await page.locator('.ul-pdf-text-opts').isVisible());
+
+  await page.locator('.ul-pdf-page').first().click({ position: { x: 90, y: 120 } });
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 10000 });
+
+  const TYPED = 'Vodice — čćžšđ';
+  await page.locator('.ul-pdf-text-input').pressSequentially(TYPED);
+
+  /*
+   * Font iz kojeg se računa okvir mora biti i onaj kojim se crta na ekranu.
+   * Inače bi se širina okvira i širina teksta razišle, i to različito po
+   * platformama — na Windowsu jedva, na Androidu vidljivo.
+   */
+  const usesEmbedded = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.ul-pdf-text-input')).fontFamily.includes(
+      'ulEditor Sans',
+    ),
+  );
+  check('polje za tipkanje koristi ugrađeni font', usesEmbedded);
+
+  const grew = await page.evaluate(() => {
+    const input = document.querySelector('.ul-pdf-text-input');
+    return input.getBoundingClientRect().width;
+  });
+
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ul-pdf-ann-text', { timeout: 5000 });
+  const boxText = await page.locator('.ul-pdf-ann-text').first().innerText();
+  check('tekst ostaje na stranici nakon tipkanja', boxText === TYPED, JSON.stringify(boxText));
+  check('okvir se proširio uz tekst', grew > 40, `${Math.round(grew)}px`);
+
+  // Prazan okvir ne smije ostati iza sebe: kliknuti pa se predomisliti je
+  // najčešći potez, a nevidljiva anotacija u dokumentu je smeće.
+  const boxesBefore = await page.locator('.ul-pdf-ann-text').count();
+  await page.locator('.ul-pdf-page').first().click({ position: { x: 260, y: 200 } });
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  check(
+    'prazan okvir se ne sprema',
+    (await page.locator('.ul-pdf-ann-text').count()) === boxesBefore,
+    `${boxesBefore} prije, ${await page.locator('.ul-pdf-ann-text').count()} poslije`,
+  );
+
+  await page.keyboard.press('Control+Z');
+  await page.waitForTimeout(250);
+  check('undo miče upisani tekst', (await page.locator('.ul-pdf-ann-text').count()) === 0);
+
+  await page.keyboard.press('Control+Shift+Z');
+  await page.waitForTimeout(250);
+  check('redo ga vraća', (await page.locator('.ul-pdf-ann-text').count()) === 1);
+
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
   /* — slika — */

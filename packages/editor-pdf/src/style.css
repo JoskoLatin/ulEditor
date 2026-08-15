@@ -310,7 +310,8 @@
   pointer-events: none;
 }
 .ul-pdf[data-tool='note'] .ul-pdf-annots,
-.ul-pdf[data-tool='ink'] .ul-pdf-annots {
+.ul-pdf[data-tool='ink'] .ul-pdf-annots,
+.ul-pdf[data-tool='text'] .ul-pdf-annots {
   pointer-events: auto;
 }
 .ul-pdf[data-tool='note'] .ul-pdf-page {
@@ -318,6 +319,9 @@
 }
 .ul-pdf[data-tool='ink'] .ul-pdf-page {
   cursor: crosshair;
+}
+.ul-pdf[data-tool='text'] .ul-pdf-page {
+  cursor: text;
 }
 .ul-pdf[data-tool='highlight'] .ul-pdf-text {
   cursor: text;
@@ -353,6 +357,87 @@
 }
 .ul-pdf-ann-note:hover {
   filter: brightness(1.08);
+}
+
+/* ── tekstualni okviri ───────────────────────────────────────────────── */
+
+/*
+ * Okvir i polje za tipkanje dijele mjere namjerno: ono što se vidi dok se
+ * tipka mora biti ono što ostane u datoteci. Zato oba imaju `box-sizing:
+ * border-box`, `white-space: pre` (bez prelamanja, kao ni u zapisu) i font
+ * koji postavlja JS iz istih mjera kojima se računa okvir.
+ */
+.ul-pdf-ann-text,
+.ul-pdf-text-input {
+  box-sizing: border-box;
+  white-space: pre;
+  overflow: hidden;
+  margin: 0;
+  border: 0;
+  background: none;
+  letter-spacing: 0;
+}
+
+.ul-pdf-ann-text {
+  pointer-events: auto;
+  cursor: text;
+  /* Jedva vidljiv obrub: okvir se mora dati pogoditi, ali ne smije izgledati
+     kao da je dio dokumenta. U ispisu ga nema — postoji samo ovdje. */
+  outline: 1px dashed transparent;
+  outline-offset: 1px;
+}
+.ul-pdf[data-tool='select'] .ul-pdf-ann-text:hover,
+.ul-pdf[data-tool='text'] .ul-pdf-ann-text:hover {
+  outline-color: var(--accent);
+  cursor: move;
+}
+
+.ul-pdf-text-input {
+  position: absolute;
+  z-index: 3;
+  resize: none;
+  pointer-events: auto;
+  outline: 1px dashed var(--accent);
+  outline-offset: 1px;
+  /* Blijeda podloga da se vidi dokle okvir seže preko gustog dokumenta. */
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.ul-pdf-text-warning {
+  position: absolute;
+  z-index: 4;
+  max-width: 280px;
+  background: var(--surface-raised);
+  border: 1px solid var(--warn, #b8860b);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+
+.ul-pdf-text-opts {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+}
+.ul-pdf[data-tool='text'] .ul-pdf-text-opts {
+  display: inline-flex;
+}
+
+.ul-pdf-select {
+  height: 24px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 0 3px;
 }
 
 .ul-pdf-ann-ink,
@@ -601,5 +686,24 @@
     justify-content: center;
     gap: 6px;
     margin-left: 0;
+  }
+
+  /* Rez i veličina jedan ispod drugoga; u red od 48 px ne stanu jedan uz drugi. */
+  .ul-pdf[data-tool='text'] .ul-pdf-text-opts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: 0;
+  }
+
+  .ul-pdf-select {
+    width: 100%;
+    height: 30px;
+  }
+
+  /* Prstom se cilja lošije nego mišem, pa je polje šire od okvira koji piše. */
+  .ul-pdf-text-input {
+    min-width: 44px;
+    min-height: 32px;
   }
 }

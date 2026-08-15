@@ -11,7 +11,7 @@
     "build:desktop": "pnpm --filter @uleditor/desktop build",
     "typecheck": "pnpm -r typecheck",
     "verify": "node tools/verify-ui.mjs",
-    "verify:pdf": "node tools/verify-pdf-annotations.mjs && node tools/verify-pdf-pages.mjs",
+    "verify:pdf": "node tools/verify-pdf-annotations.mjs && node tools/verify-pdf-pages.mjs && node tools/verify-pdf-text.mjs",
     "icons": "node tools/make-icons.mjs",
     "rust:test": "cargo test --workspace",
     "rust:lint": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
@@ -25,6 +25,7 @@
     "verify:search": "node tools/verify-project-search.mjs",
     "verify:mobile": "node tools/verify-mobile-layout.mjs",
     "verify:library": "node tools/verify-mobile-library.mjs",
+    "verify:pdf-editing": "node tools/verify-pdf-editing.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"
   },

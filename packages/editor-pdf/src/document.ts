@@ -11,7 +11,8 @@
 import { PDFDocument, degrees } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
-import { writeAnnotations, type Annotation } from './annotations.js';
+import { missingGlyphWarning, writeAnnotations, type Annotation } from './annotations.js';
+import type { FontLoader } from './text.js';
 
 export interface PagePlan {
   /** Broj stranice u IZVORNOM dokumentu, 1-baziran. */
@@ -108,12 +109,19 @@ export async function saveDocument(
   plan: PagePlan[],
   annotations: Annotation[],
   pageCount: number,
+  /** Bajtovi fonta za tekstualne okvire. */
+  loadFont?: FontLoader,
 ): Promise<SaveDocumentResult> {
   const lost: string[] = [];
 
   if (isIdentity(plan, pageCount)) {
-    const { bytes } = await writeAnnotations(source, annotations);
-    return { bytes, lost };
+    const { bytes, missingGlyphs } = await writeAnnotations(
+      source,
+      annotations,
+      undefined,
+      loadFont,
+    );
+    return { bytes, lost: missingGlyphWarning(missingGlyphs) };
   }
 
   let working: Uint8Array;
@@ -160,8 +168,13 @@ export async function saveDocument(
     working = await doc.save({ useObjectStreams: false });
   }
 
-  const { bytes } = await writeAnnotations(working, annotations, pageMapOf(plan));
-  return { bytes, lost };
+  const { bytes, missingGlyphs } = await writeAnnotations(
+    working,
+    annotations,
+    pageMapOf(plan),
+    loadFont,
+  );
+  return { bytes, lost: [...lost, ...missingGlyphWarning(missingGlyphs)] };
 }
 
 /* ── spajanje i izdvajanje ───────────────────────────────────────────── */

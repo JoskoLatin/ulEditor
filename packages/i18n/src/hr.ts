@@ -363,6 +363,19 @@ export const hr: Catalog = {
   'Split below': 'Split ispod',
   'Resize split': 'Promijeni visinu splita',
 
+  /* ── tekst u PDF-u ─────────────────────────────────────────────────── */
+  'Add text — click where it should go': 'Dodaj tekst — klikni gdje treba stajati',
+  'Font style': 'Rez slova',
+  'Font size': 'Veličina slova',
+  Regular: 'Obično',
+  Bold: 'Podebljano',
+  Italic: 'Kurziv',
+  Black: 'Crna',
+  'This font has no {chars} — they will be saved as blanks.':
+    'Ovaj font nema {chars} — spremit će se kao prazno mjesto.',
+  'The font cannot draw these characters, so they were saved as blanks: {chars}':
+    'Font ne zna nacrtati ove znakove, pa su spremljeni kao prazno mjesto: {chars}',
+
   /* ── knjižnica ─────────────────────────────────────────────────────── */
   Library: 'Knjižnica',
   'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',

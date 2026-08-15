@@ -43,7 +43,22 @@ import {
   type Point,
   type Rect,
   type Rgb,
+  type TextBoxAnnotation,
 } from './annotations.js';
+import { ensureWebFont, loadFontBytes } from './fonts.js';
+import {
+  DEFAULT_TEXT_SIZE,
+  FONT_FAMILY,
+  TEXT_FACES,
+  TEXT_PADDING,
+  TEXT_SIZES,
+  layoutTextBox,
+  linesOf,
+  loadFace,
+  topOf,
+  type FaceMetrics,
+  type TextFace,
+} from './text.js';
 import {
   describePlan,
   extractPages,
@@ -70,7 +85,10 @@ const NOTE_ICON_PX = 20;
 const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
-type Tool = 'select' | 'highlight' | 'note' | 'ink';
+type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text';
+
+/** Ispod ovoliko piksela pomak se broji kao klik, ne kao povlačenje okvira. */
+const TEXT_DRAG_SLOP = 3;
 
 interface TextItemBox {
   str: string;
@@ -162,6 +180,29 @@ class PdfEditor implements EditorInstance {
 
   #tool: Tool = 'select';
   #color: Rgb = PALETTE[0]!.color;
+
+  #textSize = DEFAULT_TEXT_SIZE;
+  #textFace: TextFace = 'sans';
+  /** Tekst ima vlastitu boju: žuta je dobra kao istaknuće, kao slovo nije. */
+  #textColor: Rgb = [0, 0, 0];
+  /** Mjere učitanih rezova; prazno dok se font ne zatreba. */
+  #metrics = new Map<TextFace, FaceMetrics>();
+
+  /**
+   * Okvir koji se upravo tipka.
+   *
+   * Nacrt namjerno **nije** u `#annotations` dok traje tipkanje: tako svako
+   * dovršeno uređivanje ostavi točno jedan korak u povijesti, umjesto jednog
+   * po pritisnutoj tipki. `origin` je `null` kad okvir tek nastaje.
+   */
+  #editor: {
+    view: PageView;
+    draft: TextBoxAnnotation;
+    origin: TextBoxAnnotation | null;
+    input: HTMLTextAreaElement;
+    warning: HTMLElement;
+    metrics: FaceMetrics;
+  } | null = null;
 
   #drawing: { view: PageView; points: Point[] } | null = null;
 
@@ -288,6 +329,7 @@ class PdfEditor implements EditorInstance {
       { tool: 'highlight', label: '▬', title: t('Highlight selected text') },
       { tool: 'note', label: '✎', title: t('Note — click the page') },
       { tool: 'ink', label: '〰', title: t('Freehand drawing') },
+      { tool: 'text', label: 'T', title: t('Add text — click where it should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
     /* Klasa, ne inline stil: na uskom ekranu se traka okreće uspravno i grupa
@@ -315,6 +357,36 @@ class PdfEditor implements EditorInstance {
       swatchButtons.push({ el: b, color });
     }
 
+    /* Rez i veličina se tiču samo pisanja teksta, pa ih CSS pokazuje tek kad je
+       taj alat izabran — inače bi traka nosila dvije kontrole koje devedeset
+       posto vremena ne rade ništa. */
+    const textOpts = document.createElement('span');
+    textOpts.className = 'ul-pdf-text-opts';
+
+    const faceSelect = document.createElement('select');
+    faceSelect.className = 'ul-pdf-select';
+    faceSelect.setAttribute('aria-label', t('Font style'));
+    for (const { id, label } of TEXT_FACES) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = t(label);
+      faceSelect.appendChild(option);
+    }
+    faceSelect.addEventListener('change', () => this.setTextFace(faceSelect.value as TextFace));
+
+    const sizeSelect = document.createElement('select');
+    sizeSelect.className = 'ul-pdf-select';
+    sizeSelect.setAttribute('aria-label', t('Font size'));
+    for (const size of TEXT_SIZES) {
+      const option = document.createElement('option');
+      option.value = String(size);
+      option.textContent = String(size);
+      sizeSelect.appendChild(option);
+    }
+    sizeSelect.addEventListener('change', () => this.setTextSize(Number(sizeSelect.value)));
+
+    textOpts.append(faceSelect, sizeSelect);
+
     const count = document.createElement('span');
     count.className = 'ul-pdf-count';
     const spacer = document.createElement('span');
@@ -325,7 +397,7 @@ class PdfEditor implements EditorInstance {
       prev, input, total, next, sep(),
       zoomOut, zoomLabel, zoomIn, sep(),
       fitWidth, fitPage, sep(),
-      toolGroup, swatches,
+      toolGroup, swatches, textOpts,
       spacer, count,
     );
 
@@ -337,9 +409,12 @@ class PdfEditor implements EditorInstance {
       total.textContent = `/ ${this.#plan.length}`;
 
       for (const [tool, b] of toolButtons) b.dataset.active = String(this.#tool === tool);
+      const active = this.#activeColor();
       for (const { el, color } of swatchButtons) {
-        el.dataset.active = String(color.every((c, i) => Math.abs(c - this.#color[i]!) < 0.001));
+        el.dataset.active = String(color.every((c, i) => Math.abs(c - active[i]!) < 0.001));
       }
+      faceSelect.value = this.#textFace;
+      sizeSelect.value = String(this.#textSize);
 
       const parts: string[] = [];
       if (this.#annotations.length) parts.push(`${this.#annotations.length} anot.`);
@@ -688,16 +763,59 @@ class PdfEditor implements EditorInstance {
     this.#tool = tool;
     if (this.#root) this.#root.dataset.tool = tool;
     this.#closePopup();
+    this.#finishTextEdit();
+    // Font se skida čim korisnik posegne za alatom, ne pri prvom kliku — inače
+    // se prvi okvir stvara uz vidljivo čekanje.
+    if (tool === 'text') void this.#face(this.#textFace);
     this.#syncToolbar();
   }
 
   setColor(color: Rgb): void {
-    this.#color = color;
+    if (this.#tool === 'text' || this.#editor) {
+      this.#textColor = color;
+      this.#applyToEditedBox({ color });
+    } else {
+      this.#color = color;
+    }
+    this.#syncToolbar();
+  }
+
+  /** Boja na koju se odnose kvačice — ovisi o tome što se upravo radi. */
+  #activeColor(): Rgb {
+    return this.#tool === 'text' || this.#editor ? this.#textColor : this.#color;
+  }
+
+  setTextFace(face: TextFace): void {
+    this.#textFace = face;
+    void this.#face(face).then(() => this.#applyToEditedBox({ face }));
+    this.#syncToolbar();
+  }
+
+  setTextSize(size: number): void {
+    if (!Number.isFinite(size) || size <= 0) return;
+    this.#textSize = size;
+    this.#applyToEditedBox({ size });
     this.#syncToolbar();
   }
 
   get tool(): Tool {
     return this.#tool;
+  }
+
+  /**
+   * Mjere jednog reza, spremne za sinkronu upotrebu.
+   *
+   * Uz bajtove se registrira i isti font u pregledniku, jer okvir na ekranu i
+   * okvir u datoteci moraju imati istu širinu.
+   */
+  async #face(face: TextFace): Promise<FaceMetrics> {
+    const ready = this.#metrics.get(face);
+    if (ready) return ready;
+
+    void ensureWebFont(face).catch(() => {});
+    const metrics = await loadFace(face, loadFontBytes);
+    this.#metrics.set(face, metrics);
+    return metrics;
   }
 
   /* ── zoom ──────────────────────────────────────────────────────────── */
@@ -923,6 +1041,22 @@ class PdfEditor implements EditorInstance {
         continue;
       }
 
+      if (annotation.kind === 'text') {
+        // Dok se okvir tipka, njegov statični prikaz bi se dvostruko iscrtao
+        // ispod `<textarea>`-e.
+        if (this.#editor?.draft.id === annotation.id) continue;
+
+        const el = document.createElement('div');
+        el.className = 'ul-pdf-ann ul-pdf-ann-text';
+        el.dataset.id = annotation.id;
+        el.textContent = annotation.text;
+        Object.assign(el.style, this.#textStyle(annotation, this.#metrics.get(annotation.face)));
+        this.#placeTextElement(el, view, annotation);
+        el.addEventListener('pointerdown', (e) => this.#beginTextDrag(e, view, annotation.id));
+        fragment.appendChild(el);
+        continue;
+      }
+
       if (annotation.kind === 'note') {
         const box = rectToCss(viewport, annotation.rect);
         const el = document.createElement('button');
@@ -970,6 +1104,17 @@ class PdfEditor implements EditorInstance {
     }
 
     view.annotEl.replaceChildren(fragment);
+
+    /* Polje za tipkanje živi u istom sloju, pa bi ga `replaceChildren` maknuo
+       pri svakom osvježenju — na primjer kad se promijeni zoom. Vraća se
+       nazad i preračunava, umjesto da se uređivanje prekine. */
+    const editor = this.#editor;
+    if (editor && editor.view === view) {
+      Object.assign(editor.input.style, this.#textStyle(editor.draft, editor.metrics));
+      this.#placeTextElement(editor.input, view, editor.draft);
+      view.annotEl.append(editor.input, editor.warning);
+      this.#warnAboutGlyphs();
+    }
   }
 
   #renderAllAnnotations(): void {
@@ -1137,6 +1282,17 @@ class PdfEditor implements EditorInstance {
       return;
     }
 
+    if (this.#tool === 'text') {
+      event.preventDefault();
+      // Klik pokraj otvorenog okvira prvo dovršava njega; drugi klik otvara novi.
+      if (this.#editor) {
+        this.#finishTextEdit();
+        return;
+      }
+      void this.#startTextBox(view, event.clientX, event.clientY);
+      return;
+    }
+
     if (this.#tool === 'ink') {
       event.preventDefault();
       view.annotEl.setPointerCapture(event.pointerId);
@@ -1209,6 +1365,284 @@ class PdfEditor implements EditorInstance {
       strokes: [stroke],
       width: 2,
     });
+  }
+
+  /* ── tekstualni okviri ─────────────────────────────────────────────── */
+
+  async #startTextBox(view: PageView, clientX: number, clientY: number): Promise<void> {
+    const metrics = await this.#face(this.#textFace);
+    // Dok se font skidao korisnik je mogao promijeniti alat ili stranicu.
+    if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
+
+    const bounds = view.el.getBoundingClientRect();
+    const [x, top] = this.#viewportFor(view).convertToPdfPoint(
+      clientX - bounds.left,
+      clientY - bounds.top,
+    );
+
+    this.#openTextEditor(view, metrics, {
+      id: newId(),
+      kind: 'text',
+      page: view.source,
+      color: this.#textColor,
+      createdAt: Date.now(),
+      rect: layoutTextBox(metrics, '', this.#textSize, { x, top }),
+      text: '',
+      size: this.#textSize,
+      face: this.#textFace,
+    });
+  }
+
+  /** CSS koji tekstu daje isti izgled kao što će imati u datoteci. */
+  #textStyle(box: TextBoxAnnotation, metrics: FaceMetrics | undefined): Partial<CSSStyleDeclaration> {
+    const spec = TEXT_FACES.find((f) => f.id === box.face);
+    const lineHeight = metrics
+      ? metrics.lineHeight(box.size)
+      : // Bez mjera se visina retka izvodi iz okvira; vrijedi za uvezene okvire
+        // koje korisnik nije dirao, pa font nije ni trebao.
+        (box.rect.height - TEXT_PADDING * 2) / Math.max(1, linesOf(box.text).length);
+
+    return {
+      color: cssRgb(box.color),
+      fontFamily: `"${FONT_FAMILY}", Arial, Helvetica, sans-serif`,
+      fontWeight: String(spec?.weight ?? 400),
+      fontStyle: spec?.style ?? 'normal',
+      fontSize: `${box.size * this.#scale}px`,
+      lineHeight: `${lineHeight * this.#scale}px`,
+      padding: `${TEXT_PADDING * this.#scale}px`,
+    };
+  }
+
+  #placeTextElement(el: HTMLElement, view: PageView, box: TextBoxAnnotation): void {
+    const geometry = rectToCss(this.#viewportFor(view), box.rect);
+    el.style.left = `${geometry.left}px`;
+    el.style.top = `${geometry.top}px`;
+    el.style.width = `${geometry.width}px`;
+    el.style.height = `${geometry.height}px`;
+  }
+
+  /**
+   * Tipkanje okvira na mjestu.
+   *
+   * `<textarea>` stoji točno preko okvira i nosi isti font, veličinu i visinu
+   * retka, pa je ono što se vidi tijekom tipkanja već ono što će biti u
+   * datoteci. Statični prikaz je za to vrijeme sakriven.
+   */
+  #openTextEditor(view: PageView, metrics: FaceMetrics, draft: TextBoxAnnotation): void {
+    this.#finishTextEdit();
+    this.#closePopup();
+
+    const input = document.createElement('textarea');
+    input.className = 'ul-pdf-text-input';
+    input.value = draft.text;
+    input.spellcheck = false;
+    Object.assign(input.style, this.#textStyle(draft, metrics));
+
+    const warning = document.createElement('div');
+    warning.className = 'ul-pdf-text-warning';
+    warning.hidden = true;
+
+    this.#editor = {
+      view,
+      metrics,
+      input,
+      warning,
+      draft,
+      origin: this.#annotations.find(
+        (a): a is TextBoxAnnotation => a.kind === 'text' && a.id === draft.id,
+      ) ?? null,
+    };
+
+    // Render sam postavlja polje u sloj i preračunava mu mjesto.
+    this.#renderAnnotations(view);
+
+    input.addEventListener('input', () => this.#onTextInput());
+    input.addEventListener('pointerdown', (e) => e.stopPropagation());
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        this.#finishTextEdit();
+      }
+    });
+    input.addEventListener('blur', () => this.#finishTextEdit());
+
+    input.focus();
+    this.#onTextInput();
+  }
+
+  /** Okvir prati tekst dok se tipka — širi se udesno i prema dolje. */
+  #onTextInput(): void {
+    const editor = this.#editor;
+    if (!editor) return;
+
+    const { draft, metrics } = editor;
+    draft.text = editor.input.value;
+    draft.rect = layoutTextBox(metrics, draft.text, draft.size, {
+      x: draft.rect.x,
+      top: topOf(draft.rect),
+    });
+
+    this.#placeTextElement(editor.input, editor.view, draft);
+    this.#warnAboutGlyphs();
+  }
+
+  /**
+   * Znak koji font ne poznaje se prijavljuje **dok se tipka**, ne pri
+   * spremanju: tada se još da promijeniti, a poslije je dokument već otišao.
+   */
+  #warnAboutGlyphs(): void {
+    const editor = this.#editor;
+    if (!editor) return;
+
+    const missing = editor.metrics.missing(editor.draft.text);
+    editor.warning.hidden = missing.length === 0;
+    if (missing.length === 0) return;
+
+    editor.warning.textContent = t('This font has no {chars} — they will be saved as blanks.', {
+      chars: missing.join(' '),
+    });
+    const geometry = rectToCss(this.#viewportFor(editor.view), editor.draft.rect);
+    editor.warning.style.left = `${geometry.left}px`;
+    editor.warning.style.top = `${geometry.top + geometry.height + 4}px`;
+  }
+
+  /** Mijenja rez, veličinu ili boju okvira koji se upravo tipka. */
+  #applyToEditedBox(patch: Partial<Pick<TextBoxAnnotation, 'size' | 'face' | 'color'>>): void {
+    const editor = this.#editor;
+    if (!editor) return;
+
+    Object.assign(editor.draft, patch);
+    if (patch.face) {
+      const metrics = this.#metrics.get(patch.face);
+      if (metrics) editor.metrics = metrics;
+    }
+
+    Object.assign(editor.input.style, this.#textStyle(editor.draft, editor.metrics));
+    this.#onTextInput();
+  }
+
+  /**
+   * Zatvara uređivanje i tek tada dira povijest.
+   *
+   * Prazan okvir se ne sprema: kliknuti pa se predomisliti ne smije ostaviti
+   * nevidljivu anotaciju u dokumentu.
+   */
+  #finishTextEdit(): void {
+    const editor = this.#editor;
+    if (!editor) return;
+    this.#editor = null;
+
+    editor.input.remove();
+    editor.warning.remove();
+
+    const { draft, origin } = editor;
+    const empty = draft.text.trim().length === 0;
+
+    if (empty) {
+      if (origin) this.#remove(origin.id);
+      else this.#renderAnnotations(editor.view);
+      return;
+    }
+
+    if (!origin) {
+      this.#add(draft);
+      return;
+    }
+
+    const unchanged =
+      origin.text === draft.text &&
+      origin.size === draft.size &&
+      origin.face === draft.face &&
+      origin.color.every((c, i) => c === draft.color[i]) &&
+      origin.rect.x === draft.rect.x &&
+      origin.rect.y === draft.rect.y;
+
+    if (unchanged) {
+      this.#renderAnnotations(editor.view);
+      return;
+    }
+
+    this.#snapshot();
+    this.#annotations = this.#annotations.map((a) =>
+      // Uređen uvezeni okvir postaje naš, inače se izmjena ne bi zapisala.
+      a.id === draft.id ? { ...draft, imported: false } : a,
+    );
+    this.#markDirty();
+    this.#renderAllAnnotations();
+    this.#emitStatus();
+  }
+
+  /**
+   * Povlačenje pomiče okvir, klik ga otvara za tipkanje.
+   *
+   * Pomak se računa u PDF prostoru, preko dviju pretvorbi umjesto dijeljenjem
+   * sa zoomom — tako radi i na zarotiranoj stranici.
+   */
+  #beginTextDrag(event: PointerEvent, view: PageView, id: string): void {
+    if (this.#tool === 'ink' || this.#tool === 'note') return;
+
+    const box = this.#annotations.find(
+      (a): a is TextBoxAnnotation => a.kind === 'text' && a.id === id,
+    );
+    if (!box) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const el = event.currentTarget as HTMLElement;
+    el.setPointerCapture(event.pointerId);
+
+    const bounds = view.el.getBoundingClientRect();
+    const viewport = this.#viewportFor(view);
+    const toPdf = (x: number, y: number) => viewport.convertToPdfPoint(x - bounds.left, y - bounds.top);
+    const [startX, startY] = toPdf(event.clientX, event.clientY);
+
+    const origin = { ...box.rect };
+    let moved = false;
+
+    const onMove = (move: PointerEvent) => {
+      if (
+        !moved &&
+        Math.hypot(move.clientX - event.clientX, move.clientY - event.clientY) < TEXT_DRAG_SLOP
+      ) {
+        return;
+      }
+      moved = true;
+
+      const [x, y] = toPdf(move.clientX, move.clientY);
+      box.rect = { ...origin, x: origin.x + (x - startX), y: origin.y + (y - startY) };
+      this.#placeTextElement(el, view, box);
+    };
+
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+
+      if (!moved) {
+        box.rect = origin;
+        void this.#face(box.face).then((metrics) =>
+          this.#openTextEditor(view, metrics, { ...box, rect: { ...box.rect } }),
+        );
+        return;
+      }
+
+      // Pomak se sprema kao jedan korak; `box` je već izmijenjen na mjestu, pa
+      // se snimka radi nad prethodnim položajem.
+      const moveTo = box.rect;
+      box.rect = origin;
+      this.#snapshot();
+      this.#annotations = this.#annotations.map((a) =>
+        a.id === id && a.kind === 'text' ? { ...a, rect: moveTo, imported: false } : a,
+      );
+      this.#markDirty();
+      this.#renderAllAnnotations();
+      this.#emitStatus();
+    };
+
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
   }
 
   /* ── prozorčić bilješke ────────────────────────────────────────────── */
@@ -1332,6 +1766,7 @@ class PdfEditor implements EditorInstance {
   /* ── ugovor ────────────────────────────────────────────────────────── */
 
   unmount(): void {
+    this.#finishTextEdit();
     this.#observer?.disconnect();
     this.#resize?.disconnect();
     this.#scroll?.removeEventListener('wheel', this.#onWheel);
@@ -1351,11 +1786,15 @@ class PdfEditor implements EditorInstance {
 
   async save(target?: SaveTarget): Promise<SaveResult> {
     const uri = target?.uri ?? this.docHandle.uri;
+    // Nedovršeno tipkanje se sprema zajedno s ostatkom, ne gubi se.
+    this.#finishTextEdit();
+
     const { bytes, lost } = await saveDocument(
       this.source,
       [...this.#plan],
       this.#annotations,
       this.pdf.numPages,
+      loadFontBytes,
     );
     await this.host.fs.writeBytes(uri, bytes);
 

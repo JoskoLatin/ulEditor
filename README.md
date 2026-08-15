@@ -17,6 +17,7 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | **EPUB** | **radi** — poglavlja, stranice, sadržaj, pamćenje mjesta | vlastiti čitač (fflate + DOMPurify) |
 | PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga, čitanje | pdf.js *(desktop → pdfium, faza 1)* |
 | PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
+| **PDF tekst** | **radi** — upisivanje teksta, rez, veličina, boja, pomicanje | pdf-lib + Liberation Sans |
 | PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
 | **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
 | **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
@@ -27,6 +28,10 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 Formati koji još nemaju editor otvaraju se s **jasnim objašnjenjem što nedostaje i kada stiže**, ne s praznim ekranom.
 
 Anotacije se zapisuju kao **pravi PDF objekti** (`/Highlight`, `/Text`, `/Ink`), ne kao crtež utisnut u stranicu — Acrobat i ostali čitači ih otvaraju, uređuju i brišu kao svoje. Anotacije koje su već u datoteci se učitavaju i prikazuju.
+
+**Tekst se upisuje alatom `T`** — klikneš gdje treba stajati i tipkaš; okvir raste uz tekst, pa je ono što se vidi dok se tipka već ono što će ostati u datoteci. Poslije se povlači mišem i otvara klikom za izmjenu. Sprema se kao `/FreeText` **s vlastitim tokom izgleda**: bez njega je takva anotacija nevidljiva u pdf.js-u i preglednicima, dakle svugdje osim u Acrobatu.
+
+Font se **ugrađuje**, i to je nužno, ne uljepšavanje: standardnih četrnaest PDF fontova koristi WinAnsi, u kojem `č ć ž š đ` ne postoje. Uzet je Liberation Sans koji ionako stiže s pdf.js-om (SIL OFL 1.1), pa u repou nema priloženog fonta, a u datoteku ide samo podskup upotrijebljenih glifova — potpis na obrascu doda ~9 KB. Znak koji font ne poznaje se prijavljuje **dok se tipka**, a ne tiho pretvara u prazno mjesto.
 
 Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 
