@@ -5,9 +5,9 @@
   "license": "Apache-2.0",
   "description": "Jedan open-source editor za kod, Markdown, PDF, Word i Excel.",
   "scripts": {
-    "dev": "pnpm --filter @uleditor/shell-ui dev",
+    "dev": "node tools/ocr-assets.mjs && pnpm --filter @uleditor/shell-ui dev",
     "desktop": "pnpm --filter @uleditor/desktop dev",
-    "build": "pnpm -r --filter=!@uleditor/desktop build",
+    "build": "node tools/ocr-assets.mjs && pnpm -r --filter=!@uleditor/desktop build",
     "build:desktop": "pnpm --filter @uleditor/desktop build",
     "typecheck": "pnpm -r typecheck",
     "verify": "node tools/verify-ui.mjs",
@@ -22,7 +22,8 @@
     "verify:all": "node tools/verify-ui.mjs && node tools/verify-reading.mjs && node tools/verify-ocr.mjs && node tools/verify-export.mjs && pnpm verify:pdf",
     "verify:ocr": "node tools/verify-ocr.mjs",
     "verify:export": "node tools/verify-export.mjs",
-    "verify:search": "node tools/verify-project-search.mjs"
+    "verify:search": "node tools/verify-project-search.mjs",
+    "ocr:assets": "node tools/ocr-assets.mjs"
   },
   "devDependencies": {
     "fflate": "^0.8.2",

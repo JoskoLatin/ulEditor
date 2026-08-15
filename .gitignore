@@ -12,3 +12,6 @@ tools/screenshots/
 .env
 .env.*
 !.env.example
+
+# OCR resursi se kopiraju iz node_modules pri svakom buildu (tools/ocr-assets.mjs).
+packages/shell-ui/public/ocr/

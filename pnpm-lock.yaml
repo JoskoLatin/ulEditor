@@ -293,6 +293,12 @@ importers:
         specifier: ^5.0.2
         version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     devDependencies:
+      '@tesseract.js-data/eng':
+        specifier: ^1.0.0
+        version: 1.0.0
+      '@tesseract.js-data/hrv':
+        specifier: ^1.0.0
+        version: 1.0.0
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.18
@@ -988,6 +994,12 @@ packages:
     resolution: {integrity: sha512-R8xGtMpwyetawSqm9kYOuMmEqkhUbvcUy8n0aNXIxollKBLESUu5f4Fx+64hgASYm1H+jSWq6jCW6zqTnH6hqQ==}
     engines: {node: '>= 10'}
     hasBin: true
+
+  '@tesseract.js-data/eng@1.0.0':
+    resolution: {integrity: sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg==}
+
+  '@tesseract.js-data/hrv@1.0.0':
+    resolution: {integrity: sha512-0qwO8Yjc1NfwjoQ7WEdBPDbKWnAitQSRALfqUQ4PuQkGG/hPmRJdO/QRR9s/OmPm2Pwo/NKdjgg41cG8HqoCxg==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -1957,6 +1969,10 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.11.4
       '@tauri-apps/cli-win32-ia32-msvc': 2.11.4
       '@tauri-apps/cli-win32-x64-msvc': 2.11.4
+
+  '@tesseract.js-data/eng@1.0.0': {}
+
+  '@tesseract.js-data/hrv@1.0.0': {}
 
   '@types/babel__core@7.20.5':
     dependencies:

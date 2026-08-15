@@ -87,8 +87,13 @@ font bez hrvatskih dijakritika, pa se to prijavljuje **prije** spremanja, po
 istom pravilu po kojem se prijavljuje svaki drugi gubitak.
 
 Jezik prepoznavanja (hrvatski / engleski) bira se uz gumb, jer ista slika zna
-imati oba. Jezični model se preuzima pri prvoj upotrebi i ostaje u predmemoriji
-— prvi put treba mreža, poslije radi bez nje.
+imati oba. Bez hrvatskog modela `č ć ž š đ` završe kao `c z s`.
+
+**OCR radi bez mreže.** Tesseract po zadanom vuče worker, wasm jezgru i jezične
+modele s CDN-a; ovdje se sve poslužuje iz same aplikacije (`tools/ocr-assets.mjs`
+ih kopira iz `node_modules`, ~11 MB). Razlog nije udobnost nego dvije stvari
+koje projekt namjerno ima: CSP desktop verzije dopušta samo `'self'`, a editor
+koji traži internet da bi pročitao tekst sa slike nije alat nego demo.
 
 ## Jezik sučelja
 

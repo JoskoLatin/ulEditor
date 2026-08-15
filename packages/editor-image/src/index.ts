@@ -153,6 +153,7 @@ class ImageEditor implements EditorInstance {
     const zoomIn = button('+', t('Zoom in (Ctrl + wheel)'), () => this.zoomBy(1));
 
     const label = document.createElement('span');
+    label.className = 'zoom';
     label.style.minWidth = '48px';
     label.style.textAlign = 'center';
     this.#zoomLabel = label;
@@ -172,7 +173,10 @@ class ImageEditor implements EditorInstance {
     const spacer = document.createElement('span');
     spacer.className = 'spacer';
 
+    /* Veličina datoteke je podatak, ne alat — na uskom ekranu ju nosi statusna
+       traka, pa se iz uspravne trake miče. */
     const info = document.createElement('span');
+    info.className = 'readout';
     info.textContent = humanBytes(this.doc.stat.size);
 
     /* Prepoznavanje teksta: jezik pa gumb. Jezik stoji uz gumb jer se bira
@@ -259,9 +263,9 @@ class ImageEditor implements EditorInstance {
     } catch (err) {
       this.host.notify.show(
         'error',
-        `${t('Text recognition failed: {reason}', {
+        t('Text recognition failed: {reason}', {
           reason: err instanceof Error ? err.message : String(err),
-        })} ${t('OCR needs to download the language data on first use, which requires an internet connection.')}`,
+        }),
       );
     } finally {
       this.#ocrBusy = false;

@@ -9,14 +9,19 @@
  * 1. **Jezik se bira.** Bez hrvatskog modela `č`, `ć`, `ž`, `š` i `đ` završe
  *    kao `c`, `z`, `s` — a to je upravo ono što se poslije mora ručno
  *    ispravljati.
- * 2. **Jezični model se preuzima pri prvoj upotrebi** i ostaje u predmemoriji
- *    preglednika. Prvi put treba mreža; poslije radi bez nje. To se kaže
- *    unaprijed, ne kroz tihu grešku.
+ * 2. **Sve se poslužuje iz same aplikacije** (`/ocr/`), ne s CDN-a. Zadani
+ *    Tesseract vuče worker, wasm i modele s interneta, što pada na dvije
+ *    stvari koje ovaj projekt namjerno ima: CSP desktop verzije dopušta samo
+ *    `'self'`, a editor mora raditi bez mreže. Labaviti CSP zbog jedne
+ *    značajke znači da to plaćaju svi korisnici, zauvijek.
+ *    Resurse priprema `tools/ocr-assets.mjs`.
  * 3. **Motor se učitava lijeno.** Tesseract je nekoliko megabajta wasm-a i ne
  *    smije opteretiti pokretanje programa nekome tko OCR nikad ne koristi.
  */
 
 import type { Worker } from 'tesseract.js';
+
+import { prepareForOcr } from './preprocess.js';
 
 /** Jezici za koje nudimo model. Više ih je lako dodati — ovo su ona dva koja Josko treba. */
 export const OCR_LANGUAGES = [
@@ -37,7 +42,17 @@ export interface OcrResult {
   text: string;
   /** Prosječna pouzdanost prepoznavanja, 0..100. */
   confidence: number;
+  /** Je li slika prije prepoznavanja povećana i pojačana. */
+  prepared: boolean;
 }
+
+/**
+ * Mjesto s kojeg se poslužuju worker, wasm jezgra i jezični modeli.
+ *
+ * Apsolutna putanja od korijena: isti izvor kao aplikacija, pa `connect-src
+ * 'self'` iz CSP-a vrijedi bez iznimke.
+ */
+const ASSETS = '/ocr';
 
 let worker: Worker | null = null;
 let workerLanguage: OcrLanguage | null = null;
@@ -55,13 +70,27 @@ async function ensureWorker(
   await disposeOcr();
 
   const { createWorker } = await import('tesseract.js');
+
+  // `oem: 1` je LSTM; zato se u aplikaciju kopiraju samo LSTM jezgre.
   worker = await createWorker(language, 1, {
+    workerPath: `${ASSETS}/worker.min.js`,
+    corePath: ASSETS,
+    langPath: ASSETS,
+    // Model je već uz aplikaciju; predmemorija bi ga samo udvostručila.
+    cacheMethod: 'none',
     logger: (message: { status?: string; progress?: number }) =>
       onProgress({
         fraction: typeof message.progress === 'number' ? message.progress : 0,
         stage: message.status ?? '',
       }),
   });
+  /*
+   * Bez podatka o razlučivosti Tesseract pretpostavi 70 DPI i prijavi
+   * upozorenje. Priprema sliku već dovede na razmjere skena, pa mu se to i
+   * kaže — pogađanje inače pomakne procjenu veličine slova.
+   */
+  await worker.setParameters({ user_defined_dpi: '300' });
+
   workerLanguage = language;
   return worker;
 }
@@ -85,15 +114,25 @@ export async function recogniseImage(
 ): Promise<OcrResult> {
   const engine = await ensureWorker(language, onProgress);
 
-  // Svjež buffer: Blob ne prihvaća pogled na dijeljeni spremnik.
-  const copy = new Uint8Array(bytes.length);
-  copy.set(bytes);
-  const blob = new Blob([copy], { type: mime });
+  /*
+   * Priprema slike prije prepoznavanja. Ako ne uspije (format koji canvas ne
+   * dekodira), šalje se izvornik — slabiji rezultat je bolji od nikakvog.
+   */
+  const prepared = await prepareForOcr(bytes, mime);
+  let input: Blob;
+  if (prepared) {
+    input = prepared.blob;
+  } else {
+    const copy = new Uint8Array(bytes.length);
+    copy.set(bytes);
+    input = new Blob([copy], { type: mime });
+  }
 
-  const { data } = await engine.recognize(blob);
+  const { data } = await engine.recognize(input);
   return {
     text: normalise(data.text ?? ''),
     confidence: Math.round(data.confidence ?? 0),
+    prepared: prepared !== null,
   };
 }
 
