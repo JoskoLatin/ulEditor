@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import './styles/app.css';
 import '@uleditor/editor-code/style.css';
+import '@uleditor/editor-image/style.css';
 import '@uleditor/editor-markdown/style.css';
 import '@uleditor/editor-pdf/style.css';
 
@@ -50,6 +51,21 @@ shell.registry.register(
       priority: 30,
     },
     () => import('@uleditor/editor-markdown'),
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.image',
+      displayName: 'Preglednik slika',
+      matches: {
+        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
+      },
+      capabilities: ['view'],
+      priority: 30,
+    },
+    () => import('@uleditor/editor-image'),
   ),
 );
 

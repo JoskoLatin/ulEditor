@@ -65,6 +65,15 @@ export function registerCommands(shell: Shell): () => void {
     }),
 
     shell.commands.register({
+      id: 'find.inDocument',
+      title: 'Traži u dokumentu',
+      category: 'Uređivanje',
+      keybinding: ['Ctrl', 'Shift', 'F'],
+      when: () => !!activeInstance(),
+      run: () => store().setFindOpen(true),
+    }),
+
+    shell.commands.register({
       id: 'view.toggleSidebar',
       title: 'Prikaži/sakrij bočnu ploču',
       category: 'Prikaz',
@@ -133,11 +142,21 @@ function cycleTab(direction: number): void {
  * (Ctrl+F u CodeMirroru, Ctrl+Z unutar teksta) ovdje se ne presreće.
  */
 function handleKey(shell: Shell, event: KeyboardEvent): void {
-  const mod = event.ctrlKey || event.metaKey;
-  if (!mod) return;
-
   const store = useWorkspace.getState();
   const key = event.key.toLowerCase();
+
+  // Escape zatvara pretragu odakle god da je fokus — ploča, editor ili tab.
+  // Vezanje samo na ploču znači da Escape iz editora ne radi, što je upravo
+  // mjesto s kojeg ga se najčešće pritisne.
+  if (event.key === 'Escape' && store.findOpen && !store.paletteOpen) {
+    event.preventDefault();
+    store.setFindOpen(false);
+    activeInstance()?.focus();
+    return;
+  }
+
+  const mod = event.ctrlKey || event.metaKey;
+  if (!mod) return;
 
   // Ctrl+Shift+P — paleta. Radi i kad je fokus unutar editora.
   if (event.shiftKey && key === 'p') {
@@ -150,6 +169,12 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     if (key === 'tab') {
       event.preventDefault();
       cycleTab(-1);
+    }
+    // Ctrl+Shift+F — pretraga koja radi nad svim formatima, uključujući PDF.
+    // Ctrl+F ostaje CodeMirroru, koji uz pretragu nudi i zamjenu.
+    if (key === 'f' && activeInstance()) {
+      event.preventDefault();
+      store.setFindOpen(true);
     }
     return;
   }

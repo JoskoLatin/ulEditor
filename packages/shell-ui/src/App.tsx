@@ -9,6 +9,7 @@ import { useWorkspace } from './state/workspace.js';
 import { ActivityBar } from './components/ActivityBar.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { EditorSurface } from './components/EditorSurface.js';
+import { FindPanel } from './components/FindPanel.js';
 import { Sidebar, SidebarResizer } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { TabBar } from './components/TabBar.js';
@@ -77,6 +78,7 @@ export function App({ shell }: { shell: Shell }) {
           {sidebarVisible ? <SidebarResizer /> : <div />}
           <main className="main">
             <TabBar />
+            <FindPanel />
             <EditorSurface />
           </main>
         </div>

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@uleditor/editor-code": "workspace:*",
+    "@uleditor/editor-image": "workspace:*",
     "@uleditor/editor-markdown": "workspace:*",
     "@uleditor/editor-pdf": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",

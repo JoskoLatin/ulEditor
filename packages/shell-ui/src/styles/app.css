@@ -796,6 +796,131 @@ button.status-item:hover {
   font-weight: 600;
 }
 
+/* ── pretraga u dokumentu ───────────────────────────────────────────── */
+
+.findpanel {
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+  min-height: 0;
+  animation: rise 140ms var(--ease);
+}
+
+.findpanel-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  height: 34px;
+  flex: none;
+  color: var(--ink-faint);
+}
+
+.findpanel-bar input {
+  flex: 1;
+  min-width: 0;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 4px 8px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+  outline: none;
+}
+.findpanel-bar input:focus {
+  border-color: var(--accent);
+}
+.findpanel-bar input::placeholder {
+  color: var(--ink-ghost);
+}
+
+.findpanel-count {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.findpanel-toggle {
+  height: 22px;
+  min-width: 24px;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.findpanel-toggle:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.findpanel-toggle[data-active="true"] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.findpanel-list {
+  overflow-y: auto;
+  border-top: 1px solid var(--rule-soft);
+  padding: 4px;
+  min-height: 0;
+}
+
+.findpanel-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 9px;
+  border-radius: 3px;
+  text-align: left;
+  color: var(--ink-soft);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.findpanel-hit:hover {
+  background: var(--rule-soft);
+}
+.findpanel-hit[data-active="true"] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+.findpanel-hit .where {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  flex: none;
+  min-width: 90px;
+}
+.findpanel-hit[data-active="true"] .where {
+  color: var(--accent);
+}
+.findpanel-hit .what {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findpanel-more {
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-ghost);
+}
+
 /* ── obavijesti ─────────────────────────────────────────────────────── */
 
 .toasts {

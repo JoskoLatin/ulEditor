@@ -1,0 +1,108 @@
+/*
+ * Preglednik slika.
+ *
+ * Prozirnost se prikazuje šahovnicom u neutralnim tonovima teme, ne u
+ * fiksnoj sivoj — inače u tamnoj temi izgleda kao greška u renderu.
+ */
+
+.ul-img {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ground);
+}
+
+.ul-img-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 34px;
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+.ul-img-toolbar .sep {
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+  margin: 0 6px;
+}
+
+.ul-img-toolbar .spacer {
+  flex: 1;
+}
+
+.ul-img-btn {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 130ms, color 130ms;
+}
+.ul-img-btn:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.ul-img-btn[data-active='true'] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.ul-img-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.ul-img-frame {
+  /* Šahovnica za prozirnost — dvije nijanse iz palete, bez fiksnih boja. */
+  background-image:
+    linear-gradient(45deg, var(--rule-soft) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--rule-soft) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--rule-soft) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--rule-soft) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-color: var(--surface);
+  box-shadow: var(--shadow-md);
+  border-radius: 2px;
+  line-height: 0;
+}
+
+.ul-img-frame img {
+  display: block;
+  /* Uvećane slike moraju pokazati piksele, ne zamućenje. */
+  image-rendering: pixelated;
+}
+
+.ul-img-frame[data-smooth='true'] img {
+  image-rendering: auto;
+}
+
+.ul-img-error {
+  margin: auto;
+  padding: 32px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
