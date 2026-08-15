@@ -6,7 +6,18 @@ target/
 Thumbs.db
 .vite/
 apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/gen/
+
+# Generirani mobilni projekti.
+#
+# Android je iznimka i mora pod verziju: u njegov manifest se upisuju dozvole
+# bez kojih aplikacija na telefonu ne vidi nijednu datoteku. Da je mapa
+# ignorirana, ta bi se izmjena gubila pri svakoj generaciji.
+#
+# Tauri unutar te mape već ostavlja vlastite `.gitignore` datoteke koje izuzimaju
+# sve build izlaze — prevedeni `.so`, generirani Kotlin i `tauri.conf.json`.
+# Ostaje ~460 KB izvora.
+apps/desktop/src-tauri/gen/*
+!apps/desktop/src-tauri/gen/android
 tools/screenshots/
 *.local
 .env
@@ -15,3 +26,6 @@ tools/screenshots/
 
 # OCR resursi se kopiraju iz node_modules pri svakom buildu (tools/ocr-assets.mjs).
 packages/shell-ui/public/ocr/
+
+# Ispis eleviranog Android builda (tools/android-dev.ps1).
+tools/android-dev.log
