@@ -1,12 +1,13 @@
 /**
- * PDF preglednik i anotator — pdf.js za prikaz, pdf-lib za zapis.
+ * PDF preglednik, anotator i organizator stranica.
  *
- * Na webu pdf.js ostaje trajno rješenje. Na desktopu ga u fazi 1 zamjenjuje
- * pdfium preko Rusta (brži render, niža potrošnja memorije na velikim
- * dokumentima); ugovor `EditorInstance` ostaje isti, pa shell razliku ne vidi.
+ * pdf.js prikazuje, pdf-lib zapisuje. Na desktopu pdf.js u fazi 1 zamjenjuje
+ * pdfium preko Rusta; ugovor `EditorInstance` ostaje isti, pa shell razliku
+ * ne vidi.
  *
- * Anotacije se čitaju iz datoteke pri otvaranju i zapisuju kao pravi PDF
- * objekti — vidi `annotations.ts`.
+ * Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — postoji
+ * samo plan (vidi `document.ts`). Anotacije se vežu uz IZVORNU stranicu, pa
+ * preslagivanje ne razdvaja bilješku od onoga na što se odnosi.
  */
 
 import { GlobalWorkerOptions, Util, getDocument } from 'pdfjs-dist';
@@ -30,16 +31,24 @@ import {
 import {
   PALETTE,
   NOTE_SIZE,
-  boundsOf,
   fidelityGaps,
   importAnnotations,
   newId,
-  writeAnnotations,
   type Annotation,
   type Point,
   type Rect,
   type Rgb,
 } from './annotations.js';
+import {
+  describePlan,
+  identityPlan,
+  isIdentity,
+  movePage,
+  removePage,
+  rotatePage,
+  saveDocument,
+  type PagePlan,
+} from './document.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -49,6 +58,7 @@ const MARGIN = 48;
 const INK_MIN_LENGTH = 4;
 /** Veličina ikone bilješke na ekranu — ne ovisi o zoomu. */
 const NOTE_ICON_PX = 20;
+const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
 type Tool = 'select' | 'highlight' | 'note' | 'ink';
@@ -64,7 +74,12 @@ interface TextItemBox {
 }
 
 interface PageView {
-  number: number;
+  /** Broj stranice u izvornom dokumentu — nepromjenjiv. */
+  source: number;
+  /** Mjesto u trenutnom prikazu, 1-bazirano. Mijenja se preslagivanjem. */
+  position: number;
+  /** Dodatna rotacija iz plana. */
+  rotate: number;
   el: HTMLElement;
   canvas: HTMLCanvasElement;
   textEl: HTMLElement;
@@ -77,8 +92,12 @@ interface PageView {
   rendering: boolean;
   boxes: TextItemBox[] | null;
   text: string | null;
-  /** Anotacije iz same datoteke su pročitane. */
   imported: boolean;
+}
+
+interface Snapshot {
+  annotations: Annotation[];
+  plan: PagePlan[];
 }
 
 function cssRgb(color: Rgb, alpha = 1): string {
@@ -86,7 +105,6 @@ function cssRgb(color: Rgb, alpha = 1): string {
   return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
 }
 
-/** PDF pravokutnik → CSS pozicija unutar elementa stranice. */
 function rectToCss(viewport: PageViewport, rect: Rect) {
   const [x1, y1] = viewport.convertToViewportPoint(rect.x, rect.y);
   const [x2, y2] = viewport.convertToViewportPoint(rect.x + rect.width, rect.y + rect.height);
@@ -101,10 +119,12 @@ function rectToCss(viewport: PageViewport, rect: Rect) {
 class PdfEditor implements EditorInstance {
   #root: HTMLElement | null = null;
   #scroll: HTMLElement | null = null;
+  #rail: HTMLElement | null = null;
   #pageInput: HTMLInputElement | null = null;
   #zoomLabel: HTMLElement | null = null;
   #popup: HTMLElement | null = null;
 
+  /** Poredano po prikazu; `source` čuva izvorni broj stranice. */
   #pages: PageView[] = [];
   #observer: IntersectionObserver | null = null;
   #resize: ResizeObserver | null = null;
@@ -113,15 +133,16 @@ class PdfEditor implements EditorInstance {
   #zoomMode: ZoomMode = 'fit-width';
   #current = 1;
 
+  #plan: PagePlan[];
   #annotations: Annotation[] = [];
-  #undoStack: Annotation[][] = [];
-  #redoStack: Annotation[][] = [];
+  #undoStack: Snapshot[] = [];
+  #redoStack: Snapshot[] = [];
   #dirty = false;
+  #railOpen = false;
 
   #tool: Tool = 'select';
   #color: Rgb = PALETTE[0]!.color;
 
-  /** Potez u tijeku, u CSS koordinatama stranice. */
   #drawing: { view: PageView; points: Point[] } | null = null;
 
   #statusEmitter = new Emitter<string>();
@@ -134,30 +155,41 @@ class PdfEditor implements EditorInstance {
     private readonly docHandle: DocumentHandle,
     private readonly pdf: PDFDocumentProxy,
     private readonly source: Uint8Array,
-  ) {}
+  ) {
+    this.#plan = identityPlan(pdf.numPages);
+  }
 
   /* ── montaža ───────────────────────────────────────────────────────── */
 
   async mount(container: HTMLElement): Promise<void> {
     const root = document.createElement('div');
     root.className = 'ul-pdf';
+    root.dataset.tool = this.#tool;
+
+    const body = document.createElement('div');
+    body.className = 'ul-pdf-body';
+
+    const rail = document.createElement('div');
+    rail.className = 'ul-pdf-rail';
 
     const scroll = document.createElement('div');
     scroll.className = 'ul-pdf-scroll';
 
-    root.append(this.#buildToolbar(), scroll);
+    body.append(rail, scroll);
+    root.append(this.#buildToolbar(), body);
     container.appendChild(root);
 
     this.#root = root;
     this.#scroll = scroll;
+    this.#rail = rail;
 
     await this.#buildPages();
 
     this.#observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          const number = Number((entry.target as HTMLElement).dataset.pageNumber);
-          const view = this.#pages[number - 1];
+          const source = Number((entry.target as HTMLElement).dataset.source);
+          const view = this.#pages.find((v) => v.source === source);
           if (view && entry.isIntersecting) void this.#renderPage(view);
         }
         this.#updateCurrentPage();
@@ -197,6 +229,10 @@ class PdfEditor implements EditorInstance {
       return s;
     };
 
+    const railToggle = button('▤', 'Stranice — rotiranje, brisanje, preslagivanje', () =>
+      this.toggleRail(),
+    );
+
     const prev = button('‹', 'Prethodna stranica', () => this.goToPage(this.#current - 1));
     const next = button('›', 'Sljedeća stranica', () => this.goToPage(this.#current + 1));
 
@@ -212,7 +248,7 @@ class PdfEditor implements EditorInstance {
     this.#pageInput = input;
 
     const total = document.createElement('span');
-    total.textContent = `/ ${this.pdf.numPages}`;
+    total.className = 'ul-pdf-total';
     total.style.padding = '0 4px';
 
     const zoomOut = button('−', 'Smanji (Ctrl + kotačić)', () => this.zoomBy(-1));
@@ -225,7 +261,6 @@ class PdfEditor implements EditorInstance {
     const fitWidth = button('Širina', 'Prilagodi širini', () => this.setZoomMode('fit-width'));
     const fitPage = button('Stranica', 'Prilagodi stranici', () => this.setZoomMode('fit-page'));
 
-    /* — alati za anotiranje — */
     const tools: { tool: Tool; label: string; title: string }[] = [
       { tool: 'select', label: '⌖', title: 'Odabir i selekcija teksta' },
       { tool: 'highlight', label: '▬', title: 'Istakni označeni tekst' },
@@ -233,11 +268,13 @@ class PdfEditor implements EditorInstance {
       { tool: 'ink', label: '〰', title: 'Crtanje slobodnom rukom' },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
+    const toolGroup = document.createElement('span');
+    toolGroup.style.display = 'inline-flex';
     for (const { tool, label, title } of tools) {
       const b = button(label, title, () => this.setTool(tool));
       b.classList.add('ul-pdf-tool');
       toolButtons.set(tool, b);
-      bar.appendChild(b);
+      toolGroup.appendChild(b);
     }
 
     const swatches = document.createElement('span');
@@ -256,29 +293,34 @@ class PdfEditor implements EditorInstance {
 
     const count = document.createElement('span');
     count.className = 'ul-pdf-count';
-
     const spacer = document.createElement('span');
     spacer.className = 'spacer';
 
-    // Redoslijed u traci: navigacija, zoom, pa alati koje smo već ubacili.
-    bar.prepend(prev, input, total, next, sep(), zoomOut, zoomLabel, zoomIn, sep(), fitWidth, fitPage, sep());
-    bar.append(swatches, spacer, count);
+    bar.append(
+      railToggle, sep(),
+      prev, input, total, next, sep(),
+      zoomOut, zoomLabel, zoomIn, sep(),
+      fitWidth, fitPage, sep(),
+      toolGroup, swatches,
+      spacer, count,
+    );
 
     this.#syncToolbar = () => {
+      railToggle.dataset.active = String(this.#railOpen);
       fitWidth.dataset.active = String(this.#zoomMode === 'fit-width');
       fitPage.dataset.active = String(this.#zoomMode === 'fit-page');
       if (this.#zoomLabel) this.#zoomLabel.textContent = `${Math.round(this.#scale * 100)}%`;
+      total.textContent = `/ ${this.#plan.length}`;
 
       for (const [tool, b] of toolButtons) b.dataset.active = String(this.#tool === tool);
       for (const { el, color } of swatchButtons) {
         el.dataset.active = String(color.every((c, i) => Math.abs(c - this.#color[i]!) < 0.001));
       }
 
-      const mine = this.#annotations.filter((a) => !a.imported).length;
-      const imported = this.#annotations.length - mine;
-      count.textContent = this.#annotations.length
-        ? `${this.#annotations.length} anot.${imported ? ` (${imported} iz datoteke)` : ''}`
-        : '';
+      const parts: string[] = [];
+      if (this.#annotations.length) parts.push(`${this.#annotations.length} anot.`);
+      parts.push(...describePlan(this.#plan, this.pdf.numPages));
+      count.textContent = parts.join('  ·  ');
     };
 
     return bar;
@@ -293,7 +335,7 @@ class PdfEditor implements EditorInstance {
 
       const el = document.createElement('div');
       el.className = 'ul-pdf-page';
-      el.dataset.pageNumber = String(n);
+      el.dataset.source = String(n);
       el.dataset.page = String(n);
       el.dataset.rendered = 'false';
 
@@ -309,7 +351,9 @@ class PdfEditor implements EditorInstance {
       this.#scroll?.appendChild(el);
 
       const view: PageView = {
-        number: n,
+        source: n,
+        position: n,
+        rotate: 0,
         el,
         canvas,
         textEl,
@@ -327,6 +371,161 @@ class PdfEditor implements EditorInstance {
 
       annotEl.addEventListener('pointerdown', (e) => this.#onPointerDown(e, view));
       this.#pages.push(view);
+    }
+  }
+
+  /* ── plan stranica ─────────────────────────────────────────────────── */
+
+  toggleRail(): void {
+    this.#railOpen = !this.#railOpen;
+    if (this.#root) this.#root.dataset.rail = String(this.#railOpen);
+    if (this.#railOpen) void this.#renderRail();
+    this.#syncToolbar();
+  }
+
+  get plan(): readonly PagePlan[] {
+    return this.#plan;
+  }
+
+  #setPlan(plan: PagePlan[]): void {
+    if (plan === this.#plan) return;
+    this.#snapshot();
+    this.#plan = plan;
+    void this.#applyPlan();
+  }
+
+  rotate(position: number, delta: number): void {
+    this.#setPlan(rotatePage(this.#plan, position - 1, delta));
+  }
+
+  deletePage(position: number): void {
+    if (this.#plan.length <= 1) {
+      this.host.notify.show('warning', 'Dokument mora imati barem jednu stranicu.');
+      return;
+    }
+    this.#setPlan(removePage(this.#plan, position - 1));
+  }
+
+  movePageTo(position: number, delta: number): void {
+    this.#setPlan(movePage(this.#plan, position - 1, delta));
+  }
+
+  /** Usklađuje DOM i stanje pogleda s trenutnim planom. */
+  async #applyPlan(): Promise<void> {
+    const scroll = this.#scroll;
+    if (!scroll) return;
+
+    const bySource = new Map(this.#pages.map((view) => [view.source, view]));
+    const ordered: PageView[] = [];
+
+    for (const [index, entry] of this.#plan.entries()) {
+      const view = bySource.get(entry.source);
+      if (!view) continue;
+      view.position = index + 1;
+      view.rotate = entry.rotate;
+      view.el.dataset.page = String(index + 1);
+      ordered.push(view);
+    }
+
+    // Stranice izvan plana su obrisane — sklanjaju se iz prikaza, ali se
+    // pogled zadržava jer ih undo može vratiti.
+    for (const view of this.#pages) {
+      if (!ordered.includes(view)) view.el.remove();
+    }
+    for (const view of ordered) scroll.appendChild(view.el);
+
+    this.#pages = [...ordered, ...this.#pages.filter((v) => !ordered.includes(v))];
+
+    for (const view of ordered) {
+      view.rendered = false;
+      view.el.dataset.rendered = 'false';
+    }
+
+    this.#markDirty();
+    this.#syncToolbar();
+    await this.#applyZoom();
+    if (this.#railOpen) await this.#renderRail();
+    this.#emitStatus();
+  }
+
+  /* ── traka s minijaturama ──────────────────────────────────────────── */
+
+  async #renderRail(): Promise<void> {
+    const rail = this.#rail;
+    if (!rail) return;
+
+    const fragment = document.createDocumentFragment();
+
+    for (const [index, entry] of this.#plan.entries()) {
+      const view = this.#pages.find((v) => v.source === entry.source);
+      if (!view) continue;
+
+      const item = document.createElement('div');
+      item.className = 'ul-pdf-thumb';
+      item.dataset.position = String(index + 1);
+      item.dataset.current = String(index + 1 === this.#current);
+
+      const canvas = document.createElement('canvas');
+      canvas.addEventListener('click', () => this.goToPage(index + 1));
+      item.appendChild(canvas);
+
+      const label = document.createElement('span');
+      label.className = 'num';
+      label.textContent = String(index + 1);
+      if (entry.source !== index + 1 || entry.rotate !== 0) label.dataset.changed = 'true';
+      item.appendChild(label);
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const action = (label: string, title: string, onClick: () => void, disabled = false) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.title = title;
+        b.disabled = disabled;
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onClick();
+        });
+        return b;
+      };
+
+      actions.append(
+        action('↺', 'Rotiraj ulijevo', () => this.rotate(index + 1, -90)),
+        action('↻', 'Rotiraj udesno', () => this.rotate(index + 1, 90)),
+        action('↑', 'Pomakni gore', () => this.movePageTo(index + 1, -1), index === 0),
+        action('↓', 'Pomakni dolje', () => this.movePageTo(index + 1, 1), index === this.#plan.length - 1),
+        action('✕', 'Obriši stranicu', () => this.deletePage(index + 1), this.#plan.length <= 1),
+      );
+      item.appendChild(actions);
+      fragment.appendChild(item);
+
+      // Minijatura se crta nakon umetanja da canvas ima izmjerenu širinu.
+      void this.#renderThumb(view, canvas, entry.rotate);
+    }
+
+    rail.replaceChildren(fragment);
+  }
+
+  async #renderThumb(view: PageView, canvas: HTMLCanvasElement, rotate: number): Promise<void> {
+    try {
+      const scale = THUMB_WIDTH / view.baseWidth;
+      const viewport = view.page.getViewport({
+        scale,
+        rotation: (view.page.rotate + rotate) % 360,
+      });
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) return;
+
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      canvas.style.width = `${Math.round(viewport.width)}px`;
+      canvas.style.height = `${Math.round(viewport.height)}px`;
+
+      await view.page.render({ canvasContext: context, viewport }).promise;
+    } catch (err) {
+      if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
+        console.warn(`[uleditor] minijatura stranice ${view.source} nije nacrtana`, err);
+      }
     }
   }
 
@@ -369,26 +568,42 @@ class PdfEditor implements EditorInstance {
     this.zoomBy(event.deltaY < 0 ? 1 : -1);
   };
 
+  /** Dimenzije stranice uz rotaciju iz plana — 90° zamjenjuje širinu i visinu. */
+  #sizeOf(view: PageView): { width: number; height: number } {
+    const swap = (view.rotate / 90) % 2 !== 0;
+    return swap
+      ? { width: view.baseHeight, height: view.baseWidth }
+      : { width: view.baseWidth, height: view.baseHeight };
+  }
+
+  #visiblePages(): PageView[] {
+    const sources = new Set(this.#plan.map((e) => e.source));
+    return this.#pages.filter((v) => sources.has(v.source)).sort((a, b) => a.position - b.position);
+  }
+
   async #applyZoom(): Promise<void> {
     const scroll = this.#scroll;
-    const first = this.#pages[0];
+    const visible = this.#visiblePages();
+    const first = visible[0];
     if (!scroll || !first) return;
 
+    const firstSize = this.#sizeOf(first);
     if (this.#zoomMode === 'fit-width') {
-      this.#scale = Math.max(0.1, (scroll.clientWidth - MARGIN) / first.baseWidth);
+      this.#scale = Math.max(0.1, (scroll.clientWidth - MARGIN) / firstSize.width);
     } else if (this.#zoomMode === 'fit-page') {
       this.#scale = Math.max(
         0.1,
         Math.min(
-          (scroll.clientWidth - MARGIN) / first.baseWidth,
-          (scroll.clientHeight - MARGIN) / first.baseHeight,
+          (scroll.clientWidth - MARGIN) / firstSize.width,
+          (scroll.clientHeight - MARGIN) / firstSize.height,
         ),
       );
     }
 
-    for (const view of this.#pages) {
-      view.el.style.width = `${Math.round(view.baseWidth * this.#scale)}px`;
-      view.el.style.height = `${Math.round(view.baseHeight * this.#scale)}px`;
+    for (const view of visible) {
+      const size = this.#sizeOf(view);
+      view.el.style.width = `${Math.round(size.width * this.#scale)}px`;
+      view.el.style.height = `${Math.round(size.height * this.#scale)}px`;
       view.rendered = false;
       view.el.dataset.rendered = 'false';
       view.hitsEl.replaceChildren();
@@ -404,7 +619,7 @@ class PdfEditor implements EditorInstance {
     const top = scroll.scrollTop - scroll.clientHeight;
     const bottom = scroll.scrollTop + scroll.clientHeight * 2;
 
-    for (const view of this.#pages) {
+    for (const view of this.#visiblePages()) {
       const y = view.el.offsetTop;
       if (y + view.el.offsetHeight >= top && y <= bottom) await this.#renderPage(view);
     }
@@ -412,8 +627,8 @@ class PdfEditor implements EditorInstance {
 
   /* ── render stranice ───────────────────────────────────────────────── */
 
-  #viewportFor(view: PageView): PageViewport {
-    return view.page.getViewport({ scale: this.#scale });
+  #viewportFor(view: PageView, scale = this.#scale): PageViewport {
+    return view.page.getViewport({ scale, rotation: (view.page.rotate + view.rotate) % 360 });
   }
 
   async #renderPage(view: PageView): Promise<void> {
@@ -422,14 +637,15 @@ class PdfEditor implements EditorInstance {
 
     try {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const viewport = view.page.getViewport({ scale: this.#scale * dpr });
+      const viewport = this.#viewportFor(view, this.#scale * dpr);
       const context = view.canvas.getContext('2d', { alpha: false });
       if (!context) return;
 
+      const size = this.#sizeOf(view);
       view.canvas.width = Math.round(viewport.width);
       view.canvas.height = Math.round(viewport.height);
-      view.canvas.style.width = `${Math.round(view.baseWidth * this.#scale)}px`;
-      view.canvas.style.height = `${Math.round(view.baseHeight * this.#scale)}px`;
+      view.canvas.style.width = `${Math.round(size.width * this.#scale)}px`;
+      view.canvas.style.height = `${Math.round(size.height * this.#scale)}px`;
 
       await view.page.render({ canvasContext: context, viewport }).promise;
 
@@ -441,17 +657,13 @@ class PdfEditor implements EditorInstance {
       view.el.dataset.rendered = 'true';
     } catch (err) {
       if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
-        console.error(`[uleditor] render stranice ${view.number} nije uspio`, err);
+        console.error(`[uleditor] render stranice ${view.source} nije uspio`, err);
       }
     } finally {
       view.rendering = false;
     }
   }
 
-  /**
-   * Vlastiti tekstualni sloj umjesto pdf.js TextLayer klase — API se između
-   * verzija mijenjao, a ovo je tridesetak linija koje kontroliramo sami.
-   */
   async #buildTextLayer(view: PageView): Promise<void> {
     const viewport = this.#viewportFor(view);
     const content = await view.page.getTextContent();
@@ -507,20 +719,19 @@ class PdfEditor implements EditorInstance {
     view.text = text;
   }
 
-  /** Anotacije koje su već u datoteci — čitaju se jednom po stranici. */
   async #importPageAnnotations(view: PageView): Promise<void> {
     if (view.imported) return;
     view.imported = true;
 
     try {
       const raw = await view.page.getAnnotations();
-      const imported = importAnnotations(raw as unknown[], view.number);
+      const imported = importAnnotations(raw as unknown[], view.source);
       if (imported.length > 0) {
         this.#annotations = [...this.#annotations, ...imported];
         this.#syncToolbar();
       }
     } catch (err) {
-      console.warn(`[uleditor] anotacije stranice ${view.number} se nisu učitale`, err);
+      console.warn(`[uleditor] anotacije stranice ${view.source} se nisu učitale`, err);
     }
   }
 
@@ -531,7 +742,9 @@ class PdfEditor implements EditorInstance {
     const fragment = document.createDocumentFragment();
 
     for (const annotation of this.#annotations) {
-      if (annotation.page !== view.number) continue;
+      // Vezuje se uz IZVORNU stranicu, pa preslagivanje ne razdvaja bilješku
+      // od onoga na što se odnosi.
+      if (annotation.page !== view.source) continue;
 
       if (annotation.kind === 'highlight') {
         for (const quad of annotation.quads) {
@@ -558,7 +771,6 @@ class PdfEditor implements EditorInstance {
         el.style.top = `${box.top}px`;
         // Fiksna veličina na ekranu, kao u svakom PDF čitaču: bilješka je
         // oznaka, ne sadržaj stranice, pa se ne smije napuhati sa zoomom.
-        // U samoj datoteci ostaje zapisana u PDF točkama (vidi NOTE_SIZE).
         el.style.width = `${NOTE_ICON_PX}px`;
         el.style.height = `${NOTE_ICON_PX}px`;
         el.style.background = cssRgb(annotation.color);
@@ -572,12 +784,9 @@ class PdfEditor implements EditorInstance {
         continue;
       }
 
-      // Ink: jedan SVG po anotaciji, u koordinatama stranice.
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'ul-pdf-ann ul-pdf-ann-ink');
       svg.dataset.id = annotation.id;
-      svg.setAttribute('width', view.el.style.width || '0');
-      svg.setAttribute('height', view.el.style.height || '0');
       svg.style.left = '0';
       svg.style.top = '0';
 
@@ -609,17 +818,46 @@ class PdfEditor implements EditorInstance {
     this.#syncToolbar();
   }
 
-  /* ── stvaranje anotacija ───────────────────────────────────────────── */
+  /* ── povijest ──────────────────────────────────────────────────────── */
 
   #snapshot(): void {
-    this.#undoStack.push(this.#annotations.map((a) => ({ ...a })));
+    this.#undoStack.push({
+      annotations: this.#annotations.map((a) => ({ ...a })),
+      plan: this.#plan.map((p) => ({ ...p })),
+    });
     this.#redoStack = [];
-    // Povijest se ne pamti unedogled; dvadeset koraka pokriva stvarnu upotrebu.
-    if (this.#undoStack.length > 20) this.#undoStack.shift();
+    if (this.#undoStack.length > 30) this.#undoStack.shift();
+  }
+
+  #capture(): Snapshot {
+    return {
+      annotations: this.#annotations.map((a) => ({ ...a })),
+      plan: this.#plan.map((p) => ({ ...p })),
+    };
+  }
+
+  #restore(snapshot: Snapshot): void {
+    const planChanged =
+      snapshot.plan.length !== this.#plan.length ||
+      snapshot.plan.some((entry, i) => {
+        const current = this.#plan[i];
+        return !current || current.source !== entry.source || current.rotate !== entry.rotate;
+      });
+
+    this.#annotations = snapshot.annotations;
+    this.#plan = snapshot.plan;
+
+    if (planChanged) void this.#applyPlan();
+    else {
+      this.#markDirty();
+      this.#renderAllAnnotations();
+      this.#emitStatus();
+    }
   }
 
   #markDirty(): void {
-    const dirty = this.#annotations.some((a) => !a.imported);
+    const dirty =
+      this.#annotations.some((a) => !a.imported) || !isIdentity(this.#plan, this.pdf.numPages);
     if (dirty === this.#dirty) return;
     this.#dirty = dirty;
     this.#dirtyEmitter.fire(dirty);
@@ -630,6 +868,7 @@ class PdfEditor implements EditorInstance {
     this.#annotations = [...this.#annotations, annotation];
     this.#markDirty();
     this.#renderAllAnnotations();
+    this.#emitStatus();
   }
 
   #remove(id: string): void {
@@ -637,9 +876,11 @@ class PdfEditor implements EditorInstance {
     this.#annotations = this.#annotations.filter((a) => a.id !== id);
     this.#markDirty();
     this.#renderAllAnnotations();
+    this.#emitStatus();
   }
 
-  /** Označen tekst → istaknuće. Jedan pravokutnik po retku selekcije. */
+  /* ── stvaranje anotacija ───────────────────────────────────────────── */
+
   #onMouseUp = (): void => {
     if (this.#tool !== 'highlight') return;
 
@@ -650,7 +891,6 @@ class PdfEditor implements EditorInstance {
     const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
     if (rects.length === 0) return;
 
-    // Selekcija može prelaziti preko stranica — grupiramo po stranici.
     const byPage = new Map<PageView, Rect[]>();
     for (const rect of rects) {
       const view = this.#pageAt(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -659,10 +899,7 @@ class PdfEditor implements EditorInstance {
       const bounds = view.el.getBoundingClientRect();
       const viewport = this.#viewportFor(view);
       const [x1, y1] = viewport.convertToPdfPoint(rect.left - bounds.left, rect.top - bounds.top);
-      const [x2, y2] = viewport.convertToPdfPoint(
-        rect.right - bounds.left,
-        rect.bottom - bounds.top,
-      );
+      const [x2, y2] = viewport.convertToPdfPoint(rect.right - bounds.left, rect.bottom - bounds.top);
 
       const quad: Rect = {
         x: Math.min(x1, x2),
@@ -684,7 +921,7 @@ class PdfEditor implements EditorInstance {
         {
           id: newId(),
           kind: 'highlight',
-          page: view.number,
+          page: view.source,
           color: this.#color,
           createdAt: Date.now(),
           quads,
@@ -694,10 +931,11 @@ class PdfEditor implements EditorInstance {
     selection.removeAllRanges();
     this.#markDirty();
     this.#renderAllAnnotations();
+    this.#emitStatus();
   };
 
   #pageAt(clientX: number, clientY: number): PageView | null {
-    for (const view of this.#pages) {
+    for (const view of this.#visiblePages()) {
       const rect = view.el.getBoundingClientRect();
       if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
         return view;
@@ -722,10 +960,9 @@ class PdfEditor implements EditorInstance {
       const annotation: Annotation = {
         id: newId(),
         kind: 'note',
-        page: view.number,
+        page: view.source,
         color: this.#color,
         createdAt: Date.now(),
-        // Ikona se crta od kliknute točke prema gore-desno.
         rect: { x, y: y - NOTE_SIZE, width: NOTE_SIZE, height: NOTE_SIZE },
         text: '',
       };
@@ -761,7 +998,6 @@ class PdfEditor implements EditorInstance {
     }
   }
 
-  /** Potez u tijeku crtamo izravno, bez diranja modela. */
   #previewInk(): void {
     const drawing = this.#drawing;
     if (!drawing) return;
@@ -801,7 +1037,7 @@ class PdfEditor implements EditorInstance {
     this.#add({
       id: newId(),
       kind: 'ink',
-      page: drawing.view.number,
+      page: drawing.view.source,
       color: this.#color,
       createdAt: Date.now(),
       strokes: [stroke],
@@ -809,7 +1045,7 @@ class PdfEditor implements EditorInstance {
     });
   }
 
-  /* ── skočni prozorčić bilješke ─────────────────────────────────────── */
+  /* ── prozorčić bilješke ────────────────────────────────────────────── */
 
   #closePopup(): void {
     this.#popup?.remove();
@@ -825,7 +1061,7 @@ class PdfEditor implements EditorInstance {
     const box = rectToCss(this.#viewportFor(view), annotation.rect);
     const popup = document.createElement('div');
     popup.className = 'ul-pdf-note-popup';
-    popup.style.left = `${box.left + box.width + 8}px`;
+    popup.style.left = `${box.left + NOTE_ICON_PX + 8}px`;
     popup.style.top = `${box.top}px`;
 
     const textarea = document.createElement('textarea');
@@ -876,9 +1112,9 @@ class PdfEditor implements EditorInstance {
 
   /* ── navigacija ────────────────────────────────────────────────────── */
 
-  goToPage(number: number): void {
-    const clamped = Math.min(this.pdf.numPages, Math.max(1, Math.round(number)));
-    const view = this.#pages[clamped - 1];
+  goToPage(position: number): void {
+    const clamped = Math.min(this.#plan.length, Math.max(1, Math.round(position)));
+    const view = this.#visiblePages()[clamped - 1];
     if (!view || !this.#scroll) return;
     this.#scroll.scrollTo({ top: view.el.offsetTop - 20, behavior: 'smooth' });
     this.#current = clamped;
@@ -891,20 +1127,32 @@ class PdfEditor implements EditorInstance {
     const middle = scroll.scrollTop + scroll.clientHeight / 2;
 
     let best = 1;
-    for (const view of this.#pages) {
-      if (view.el.offsetTop <= middle) best = view.number;
+    for (const view of this.#visiblePages()) {
+      if (view.el.offsetTop <= middle) best = view.position;
       else break;
     }
     if (best === this.#current) return;
     this.#current = best;
     this.#emitStatus();
+
+    if (this.#railOpen && this.#rail) {
+      for (const item of this.#rail.children) {
+        (item as HTMLElement).dataset.current = String(
+          Number((item as HTMLElement).dataset.position) === this.#current,
+        );
+      }
+    }
   }
 
   #emitStatus(): void {
     if (this.#pageInput) this.#pageInput.value = String(this.#current);
+    const parts = [`Stranica ${this.#current} od ${this.#plan.length}`];
+
     const mine = this.#annotations.filter((a) => !a.imported).length;
-    const suffix = mine > 0 ? `  ·  ${mine} novih anotacija` : '';
-    this.#statusEmitter.fire(`Stranica ${this.#current} od ${this.pdf.numPages}${suffix}`);
+    if (mine > 0) parts.push(`${mine} novih anotacija`);
+    parts.push(...describePlan(this.#plan, this.pdf.numPages));
+
+    this.#statusEmitter.fire(parts.join('  ·  '));
   }
 
   /* ── ugovor ────────────────────────────────────────────────────────── */
@@ -929,7 +1177,12 @@ class PdfEditor implements EditorInstance {
 
   async save(target?: SaveTarget): Promise<SaveResult> {
     const uri = target?.uri ?? this.docHandle.uri;
-    const { bytes } = await writeAnnotations(this.source, this.#annotations);
+    const { bytes, lost } = await saveDocument(
+      this.source,
+      [...this.#plan],
+      this.#annotations,
+      this.pdf.numPages,
+    );
     await this.host.fs.writeBytes(uri, bytes);
 
     // Spremljene anotacije su sada dio datoteke; označavamo ih kao uvezene
@@ -939,27 +1192,21 @@ class PdfEditor implements EditorInstance {
     this.#syncToolbar();
     this.#emitStatus();
 
-    return { uri, lostFidelity: fidelityGaps(this.#annotations) };
+    return { uri, lostFidelity: [...lost, ...fidelityGaps(this.#annotations)] };
   }
 
   undo(): void {
     const previous = this.#undoStack.pop();
     if (!previous) return;
-    this.#redoStack.push(this.#annotations.map((a) => ({ ...a })));
-    this.#annotations = previous;
-    this.#markDirty();
-    this.#renderAllAnnotations();
-    this.#emitStatus();
+    this.#redoStack.push(this.#capture());
+    this.#restore(previous);
   }
 
   redo(): void {
     const next = this.#redoStack.pop();
     if (!next) return;
-    this.#undoStack.push(this.#annotations.map((a) => ({ ...a })));
-    this.#annotations = next;
-    this.#markDirty();
-    this.#renderAllAnnotations();
-    this.#emitStatus();
+    this.#undoStack.push(this.#capture());
+    this.#restore(next);
   }
 
   canUndo(): boolean {
@@ -979,7 +1226,7 @@ class PdfEditor implements EditorInstance {
     const needle = query.caseSensitive ? query.query : query.query.toLowerCase();
     const results: FindResult[] = [];
 
-    for (const view of this.#pages) {
+    for (const view of this.#visiblePages()) {
       if (view.text === null) await this.#extractText(view);
       const text = view.text ?? '';
       const haystack = query.caseSensitive ? text : text.toLowerCase();
@@ -990,7 +1237,8 @@ class PdfEditor implements EditorInstance {
         if (index === -1) break;
         const end = index + query.query.length;
         results.push({
-          label: `Stranica ${view.number}`,
+          // Korisnik vidi mjesto u trenutnom prikazu, ne izvorni broj stranice.
+          label: `Stranica ${view.position}`,
           preview: text
             .slice(Math.max(0, index - 40), index + needle.length + 40)
             .replace(/\s+/g, ' ')
@@ -1015,7 +1263,7 @@ class PdfEditor implements EditorInstance {
   }
 
   #revealMatch(view: PageView, start: number, end: number): void {
-    this.goToPage(view.number);
+    this.goToPage(view.position);
 
     void this.#renderPage(view).then(() => {
       const boxes = view.boxes;
@@ -1075,3 +1323,4 @@ export const pdfEditorProvider: EditorProvider = {
 
 export default pdfEditorProvider;
 export * from './annotations.js';
+export * from './document.js';

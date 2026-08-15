@@ -21,7 +21,7 @@ const args = process.argv.slice(2);
 const url = args.includes('--url') ? args[args.indexOf('--url') + 1] : 'http://localhost:5273';
 const headed = args.includes('--headed');
 
-import { MD_SOURCE, TS_SOURCE, makeFakeDocx, makePdf } from './fixtures.mjs';
+import { MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from './fixtures.mjs';
 
 /* ── pomoćno ─────────────────────────────────────────────────────────── */
 
@@ -254,6 +254,48 @@ try {
   // Dvije izmijenjene kartice: kod koji smo upravo tipkali i PDF s anotacijama.
   const dirty = await page.locator('.tab[data-dirty="true"]').count();
   check('oznaka nespremljenog na obje izmijenjene kartice', dirty === 2, `${dirty}`);
+
+  /* — operacije nad stranicama — */
+  await dropFile(page, 'visestranicni.pdf', makeMultiPagePdf(3));
+  await page.waitForSelector('.tab', { timeout: 10000 });
+  await page.locator('.tab').nth(5).click();
+  // Neaktivne kartice ostaju u DOM-u (samo su skrivene), pa se od sada
+  // selektori moraju ograničiti na vidljivu ploču.
+  const pdf = page.locator('.mount:visible');
+  await pdf.locator('.ul-pdf-page[data-rendered="true"]').first().waitFor({ timeout: 20000 });
+
+  await pdf.locator('.ul-pdf-btn[title*="Stranice"]').click();
+  await pdf.locator('.ul-pdf-thumb').first().waitFor({ timeout: 10000 });
+  check('traka pokazuje tri stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+
+  await pdf.locator('.ul-pdf-thumb').first().hover();
+  await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="udesno"]').click();
+  await page.waitForTimeout(400);
+  check(
+    'rotirana stranica je označena kao izmijenjena',
+    (await pdf.locator('.ul-pdf-thumb .num[data-changed="true"]').count()) === 1,
+  );
+
+  await pdf.locator('.ul-pdf-thumb').nth(1).hover();
+  await pdf.locator('.ul-pdf-thumb').nth(1).locator('button[title*="Obriši"]').click();
+  await page.waitForTimeout(500);
+  check('brisanje ostavlja dvije stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 2);
+  check(
+    'brojač stranica u traci prati brisanje',
+    (await pdf.locator('.ul-pdf-total').innerText()).includes('2'),
+    await pdf.locator('.ul-pdf-total').innerText(),
+  );
+  check(
+    'izmjene stranica su opisane',
+    (await pdf.locator('.ul-pdf-count').innerText()).includes('obrisan'),
+    await pdf.locator('.ul-pdf-count').innerText(),
+  );
+
+  await page.keyboard.press('Control+Z');
+  await page.waitForTimeout(600);
+  check('undo vraća obrisanu stranicu', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+
+  await page.screenshot({ path: resolve(SHOTS, 'pages.png') });
 
   /* — snimke — */
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));

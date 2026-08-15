@@ -16,8 +16,8 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | Markdown | **radi** — izvor + živi pregled | CodeMirror 6 + markdown-it |
 | PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga | pdf.js *(desktop → pdfium, faza 1)* |
 | PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
+| PDF stranice | **radi** — rotiranje, brisanje, preslagivanje | pdf-lib |
 | Slike | **radi** — pregled, zoom, prozirnost | *(uređivanje → image-rs, faza 1)* |
-| PDF operacije nad stranicama | faza 1 | lopdf, qpdf |
 | XLSX | faza 2 | Univer |
 | DOCX | faza 2 | ProseMirror + docx-rs |
 | ODF, konverzije | faza 2 | LibreOffice headless |
@@ -26,6 +26,8 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 Formati koji još nemaju editor otvaraju se s **jasnim objašnjenjem što nedostaje i kada stiže**, ne s praznim ekranom.
 
 Anotacije se zapisuju kao **pravi PDF objekti** (`/Highlight`, `/Text`, `/Ink`), ne kao crtež utisnut u stranicu — Acrobat i ostali čitači ih otvaraju, uređuju i brišu kao svoje. Anotacije koje su već u datoteci se učitavaju i prikazuju.
+
+Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 
 **Pretraga (`Ctrl+Shift+F`) radi jednako nad svim formatima** — jedna ploča, isti rezultati, bilo da je otvoren kod, Markdown ili PDF. To dolazi iz `EditorInstance.find()` u plugin ugovoru, bez ijedne linije koda specifične za pojedini format.
 

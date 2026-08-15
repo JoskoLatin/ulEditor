@@ -61,6 +61,46 @@ export function makePdf(text = 'ulEditor PDF') {
   return pdf;
 }
 
+/**
+ * Višestranični PDF u kojem svaka stranica nosi svoju oznaku, pa se nakon
+ * preslagivanja može provjeriti da je stvarno došla na pravo mjesto.
+ * @param {number} count broj stranica
+ */
+export function makeMultiPagePdf(count = 3) {
+  const objects = [];
+  // 1 = katalog, 2 = stablo stranica, zatim po dva objekta na stranicu.
+  const pageRefs = [];
+  for (let i = 0; i < count; i++) pageRefs.push(3 + i * 2);
+
+  objects.push('<</Type/Catalog/Pages 2 0 R>>');
+  objects.push(`<</Type/Pages/Kids[${pageRefs.map((r) => `${r} 0 R`).join(' ')}]/Count ${count}>>`);
+
+  const fontRef = 3 + count * 2;
+  for (let i = 0; i < count; i++) {
+    const contentRef = pageRefs[i] + 1;
+    objects.push(
+      `<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents ${contentRef} 0 R` +
+        `/Resources<</Font<</F1 ${fontRef} 0 R>>>>>>`,
+    );
+    const stream = `BT /F1 20 Tf 30 110 Td (STRANICA ${i + 1}) Tj ET`;
+    objects.push(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
+  }
+  objects.push('<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>');
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
 /** ZIP koji izgleda kao .docx — za provjeru detekcije i poruke o nepodržanom formatu. */
 export function makeFakeDocx() {
   return 'PK' + ' '.repeat(26) + 'word/document.xml' + ' '.repeat(40);

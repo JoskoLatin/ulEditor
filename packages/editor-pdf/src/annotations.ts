@@ -392,6 +392,13 @@ export interface WriteResult {
 export async function writeAnnotations(
   source: Uint8Array,
   annotations: Annotation[],
+  /**
+   * Izvorna stranica (1-bazirano) → mjesto u izlazu (0-bazirano). Potreban
+   * je kad su stranice preslagane ili obrisane; bez njega se pretpostavlja
+   * da je redoslijed netaknut. Stranica koje nema u mapi znači da je
+   * obrisana — njezine anotacije se preskaču.
+   */
+  pageMap?: Map<number, number>,
 ): Promise<WriteResult> {
   const doc = await PDFDocument.load(source, { ignoreEncryption: true });
   const context = doc.context;
@@ -401,7 +408,10 @@ export async function writeAnnotations(
   for (const annotation of annotations) {
     if (annotation.imported) continue;
 
-    const page = pages[annotation.page - 1];
+    const index = pageMap ? pageMap.get(annotation.page) : annotation.page - 1;
+    if (index === undefined) continue;
+
+    const page = pages[index];
     if (!page) continue;
 
     const dict = dictFor(context, annotation);

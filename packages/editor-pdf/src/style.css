@@ -85,8 +85,15 @@
   border-color: var(--accent);
 }
 
+.ul-pdf-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .ul-pdf-scroll {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 20px 0 40px;
@@ -94,6 +101,99 @@
   flex-direction: column;
   align-items: center;
   gap: 18px;
+}
+
+/* ── traka sa stranicama ─────────────────────────────────────────────── */
+
+.ul-pdf-rail {
+  display: none;
+  width: 150px;
+  flex: none;
+  overflow-y: auto;
+  padding: 12px 8px 24px;
+  background: var(--surface);
+  border-right: 1px solid var(--rule);
+  flex-direction: column;
+  gap: 10px;
+}
+.ul-pdf[data-rail='true'] .ul-pdf-rail {
+  display: flex;
+}
+
+.ul-pdf-thumb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  transition: background 130ms, border-color 130ms;
+}
+.ul-pdf-thumb:hover {
+  background: var(--rule-soft);
+}
+.ul-pdf-thumb[data-current='true'] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.ul-pdf-thumb canvas {
+  display: block;
+  max-width: 100%;
+  background: #ffffff;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.ul-pdf-thumb .num {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ul-pdf-thumb .num[data-changed='true'] {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.ul-pdf-thumb .actions {
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 130ms;
+}
+.ul-pdf-thumb:hover .actions,
+.ul-pdf-thumb[data-current='true'] .actions {
+  opacity: 1;
+}
+
+.ul-pdf-thumb .actions button {
+  width: 20px;
+  height: 19px;
+  border: none;
+  background: none;
+  border-radius: 3px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: background 130ms, color 130ms;
+}
+.ul-pdf-thumb .actions button:hover:not(:disabled) {
+  background: var(--rule-strong);
+  color: var(--ink);
+}
+.ul-pdf-thumb .actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.ul-pdf-thumb .actions button:last-child:hover:not(:disabled) {
+  background: var(--danger);
+  color: var(--ink-inverse);
 }
 
 .ul-pdf-page {
