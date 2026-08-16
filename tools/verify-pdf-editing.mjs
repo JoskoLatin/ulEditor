@@ -39,6 +39,10 @@ const file = join(workspace, 'obrazac.pdf');
 await writeFile(file, makePdf());
 const originalSize = (await readFile(file)).length;
 
+/** Drugi dokument, za prepisivanje postojećeg retka. */
+const contract = join(workspace, 'ugovor.pdf');
+await writeFile(contract, makePdf('Ime i prezime'));
+
 const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
   cwd: ROOT,
   shell: true,
@@ -187,6 +191,60 @@ try {
     'ponovno otvoren dokument više ne sadrži taj tekst',
     !remaining.includes('ulEditor PDF'),
     JSON.stringify(remaining.replace(/\s+/g, ' ').slice(0, 40)),
+  );
+
+  /* ── prepisivanje postojećeg retka ─────────────────────────────────── */
+
+  await page.locator('.tab .close').first().click();
+  await page.waitForTimeout(400);
+  await open('ugovor.pdf');
+
+  const original = await page.locator('.ul-pdf-text span').first().boundingBox();
+  await page.locator('.ul-pdf-tool[title*="Add text"]').click();
+  await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
+
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+
+  /*
+   * Polje mora doći **popunjeno** onim što na stranici piše. Prazno polje bi
+   * značilo da je klik otvorio nov okvir povrh starog teksta, a ne izmjenu
+   * postojećeg — i stari bi redak ostao ispod.
+   */
+  const prefilled = await page.locator('.ul-pdf-text-input').inputValue();
+  check('polje je popunjeno postojećim tekstom', prefilled === 'Ime i prezime', JSON.stringify(prefilled));
+
+  const REPLACEMENT = 'Joško Latin — čćžšđ';
+  await page.locator('.ul-pdf-text-input').fill(REPLACEMENT);
+  await page.keyboard.press('Escape');
+
+  await page.waitForSelector('.ul-pdf-redaction[data-replaced="true"]', { timeout: 5000 });
+  check('stari redak je označen za micanje', true);
+  check(
+    'novi tekst stoji na stranici',
+    (await page.locator('.ul-pdf-ann-text').first().innerText()) === REPLACEMENT,
+  );
+
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
+    timeout: 30000,
+  });
+
+  const rewritten = new TextDecoder('latin1').decode(await readFile(contract));
+  check('izvornog retka više nema u datoteci', !rewritten.includes('Ime i prezime'));
+  check('zamjena je zapisana kao tekst', rewritten.includes('/FreeText'));
+
+  await page.locator('.tab .close').first().click();
+  await page.waitForTimeout(400);
+  await open('ugovor.pdf');
+  await page.waitForSelector('.ul-pdf-ann-text', { timeout: 20000 });
+  check(
+    'prepisani redak se čita natrag iz datoteke',
+    (await page.locator('.ul-pdf-ann-text').first().innerText()) === REPLACEMENT,
+    JSON.stringify(await page.locator('.ul-pdf-ann-text').first().innerText()),
+  );
+  check(
+    'izvornog teksta nema ni u sloju stranice',
+    !(await page.locator('.ul-pdf-text').innerText()).includes('Ime i prezime'),
   );
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-pdf-text.png') });

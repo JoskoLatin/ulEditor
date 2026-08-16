@@ -47,6 +47,7 @@ import {
   type TextBoxAnnotation,
 } from './annotations.js';
 import { ensureWebFont, loadFontBytes } from './fonts.js';
+import { findEditableLine, metricsWarning } from './edit.js';
 import { previewRedaction, type Redaction } from './redact.js';
 import {
   DEFAULT_TEXT_SIZE,
@@ -217,6 +218,10 @@ class PdfEditor implements EditorInstance {
     input: HTMLTextAreaElement;
     warning: HTMLElement;
     metrics: FaceMetrics;
+    /** Područje izvornog retka koji ova izmjena zamjenjuje. */
+    replaces: Rect | null;
+    /** Što treba reći prije spremanja, neovisno o tipkanju. */
+    notes: string[];
   } | null = null;
 
   #drawing: { view: PageView; points: Point[] } | null = null;
@@ -1055,6 +1060,7 @@ class PdfEditor implements EditorInstance {
       el.className = 'ul-pdf-ann ul-pdf-redaction';
       el.dataset.id = redaction.id;
       el.dataset.applied = String(!!redaction.applied);
+      el.dataset.replaced = String(!!redaction.replaced);
       el.style.left = `${box.left}px`;
       el.style.top = `${box.top}px`;
       el.style.width = `${box.width}px`;
@@ -1563,16 +1569,75 @@ class PdfEditor implements EditorInstance {
 
   /* ── tekstualni okviri ─────────────────────────────────────────────── */
 
-  async #startTextBox(view: PageView, clientX: number, clientY: number): Promise<void> {
-    const metrics = await this.#face(this.#textFace);
-    // Dok se font skidao korisnik je mogao promijeniti alat ili stranicu.
-    if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
+  /** Rez koji najbolje odgovara imenu izvornog fonta. */
+  static #faceFor(baseFont: string): TextFace {
+    const lower = baseFont.toLowerCase();
+    if (lower.includes('bold')) return 'sans-bold';
+    if (lower.includes('italic') || lower.includes('oblique')) return 'sans-italic';
+    return 'sans';
+  }
 
+  /**
+   * Klik alatom za tekst: na prazno mjesto otvara nov okvir, na postojeći
+   * tekst otvara **taj tekst** na prepisivanje.
+   *
+   * Dva različita posla iza istog poteza, jer je to isti poriv — „ovdje želim
+   * drukčija slova”. Zaseban alat bi tražio da korisnik unaprijed zna je li
+   * ono pod prstom tekst dokumenta ili prazan papir, a to se ne vidi.
+   */
+  async #startTextBox(view: PageView, clientX: number, clientY: number): Promise<void> {
     const bounds = view.el.getBoundingClientRect();
     const [x, top] = this.#viewportFor(view).convertToPdfPoint(
       clientX - bounds.left,
       clientY - bounds.top,
     );
+
+    const existing = await this.#lineAt(view, { x, y: top });
+    // Dok se sadržaj čitao korisnik je mogao promijeniti alat ili stranicu.
+    if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
+
+    if (existing && 'refusal' in existing) {
+      this.host.notify.show('warning', existing.refusal);
+      return;
+    }
+
+    if (existing) {
+      const { line } = existing;
+      const face = PdfEditor.#faceFor(line.baseFont);
+      const metrics = await this.#face(face);
+      if (this.#tool !== 'text' || this.#editor) return;
+
+      /*
+       * Zamjena se poravnava po **osnovnoj liniji** izvornog retka, ne po
+       * njegovu okviru: okvir ovisi o tome koja su slova u retku, a osnovna
+       * linija je ista bez obzira na to.
+       */
+      const anchor = {
+        x: line.origin.x - TEXT_PADDING,
+        top: line.origin.y + metrics.ascent(line.size) + TEXT_PADDING,
+      };
+
+      this.#openTextEditor(
+        view,
+        metrics,
+        {
+          id: newId(),
+          kind: 'text',
+          page: view.source,
+          color: line.color,
+          createdAt: Date.now(),
+          rect: layoutTextBox(metrics, line.text, line.size, anchor),
+          text: line.text,
+          size: line.size,
+          face,
+        },
+        { rect: line.bounds, note: metricsWarning(line) },
+      );
+      return;
+    }
+
+    const metrics = await this.#face(this.#textFace);
+    if (this.#tool !== 'text' || this.#editor) return;
 
     this.#openTextEditor(view, metrics, {
       id: newId(),
@@ -1585,6 +1650,22 @@ class PdfEditor implements EditorInstance {
       size: this.#textSize,
       face: this.#textFace,
     });
+  }
+
+  /** Redak dokumenta pod zadanom točkom, ako ga ima i ako se da prepisati. */
+  async #lineAt(
+    view: PageView,
+    point: { x: number; y: number },
+  ): Promise<ReturnType<typeof findEditableLine>> {
+    try {
+      const doc = await this.#openContent();
+      const page = doc.getPages()[view.source - 1];
+      if (!page) return null;
+      return findEditableLine(page, point, await this.#standardWidths());
+    } catch {
+      // Nečitljiv sadržaj ne smije spriječiti pisanje novog teksta.
+      return null;
+    }
   }
 
   /** CSS koji tekstu daje isti izgled kao što će imati u datoteci. */
@@ -1622,7 +1703,13 @@ class PdfEditor implements EditorInstance {
    * retka, pa je ono što se vidi tijekom tipkanja već ono što će biti u
    * datoteci. Statični prikaz je za to vrijeme sakriven.
    */
-  #openTextEditor(view: PageView, metrics: FaceMetrics, draft: TextBoxAnnotation): void {
+  #openTextEditor(
+    view: PageView,
+    metrics: FaceMetrics,
+    draft: TextBoxAnnotation,
+    /** Kad se prepisuje postojeći redak: što odlazi i što o tome treba reći. */
+    replaces?: { rect: Rect; note: string | null },
+  ): void {
     this.#finishTextEdit();
     this.#closePopup();
 
@@ -1642,6 +1729,8 @@ class PdfEditor implements EditorInstance {
       input,
       warning,
       draft,
+      replaces: replaces?.rect ?? null,
+      notes: replaces?.note ? [replaces.note] : [],
       origin: this.#annotations.find(
         (a): a is TextBoxAnnotation => a.kind === 'text' && a.id === draft.id,
       ) ?? null,
@@ -1688,13 +1777,26 @@ class PdfEditor implements EditorInstance {
     const editor = this.#editor;
     if (!editor) return;
 
-    const missing = editor.metrics.missing(editor.draft.text);
-    editor.warning.hidden = missing.length === 0;
-    if (missing.length === 0) return;
+    const messages = [...editor.notes];
 
-    editor.warning.textContent = t('This font has no {chars} — they will be saved as blanks.', {
-      chars: missing.join(' '),
-    });
+    const missing = editor.metrics.missing(editor.draft.text);
+    if (missing.length > 0) {
+      messages.push(
+        t('This font has no {chars} — they will be saved as blanks.', { chars: missing.join(' ') }),
+      );
+    }
+
+    editor.warning.hidden = messages.length === 0;
+    if (messages.length === 0) return;
+
+    editor.warning.replaceChildren(
+      ...messages.map((message) => {
+        const line = document.createElement('div');
+        line.textContent = message;
+        return line;
+      }),
+    );
+
     const geometry = rectToCss(this.#viewportFor(editor.view), editor.draft.rect);
     editor.warning.style.left = `${geometry.left}px`;
     editor.warning.style.top = `${geometry.top + geometry.height + 4}px`;
@@ -1729,8 +1831,26 @@ class PdfEditor implements EditorInstance {
     editor.input.remove();
     editor.warning.remove();
 
-    const { draft, origin } = editor;
+    const { draft, origin, replaces } = editor;
     const empty = draft.text.trim().length === 0;
+
+    /*
+     * Prepisivanje postojećeg retka: stari odlazi iz sadržaja, novi dolazi na
+     * njegovu osnovnu liniju. Oboje je jedan korak povijesti — poništavanje
+     * mora vratiti i tekst i njegovo mjesto, a ne pola posla.
+     */
+    if (replaces) {
+      this.#snapshot();
+      this.#redactions = [
+        ...this.#redactions,
+        { id: newId(), page: draft.page, rect: replaces, replaced: !empty },
+      ];
+      if (!empty) this.#annotations = [...this.#annotations, draft];
+      this.#markDirty();
+      this.#renderAllAnnotations();
+      this.#emitStatus();
+      return;
+    }
 
     if (empty) {
       if (origin) this.#remove(origin.id);

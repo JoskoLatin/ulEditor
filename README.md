@@ -19,6 +19,7 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
 | **PDF tekst** | **radi** — upisivanje teksta, rez, veličina, boja, pomicanje | pdf-lib + Liberation Sans |
 | **PDF brisanje** | **radi** — tekst se miče iz sadržaja, ne prekriva se | vlastiti čitač toka sadržaja |
+| **PDF izmjena teksta** | **radi** — klikneš postojeći redak i prepišeš ga | isto + pdf-lib |
 | PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
 | **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
 | **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
@@ -37,6 +38,12 @@ Font se **ugrađuje**, i to je nužno, ne uljepšavanje: standardnih četrnaest 
 **Brisanje teksta alatom `⌫`** povuče pravokutnik preko onoga što ide van i **miče glifove iz toka sadržaja stranice**. Crni pravokutnik preko teksta nije brisanje: tekst ostaje u datoteci i vadi se označavanjem, kopiranjem ili bilo kojim alatom koji čita PDF — greška koja je više puta objavila ono što je trebala sakriti. Razmak koji su glifovi zauzimali nadomješta se pomakom u `TJ` polju, pa ostatak retka ostaje točno gdje je bio.
 
 Kad se **ne može jamčiti** da je sve maknuto — font bez tablice širina, Type3 glifovi, tekst unutar Form XObjecta — stranica se ne dira i razlog se kaže odmah, dok korisnik još gleda u to mjesto. Redakcija koja tiho promaši dio teksta gora je od one koje nema.
+
+**Izmjena postojećeg teksta** ide istim alatom `T`: klikneš na redak i on se otvori popunjen onim što ondje piše. Stari redak odlazi iz sadržaja, novi sjeda na **istu osnovnu liniju**, u istoj veličini i boji, pročitanima iz samog dokumenta.
+
+Piše se **našim ugrađenim fontom**, ne izvornim, i to ima cijenu koju treba znati. Za Helveticu i Arial razlike nema — Liberation Sans im je metrički jednak, pa zamjena zauzme točno istu širinu. Za druge fontove veličina, mjesto i boja ostaju, ali oblik slova se mijenja, i to se kaže **prije** tipkanja. Izvorni font se ne može upotrijebiti jer je u dokumentu ugrađen kao podskup: sadrži samo glifove koje je taj dokument već koristio, pa bi prvo dopisano `č` ispalo kao prazno mjesto usred rečenice.
+
+Zarotiran tekst, razvučen tekst, nevidljivi sloj iz OCR-a i font bez `/ToUnicode` tablice se **ne nude na prepisivanje** — svaki sa svojim razlogom, umjesto da zamjena sjedne nakrivo ili da se slova nagađaju.
 
 Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 

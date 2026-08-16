@@ -392,6 +392,21 @@ export const hr: Catalog = {
   'Page {n} was left untouched — the text there cannot be removed safely ({reason}).':
     'Stranica {n} je ostala netaknuta — tekst se ondje ne da pouzdano maknuti ({reason}).',
 
+  /* ── prepisivanje postojećeg teksta ────────────────────────────────── */
+  'That text is invisible — it is a recognition layer, not the page.':
+    'Taj tekst je nevidljiv — to je sloj iz prepoznavanja, ne sama stranica.',
+  'That text is rotated or skewed, so it cannot be retyped in place.':
+    'Taj tekst je zarotiran ili nagnut, pa se ne da prepisati na mjestu.',
+  'That text is horizontally stretched, so a replacement would not match.':
+    'Taj tekst je vodoravno razvučen, pa se zamjena ne bi poklopila.',
+  'The colour of that text comes from a colour space we do not read.':
+    'Boja tog teksta dolazi iz prostora boje koji ne čitamo.',
+  'That text cannot be read back as letters — the font has no /ToUnicode map.':
+    'Taj se tekst ne da pročitati kao slova — font nema /ToUnicode tablicu.',
+  '{font} is not the font we write with — size and position stay, the letterforms change.':
+    '{font} nije font kojim pišemo — veličina i mjesto ostaju, oblik slova se mijenja.',
+  'The original font': 'Izvorni font',
+
   /* ── knjižnica ─────────────────────────────────────────────────────── */
   Library: 'Knjižnica',
   'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',

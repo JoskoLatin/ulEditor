@@ -37,6 +37,14 @@ export interface Redaction {
    * vraća tekst. Zato je i poslije spremanja poništavanje stvarno moguće.
    */
   applied?: boolean;
+  /**
+   * Na to mjesto dolazi nov tekst.
+   *
+   * Prikaz je zbog toga neproziran: da se stari i novi redak ne vide jedan
+   * preko drugoga dok se ne spremi. Kod običnog brisanja se namjerno **ne**
+   * prekriva ništa — ondje je važno vidjeti što odlazi.
+   */
+  replaced?: boolean;
 }
 
 export interface RedactionResult {

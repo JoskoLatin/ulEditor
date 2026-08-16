@@ -130,7 +130,7 @@ const WIN_ANSI_HIGH = [
   0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x0000, 0x017e, 0x0178,
 ];
 
-function winAnsiCodePoint(code: number): number | null {
+export function winAnsiCodePoint(code: number): number | null {
   if (code >= 0x80 && code <= 0x9f) {
     const mapped = WIN_ANSI_HIGH[code - 0x80] ?? 0;
     return mapped === 0 ? null : mapped;

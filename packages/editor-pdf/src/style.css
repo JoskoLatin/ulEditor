@@ -394,6 +394,20 @@
   background: rgba(120, 120, 120, 0.16);
 }
 
+/*
+ * Prepisani redak je iznimka od pravila o prozirnosti: ovdje na to mjesto
+ * dolazi nov tekst, pa bi se stari i novi vidjeli jedan preko drugoga. Ništa
+ * se time ne skriva — što je ispod, korisnik je upravo pročitao i prepisao.
+ */
+.ul-pdf-redaction[data-replaced='true'] {
+  background: #fff;
+  border-color: transparent;
+}
+.ul-pdf-redaction[data-replaced='true']:hover {
+  background: rgba(190, 60, 60, 0.18);
+  border-color: var(--accent);
+}
+
 .ul-pdf-marquee {
   position: absolute;
   pointer-events: none;

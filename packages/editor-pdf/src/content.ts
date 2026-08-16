@@ -19,8 +19,8 @@
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import type { PDFPage } from 'pdf-lib';
 
-import type { Rect } from './annotations.js';
-import type { StandardWidths } from './text.js';
+import type { Rect, Rgb } from './annotations.js';
+import { winAnsiCodePoint, type StandardWidths } from './text.js';
 
 /* ── matrice ─────────────────────────────────────────────────────────── */
 
@@ -272,12 +272,110 @@ function indexOfOperator(bytes: Uint8Array, from: number, word: string): number 
  */
 export interface FontInfo {
   name: string;
+  /** `/BaseFont` bez podskupovnog prefiksa. */
+  baseFont: string;
   /** Kompozitni font s Identity kodiranjem — dva bajta po kodu. */
   twoByte: boolean;
   /** Širina koda u tisućinkama tekstualne jedinice. */
   widthOf(code: number): number;
+  /**
+   * Kod → znak, ako se pouzdano zna.
+   *
+   * `null` znači da se kod ne da pretvoriti u slovo: bez `/ToUnicode` i bez
+   * poznatog kodiranja tekst se može maknuti, ali ne i pročitati — pa se ne
+   * može ponuditi ni na prepisivanje.
+   */
+  decode(code: number): string | null;
   /** Zašto se font ne da izmjeriti; `null` kad je sve u redu. */
   unsupported: string | null;
+}
+
+/**
+ * Čita `/ToUnicode` CMap — jedini pouzdan put od koda do slova.
+ *
+ * Format je PostScriptu sličan, pa se čita istim leksičkim rastavom kojim i
+ * tok sadržaja. Odredišta su UTF-16BE nizovi, jer jedan kod smije davati i
+ * više znakova (ligature).
+ */
+function parseToUnicode(bytes: Uint8Array): Map<number, string> {
+  const map = new Map<number, string>();
+  const tokens = tokenize(bytes);
+
+  const asCode = (token: Token | undefined): number | null => {
+    if (token?.kind !== 'string') return null;
+    let value = 0;
+    for (const byte of token.bytes) value = value * 256 + byte;
+    return value;
+  };
+  const asText = (token: Token | undefined): string | null => {
+    if (token?.kind !== 'string') return null;
+    let out = '';
+    for (let i = 0; i + 1 < token.bytes.length; i += 2) {
+      out += String.fromCharCode((token.bytes[i]! << 8) | token.bytes[i + 1]!);
+    }
+    return out;
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (token.kind !== 'operator') continue;
+
+    if (token.value === 'beginbfchar') {
+      for (let k = i + 1; k + 1 < tokens.length; k += 2) {
+        if (tokens[k]!.kind === 'operator') break;
+        const code = asCode(tokens[k]);
+        const text = asText(tokens[k + 1]);
+        if (code !== null && text !== null) map.set(code, text);
+      }
+      continue;
+    }
+
+    if (token.value === 'beginbfrange') {
+      let k = i + 1;
+      while (k < tokens.length && tokens[k]!.kind !== 'operator') {
+        const low = asCode(tokens[k]);
+        const high = asCode(tokens[k + 1]);
+        const third = tokens[k + 2];
+        if (low === null || high === null || !third) break;
+
+        if (third.kind === 'array-open') {
+          // Oblik `<lo> <hi> [<d1> <d2> …]`: po jedno odredište za svaki kod.
+          let index = 0;
+          let at = k + 3;
+          while (at < tokens.length && tokens[at]!.kind !== 'array-close') {
+            const text = asText(tokens[at]);
+            if (text !== null) map.set(low + index, text);
+            index++;
+            at++;
+          }
+          k = at + 1;
+          continue;
+        }
+
+        const start = asText(third);
+        if (start === null) break;
+        // Oblik `<lo> <hi> <početak>`: zadnji znak odredišta se uvećava.
+        const prefix = start.slice(0, -1);
+        const last = start.charCodeAt(start.length - 1);
+        for (let code = low; code <= high && code - low <= 65535; code++) {
+          map.set(code, prefix + String.fromCharCode(last + (code - low)));
+        }
+        k += 3;
+      }
+    }
+  }
+
+  return map;
+}
+
+function readToUnicode(font: PDFDict): Map<number, string> | null {
+  const stream = font.lookup(PDFName.of('ToUnicode'));
+  if (!(stream instanceof PDFRawStream)) return null;
+  try {
+    return parseToUnicode(decodePDFRawStream(stream).decode());
+  } catch {
+    return null;
+  }
 }
 
 function numberAt(array: PDFArray | undefined, index: number): number | undefined {
@@ -365,8 +463,41 @@ export function readFonts(
   for (const [key] of fonts.entries()) {
     const name = key.asString().replace(/^\//, '');
     const font = fonts.lookup(key);
+
+    /** Popunjava zajednička polja da ih svaka grana ne ponavlja. */
+    const describe = (partial: Omit<FontInfo, 'name' | 'baseFont' | 'decode'>): FontInfo => {
+      const raw = font instanceof PDFDict ? font.lookup(PDFName.of('BaseFont')) : undefined;
+      const baseFont = (raw instanceof PDFName ? raw.asString() : '')
+        .replace(/^\//, '')
+        .replace(/^[A-Z]{6}\+/, '');
+
+      const toUnicode = font instanceof PDFDict ? readToUnicode(font) : null;
+      const winAnsi = !partial.twoByte && font instanceof PDFDict && !hasDifferences(font);
+
+      return {
+        ...partial,
+        name,
+        baseFont,
+        decode: (code) => {
+          const mapped = toUnicode?.get(code);
+          if (mapped !== undefined) return mapped;
+          /*
+           * Bez `/ToUnicode` jedini pošten oslonac je standardno kodiranje
+           * jednobajtnog fonta. Kompozitni font s Identity kodiranjem daje
+           * broj glifa u fontu, a taj o slovu ne govori ništa.
+           */
+          if (!winAnsi) return null;
+          const cp = winAnsiCodePoint(code);
+          return cp === null ? null : String.fromCodePoint(cp);
+        },
+      };
+    };
+
     if (!(font instanceof PDFDict)) {
-      out.set(name, { name, twoByte: false, widthOf: () => 0, unsupported: 'font se ne da pročitati' });
+      out.set(
+        name,
+        describe({ twoByte: false, widthOf: () => 0, unsupported: 'font se ne da pročitati' }),
+      );
       continue;
     }
 
@@ -376,7 +507,7 @@ export function readFonts(
     if (kind === '/Type3') {
       // Glifovi su vlastiti tokovi sadržaja; njihova širina ovisi o matrici
       // fonta i ne da se očitati iz tablice.
-      out.set(name, { name, twoByte: false, widthOf: () => 0, unsupported: 'Type3 font' });
+      out.set(name, describe({ twoByte: false, widthOf: () => 0, unsupported: 'Type3 font' }));
       continue;
     }
 
@@ -386,12 +517,14 @@ export function readFonts(
       if (encodingName !== '/Identity-H' && encodingName !== '/Identity-V') {
         // Ugrađen CMap bi tražio vlastiti parser da bi se znalo koliko je
         // bajtova jedan kod.
-        out.set(name, {
+        out.set(
           name,
-          twoByte: true,
-          widthOf: () => 0,
-          unsupported: `kodiranje ${encodingName || 'bez imena'}`,
-        });
+          describe({
+            twoByte: true,
+            widthOf: () => 0,
+            unsupported: `kodiranje ${encodingName || 'bez imena'}`,
+          }),
+        );
         continue;
       }
 
@@ -399,22 +532,23 @@ export function readFonts(
       const descendant =
         descendants instanceof PDFArray ? descendants.lookup(0) : undefined;
       if (!(descendant instanceof PDFDict)) {
-        out.set(name, { name, twoByte: true, widthOf: () => 0, unsupported: 'nema DescendantFonts' });
+        out.set(
+          name,
+          describe({ twoByte: true, widthOf: () => 0, unsupported: 'nema DescendantFonts' }),
+        );
         continue;
       }
 
-      out.set(name, {
+      out.set(
         name,
-        twoByte: true,
-        widthOf: compositeWidths(descendant),
-        unsupported: null,
-      });
+        describe({ twoByte: true, widthOf: compositeWidths(descendant), unsupported: null }),
+      );
       continue;
     }
 
     const widths = simpleWidths(font);
     if (widths) {
-      out.set(name, { name, twoByte: false, widthOf: widths, unsupported: null });
+      out.set(name, describe({ twoByte: false, widthOf: widths, unsupported: null }));
       continue;
     }
 
@@ -427,32 +561,38 @@ export function readFonts(
     const baseName = baseFont instanceof PDFName ? baseFont.asString() : '';
 
     if (hasDifferences(font)) {
-      out.set(name, {
+      out.set(
         name,
-        twoByte: false,
-        widthOf: () => 0,
-        unsupported: 'vlastito preslikavanje kodova bez tablice širina',
-      });
+        describe({
+          twoByte: false,
+          widthOf: () => 0,
+          unsupported: 'vlastito preslikavanje kodova bez tablice širina',
+        }),
+      );
       continue;
     }
 
     const probe = standard?.widthOf(baseName, 0x41);
     if (standard && probe !== null && probe !== undefined) {
-      out.set(name, {
+      out.set(
         name,
-        twoByte: false,
-        widthOf: (code) => standard.widthOf(baseName, code) ?? 0,
-        unsupported: null,
-      });
+        describe({
+          twoByte: false,
+          widthOf: (code) => standard.widthOf(baseName, code) ?? 0,
+          unsupported: null,
+        }),
+      );
       continue;
     }
 
-    out.set(name, {
+    out.set(
       name,
-      twoByte: false,
-      widthOf: () => 0,
-      unsupported: `${baseName || 'font'} bez tablice širina`,
-    });
+      describe({
+        twoByte: false,
+        widthOf: () => 0,
+        unsupported: `${baseName || 'font'} bez tablice širina`,
+      }),
+    );
   }
 
   return out;
@@ -484,6 +624,57 @@ export interface TextOperation {
   horizontalScale: number;
   /** Naredbe `'` i `"` u sebi nose i prelazak u novi redak. */
   leading: number;
+
+  font: FontInfo;
+  /** 0 = ispuna, 3 = nevidljivo (sloj iz OCR-a), ostalo su obrubi. */
+  renderMode: number;
+  /** Boja ispune, ili `null` kad se prostor boje ne prepoznaje. */
+  fill: Rgb | null;
+  /**
+   * Veličina slova kakva se stvarno vidi na stranici — `Tf` pomnožen svime
+   * što je matricama došlo na njega.
+   */
+  effectiveSize: number;
+  /** Početak osnovne linije prvog glifa, u korisničkom prostoru. */
+  origin: { x: number; y: number };
+  /**
+   * Stoji li tekst vodoravno i neiskrivljen.
+   *
+   * Zarotiran ili nagnut tekst se da maknuti, ali ne i prepisati: naši
+   * tekstualni okviri stoje uspravno, pa bi zamjena stajala nakrivo.
+   */
+  axisAligned: boolean;
+}
+
+/** Tekst naredbe, ili `null` ako se kodovi ne daju pretvoriti u slova. */
+export function textOf(operation: TextOperation): string | null {
+  let out = '';
+  for (const part of operation.parts) {
+    if (part.kind !== 'glyphs') continue;
+    for (const glyph of part.glyphs) {
+      const decoded = operation.font.decode(glyph.code);
+      if (decoded === null) return null;
+      out += decoded;
+    }
+  }
+  return out;
+}
+
+/** Omeđujući pravokutnik svih glifova naredbe. */
+export function boundsOfOperation(operation: TextOperation): Rect | null {
+  const boxes = operation.parts
+    .filter((part) => part.kind === 'glyphs')
+    .flatMap((part) => part.glyphs.map((glyph) => glyph.box));
+  if (boxes.length === 0) return null;
+
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  return {
+    x,
+    y,
+    width: Math.max(...boxes.map((b) => b.x + b.width)) - x,
+    height: Math.max(...boxes.map((b) => b.y + b.height)) - y,
+  };
 }
 
 /** Zašto neka stranica nije sigurna za izmjenu. */
@@ -508,6 +699,49 @@ interface State {
   horizontalScale: number;
   leading: number;
   rise: number;
+  renderMode: number;
+  fill: Rgb | null;
+  /** Ime prostora boje postavljenog s `cs`; treba za tumačenje `sc`/`scn`. */
+  fillSpace: string;
+}
+
+/** Pretvara operande boje u RGB, ili `null` kad prostor nije prepoznat. */
+function colorFrom(operator: string, values: number[], space: string): Rgb | null {
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+
+  const fromCount = (count: number): Rgb | null => {
+    if (count === 1) {
+      const g = clamp(values[0] ?? 0);
+      return [g, g, g];
+    }
+    if (count === 3) return [clamp(values[0] ?? 0), clamp(values[1] ?? 0), clamp(values[2] ?? 0)];
+    if (count === 4) {
+      // CMYK → RGB, jednostavnom pretvorbom; profil boje ovdje ne igra ulogu.
+      const [c = 0, m = 0, y = 0, k = 0] = values;
+      return [clamp((1 - c) * (1 - k)), clamp((1 - m) * (1 - k)), clamp((1 - y) * (1 - k))];
+    }
+    return null;
+  };
+
+  switch (operator) {
+    case 'g':
+      return fromCount(1);
+    case 'rg':
+      return fromCount(3);
+    case 'k':
+      return fromCount(4);
+    case 'sc':
+    case 'scn': {
+      // Imenovani prostori (ICC, Separation, Pattern) traže vlastito tumačenje;
+      // pogađanje po broju operanada dalo bi krivu boju bez ijednog znaka
+      // upozorenja, pa se radije priznaje da se ne zna.
+      const device =
+        space === '/DeviceGray' || space === '/DeviceRGB' || space === '/DeviceCMYK';
+      return device ? fromCount(values.length) : null;
+    }
+    default:
+      return null;
+  }
 }
 
 function cloneState(state: State): State {
@@ -587,6 +821,10 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
     horizontalScale: 1,
     leading: 0,
     rise: 0,
+    renderMode: 0,
+    // PDF kreće od crne ispune u DeviceGray.
+    fill: [0, 0, 0],
+    fillSpace: '/DeviceGray',
   };
   const stack: State[] = [];
 
@@ -660,6 +898,27 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
       case 'Ts':
         state.rise = values[0] ?? state.rise;
         break;
+      case 'Tr':
+        state.renderMode = values[0] ?? state.renderMode;
+        break;
+
+      case 'cs': {
+        const space = operands.find((o) => o.kind === 'name');
+        state.fillSpace = space?.kind === 'name' ? `/${space.value}` : '';
+        // Novi prostor boje poništava staru vrijednost, kako spec traži.
+        state.fill = state.fillSpace === '/Pattern' ? null : [0, 0, 0];
+        break;
+      }
+      case 'g':
+      case 'rg':
+      case 'k':
+      case 'sc':
+      case 'scn':
+        state.fill = colorFrom(op, values, state.fillSpace);
+        if (op === 'g') state.fillSpace = '/DeviceGray';
+        if (op === 'rg') state.fillSpace = '/DeviceRGB';
+        if (op === 'k') state.fillSpace = '/DeviceCMYK';
+        break;
 
       case 'Td':
         if (values.length >= 2) {
@@ -720,6 +979,12 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
           break;
         }
 
+        /* Matrica prije nego glifovi pomaknu tekst — odatle kreće redak. */
+        const trm = multiply(
+          [state.fontSize * state.horizontalScale, 0, 0, state.fontSize, 0, state.rise],
+          multiply(tm, state.ctm),
+        );
+
         const parts: TextOperation['parts'] = [];
 
         if (op === 'TJ') {
@@ -754,6 +1019,13 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
           wordSpacing: state.wordSpacing,
           horizontalScale: state.horizontalScale,
           leading: state.leading,
+          font,
+          renderMode: state.renderMode,
+          fill: state.fill,
+          effectiveSize: Math.hypot(trm[2], trm[3]),
+          origin: { x: trm[4], y: trm[5] },
+          axisAligned:
+            Math.abs(trm[1]) < 1e-6 && Math.abs(trm[2]) < 1e-6 && trm[0] > 0 && trm[3] > 0,
         });
         break;
       }
