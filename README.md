@@ -18,6 +18,7 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | PDF | **radi** — pregled, zoom, tekstualni sloj, pretraga, čitanje | pdf.js *(desktop → pdfium, faza 1)* |
 | PDF anotacije | **radi** — istaknuća, bilješke, crtanje | pdf-lib |
 | **PDF tekst** | **radi** — upisivanje teksta, rez, veličina, boja, pomicanje | pdf-lib + Liberation Sans |
+| **PDF brisanje** | **radi** — tekst se miče iz sadržaja, ne prekriva se | vlastiti čitač toka sadržaja |
 | PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
 | **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
 | **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
@@ -32,6 +33,10 @@ Anotacije se zapisuju kao **pravi PDF objekti** (`/Highlight`, `/Text`, `/Ink`),
 **Tekst se upisuje alatom `T`** — klikneš gdje treba stajati i tipkaš; okvir raste uz tekst, pa je ono što se vidi dok se tipka već ono što će ostati u datoteci. Poslije se povlači mišem i otvara klikom za izmjenu. Sprema se kao `/FreeText` **s vlastitim tokom izgleda**: bez njega je takva anotacija nevidljiva u pdf.js-u i preglednicima, dakle svugdje osim u Acrobatu.
 
 Font se **ugrađuje**, i to je nužno, ne uljepšavanje: standardnih četrnaest PDF fontova koristi WinAnsi, u kojem `č ć ž š đ` ne postoje. Uzet je Liberation Sans koji ionako stiže s pdf.js-om (SIL OFL 1.1), pa u repou nema priloženog fonta, a u datoteku ide samo podskup upotrijebljenih glifova — potpis na obrascu doda ~9 KB. Znak koji font ne poznaje se prijavljuje **dok se tipka**, a ne tiho pretvara u prazno mjesto.
+
+**Brisanje teksta alatom `⌫`** povuče pravokutnik preko onoga što ide van i **miče glifove iz toka sadržaja stranice**. Crni pravokutnik preko teksta nije brisanje: tekst ostaje u datoteci i vadi se označavanjem, kopiranjem ili bilo kojim alatom koji čita PDF — greška koja je više puta objavila ono što je trebala sakriti. Razmak koji su glifovi zauzimali nadomješta se pomakom u `TJ` polju, pa ostatak retka ostaje točno gdje je bio.
+
+Kad se **ne može jamčiti** da je sve maknuto — font bez tablice širina, Type3 glifovi, tekst unutar Form XObjecta — stranica se ne dira i razlog se kaže odmah, dok korisnik još gleda u to mjesto. Redakcija koja tiho promaši dio teksta gora je od one koje nema.
 
 Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 

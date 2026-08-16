@@ -140,6 +140,55 @@ try {
     (await page.locator('.tab[data-dirty="true"]').count()) === 0,
   );
 
+  /* ── brisanje postojećeg teksta ────────────────────────────────────── */
+
+  /*
+   * Tekst se cilja preko sloja koji pdf.js gradi iznad stranice: on stoji
+   * točno ondje gdje su glifovi, pa je povlačenje preko njega isto što bi
+   * korisnik napravio mišem.
+   */
+  const span = await page.locator('.ul-pdf-text span').first().boundingBox();
+  check('postojeći tekst je na stranici', !!span && span.width > 10, `${Math.round(span?.width ?? 0)}px`);
+
+  await page.locator('.ul-pdf-tool[title*="Erase text"]').click();
+  await page.mouse.move(span.x - 2, span.y - 2);
+  await page.mouse.down();
+  await page.mouse.move(span.x + span.width + 2, span.y + span.height + 2, { steps: 8 });
+  await page.mouse.up();
+
+  await page.waitForSelector('.ul-pdf-redaction', { timeout: 10000 });
+  const toast = await page
+    .locator('.toast p', { hasText: /\d/ })
+    .last()
+    .innerText()
+    .catch(() => '');
+  check('najavljen je broj znakova koji nestaju', /\d+/.test(toast), toast.slice(0, 80));
+  check('dokument je opet izmijenjen', (await page.locator('.tab[data-dirty="true"]').count()) === 1);
+
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
+    timeout: 30000,
+  });
+
+  /*
+   * Provjera koja razlikuje brisanje od prekrivanja: traži se sam niz bajtova
+   * u datoteci. Da je preko teksta samo nacrtan pravokutnik, ovdje bi i dalje
+   * pisao — i vadio bi se označavanjem u bilo kojem čitaču.
+   */
+  const erased = new TextDecoder('latin1').decode(await readFile(file));
+  check('obrisanog teksta više nema u datoteci', !erased.includes('ulEditor PDF'));
+  check('upisani tekst je preživio brisanje', erased.includes('/FreeText'));
+
+  await page.locator('.tab .close').first().click();
+  await page.waitForTimeout(400);
+  await open('obrazac.pdf');
+  const remaining = await page.locator('.ul-pdf-text').innerText();
+  check(
+    'ponovno otvoren dokument više ne sadrži taj tekst',
+    !remaining.includes('ulEditor PDF'),
+    JSON.stringify(remaining.replace(/\s+/g, ' ').slice(0, 40)),
+  );
+
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-pdf-text.png') });
 } catch (err) {
   check('izvođenje bez iznimke', false, err instanceof Error ? err.message : String(err));

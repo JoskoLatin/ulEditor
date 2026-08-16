@@ -376,6 +376,22 @@ export const hr: Catalog = {
   'The font cannot draw these characters, so they were saved as blanks: {chars}':
     'Font ne zna nacrtati ove znakove, pa su spremljeni kao prazno mjesto: {chars}',
 
+  /* ── brisanje teksta iz PDF-a ──────────────────────────────────────── */
+  'Erase text — drag over what should go': 'Obriši tekst — povuci preko onoga što ide van',
+  'Marked for removal — click to undo': 'Označeno za brisanje — klikni za poništavanje',
+  'Removed on save — click to bring the text back':
+    'Obrisano pri spremanju — klikni da se tekst vrati',
+  '{n} characters will be removed from the document when you save.':
+    'Pri spremanju će {n} znakova nestati iz dokumenta.',
+  '{n} areas to erase': '{n} područja za brisanje',
+  'There is no text in that area.': 'U tom području nema teksta.',
+  'This area cannot be cleared safely: {reason}':
+    'Ovo područje se ne da pouzdano očistiti: {reason}',
+  'Could not read the page content: {reason}':
+    'Sadržaj stranice se ne da pročitati: {reason}',
+  'Page {n} was left untouched — the text there cannot be removed safely ({reason}).':
+    'Stranica {n} je ostala netaknuta — tekst se ondje ne da pouzdano maknuti ({reason}).',
+
   /* ── knjižnica ─────────────────────────────────────────────────────── */
   Library: 'Knjižnica',
   'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',

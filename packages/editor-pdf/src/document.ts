@@ -12,7 +12,8 @@ import { PDFDocument, degrees } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import { missingGlyphWarning, writeAnnotations, type Annotation } from './annotations.js';
-import type { FontLoader } from './text.js';
+import { applyRedactions, refusalWarning, type Redaction } from './redact.js';
+import { standardWidths, type FontLoader } from './text.js';
 
 export interface PagePlan {
   /** Broj stranice u IZVORNOM dokumentu, 1-baziran. */
@@ -111,8 +112,23 @@ export async function saveDocument(
   pageCount: number,
   /** Bajtovi fonta za tekstualne okvire. */
   loadFont?: FontLoader,
+  /** Područja iz kojih se tekst miče iz samog dokumenta. */
+  redactions: Redaction[] = [],
 ): Promise<SaveDocumentResult> {
   const lost: string[] = [];
+
+  /*
+   * Brisanje ide prvo i nad izvornim stranicama: područja su zabilježena nad
+   * onim što je korisnik vidio, prije nego što ih plan preslaže ili obriše.
+   */
+  const cleaned = await applyRedactions(
+    source,
+    redactions,
+    // Mjere standardnih fontova dolaze iz istog fonta kojim se i piše.
+    loadFont && redactions.length > 0 ? await standardWidths(loadFont) : undefined,
+  );
+  lost.push(...refusalWarning(cleaned.refused));
+  source = cleaned.bytes;
 
   if (isIdentity(plan, pageCount)) {
     const { bytes, missingGlyphs } = await writeAnnotations(
@@ -121,7 +137,7 @@ export async function saveDocument(
       undefined,
       loadFont,
     );
-    return { bytes, lost: missingGlyphWarning(missingGlyphs) };
+    return { bytes, lost: [...lost, ...missingGlyphWarning(missingGlyphs)] };
   }
 
   let working: Uint8Array;

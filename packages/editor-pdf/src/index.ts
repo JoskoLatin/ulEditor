@@ -10,6 +10,7 @@
  * preslagivanje ne razdvaja bilješku od onoga na što se odnosi.
  */
 
+import { PDFDocument } from 'pdf-lib';
 import { GlobalWorkerOptions, Util, getDocument } from 'pdfjs-dist';
 import type { PageViewport, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -46,6 +47,7 @@ import {
   type TextBoxAnnotation,
 } from './annotations.js';
 import { ensureWebFont, loadFontBytes } from './fonts.js';
+import { previewRedaction, type Redaction } from './redact.js';
 import {
   DEFAULT_TEXT_SIZE,
   FONT_FAMILY,
@@ -55,8 +57,10 @@ import {
   layoutTextBox,
   linesOf,
   loadFace,
+  standardWidths,
   topOf,
   type FaceMetrics,
+  type StandardWidths,
   type TextFace,
 } from './text.js';
 import {
@@ -85,7 +89,10 @@ const NOTE_ICON_PX = 20;
 const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
-type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text';
+type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'redact';
+
+/** Manje od ovoliko piksela nije povlačenje nego promašen klik. */
+const REDACT_MIN_SIZE = 6;
 
 /** Ispod ovoliko piksela pomak se broji kao klik, ne kao povlačenje okvira. */
 const TEXT_DRAG_SLOP = 3;
@@ -124,6 +131,7 @@ interface PageView {
 
 interface Snapshot {
   annotations: Annotation[];
+  redactions: Redaction[];
   plan: PagePlan[];
   /**
    * Bajtovi izvornika u trenutku snimke. Isti su za sve korake osim spajanja,
@@ -168,6 +176,13 @@ class PdfEditor implements EditorInstance {
 
   #plan: PagePlan[];
   #annotations: Annotation[] = [];
+  /**
+   * Područja iz kojih tekst odlazi iz samog dokumenta.
+   *
+   * Kao i operacije nad stranicama: do spremanja postoji samo namjera, pa je
+   * poništavanje obično micanje iz popisa, a ne vraćanje obrisanog.
+   */
+  #redactions: Redaction[] = [];
   #undoStack: Snapshot[] = [];
   #redoStack: Snapshot[] = [];
   #dirty = false;
@@ -205,6 +220,11 @@ class PdfEditor implements EditorInstance {
   } | null = null;
 
   #drawing: { view: PageView; points: Point[] } | null = null;
+  #marquee: { view: PageView; origin: Point; el: HTMLElement } | null = null;
+
+  /** Dokument otvoren radi čitanja sadržaja; prati `source`. */
+  #contentDoc: { source: Uint8Array; doc: Promise<PDFDocument> } | null = null;
+  #standard: Promise<StandardWidths> | null = null;
 
   #statusEmitter = new Emitter<string>();
   #dirtyEmitter = new Emitter<boolean>();
@@ -330,6 +350,7 @@ class PdfEditor implements EditorInstance {
       { tool: 'note', label: '✎', title: t('Note — click the page') },
       { tool: 'ink', label: '〰', title: t('Freehand drawing') },
       { tool: 'text', label: 'T', title: t('Add text — click where it should go') },
+      { tool: 'redact', label: '⌫', title: t('Erase text — drag over what should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
     /* Klasa, ne inline stil: na uskom ekranu se traka okreće uspravno i grupa
@@ -418,6 +439,7 @@ class PdfEditor implements EditorInstance {
 
       const parts: string[] = [];
       if (this.#annotations.length) parts.push(`${this.#annotations.length} anot.`);
+      if (this.#redactions.length) parts.push(`${this.#redactions.length} obr.`);
       parts.push(...describePlan(this.#plan, this.pdf.numPages));
       count.textContent = parts.join('  ·  ');
     };
@@ -1020,6 +1042,33 @@ class PdfEditor implements EditorInstance {
     const viewport = this.#viewportFor(view);
     const fragment = document.createDocumentFragment();
 
+    /*
+     * Označeno za brisanje se crta kao **namjera**, ne kao gotov posao: tekst
+     * ispod se još nazire. Neprozirna zakrpa bi izgledala kao da je već
+     * obrisan, a to je upravo dojam koji crni pravokutnik u drugim alatima
+     * ostavlja lažno.
+     */
+    for (const redaction of this.#redactions) {
+      if (redaction.page !== view.source) continue;
+      const box = rectToCss(viewport, redaction.rect);
+      const el = document.createElement('button');
+      el.className = 'ul-pdf-ann ul-pdf-redaction';
+      el.dataset.id = redaction.id;
+      el.dataset.applied = String(!!redaction.applied);
+      el.style.left = `${box.left}px`;
+      el.style.top = `${box.top}px`;
+      el.style.width = `${box.width}px`;
+      el.style.height = `${box.height}px`;
+      el.title = redaction.applied
+        ? t('Removed on save — click to bring the text back')
+        : t('Marked for removal — click to undo');
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.#removeRedaction(redaction.id);
+      });
+      fragment.appendChild(el);
+    }
+
     for (const annotation of this.#annotations) {
       // Vezuje se uz IZVORNU stranicu, pa preslagivanje ne razdvaja bilješku
       // od onoga na što se odnosi.
@@ -1135,6 +1184,7 @@ class PdfEditor implements EditorInstance {
   #capture(): Snapshot {
     return {
       annotations: this.#annotations.map((a) => ({ ...a })),
+      redactions: this.#redactions.map((r) => ({ ...r })),
       plan: this.#plan.map((p) => ({ ...p })),
       source: this.source,
     };
@@ -1144,6 +1194,7 @@ class PdfEditor implements EditorInstance {
     // Poništavanje spajanja vraća i sam dokument, ne samo plan.
     if (snapshot.source !== this.source) {
       this.#annotations = snapshot.annotations;
+      this.#redactions = snapshot.redactions;
       void this.#reload(snapshot.source, snapshot.plan);
       return;
     }
@@ -1156,6 +1207,7 @@ class PdfEditor implements EditorInstance {
       });
 
     this.#annotations = snapshot.annotations;
+    this.#redactions = snapshot.redactions;
     this.#plan = snapshot.plan;
 
     if (planChanged) void this.#applyPlan();
@@ -1168,7 +1220,9 @@ class PdfEditor implements EditorInstance {
 
   #markDirty(): void {
     const dirty =
-      this.#annotations.some((a) => !a.imported) || !isIdentity(this.#plan, this.pdf.numPages);
+      this.#annotations.some((a) => !a.imported) ||
+      this.#redactions.some((r) => !r.applied) ||
+      !isIdentity(this.#plan, this.pdf.numPages);
     if (dirty === this.#dirty) return;
     this.#dirty = dirty;
     this.#dirtyEmitter.fire(dirty);
@@ -1293,6 +1347,12 @@ class PdfEditor implements EditorInstance {
       return;
     }
 
+    if (this.#tool === 'redact') {
+      event.preventDefault();
+      this.#beginMarquee(event, view);
+      return;
+    }
+
     if (this.#tool === 'ink') {
       event.preventDefault();
       view.annotEl.setPointerCapture(event.pointerId);
@@ -1365,6 +1425,140 @@ class PdfEditor implements EditorInstance {
       strokes: [stroke],
       width: 2,
     });
+  }
+
+  /* ── brisanje teksta ───────────────────────────────────────────────── */
+
+  /** Dokument otvoren za čitanje sadržaja; jednom po verziji izvornika. */
+  #openContent(): Promise<PDFDocument> {
+    if (!this.#contentDoc || this.#contentDoc.source !== this.source) {
+      this.#contentDoc = {
+        source: this.source,
+        doc: PDFDocument.load(this.source, { ignoreEncryption: true }),
+      };
+    }
+    return this.#contentDoc.doc;
+  }
+
+  #standardWidths(): Promise<StandardWidths> {
+    this.#standard ??= standardWidths(loadFontBytes);
+    return this.#standard;
+  }
+
+  #beginMarquee(event: PointerEvent, view: PageView): void {
+    const bounds = view.el.getBoundingClientRect();
+    const origin = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+
+    const el = document.createElement('div');
+    el.className = 'ul-pdf-marquee';
+    view.annotEl.appendChild(el);
+    view.annotEl.setPointerCapture(event.pointerId);
+
+    this.#marquee = { view, origin, el };
+
+    const place = (moveX: number, moveY: number) => {
+      const x = Math.min(origin.x, moveX);
+      const y = Math.min(origin.y, moveY);
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.width = `${Math.abs(moveX - origin.x)}px`;
+      el.style.height = `${Math.abs(moveY - origin.y)}px`;
+    };
+    place(origin.x, origin.y);
+
+    const onMove = (move: PointerEvent) => {
+      place(move.clientX - bounds.left, move.clientY - bounds.top);
+    };
+    const onUp = (up: PointerEvent) => {
+      view.annotEl.removeEventListener('pointermove', onMove);
+      view.annotEl.removeEventListener('pointerup', onUp);
+      view.annotEl.removeEventListener('pointercancel', onUp);
+      this.#marquee = null;
+      el.remove();
+
+      const endX = up.clientX - bounds.left;
+      const endY = up.clientY - bounds.top;
+      if (Math.abs(endX - origin.x) < REDACT_MIN_SIZE || Math.abs(endY - origin.y) < REDACT_MIN_SIZE) {
+        return;
+      }
+
+      const viewport = this.#viewportFor(view);
+      const [x1, y1] = viewport.convertToPdfPoint(origin.x, origin.y);
+      const [x2, y2] = viewport.convertToPdfPoint(endX, endY);
+
+      void this.#addRedaction(view, {
+        x: Math.min(x1, x2),
+        y: Math.min(y1, y2),
+        width: Math.abs(x2 - x1),
+        height: Math.abs(y2 - y1),
+      });
+    };
+
+    view.annotEl.addEventListener('pointermove', onMove);
+    view.annotEl.addEventListener('pointerup', onUp);
+    view.annotEl.addEventListener('pointercancel', onUp);
+  }
+
+  /**
+   * Bilježi područje za brisanje, ali tek nakon što se provjeri da se dade.
+   *
+   * Provjera se radi odmah, a ne pri spremanju: da čitanje sadržaja stranice
+   * ne uspije ili da tekst bude izvan dosega, korisnik to mora saznati dok
+   * još gleda u to mjesto — a ne kroz upozorenje uz spremanje, kad je već
+   * prešao na drugi posao.
+   */
+  async #addRedaction(view: PageView, rect: Rect): Promise<void> {
+    try {
+      const doc = await this.#openContent();
+      const page = doc.getPages()[view.source - 1];
+      if (!page) return;
+
+      const preview = previewRedaction(page, [rect], await this.#standardWidths());
+
+      if (preview.obstacles.length > 0) {
+        this.host.notify.show(
+          'warning',
+          t('This area cannot be cleared safely: {reason}', {
+            reason: preview.obstacles.map((o) => o.reason).join('; '),
+          }),
+        );
+        return;
+      }
+
+      if (preview.glyphs === 0) {
+        this.host.notify.show('info', t('There is no text in that area.'));
+        return;
+      }
+
+      this.#snapshot();
+      this.#redactions = [
+        ...this.#redactions,
+        { id: newId(), page: view.source, rect },
+      ];
+      this.#markDirty();
+      this.#renderAllAnnotations();
+      this.#emitStatus();
+
+      this.host.notify.show(
+        'info',
+        t('{n} characters will be removed from the document when you save.', { n: preview.glyphs }),
+      );
+    } catch (err) {
+      this.host.notify.show(
+        'error',
+        t('Could not read the page content: {reason}', {
+          reason: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }
+
+  #removeRedaction(id: string): void {
+    this.#snapshot();
+    this.#redactions = this.#redactions.filter((r) => r.id !== id);
+    this.#markDirty();
+    this.#renderAllAnnotations();
+    this.#emitStatus();
   }
 
   /* ── tekstualni okviri ─────────────────────────────────────────────── */
@@ -1750,6 +1944,10 @@ class PdfEditor implements EditorInstance {
 
     const mine = this.#annotations.filter((a) => !a.imported).length;
     if (mine > 0) parts.push(t('{n} new annotations', { n: mine }));
+
+    const pending = this.#redactions.filter((r) => !r.applied).length;
+    if (pending > 0) parts.push(t('{n} areas to erase', { n: pending }));
+
     parts.push(...describePlan(this.#plan, this.pdf.numPages));
 
     this.#statusEmitter.fire(parts.join('  ·  '));
@@ -1795,12 +1993,17 @@ class PdfEditor implements EditorInstance {
       this.#annotations,
       this.pdf.numPages,
       loadFontBytes,
+      this.#redactions,
     );
     await this.host.fs.writeBytes(uri, bytes);
 
     // Spremljene anotacije su sada dio datoteke; označavamo ih kao uvezene
     // da ih sljedeće spremanje ne doda drugi put.
     this.#annotations = this.#annotations.map((a) => ({ ...a, imported: true }));
+    /* Oznake ostaju: svako spremanje kreće od netaknutog izvornika, pa se
+       brisanje ponavlja s istim ishodom — a micanje oznake i dalje vraća
+       tekst, što je jedini način da se predomišljanje uopće može ponuditi. */
+    this.#redactions = this.#redactions.map((r) => ({ ...r, applied: true }));
     this.#markDirty();
     this.#syncToolbar();
     this.#emitStatus();

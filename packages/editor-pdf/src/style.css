@@ -311,8 +311,12 @@
 }
 .ul-pdf[data-tool='note'] .ul-pdf-annots,
 .ul-pdf[data-tool='ink'] .ul-pdf-annots,
-.ul-pdf[data-tool='text'] .ul-pdf-annots {
+.ul-pdf[data-tool='text'] .ul-pdf-annots,
+.ul-pdf[data-tool='redact'] .ul-pdf-annots {
   pointer-events: auto;
+}
+.ul-pdf[data-tool='redact'] .ul-pdf-page {
+  cursor: crosshair;
 }
 .ul-pdf[data-tool='note'] .ul-pdf-page {
   cursor: crosshair;
@@ -357,6 +361,44 @@
 }
 .ul-pdf-ann-note:hover {
   filter: brightness(1.08);
+}
+
+/* ── brisanje teksta ─────────────────────────────────────────────────── */
+
+/*
+ * Označeno područje se **ne** prekriva neprozirnom zakrpom. Tekst ispod mora
+ * ostati vidljiv dok se ne spremi, jer do tada nije obrisan — a lažan dojam
+ * gotovog posla je upravo ono zbog čega crni pravokutnici u drugim alatima
+ * objave ono što su trebali sakriti.
+ */
+.ul-pdf-redaction {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  border: 1px dashed var(--accent);
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(190, 60, 60, 0.16) 0 6px,
+    rgba(190, 60, 60, 0.05) 6px 12px
+  );
+}
+.ul-pdf-redaction:hover {
+  background: rgba(190, 60, 60, 0.3);
+}
+/* Provedeno pri spremanju: mirnije, jer više nije nedovršen posao. */
+.ul-pdf-redaction[data-applied='true'] {
+  border-style: solid;
+  border-color: var(--rule-strong);
+  background: rgba(120, 120, 120, 0.16);
+}
+
+.ul-pdf-marquee {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed var(--accent);
+  background: rgba(190, 60, 60, 0.12);
 }
 
 /* ── tekstualni okviri ───────────────────────────────────────────────── */

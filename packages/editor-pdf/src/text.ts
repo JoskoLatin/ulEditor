@@ -63,6 +63,8 @@ export interface FaceMetrics {
   ascent(size: number): number;
   /** Širina jednog retka u točkama. */
   measure(line: string, size: number): number;
+  /** Širina jednog znaka u tisućinkama em-a — mjera kojom PDF računa. */
+  widthOfCodePoint(codePoint: number): number;
   /** Znakovi koje ovaj rez nema — jedinstveni, redoslijedom pojavljivanja. */
   missing(text: string): string[];
 }
@@ -81,6 +83,10 @@ export function metricsOf(face: TextFace, bytes: Uint8Array): FaceMetrics {
       /* Isti račun kojim pdf-lib slaže glifove pri zapisu, pa se okvir na
          ekranu i okvir u datoteci ne razilaze. */
       return (font.layout(line).advanceWidth / perEm) * size;
+    },
+    widthOfCodePoint: (codePoint) => {
+      if (!font.hasGlyphForCodePoint(codePoint)) return 0;
+      return (font.glyphForCodePoint(codePoint).advanceWidth / perEm) * 1000;
     },
     missing: (text) => {
       const out: string[] = [];
@@ -107,6 +113,82 @@ export function loadFace(face: TextFace, loader: FontLoader): Promise<FaceMetric
   // Neuspjeh se ne pamti: sljedeći pokušaj mora smjeti probati ponovno.
   void pending.catch(() => cache.delete(face));
   return pending;
+}
+
+/* ── metrike standardnih fontova ─────────────────────────────────────── */
+
+/**
+ * Kodovi 0x80–0x9F u WinAnsi kodiranju.
+ *
+ * Ispod 0x80 je WinAnsi jednak ASCII-ju, a od 0xA0 nadalje Latin-1; razlikuje
+ * se samo ovaj komad, u kojem stoje navodnici, crte i slična interpunkcija.
+ */
+const WIN_ANSI_HIGH = [
+  0x20ac, 0x0000, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+  0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x0000, 0x017d, 0x0000,
+  0x0000, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x0000, 0x017e, 0x0178,
+];
+
+function winAnsiCodePoint(code: number): number | null {
+  if (code >= 0x80 && code <= 0x9f) {
+    const mapped = WIN_ANSI_HIGH[code - 0x80] ?? 0;
+    return mapped === 0 ? null : mapped;
+  }
+  return code >= 32 ? code : null;
+}
+
+export interface StandardWidths {
+  /** Širina koda u tisućinkama, ili `null` ako se font ne prepoznaje. */
+  widthOf(baseFont: string, code: number): number | null;
+}
+
+/** `ABCDEF+Helvetica-Bold` → `Helvetica-Bold`. */
+function baseName(name: string): string {
+  return name.replace(/^\//, '').replace(/^[A-Z]{6}\+/, '');
+}
+
+/**
+ * Mjere za standardnih četrnaest fontova, koji smiju izostaviti `/Widths`.
+ *
+ * Bez ovoga bi svaki jednostavno generiran PDF — a takvi su gotovo svi
+ * računi, potvrde i obrasci — ispao „ne da se dirati”, jer se bez širina ne
+ * zna gdje jedan glif prestaje.
+ *
+ * Helvetica se mjeri Liberation Sansom. To nije aproksimacija: Liberation je
+ * napravljen tako da mu se širine poklapaju s Arialom, a Arial s Helveticom.
+ * Courier je monoprostorni s 600 posvuda. Times, Symbol i ZapfDingbats
+ * ostaju neprepoznati i to se prijavljuje, umjesto da se nagađa.
+ */
+export async function standardWidths(load: FontLoader): Promise<StandardWidths> {
+  const regular = await loadFace('sans', load);
+  const bold = await loadFace('sans-bold', load);
+
+  const faceFor = (name: string): FaceMetrics | null => {
+    const lower = name.toLowerCase();
+    if (lower.startsWith('helvetica') || lower.startsWith('arial')) {
+      // Kurziv ima iste širine kao uspravni rez — kod Ariala i Helvetice
+      // razlikuje se oblik, ne razmak.
+      return lower.includes('bold') ? bold : regular;
+    }
+    return null;
+  };
+
+  return {
+    widthOf(baseFont, code) {
+      const name = baseName(baseFont);
+      const lower = name.toLowerCase();
+
+      if (lower.startsWith('courier')) return 600;
+
+      const face = faceFor(name);
+      if (!face) return null;
+
+      const cp = winAnsiCodePoint(code);
+      if (cp === null) return 0;
+      return face.widthOfCodePoint(cp);
+    },
+  };
 }
 
 /* ── raspored okvira ─────────────────────────────────────────────────── */
