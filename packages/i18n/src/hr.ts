@@ -407,6 +407,14 @@ export const hr: Catalog = {
     '{font} nije font kojim pišemo — veličina i mjesto ostaju, oblik slova se mijenja.',
   'The original font': 'Izvorni font',
 
+  /* ── izmjena teksta u Wordu ────────────────────────────────────────── */
+  'Text can be retyped — double-click it. Layout and styles stay as they are.':
+    'Tekst se da prepisati — dvoklik na njega. Raspored i stilovi ostaju kakvi jesu.',
+  '{n} words · double-click text to edit': '{n} riječi · dvoklik na tekst za izmjenu',
+  '{words} words · {n} edits': '{words} riječi · {n} izmjena',
+  'Only the text you retyped was changed; everything else in the file was copied over unchanged.':
+    'Promijenjen je samo tekst koji si prepisao; sve ostalo u datoteci je preneseno nepromijenjeno.',
+
   /* ── knjižnica ─────────────────────────────────────────────────────── */
   Library: 'Knjižnica',
   'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',

@@ -18,12 +18,14 @@ import {
   imageUrl,
   openArchive,
   readRelationships,
+  readText,
   readXml,
   tag,
   tags,
   type Archive,
   type Relationships,
 } from './ooxml.js';
+import { findRuns, type RunSpan } from './docx-edit.js';
 import { t } from '@uleditor/i18n';
 
 export interface PreviewOutline {
@@ -39,6 +41,14 @@ export interface Preview {
   outline: PreviewOutline[];
   notes: string[];
   release(): void;
+
+  /** Sve što treba da se izmjena upiše natrag u datoteku. */
+  source: {
+    archive: Archive;
+    /** Sirovi `word/document.xml`; izmjene se rade nad njim, ne nad DOM-om. */
+    xml: string;
+    runs: RunSpan[];
+  };
 }
 
 const HEADING = /^heading\s*([1-6])$/i;
@@ -75,6 +85,10 @@ interface Context {
   rels: Relationships;
   urls: string[];
   notes: Set<string>;
+  /** Redni broj svakog `w:r`, isti kojim ih broji `findRuns`. */
+  runIndex: Map<Element, number>;
+  /** Runovi koji se daju prepisati; ostali se prikazuju, ali ne nude. */
+  editable: Set<number>;
 }
 
 /** Jedan `w:r` — nosilac svog formatiranja. */
@@ -149,6 +163,24 @@ function buildRun(run: Element, ctx: Context): Node[] {
   return wrapper ? [wrapper] : out;
 }
 
+/**
+ * Označava run u pregledu tako da se zna kojem komadu XML-a pripada.
+ *
+ * Omotač dobivaju **samo runovi koje se stvarno da prepisati**. Ponuditi
+ * izmjenu ondje gdje se ne može provesti znači obećati nešto što se ne
+ * ispuni tek pri spremanju.
+ */
+function tagRun(run: Element, ctx: Context, nodes: Node[]): Node[] {
+  const index = ctx.runIndex.get(run);
+  if (index === undefined || !ctx.editable.has(index) || nodes.length === 0) return nodes;
+
+  const span = document.createElement('span');
+  span.className = 'ul-office-run';
+  span.dataset.run = String(index);
+  span.append(...nodes);
+  return [span];
+}
+
 function buildImage(node: Element, ctx: Context): HTMLElement | null {
   const blip = tag(node, 'blip');
   const id = attr(blip, 'embed') ?? attr(blip, 'link');
@@ -184,7 +216,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
   for (const node of [...paragraph.children]) {
     switch (node.localName) {
       case 'r':
-        out.push(...buildRun(node, ctx));
+        out.push(...tagRun(node, ctx, buildRun(node, ctx)));
         break;
       case 'hyperlink': {
         const id = attr(node, 'id');
@@ -195,13 +227,13 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
         }
-        for (const run of children(node, 'r')) link.append(...buildRun(run, ctx));
+        for (const run of children(node, 'r')) link.append(...tagRun(run, ctx, buildRun(run, ctx)));
         if (link.textContent) out.push(link);
         break;
       }
       case 'ins':
         // Prihvaćena praćena promjena — tekst pripada dokumentu.
-        for (const run of children(node, 'r')) out.push(...buildRun(run, ctx));
+        for (const run of children(node, 'r')) out.push(...tagRun(run, ctx, buildRun(run, ctx)));
         break;
       case 'del':
         ctx.notes.add('Tracked changes are shown as accepted; deleted text is not visible.');
@@ -209,7 +241,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
       case 'fldSimple':
       case 'sdt':
         // Polja (broj stranice, sadržaj) nemaju smisla izvan Wordovog prijeloma.
-        for (const run of tags(node, 'r')) out.push(...buildRun(run, ctx));
+        for (const run of tags(node, 'r')) out.push(...tagRun(run, ctx, buildRun(run, ctx)));
         break;
       default:
         break;
@@ -281,11 +313,33 @@ export function renderDocx(bytes: Uint8Array): Preview {
     );
   }
 
+  /*
+   * Runovi se broje nad sirovim XML-om, a u pregled se preslikavaju preko
+   * poretka elemenata. Oba obilaska idu redoslijedom dokumenta, pa se
+   * `n`-ti `w:r` u jednom poklapa s `n`-tim u drugom — bez toga bi izmjena
+   * mogla završiti u krivom komadu teksta.
+   */
+  const xml = readText(archive, 'word/document.xml') ?? '';
+  const runs = findRuns(xml);
+
+  const runIndex = new Map<Element, number>();
+  let seen = 0;
+  for (const el of doc.querySelectorAll('*')) {
+    if (el.localName === 'r') runIndex.set(el, seen++);
+  }
+
   const ctx: Context = {
     archive,
     rels: readRelationships(archive, 'word/document.xml'),
     urls: [],
     notes: new Set(),
+    runIndex,
+    /* Broj se mora poklopiti; ako se ne poklapa, ne nudi se ništa umjesto da
+       se pogodi krivi run. */
+    editable:
+      seen === runs.length
+        ? new Set(runs.filter((run) => !run.refusal).map((run) => run.index))
+        : new Set(),
   };
 
   const ordered = readNumbering(archive);
@@ -398,5 +452,6 @@ export function renderDocx(bytes: Uint8Array): Preview {
       for (const url of ctx.urls) URL.revokeObjectURL(url);
       ctx.urls.length = 0;
     },
+    source: { archive, xml, runs },
   };
 }

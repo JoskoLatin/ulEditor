@@ -25,6 +25,12 @@ export function openArchive(bytes: Uint8Array): Archive {
   }
 }
 
+/** Sirovi tekst dijela arhive — izmjene se rade nad njim, ne nad DOM-om. */
+export function readText(archive: Archive, path: string): string | null {
+  const data = archive[path];
+  return data ? strFromU8(data) : null;
+}
+
 export function readXml(archive: Archive, path: string): Document | null {
   const data = archive[path];
   if (!data) return null;

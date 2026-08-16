@@ -24,12 +24,14 @@ import {
   type ReadingOptions,
   type ReadingSession,
   type SaveResult,
+  type SaveTarget,
 } from '@uleditor/plugin-sdk';
 
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
 import { renderDocx, type Preview } from './docx.js';
+import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
 
 export { renderDocx } from './docx.js';
@@ -40,16 +42,18 @@ export type { Sheet, Workbook } from './xlsx.js';
 /* ── zajedničko ──────────────────────────────────────────────────────── */
 
 /**
- * Traka koja kaže dvije stvari: da se dokument ne može uređivati i što pregled
- * ne pokazuje. Prva vrijedi uvijek — korisnik mora znati zašto Ctrl+S ne radi
- * prije nego ga pritisne, a ne poslije.
+ * Traka koja kaže što se s dokumentom smije i što pregled ne pokazuje.
+ *
+ * Opseg mora stajati napisan prije nego korisnik pritisne `Ctrl+S`, a ne
+ * poslije: u Wordu se tekst da prepisati, ali raspored, stilovi i sve ostalo
+ * ostaju kakvi jesu.
  */
-function buildNotes(notes: string[]): HTMLElement {
+function buildNotes(notes: string[], headline: string): HTMLElement {
   const bar = document.createElement('div');
   bar.className = 'ul-office-notes';
 
   const label = document.createElement('strong');
-  label.textContent = t('Read-only preview — editing arrives in phase 2.');
+  label.textContent = headline;
   bar.appendChild(label);
 
   const list = document.createElement('ul');
@@ -119,6 +123,12 @@ class DocxPreviewEditor implements EditorInstance {
   #reading = false;
   #words: number;
 
+  /** Prepisani runovi: redni broj u dokumentu → novi tekst. */
+  #edits = new Map<number, string>();
+  #undoStack: Map<number, string>[] = [];
+  #redoStack: Map<number, string>[] = [];
+  #dirty = false;
+
   #dirtyEmitter = new Emitter<boolean>();
   #statusEmitter = new Emitter<string>();
   #progressEmitter = new Emitter<import('@uleditor/plugin-sdk').ReadingProgress>();
@@ -139,7 +149,12 @@ class DocxPreviewEditor implements EditorInstance {
     root.tabIndex = 0;
     root.dataset.reading = 'false';
 
-    root.appendChild(buildNotes(this.preview.notes));
+    root.appendChild(
+      buildNotes(
+        this.preview.notes,
+        t('Text can be retyped — double-click it. Layout and styles stay as they are.'),
+      ),
+    );
 
     const view = document.createElement('div');
     view.className = 'ul-read-view ul-office-view';
@@ -180,10 +195,12 @@ class DocxPreviewEditor implements EditorInstance {
       },
     });
 
-    this.#statusEmitter.fire(t('{n} words · read-only', { n: this.#words }));
+    root.addEventListener('dblclick', this.#onDoubleClick);
+    this.#emitDirty();
   }
 
   unmount(): void {
+    this.#root?.removeEventListener('dblclick', this.#onDoubleClick);
     this.#flow?.destroy();
     this.#flow = null;
     showHit(null);
@@ -193,21 +210,146 @@ class DocxPreviewEditor implements EditorInstance {
     this.preview.release();
   }
 
+  /* ── izmjena teksta ──────────────────────────────────────────────── */
+
+  /**
+   * Dvostruki klik otvara **jedan run** — komad teksta s jednim
+   * formatiranjem.
+   *
+   * Zašto run, a ne odlomak: odlomak ih zna imati desetak, pa bi prepisivanje
+   * cijelog odlomka tražilo da program pogodi koje formatiranje ide na koje
+   * novo slovo. Run se prepisuje bez ijedne takve odluke.
+   *
+   * Jednostruki klik ostaje slobodan za označavanje teksta pri čitanju.
+   */
+  #onDoubleClick = (event: MouseEvent): void => {
+    const target = (event.target as HTMLElement | null)?.closest('.ul-office-run');
+    if (!(target instanceof HTMLElement) || target.isContentEditable) return;
+
+    event.preventDefault();
+    const index = Number(target.dataset.run);
+    const before = target.textContent ?? '';
+
+    target.contentEditable = 'plaintext-only';
+    target.focus();
+    document.getSelection()?.selectAllChildren(target);
+
+    const finish = () => {
+      target.removeEventListener('blur', finish);
+      target.removeEventListener('keydown', onKey);
+      target.contentEditable = 'false';
+
+      const after = target.textContent ?? '';
+      if (after === before) return;
+      this.#record(index, after);
+    };
+
+    const onKey = (key: KeyboardEvent) => {
+      if (key.key === 'Escape') {
+        key.stopPropagation();
+        target.textContent = before;
+        target.blur();
+        return;
+      }
+      // Novi redak u Wordu je vlastiti element, ne znak u tekstu.
+      if (key.key === 'Enter') {
+        key.preventDefault();
+        target.blur();
+      }
+    };
+
+    target.addEventListener('blur', finish);
+    target.addEventListener('keydown', onKey);
+  };
+
+  #record(index: number, text: string): void {
+    this.#undoStack.push(new Map(this.#edits));
+    this.#redoStack = [];
+    this.#edits.set(index, text);
+    this.#emitDirty();
+  }
+
+  #restore(edits: Map<number, string>): void {
+    this.#edits = edits;
+    // Pregled se vraća na ono što u izmjenama piše, uključujući izvorni tekst.
+    for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run')) {
+      const index = Number(el.dataset.run);
+      const run = this.preview.source.runs[index];
+      el.textContent = edits.get(index) ?? (run ? runText(this.preview.source.xml, run) : el.textContent);
+    }
+    this.#emitDirty();
+  }
+
+  #emitDirty(): void {
+    const dirty = this.#edits.size > 0;
+    if (dirty !== this.#dirty) {
+      this.#dirty = dirty;
+      this.#dirtyEmitter.fire(dirty);
+    }
+    this.#statusEmitter.fire(
+      dirty
+        ? t('{words} words · {n} edits', { words: this.#words, n: this.#edits.size })
+        : t('{n} words · double-click text to edit', { n: this.#words }),
+    );
+  }
+
   isDirty(): boolean {
-    return false;
+    return this.#dirty;
   }
 
-  async save(): Promise<SaveResult> {
-    throw new Error(t('Word documents are read-only for now — editing arrives in phase 2.'));
+  async save(target?: SaveTarget): Promise<SaveResult> {
+    const uri = target?.uri ?? this.doc.uri;
+    const { archive, xml, runs } = this.preview.source;
+
+    const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
+    const nextXml = applyRunEdits(xml, runs, edits);
+
+    await this.host.fs.writeBytes(uri, writeDocx(archive, runs, xml, edits));
+
+    /*
+     * Spremljeno postaje nova polazna točka. Bez toga bi sljedeće spremanje
+     * krenulo od izvornog XML-a s praznim popisom izmjena — i tiho vratilo
+     * dokument na staro.
+     *
+     * Redni brojevi runova preživljavaju jer se mijenja samo sadržaj `w:t`,
+     * ne i njihov redoslijed; rasponi se preračunavaju.
+     */
+    this.preview.source.xml = nextXml;
+    this.preview.source.runs = findRuns(nextXml);
+    this.#edits.clear();
+    this.#undoStack = [];
+    this.#redoStack = [];
+    this.#emitDirty();
+
+    /*
+     * Bez upozorenja o vjernosti, i to s razlogom: zapis mijenja točno one
+     * raspone koje je korisnik prepisao, a svaki drugi dio arhive prolazi
+     * nedirnut. Upozorenje na svako spremanje otupi ono jedno koje stvarno
+     * nešto znači.
+     */
+    return { uri, lostFidelity: [] };
   }
 
-  undo(): void {}
-  redo(): void {}
+  undo(): void {
+    const previous = this.#undoStack.pop();
+    if (!previous) return;
+    this.#redoStack.push(new Map(this.#edits));
+    this.#restore(previous);
+  }
+
+  redo(): void {
+    const next = this.#redoStack.pop();
+    if (!next) return;
+    this.#undoStack.push(new Map(this.#edits));
+    this.#restore(next);
+  }
+
   canUndo(): boolean {
-    return false;
+    return this.#undoStack.length > 0;
   }
+
   canRedo(): boolean {
-    return false;
+    return this.#redoStack.length > 0;
   }
 
   async find(query: FindQuery): Promise<FindResult[]> {
@@ -307,7 +449,9 @@ class XlsxPreviewEditor implements EditorInstance {
     root.className = 'ul-office ul-sheet-book';
     root.tabIndex = 0;
 
-    root.appendChild(buildNotes(this.workbook.notes));
+    root.appendChild(
+      buildNotes(this.workbook.notes, t('Read-only preview — editing arrives in phase 2.')),
+    );
 
     const grid = document.createElement('div');
     grid.className = 'ul-sheet-scroll';
@@ -456,12 +600,14 @@ class XlsxPreviewEditor implements EditorInstance {
 
 export const docxPreviewProvider: EditorProvider = {
   id: 'org.uleditor.docx',
-  displayName: 'Word preview',
+  displayName: 'Word',
   matches: {
     extensions: ['docx'],
     mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
   },
-  capabilities: ['view', 'search', 'read'],
+  /* `edit` znači točno ono što editor doista može: prepisati postojeći tekst.
+     Raspored, stilovi i sve ostalo se ne dira, i to piše iznad dokumenta. */
+  capabilities: ['view', 'search', 'read', 'edit'],
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {

@@ -21,7 +21,7 @@ Ne postoji editor koji ozbiljno radi i s kodom i s Office dokumentima i s PDF-om
 | **PDF brisanje** | **radi** — tekst se miče iz sadržaja, ne prekriva se | vlastiti čitač toka sadržaja |
 | **PDF izmjena teksta** | **radi** — klikneš postojeći redak i prepišeš ga | isto + pdf-lib |
 | PDF stranice | **radi** — rotiranje, brisanje, preslagivanje, spajanje, izdvajanje | pdf-lib |
-| **DOCX** | **radi — pregled** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(uređivanje → ProseMirror, faza 2)* |
+| **DOCX** | **radi — pregled + izmjena teksta** (naslovi, formatiranje, liste, tablice, slike) | vlastiti čitač *(puno uređivanje → ProseMirror, faza 2)* |
 | **XLSX** | **radi — pregled** (listovi, formati, formule, spojene ćelije) | vlastiti čitač *(uređivanje → Univer, faza 2)* |
 | Slike | **radi** — pregled, zoom, prozirnost, **OCR** | Tesseract (wasm) *(uređivanje → image-rs, faza 1)* |
 | ODF, konverzije | faza 2 | LibreOffice headless |
@@ -47,7 +47,11 @@ Zarotiran tekst, razvučen tekst, nevidljivi sloj iz OCR-a i font bez `/ToUnicod
 
 Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — do tada postoji samo *plan*. Rotiranje i brisanje rade na izvorniku bez gubitka; preslagivanje zahtijeva presnimavanje stranica, pa se gubitak oznaka i obrazaca **prijavljuje prije spremanja** umjesto da se tiho dogodi.
 
-Word i Excel se za sada **samo čitaju**, i to piše na samom dokumentu. Uređivanje bez fidelity harnessa znači tiho gubljenje tuđeg formatiranja, pa ovi editori nemaju sposobnost `edit` — umjesto da je imaju i javljaju grešku pri spremanju. Sve što pregled ne prikazuje (zaglavlja, fusnote, komentari, grafikoni) navedeno je u traci iznad dokumenta.
+**U Wordu se tekst da prepisati** — dvoklik na njega. Jedinica izmjene je `w:r`, komad teksta s jednim formatiranjem: odlomak ih zna imati desetak, pa bi prepisivanje cijelog odlomka tražilo da program pogodi koje formatiranje ide na koje novo slovo. Run se prepisuje bez ijedne takve odluke.
+
+XML se **ne serijalizira nanovo** nego se mijenjaju samo rasponi bajtova koje je korisnik dirao, a svi ostali dijelovi arhive — stilovi, numeriranje, slike, metapodaci — prolaze nedirnuti. Provjera to i mjeri: nakon spremanja svaki drugi dio mora biti **bajt za bajt isti**. Runovi s prijelomom retka, tabulatorom, crtežom ili razbijenim tekstom se ne nude na izmjenu, jer se ondje ne bi mijenjao samo tekst.
+
+Excel se za sada **samo čita**, i to piše na samom dokumentu. Uređivanje bez fidelity harnessa znači tiho gubljenje tuđeg formatiranja, pa ovi editori nemaju sposobnost `edit` — umjesto da je imaju i javljaju grešku pri spremanju. Sve što pregled ne prikazuje (zaglavlja, fusnote, komentari, grafikoni) navedeno je u traci iznad dokumenta.
 
 ## Način čitanja
 

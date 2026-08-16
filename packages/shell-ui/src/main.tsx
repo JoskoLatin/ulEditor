@@ -105,12 +105,14 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.docx',
-      displayName: 'Word preview',
+      displayName: 'Word',
       matches: {
         extensions: ['docx'],
         mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
       },
-      capabilities: ['view', 'search', 'read'],
+      /* Mora se poklapati s onim što editor prijavljuje: shell odlučuje je li
+         kartica samo za čitanje prije nego se editor uopće učita. */
+      capabilities: ['view', 'search', 'read', 'edit'],
       priority: 30,
     },
     async () => (await import('@uleditor/editor-office')).docxPreviewProvider,

@@ -16,6 +16,27 @@
   outline: none;
 }
 
+/* ── prepisivi tekst ─────────────────────────────────────────────────── */
+
+/*
+ * Omotač oko jednog `w:r`. U mirovanju ne smije promijeniti ni piksel
+ * prikaza — dokument se prije svega čita, pa natuknica da se tekst da
+ * prepisati ne vrijedi da se zbog nje čitanje pogorša.
+ */
+.ul-office-run {
+  border-radius: 2px;
+  transition: background 120ms;
+}
+.ul-office-run:hover {
+  background: rgba(120, 160, 200, 0.16);
+  cursor: text;
+}
+.ul-office-run[contenteditable='plaintext-only']:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  background: rgba(120, 160, 200, 0.1);
+}
+
 /* ── traka o tome što pregled ne pokazuje ────────────────────────────── */
 
 .ul-office-notes {
