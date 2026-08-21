@@ -1,14 +1,15 @@
 /**
- * Raspored na **fizičkom telefonu**.
+ * The layout on **a physical phone**.
  *
- * Mobilni shell nije stisnuti desktop nego drukčija podjela prostora:
- * navigacija gore, alati otvorenog dokumenta uz lijevi rub, ploča pada odozgo
- * i miče se čim je odabir napravljen. Sve to ovisi o stvarnoj širini ekrana i o
- * ponašanju sistemskih traka, pa se u pregledniku ne da provjeriti — uski
- * viewport bi testirao medijski upit, ne uređaj.
+ * The mobile shell is not a squeezed desktop but a different division of space:
+ * navigation on top, the open document's tools along the left edge, the panel
+ * dropping from above and leaving the moment a choice is made. All of that
+ * depends on the real screen width and on how the system bars behave, so it
+ * cannot be checked in a browser — a narrow viewport would test the media query,
+ * not the device.
  *
- * Mjeri se, ne gleda: umetci se očitavaju iz webviewa, lomljenje teksta se
- * broji u retcima, a položaji se uspoređuju u pikselima.
+ * It measures rather than looks: the insets are read out of the webview, text
+ * wrapping is counted in lines, and positions are compared in pixels.
  *
  *   node tools/verify-mobile-layout.mjs [--skip-install]
  */
@@ -39,39 +40,41 @@ try {
 
   if (!process.argv.includes('--skip-install')) {
     await installApk(APK);
-    check('APK instaliran na uređaj', true);
+    check('the APK was installed on the device', true);
   }
 
   session = await startDevice();
   const { page } = session;
-  check('spojen na webview na telefonu', true);
+  check('attached to the webview on the phone', true);
 
   /*
-   * Shell obnavlja sesiju, pa se ploča i kartice pojave tek nakon prvog
-   * rendera. Bez predaha provjera zatekne prazan DOM i zaključi da je sve
-   * zatvoreno, a onda joj ploča iskoči pred klik.
+   * The shell restores its session, so the panel and the tabs appear only after
+   * the first render. Without a pause the check meets an empty DOM, concludes
+   * everything is closed, and then the panel jumps in front of its click.
    */
   await page.waitForTimeout(1200);
 
-  /* Gumb zatvara ploču samo ako je njegov pogled već aktivan; inače prebacuje
-     pogled i ploča ostaje. Zato se ne broje klikovi nego se gleda stanje. */
+  /* The button closes the panel only when its own view is already active;
+     otherwise it switches the view and the panel stays. So the state is what is
+     looked at, not the number of clicks. */
   const panelOpen = async () => (await page.locator('.sidebar').count()) > 0;
   for (let guard = 0; guard < 5 && (await panelOpen()); guard++) {
     await page.locator('.view-btn').first().click();
     await page.waitForTimeout(400);
   }
 
-  /* Mjeri se pozdravni ekran, pa otvorenih dokumenata ne smije biti. */
+  /* The welcome screen is what is measured, so no document may be open. */
   for (let guard = 0; guard < 20 && (await page.locator('.tab').count()) > 0; guard++) {
     await page.locator('.tab .close').first().click();
     await page.waitForTimeout(250);
   }
 
   /*
-   * Umetci se čitaju iz samog webviewa. Android ih ne mora prijaviti: bez
-   * izreza u ekranu `safe-area-inset-top` zna biti nula i onda sistemska traka
-   * i dalje stoji preko naslovne. Zato se vrijednost ispisuje, a ne samo
-   * uspoređuje — bez broja se ne zna je li popravak uopće primijenjen.
+   * The insets are read from the webview itself. Android need not report them:
+   * with no cutout in the screen `safe-area-inset-top` can be zero, and then the
+   * system bar still stands over the title bar. So the value is printed and not
+   * merely compared — without the number there is no telling whether the fix
+   * was applied at all.
    */
   const insets = await page.evaluate(() => {
     const probe = document.createElement('div');
@@ -96,7 +99,7 @@ try {
   });
 
   console.log(
-    `\n  umetci: gore ${insets.top}px · desno ${insets.right}px · dolje ${insets.bottom}px · lijevo ${insets.left}px`,
+    `\n  insets: top ${insets.top}px · right ${insets.right}px · bottom ${insets.bottom}px · left ${insets.left}px`,
   );
 
   const layout = await page.evaluate(() => {
@@ -107,7 +110,7 @@ try {
 
     return {
       viewport: window.innerWidth,
-      /* Odzumiranje je prvi znak da je nešto razvuklo shell preko ekrana. */
+      /* Zooming out is the first sign something stretched the shell past the screen. */
       documentWidth: document.documentElement.scrollWidth,
       titlebarPadTop: Math.round(
         parseFloat(getComputedStyle(document.querySelector('.titlebar')).paddingTop) || 0,
@@ -116,7 +119,7 @@ try {
       mainLeft: Math.round(main?.left ?? -1),
       subLines: sub && lineHeight ? Math.round(sub.scrollHeight / lineHeight) : 0,
       titleVisible: !!document.querySelector('.titlebar-title')?.getClientRects().length,
-      /* Navigacija je gore; okomite trake uz rub više nema. */
+      /* The navigation is on top; the vertical rail along the edge is gone. */
       railVisible: !!document.querySelector('.activitybar')?.getClientRects().length,
       viewButtons: [...document.querySelectorAll('.view-btn')].map((b) =>
         b.getAttribute('aria-label'),
@@ -127,58 +130,59 @@ try {
     };
   });
 
-  console.log(`  viewport: ${layout.viewport}px · glavno područje: ${layout.mainWidth}px\n`);
+  console.log(`  viewport: ${layout.viewport}px · main area: ${layout.mainWidth}px\n`);
 
   check(
-    'medijski upit za uski ekran je aktivan',
+    'the narrow-screen media query is active',
     layout.viewport <= 720,
     `viewport ${layout.viewport}px`,
   );
 
   /*
-   * Sadržaj koji se ne da stisnuti razvuče grid preko ekrana, a WebView tada
-   * odzumira **cijelu** stranicu — `innerWidth` naraste s 392 na 591 px i
-   * dodiri padnu pokraj gumba. Točno se to dogodilo s otvorenim PDF-om.
+   * Content that will not compress stretches the grid past the screen, and the
+   * WebView then zooms **the whole** page out — `innerWidth` grows from 392 to
+   * 591 px and taps land beside the buttons. That is exactly what happened with
+   * a PDF open.
    */
   check(
-    'ništa ne razvlači stranicu preko širine ekrana',
+    'nothing stretches the page past the screen width',
     layout.documentWidth <= layout.viewport,
-    `dokument ${layout.documentWidth}px, ekran ${layout.viewport}px`,
+    `document ${layout.documentWidth}px, screen ${layout.viewport}px`,
   );
 
-  check('navigacija je gore, okomite trake uz rub nema', !layout.railVisible);
+  check('the navigation is on top, with no rail along the edge', !layout.railVisible);
 
   check(
-    'pogledi su u naslovnoj traci',
+    'the views live in the title bar',
     layout.viewButtons.length >= 2,
     layout.viewButtons.join(' · '),
   );
 
-  /* Mape su desktop metafora; knjižnica ih na telefonu zamjenjuje u cijelosti. */
+  /* Folders are a desktop metaphor; on a phone the library replaces them entirely. */
   check(
-    'desktop radnje se na telefonu ne nude',
+    'the desktop actions are not offered on a phone',
     layout.desktopOnlyVisible === 0,
-    `${layout.desktopOnlyVisible} vidljivih`,
+    `${layout.desktopOnlyVisible} visible`,
   );
 
-  check('glavno područje koristi punu širinu', layout.mainWidth >= layout.viewport - 2);
-  check('glavno područje počinje od lijevog ruba', layout.mainLeft === 0);
+  check('the main area uses the full width', layout.mainWidth >= layout.viewport - 2);
+  check('the main area starts at the left edge', layout.mainLeft === 0);
 
   check(
-    'opis se ne lomi na jednu riječ po retku',
+    'the description does not wrap to one word per line',
     layout.subLines > 0 && layout.subLines <= 5,
-    `${layout.subLines} redaka`,
+    `${layout.subLines} lines`,
   );
 
-  check('naziv dokumenta je maknut iz naslovne trake', !layout.titleVisible);
+  check('the document name was taken out of the title bar', !layout.titleVisible);
 
   check(
-    'naslovna traka poštuje umetak odozgo',
+    'the title bar respects the inset from above',
     layout.titlebarPadTop === insets.top,
-    `padding ${layout.titlebarPadTop}px, umetak ${insets.top}px`,
+    `padding ${layout.titlebarPadTop}px, inset ${insets.top}px`,
   );
 
-  /* ── ploča pada odozgo ──────────────────────────────────────────────── */
+  /* ── the panel drops from above ─────────────────────────────────────── */
 
   await page.locator('.view-btn').first().click();
   await page.waitForSelector('.sidebar', { timeout: 8000 });
@@ -197,24 +201,24 @@ try {
   });
 
   check(
-    'ploča pada odozgo, punom širinom',
+    'the panel drops from above, at full width',
     panel.top === 0 && panel.left === 0 && panel.width >= panel.viewportW - 2,
-    `vrh ${panel.top}px, širina ${panel.width}px`,
+    `top ${panel.top}px, width ${panel.width}px`,
   );
 
   /*
-   * Ispod ploče mora ostati ploha koja se da pogoditi prstom — po njoj se
-   * zatvara. Ranija izvedba sa strane ostavljala je 38 px, manje nego što
-   * palac pouzdano pogodi.
+   * Below the panel there has to be a surface a finger can hit — that is what
+   * closes it. The earlier side-mounted version left 38 px, less than a thumb
+   * reliably hits.
    */
   const strip = panel.viewportH - panel.bottom;
-  check('ispod ploče ostaje ploha za zatvaranje', strip >= 56, `${strip}px`);
+  check('a surface for closing is left below the panel', strip >= 56, `${strip}px`);
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-panel.png'));
 
   await page.mouse.click(panel.viewportW / 2, panel.bottom + strip / 2);
   await page.waitForTimeout(400);
-  check('dodir ispod ploče ju zatvara', (await page.locator('.sidebar').count()) === 0);
+  check('a tap below the panel closes it', (await page.locator('.sidebar').count()) === 0);
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-welcome.png'));
 } catch (err) {

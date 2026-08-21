@@ -343,7 +343,7 @@ mod tests {
     fn finds_documents_and_images_and_skips_code() {
         let dir = temp_dir("mix");
         fs::write(dir.join("ugovor.pdf"), b"%PDF-1.4").unwrap();
-        fs::write(dir.join("slika.png"), b"\x89PNG").unwrap();
+        fs::write(dir.join("photo.png"), b"\x89PNG").unwrap();
         fs::write(dir.join("biljeske.md"), b"# naslov").unwrap();
         fs::write(dir.join("main.rs"), b"fn main() {}").unwrap();
         fs::write(dir.join("arhiva.zip"), b"PK").unwrap();

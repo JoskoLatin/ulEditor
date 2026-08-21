@@ -350,12 +350,12 @@ mod tests {
         // Without this an e-book would end up as "archive" and nobody would open it.
         let mut epub = b"PK\x03\x04".to_vec();
         epub.extend_from_slice(b"mimetypeapplication/epub+zip");
-        assert_eq!(detect("knjiga.bin", &epub).format, FormatId::Epub);
+        assert_eq!(detect("book.bin", &epub).format, FormatId::Epub);
 
         // The variant without the uncompressed `mimetype` entry.
         let mut loose = b"PK\x03\x04".to_vec();
         loose.extend_from_slice(b"........META-INF/container.xml");
-        assert_eq!(detect("knjiga.bin", &loose).format, FormatId::Epub);
+        assert_eq!(detect("book.bin", &loose).format, FormatId::Epub);
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn extensionless_text_falls_back() {
-        assert_eq!(detect("CHANGELOG", b"neki tekst").format, FormatId::Text);
+        assert_eq!(detect("CHANGELOG", b"some text").format, FormatId::Text);
     }
 
     #[test]

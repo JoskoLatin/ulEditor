@@ -227,18 +227,18 @@ try {
 
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
-  /* — slika — */
+  /* — an image — */
   const png = await readFile(resolve(ROOT, 'apps/desktop/src-tauri/icons/128x128.png'));
   await dropFile(page, 'ikona.png', png);
   await page.waitForSelector('.ul-img', { timeout: 15000 });
   await page.waitForSelector('.ul-img-frame img', { timeout: 10000 });
   const imgBox = await page.locator('.ul-img-frame img').boundingBox();
-  check('slika prikazana', !!imgBox && imgBox.width > 10, `${Math.round(imgBox?.width ?? 0)}px`);
+  check('the image is displayed', !!imgBox && imgBox.width > 10, `${Math.round(imgBox?.width ?? 0)}px`);
   const imgStatus = await page.locator('.statusbar').innerText();
-  check('dimenzije u statusnoj traci', imgStatus.includes('128 × 128'), imgStatus.replace(/\s+/g, ' ').slice(0, 60));
+  check('the dimensions are in the status bar', imgStatus.includes('128 × 128'), imgStatus.replace(/\s+/g, ' ').slice(0, 60));
 
   /* — tabovi — */
-  check('pet otvorenih kartica', (await page.locator('.tab').count()) === 5);
+  check('five open tabs', (await page.locator('.tab').count()) === 5);
 
   /* — in-document search (the same contract for every format) — */
   await page.locator('.tab').first().click();
@@ -309,7 +309,7 @@ try {
   await page.waitForTimeout(150);
   // Two modified tabs: the code we have just typed and the PDF with annotations.
   const dirty = await page.locator('.tab[data-dirty="true"]').count();
-  check('oznaka nespremljenog na obje izmijenjene kartice', dirty === 2, `${dirty}`);
+  check('the unsaved mark is on both modified tabs', dirty === 2, `${dirty}`);
 
   /* — page operations — */
   await dropFile(page, 'visestranicni.pdf', makeMultiPagePdf(3));

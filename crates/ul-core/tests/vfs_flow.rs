@@ -23,7 +23,7 @@ impl TempDir {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("uleditor-test-{tag}-{nanos}"));
-        fs::create_dir_all(&path).expect("privremena mapa");
+        fs::create_dir_all(&path).expect("a temporary folder");
         Self(path)
     }
 
@@ -142,10 +142,10 @@ fn content_beats_extension() {
 /// The sandbox must hold whether the path exists or not.
 #[test]
 fn sandbox_holds_both_ways() {
-    let outside = TempDir::new("vani");
+    let outside = TempDir::new("outside");
     let outside_file = outside.write("secret.txt", "must not be readable\n".as_bytes());
 
-    let inside = TempDir::new("unutra");
+    let inside = TempDir::new("inside");
     inside.write("ok.txt", b"allowed\n");
 
     let mut workspace = Workspace::new();

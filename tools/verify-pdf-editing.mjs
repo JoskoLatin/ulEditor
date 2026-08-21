@@ -1,16 +1,16 @@
 /**
- * Krug koji dokazuje da upisani tekst preživi: napiši → spremi → otvori nanovo.
+ * The round trip proving typed text survives: write → save → open afresh.
  *
- * `verify-pdf-text.mjs` gleda strukturu zapisanog PDF-a, ali radi nad
- * bajtovima u memoriji. Ovdje se ista stvar vozi kroz **pravu desktop
- * aplikaciju**, do diska i natrag, jer se između njih nalazi sve ono što
- * struktura ne pokriva: spremanje kroz Rust VFS, ponovno otvaranje i — što je
- * najvažnije — čita li pdf.js natrag ono što je pdf-lib napisao.
+ * `verify-pdf-text.mjs` inspects the structure of the written PDF, but it works
+ * on bytes in memory. Here the same thing is driven through **the real desktop
+ * application**, out to disk and back, because between the two lies everything
+ * the structure does not cover: saving through the Rust VFS, reopening and — most
+ * importantly — whether pdf.js reads back what pdf-lib wrote.
  *
- * To zadnje nije formalnost. `/FreeText` je jedina anotacija koju pišemo a
- * koju čitači crtaju isključivo iz priloženog toka izgleda; da smo ga
- * propustili, datoteka bi i dalje bila valjan PDF i i dalje bi sadržavala
- * tekst — samo ga nitko ne bi vidio.
+ * That last one is no formality. `/FreeText` is the only annotation we write that
+ * readers draw solely from the appearance stream attached to it; had we omitted
+ * that stream, the file would still be a valid PDF and would still contain the
+ * text — only nobody would see it.
  *
  *   node tools/verify-pdf-editing.mjs
  */
@@ -26,7 +26,7 @@ import { makePdf } from './fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9334;
-const TYPED = 'Vodice, 15. kolovoza — čćžšđ';
+const TYPED = 'Vodice, 15 August — čćžšđ';
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -35,13 +35,13 @@ function check(name, passed, detail = '') {
 }
 
 const workspace = await mkdtemp(join(tmpdir(), 'ul-pdf-text-'));
-const file = join(workspace, 'obrazac.pdf');
+const file = join(workspace, 'form.pdf');
 await writeFile(file, makePdf());
 const originalSize = (await readFile(file)).length;
 
-/** Drugi dokument, za prepisivanje postojećeg retka. */
-const contract = join(workspace, 'ugovor.pdf');
-await writeFile(contract, makePdf('Ime i prezime'));
+/** A second document, for rewriting an existing line. */
+const contract = join(workspace, 'contract.pdf');
+await writeFile(contract, makePdf('Name and surname'));
 
 const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
   cwd: ROOT,
@@ -64,13 +64,13 @@ async function connect(timeoutMs) {
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  throw lastError ?? new Error('CDP se nije otvorio');
+  throw lastError ?? new Error('the CDP endpoint never opened');
 }
 
 let browser;
 let page;
 
-/** Otvara dokument iz radnog prostora kroz brzo otvaranje. */
+/** Opens a document from the workspace through quick open. */
 async function open(name) {
   await page.keyboard.press('Control+P');
   await page.waitForSelector('.palette-input input', { timeout: 10000 });
@@ -85,9 +85,9 @@ try {
   const contexts = browser.contexts();
   page = contexts[0]?.pages()[0] ?? (await contexts[0].waitForEvent('page'));
   await page.waitForSelector('.shell', { timeout: 30000 });
-  check('spojen na desktop aplikaciju', true);
+  check('attached to the desktop application', true);
 
-  /* Zatvara sve što je ostalo od prethodnog pokretanja. */
+  /* Closes whatever is left over from the previous run. */
   for (let guard = 0; guard < 20 && (await page.locator('.tab').count()) > 0; guard++) {
     await page.locator('.tab .close').first().click();
     await page.waitForTimeout(200);
@@ -98,10 +98,10 @@ try {
     workspace,
   );
 
-  await open('obrazac.pdf');
-  check('PDF otvoren iz radnog prostora', true);
+  await open('form.pdf');
+  check('the PDF is open from the workspace', true);
 
-  /* ── upis ──────────────────────────────────────────────────────────── */
+  /* ── typing ────────────────────────────────────────────────────────── */
 
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
   await page.locator('.ul-pdf-page').first().click({ position: { x: 80, y: 140 } });
@@ -109,9 +109,9 @@ try {
   await page.locator('.ul-pdf-text-input').pressSequentially(TYPED);
   await page.keyboard.press('Escape');
   await page.waitForSelector('.ul-pdf-ann-text', { timeout: 5000 });
-  check('tekst upisan u dokument', true);
+  check('the text was typed into the document', true);
 
-  /* ── spremanje ─────────────────────────────────────────────────────── */
+  /* ── saving ────────────────────────────────────────────────────────── */
 
   await page.keyboard.press('Control+S');
   await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
@@ -120,39 +120,39 @@ try {
 
   const saved = await readFile(file);
   const raw = new TextDecoder('latin1').decode(saved);
-  check('datoteka na disku je narasla', saved.length > originalSize, `${originalSize} → ${saved.length} B`);
-  check('zapisan je FreeText', raw.includes('/FreeText'));
-  check('font je ugrađen u datoteku', raw.includes('/FontFile2'));
+  check('the file on disk grew', saved.length > originalSize, `${originalSize} → ${saved.length} B`);
+  check('a FreeText was written', raw.includes('/FreeText'));
+  check('the font is embedded in the file', raw.includes('/FontFile2'));
 
-  /* ── ponovno otvaranje ─────────────────────────────────────────────── */
+  /* ── reopening ─────────────────────────────────────────────────────── */
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);
-  await open('obrazac.pdf');
+  await open('form.pdf');
 
   /*
-   * Ovo je prava provjera: okvir se ovdje ne crta iz našeg stanja nego iz
-   * onoga što je pdf.js pročitao iz datoteke. Da tok izgleda ili sadržaj
-   * nedostaju, ovdje ne bi bilo ničega.
+   * This is the real check: the box here is not drawn from our own state but
+   * from what pdf.js read out of the file. Were the appearance stream or the
+   * contents missing, there would be nothing here.
    */
   await page.waitForSelector('.ul-pdf-ann-text', { timeout: 20000 });
   const reopened = await page.locator('.ul-pdf-ann-text').first().innerText();
-  check('tekst je pročitan natrag iz datoteke', reopened === TYPED, JSON.stringify(reopened));
+  check('the text was read back out of the file', reopened === TYPED, JSON.stringify(reopened));
 
   check(
-    'ponovno otvoren dokument nije odmah izmijenjen',
+    'a reopened document is not immediately modified',
     (await page.locator('.tab[data-dirty="true"]').count()) === 0,
   );
 
-  /* ── brisanje postojećeg teksta ────────────────────────────────────── */
+  /* ── deleting existing text ────────────────────────────────────────── */
 
   /*
-   * Tekst se cilja preko sloja koji pdf.js gradi iznad stranice: on stoji
-   * točno ondje gdje su glifovi, pa je povlačenje preko njega isto što bi
-   * korisnik napravio mišem.
+   * The text is targeted through the layer pdf.js builds over the page: it sits
+   * exactly where the glyphs are, so dragging across it is the same thing the
+   * user would do with the mouse.
    */
   const span = await page.locator('.ul-pdf-text span').first().boundingBox();
-  check('postojeći tekst je na stranici', !!span && span.width > 10, `${Math.round(span?.width ?? 0)}px`);
+  check('the existing text is on the page', !!span && span.width > 10, `${Math.round(span?.width ?? 0)}px`);
 
   await page.locator('.ul-pdf-tool[title*="Erase text"]').click();
   await page.mouse.move(span.x - 2, span.y - 2);
@@ -166,8 +166,8 @@ try {
     .last()
     .innerText()
     .catch(() => '');
-  check('najavljen je broj znakova koji nestaju', /\d+/.test(toast), toast.slice(0, 80));
-  check('dokument je opet izmijenjen', (await page.locator('.tab[data-dirty="true"]').count()) === 1);
+  check('the number of characters going is announced', /\d+/.test(toast), toast.slice(0, 80));
+  check('the document is modified again', (await page.locator('.tab[data-dirty="true"]').count()) === 1);
 
   await page.keyboard.press('Control+S');
   await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
@@ -175,29 +175,30 @@ try {
   });
 
   /*
-   * Provjera koja razlikuje brisanje od prekrivanja: traži se sam niz bajtova
-   * u datoteci. Da je preko teksta samo nacrtan pravokutnik, ovdje bi i dalje
-   * pisao — i vadio bi se označavanjem u bilo kojem čitaču.
+   * The check that tells deletion apart from covering up: the byte sequence
+   * itself is searched for in the file. Had a rectangle merely been drawn over
+   * the text, it would still be written here — and would come out by selecting
+   * it in any reader.
    */
   const erased = new TextDecoder('latin1').decode(await readFile(file));
-  check('obrisanog teksta više nema u datoteci', !erased.includes('ulEditor PDF'));
-  check('upisani tekst je preživio brisanje', erased.includes('/FreeText'));
+  check('the deleted text is no longer in the file', !erased.includes('ulEditor PDF'));
+  check('the typed text survived the deletion', erased.includes('/FreeText'));
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);
-  await open('obrazac.pdf');
+  await open('form.pdf');
   const remaining = await page.locator('.ul-pdf-text').innerText();
   check(
-    'ponovno otvoren dokument više ne sadrži taj tekst',
+    'a reopened document no longer holds that text',
     !remaining.includes('ulEditor PDF'),
     JSON.stringify(remaining.replace(/\s+/g, ' ').slice(0, 40)),
   );
 
-  /* ── prepisivanje postojećeg retka ─────────────────────────────────── */
+  /* ── rewriting an existing line ────────────────────────────────────── */
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);
-  await open('ugovor.pdf');
+  await open('contract.pdf');
 
   const original = await page.locator('.ul-pdf-text span').first().boundingBox();
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
@@ -206,21 +207,21 @@ try {
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
 
   /*
-   * Polje mora doći **popunjeno** onim što na stranici piše. Prazno polje bi
-   * značilo da je klik otvorio nov okvir povrh starog teksta, a ne izmjenu
-   * postojećeg — i stari bi redak ostao ispod.
+   * The field has to arrive **prefilled** with what the page says. An empty field
+   * would mean the click opened a new box on top of the old text rather than an
+   * edit of the existing one — and the old line would stay underneath.
    */
   const prefilled = await page.locator('.ul-pdf-text-input').inputValue();
-  check('polje je popunjeno postojećim tekstom', prefilled === 'Ime i prezime', JSON.stringify(prefilled));
+  check('the field is prefilled with the existing text', prefilled === 'Name and surname', JSON.stringify(prefilled));
 
   const REPLACEMENT = 'Joško Latin — čćžšđ';
   await page.locator('.ul-pdf-text-input').fill(REPLACEMENT);
   await page.keyboard.press('Escape');
 
   await page.waitForSelector('.ul-pdf-redaction[data-replaced="true"]', { timeout: 5000 });
-  check('stari redak je označen za micanje', true);
+  check('the old line is marked for removal', true);
   check(
-    'novi tekst stoji na stranici',
+    'the new text stands on the page',
     (await page.locator('.ul-pdf-ann-text').first().innerText()) === REPLACEMENT,
   );
 
@@ -230,21 +231,21 @@ try {
   });
 
   const rewritten = new TextDecoder('latin1').decode(await readFile(contract));
-  check('izvornog retka više nema u datoteci', !rewritten.includes('Ime i prezime'));
-  check('zamjena je zapisana kao tekst', rewritten.includes('/FreeText'));
+  check('the source line is no longer in the file', !rewritten.includes('Name and surname'));
+  check('the replacement was written as text', rewritten.includes('/FreeText'));
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);
-  await open('ugovor.pdf');
+  await open('contract.pdf');
   await page.waitForSelector('.ul-pdf-ann-text', { timeout: 20000 });
   check(
-    'prepisani redak se čita natrag iz datoteke',
+    'the rewritten line reads back out of the file',
     (await page.locator('.ul-pdf-ann-text').first().innerText()) === REPLACEMENT,
     JSON.stringify(await page.locator('.ul-pdf-ann-text').first().innerText()),
   );
   check(
-    'izvornog teksta nema ni u sloju stranice',
-    !(await page.locator('.ul-pdf-text').innerText()).includes('Ime i prezime'),
+    'the source text is not in the page layer either',
+    !(await page.locator('.ul-pdf-text').innerText()).includes('Name and surname'),
   );
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-pdf-text.png') });

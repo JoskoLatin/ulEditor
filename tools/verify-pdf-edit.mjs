@@ -1,11 +1,11 @@
 /**
- * Provjera prepisivanja postojećeg teksta.
+ * Checking the rewriting of existing text.
  *
- * Izmjena je ovdje sastavljena od brisanja i upisivanja, pa je pitanje samo
- * jedno: **poklopi li se zamjena s onim što je bilo.** Zato se ne gleda je li
- * se nešto promijenilo nego se uspoređuju brojke — osnovna linija, veličina,
- * boja — i provjerava se da program odbije ondje gdje se poklapanje ne može
- * obećati.
+ * An edit here is assembled out of a deletion and a write, so there is only one
+ * question: **does the replacement line up with what was there.** So this does
+ * not look at whether something changed but compares the numbers — baseline,
+ * size, colour — and checks that the program refuses wherever that alignment
+ * cannot be promised.
  *
  *   node tools/verify-pdf-edit.mjs
  */
@@ -71,97 +71,97 @@ function buildPdf(stream, fonts = ['<</Type/Font/Subtype/Type1/BaseFont/Helvetic
 
 const pageOf = async (bytes) => (await PDFDocument.load(bytes)).getPages()[0];
 
-/* ── čitanje retka ───────────────────────────────────────────────────── */
+/* ── reading a line ──────────────────────────────────────────────────── */
 
 const plain = await pageOf(
   buildPdf(
     [
-      'BT /F1 12 Tf 30 150 Td (Ime i prezime) Tj ET',
-      'BT 1 0 0 rg /F1 9 Tf 30 120 Td (Crveni sitni redak) Tj ET',
-      'BT 3 Tr /F1 12 Tf 30 90 Td (Nevidljivi sloj) Tj ET',
-      // `Tr` je dio stanja teksta i traje preko `BT`/`ET`; bez vraćanja na 0
-      // bio bi nevidljiv i sljedeći redak.
-      'BT 0 Tr /F1 12 Tf 1 0.4 -0.4 1 30 60 Tm (Nakrivo) Tj ET',
+      'BT /F1 12 Tf 30 150 Td (Name and surname) Tj ET',
+      'BT 1 0 0 rg /F1 9 Tf 30 120 Td (A small red line) Tj ET',
+      'BT 3 Tr /F1 12 Tf 30 90 Td (An invisible layer) Tj ET',
+      // `Tr` is part of the text state and survives `BT`/`ET`; without resetting
+      // it to 0 the next line would be invisible too.
+      'BT 0 Tr /F1 12 Tf 1 0.4 -0.4 1 30 60 Tm (Askew) Tj ET',
     ].join('\n'),
   ),
 );
 
 const found = findEditableLine(plain, { x: 45, y: 154 }, standard);
-check('redak pod prstom je pronađen', !!found && 'line' in found);
+check('the line under the finger was found', !!found && 'line' in found);
 
 const line = found?.line;
-check('tekst je pročitan kao slova', line?.text === 'Ime i prezime', line?.text ?? '');
-check('veličina je preuzeta iz dokumenta', Math.abs((line?.size ?? 0) - 12) < 0.01, `${line?.size}`);
+check('the text was read back as letters', line?.text === 'Name and surname', line?.text ?? '');
+check('the size came from the document', Math.abs((line?.size ?? 0) - 12) < 0.01, `${line?.size}`);
 check(
-  'osnovna linija je ondje gdje ju je Td postavio',
+  'the baseline is where Td put it',
   Math.abs((line?.origin.x ?? 0) - 30) < 0.01 && Math.abs((line?.origin.y ?? 0) - 150) < 0.01,
   `${line?.origin.x}, ${line?.origin.y}`,
 );
-check('boja je crna', line?.color.every((c) => c === 0) === true, JSON.stringify(line?.color));
-check('Helvetica se mjerama poklapa s našim fontom', line?.metricsMatch === true);
-check('nema upozorenja o obliku slova', metricsWarning(line) === null);
+check('the colour is black', line?.color.every((c) => c === 0) === true, JSON.stringify(line?.color));
+check('Helvetica matches our font metrically', line?.metricsMatch === true);
+check('there is no warning about the letterforms', metricsWarning(line) === null);
 
 const red = findEditableLine(plain, { x: 45, y: 124 }, standard);
 check(
-  'boja retka je pročitana iz sadržaja',
+  'the line colour was read out of the content',
   red?.line?.color?.[0] === 1 && red.line.color[1] === 0 && red.line.color[2] === 0,
   JSON.stringify(red?.line?.color),
 );
-check('i njegova veličina', Math.abs((red?.line?.size ?? 0) - 9) < 0.01, `${red?.line?.size}`);
+check('and so was its size', Math.abs((red?.line?.size ?? 0) - 9) < 0.01, `${red?.line?.size}`);
 
-check('prazno mjesto ne nudi ništa', findEditableLine(plain, { x: 260, y: 20 }, standard) === null);
+check('an empty spot offers nothing', findEditableLine(plain, { x: 260, y: 20 }, standard) === null);
 
-/* ── odbijanja ───────────────────────────────────────────────────────── */
+/* ── refusals ────────────────────────────────────────────────────────── */
 
-/* Razlozi se uspoređuju, ne samo postojanje: odbijanje iz krivog razloga
-   znači da provjera gleda drugi redak nego što misli. */
+/* The reasons are compared, not merely their existence: a refusal for the wrong
+   reason means the check is looking at a different line than it thinks. */
 const invisible = findEditableLine(plain, { x: 45, y: 94 }, standard);
 check(
-  'nevidljiv sloj se odbija kao sloj iz prepoznavanja',
+  'an invisible layer is refused as a recognition layer',
   /invisible/.test(invisible?.refusal ?? ''),
   invisible?.refusal ?? '',
 );
 
 const skewed = findEditableLine(plain, { x: 45, y: 66 }, standard);
 check(
-  'nakrivljen tekst se odbija zbog nagiba',
+  'skewed text is refused for its skew',
   /rotated or skewed/.test(skewed?.refusal ?? ''),
   skewed?.refusal ?? '',
 );
 
-/* Font s vlastitim širinama i vlastitim kodiranjem, bez /ToUnicode: kodovi se
-   daju izmjeriti, ali ne i pročitati kao slova. */
+/* A font with its own widths and its own encoding, without a /ToUnicode: the
+   codes can be measured but not read back as letters. */
 const opaque = await pageOf(
   buildPdf('BT /F1 12 Tf 30 150 Td (abc) Tj ET', [
-    '<</Type/Font/Subtype/Type1/BaseFont/Neznani/FirstChar 97/LastChar 99/Widths[500 500 500]' +
+    '<</Type/Font/Subtype/Type1/BaseFont/Unknown/FirstChar 97/LastChar 99/Widths[500 500 500]' +
       '/Encoding<</Type/Encoding/Differences[97/alpha/beta/gamma]>>>>',
   ]),
 );
 const unreadable = findEditableLine(opaque, { x: 35, y: 154 }, standard);
-check('tekst bez /ToUnicode se odbija, ne nagađa', !!unreadable?.refusal, unreadable?.refusal ?? '');
+check('text without a /ToUnicode is refused, not guessed at', !!unreadable?.refusal, unreadable?.refusal ?? '');
 
-/* Drugi font s poznatim širinama: prepisivanje ide, ali oblik slova neće biti isti. */
+/* Another font with known widths: rewriting goes ahead, but the letterforms will differ. */
 const other = await pageOf(
-  buildPdf('BT /F1 10 Tf 30 150 Td (Ugovor) Tj ET', [
+  buildPdf('BT /F1 10 Tf 30 150 Td (Contract) Tj ET', [
     '<</Type/Font/Subtype/Type1/BaseFont/Garamond/FirstChar 32/LastChar 122/Widths[' +
       Array.from({ length: 91 }, () => '500').join(' ') +
       ']>>',
   ]),
 );
 const foreign = findEditableLine(other, { x: 40, y: 154 }, standard);
-check('drugi font se i dalje da prepisati', !!foreign?.line, foreign?.line?.text ?? '');
+check('another font is still rewritable', !!foreign?.line, foreign?.line?.text ?? '');
 check(
-  'ali se najavi da oblik slova neće biti isti',
+  'but it is announced that the letterforms will not be the same',
   typeof metricsWarning(foreign?.line) === 'string',
   metricsWarning(foreign?.line) ?? '',
 );
 
-/* ── poravnanje zamjene ──────────────────────────────────────────────── */
+/* ── aligning the replacement ────────────────────────────────────────── */
 
 /*
- * Zamjena se sidri po osnovnoj liniji izvornog retka. Ovdje se taj račun vrti
- * unatrag: iz okvira koji nastane mora se dobiti ista osnovna linija s koje
- * se krenulo, inače bi prepisani redak sjeo više ili niže od ostatka retka.
+ * The replacement is anchored on the baseline of the source line. Here that sum
+ * is run backwards: the box that comes out has to give back the same baseline it
+ * started from, or the rewritten line would sit above or below the rest.
  */
 const metrics = await loadFace('sans', loadFont);
 const anchor = {
@@ -172,28 +172,28 @@ const box = layoutTextBox(metrics, line.text, line.size, anchor);
 const baseline = box.y + box.height - TEXT_PADDING - metrics.ascent(line.size);
 
 check(
-  'zamjena sjeda na istu osnovnu liniju',
+  'the replacement lands on the same baseline',
   Math.abs(baseline - line.origin.y) < 0.001,
   `${line.origin.y} → ${baseline.toFixed(3)}`,
 );
 check(
-  'i počinje na istom mjestu slijeva',
+  'and starts at the same place from the left',
   Math.abs(box.x + TEXT_PADDING - line.origin.x) < 0.001,
   `${line.origin.x} → ${(box.x + TEXT_PADDING).toFixed(3)}`,
 );
 
 /*
- * Helvetica i Liberation Sans su metrički jednaki, pa prepisani redak mora
- * zauzeti istu širinu kao izvorni — to je cijeli razlog zbog kojeg se piše
- * baš tim fontom.
+ * Helvetica and Liberation Sans are metrically identical, so the rewritten line
+ * has to take up the same width as the source one — that is the entire reason
+ * this particular font is what gets written.
  */
 check(
-  'ista širina kao izvorni redak',
+  'the same width as the source line',
   Math.abs(box.width - TEXT_PADDING * 2 - line.bounds.width) < 0.5,
   `${line.bounds.width.toFixed(2)} → ${(box.width - TEXT_PADDING * 2).toFixed(2)} pt`,
 );
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

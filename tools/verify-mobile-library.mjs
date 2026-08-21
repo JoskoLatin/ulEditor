@@ -1,17 +1,18 @@
 /**
- * Knjižnica dokumenata na **fizičkom telefonu**.
+ * The document library on **a physical phone**.
  *
- * Dvije stvari koje se ne daju provjeriti nigdje drugdje:
+ * Two things that cannot be checked anywhere else:
  *
- * 1. **Da uopće nešto nađe.** Skeniranje ovisi o tome što Android propusti, a
- *    to se ponaša drukčije od svakog desktop datotečnog sustava.
- * 2. **Da laž ne prođe.** Bez dozvole Android vrati mape bez ijedne datoteke i
- *    ne javi grešku. Naivna knjižnica bi tada tvrdila „nemaš dokumenata” iako
- *    ih uređaj ima stotine. Zato se dozvola ovdje namjerno oduzima i provjerava
- *    da aplikacija kaže istinu.
+ * 1. **That it finds anything at all.** Scanning depends on what Android lets
+ *    through, and that behaves unlike any desktop file system.
+ * 2. **That a lie does not get through.** Without permission Android returns
+ *    folders with not one file in them and reports no error. A naive library
+ *    would then claim "you have no documents" while the device holds hundreds.
+ *    So the permission is deliberately taken away here and the application is
+ *    checked for telling the truth.
  *
- * Dozvola se namješta preko `appops`, jer je `MANAGE_EXTERNAL_STORAGE` sustav
- * ne nudi kroz obični dijalog.
+ * The permission is set through `appops`, because the system does not offer
+ * `MANAGE_EXTERNAL_STORAGE` through an ordinary dialog.
  *
  *   node tools/verify-mobile-library.mjs [--skip-install]
  */
@@ -39,12 +40,12 @@ const setAllFiles = (mode) =>
   adb('shell', 'appops', 'set', 'org.uleditor.app', 'MANAGE_EXTERNAL_STORAGE', mode);
 
 /**
- * Otvara knjižnicu i čeka da skeniranje stane.
+ * Opens the library and waits for the scan to settle.
  *
- * Gumb je preklopnik, a knjižnica je na uskom ekranu zadani pogled — pa slijepi
- * klik jednako često zatvori koliko i otvori. Zato se gleda stanje, ne broji
- * klikovi. Pogledi na telefonu stoje u naslovnoj traci (`.view-btn`), ne u
- * okomitoj traci uz rub — nje ondje nema.
+ * The button is a toggle, and on a narrow screen the library is the default view
+ * — so a blind click closes it as often as it opens it. The state is what is
+ * looked at, not the number of clicks. On a phone the views sit in the title bar
+ * (`.view-btn`), not in a vertical rail along the edge — there is none there.
  */
 async function openLibrary(page) {
   const shown = async () => (await page.locator('.library').count()) > 0;
@@ -55,8 +56,9 @@ async function openLibrary(page) {
   }
   await page.waitForSelector('.library', { timeout: 10000 });
 
-  /* Skeniranje je gotovo kad se pojavi rezultat, zapreka ili poruka koja više
-     nije „tražim…”. Čekanje na fiksno vrijeme bi bilo ili prekratko ili sporo. */
+  /* The scan is done once a result, an obstacle, or a message that is no longer
+     "searching…" appears. Waiting a fixed time would be either too short or
+     slow. */
   await page.waitForFunction(
     () =>
       document.querySelector('.library-item') ||
@@ -73,10 +75,10 @@ try {
 
   if (!process.argv.includes('--skip-install')) {
     await installApk(APK);
-    check('APK instaliran', true);
+    check('the APK was installed', true);
   }
 
-  /* ── s dozvolom ─────────────────────────────────────────────────────── */
+  /* ── with permission ────────────────────────────────────────────────── */
 
   await setAllFiles('allow');
   session = await startDevice();
@@ -100,36 +102,36 @@ try {
   const documents = found.items - images;
 
   console.log(
-    `\n  nađeno: ${found.items} · dokumenata ${documents} · slika ${images}` +
-      `\n  formati: ${found.chips.map((c) => `${c.label} ${c.count}`).join(', ')}\n`,
+    `\n  found: ${found.items} · documents ${documents} · images ${images}` +
+      `\n  formats: ${found.chips.map((c) => `${c.label} ${c.count}`).join(', ')}\n`,
   );
 
-  check('knjižnica je našla dokumente', documents > 0, `${documents} dokumenata`);
-  check('nije prijavljena zapreka kad dozvola postoji', !found.blocked);
-  check('ponuđen je filtar po formatu', found.chips.length > 1);
+  check('the library found documents', documents > 0, `${documents} documents`);
+  check('no obstacle is reported when the permission is there', !found.blocked);
+  check('a filter by format is offered', found.chips.length > 1);
 
   /*
-   * Bez zasebne kvote fotografije progutaju popis: na ovom uređaju su prvom
-   * mjerenju dale 1956 slika naspram 41 PDF-a, a granica je pukla usred
-   * skeniranja. Kvota je 400, pa se ovdje traži da je poštovana i da dokumenti
-   * nisu ispali.
+   * Without a quota of its own, photos swallow the list: on this device the
+   * first measurement gave 1956 images against 41 PDFs, and the limit blew
+   * mid-scan. The quota is 400, so what is asked here is that it was respected
+   * and that the documents did not fall out.
    */
-  check('fotografije ne guše dokumente', images <= 400, `${images} slika`);
+  check('photos do not smother the documents', images <= 400, `${images} images`);
 
-  /* Dokument se mora dati **otvoriti**, ne samo prikazati u popisu: putanja je
-     izvan radnog prostora, pa skeniranje mora usvojiti korijene. */
+  /* A document has to be **openable**, not merely listed: the path lies outside
+     the workspace, so the scan has to adopt the roots. */
   await session.page.locator('.library-item').first().click();
   const opened = await session.page
     .waitForSelector('.tabbar .tab', { timeout: 60000 })
     .then(() => true)
     .catch(() => false);
-  check('dokument iz knjižnice se otvara', opened, found.first.slice(0, 40));
+  check('a document from the library opens', opened, found.first.slice(0, 40));
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-library.png'));
   await stopDevice(session);
   session = null;
 
-  /* ── bez dozvole ────────────────────────────────────────────────────── */
+  /* ── without permission ─────────────────────────────────────────────── */
 
   await setAllFiles('deny');
   session = await startDevice();
@@ -141,11 +143,11 @@ try {
     heading: document.querySelector('.library-blocked strong')?.textContent ?? '',
   }));
 
-  check('bez dozvole nema lažnih rezultata', denied.items === 0, `${denied.items} stavki`);
+  check('with no permission there are no false results', denied.items === 0, `${denied.items} entries`);
   check(
-    'uskraćen pristup je prijavljen, ne prešućen',
+    'denied access is reported, not passed over in silence',
     denied.blocked,
-    denied.heading || 'nema poruke',
+    denied.heading || 'no message',
   );
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-library-blocked.png'));
@@ -154,7 +156,7 @@ try {
   await deviceScreenshot(resolve(SHOTS, 'failure-mobile-library.png')).catch(() => {});
 } finally {
   await stopDevice(session);
-  // Uređaj se ostavlja upotrebljivim.
+  // The device is left usable.
   await setAllFiles('allow').catch(() => {});
 }
 
