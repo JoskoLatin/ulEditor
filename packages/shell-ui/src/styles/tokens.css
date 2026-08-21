@@ -26,19 +26,19 @@
   --ink-ghost: #a3b2b9;
   --ink-inverse: #f7fafb;
 
-  /* ── linije ── */
+  /* ── lines ── */
   --rule: #cfdade;
   --rule-soft: #dfe7ea;
   --rule-strong: #b6c5cb;
 
-  /* ── akcent ── */
+  /* ── accent ── */
   --accent: #0c7079;
   --accent-hover: #0a5f67;
   --accent-ink: #085259;
   --accent-wash: #d8ecee;
   --accent-glow: rgba(12, 112, 121, 0.16);
 
-  /* ── boje formata ── */
+  /* ── format colours ── */
   --fmt-code: #a96a12;
   --fmt-document: #2a5b9e;
   --fmt-sheet: #2a7048;
@@ -48,19 +48,19 @@
   --fmt-media: #6b5aa6;
   --fmt-other: #6c7b82;
 
-  /* ── semantika ── */
+  /* ── semantics ── */
   --ok: #2a7048;
   --warn: #a96a12;
   --danger: #b03a2b;
   --warn-wash: #f6ecd9;
   --danger-wash: #f8e3df;
 
-  /* ── sjene ── */
+  /* ── shadows ── */
   --shadow-sm: 0 1px 2px rgba(16, 22, 25, 0.07);
   --shadow-md: 0 2px 6px rgba(16, 22, 25, 0.08), 0 12px 28px -18px rgba(16, 22, 25, 0.4);
   --shadow-lg: 0 8px 20px rgba(16, 22, 25, 0.1), 0 32px 64px -28px rgba(16, 22, 25, 0.45);
 
-  /* ── tipografija ── */
+  /* ── typography ── */
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --serif: "Iowan Old Style", Charter, Cambria, Georgia, serif;
@@ -71,7 +71,7 @@
   --fs-lg: 15px;
   --fs-xl: 19px;
 
-  /* ── mjere ── */
+  /* ── measures ── */
   --titlebar-h: 36px;
   --statusbar-h: 24px;
   --activitybar-w: 48px;

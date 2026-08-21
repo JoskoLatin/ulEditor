@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "ulEditor",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 720,
+        "minHeight": 480,
+        "resizable": true,
+        "center": true,
+        "dragDropEnabled": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  }
+}

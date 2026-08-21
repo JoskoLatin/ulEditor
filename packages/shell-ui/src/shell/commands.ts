@@ -13,6 +13,7 @@ import { activeInstance, useWorkspace } from '../state/workspace.js';
 import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
+import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -155,6 +156,37 @@ export function registerCommands(shell: Shell): () => void {
       run: () => closeScratch(shell),
     }),
 
+    /*
+     * The zoom is registered as commands too, so it is in the palette and not
+     * only under a key combination nobody was told about. On the web these are
+     * hidden: the browser's own zoom is already bound to the same keys and does
+     * the job better than we could.
+     */
+    shell.commands.register({
+      id: 'view.zoomIn',
+      title: t('Zoom in'),
+      category: t('View'),
+      keybinding: ['Ctrl', '+'],
+      when: () => canZoom(shell),
+      run: () => void stepZoom(shell, 1),
+    }),
+    shell.commands.register({
+      id: 'view.zoomOut',
+      title: t('Zoom out'),
+      category: t('View'),
+      keybinding: ['Ctrl', '-'],
+      when: () => canZoom(shell),
+      run: () => void stepZoom(shell, -1),
+    }),
+    shell.commands.register({
+      id: 'view.zoomReset',
+      title: t('Reset the interface size'),
+      category: t('View'),
+      keybinding: ['Ctrl', '0'],
+      when: () => canZoom(shell),
+      run: () => void resetZoom(shell),
+    }),
+
     shell.commands.register({
       id: 'view.preferences',
       title: t('Preferences…'),
@@ -183,9 +215,11 @@ export function registerCommands(shell: Shell): () => void {
 
   const onKeyDown = (event: KeyboardEvent) => handleKey(shell, event);
   window.addEventListener('keydown', onKeyDown, { capture: true });
+  const stopZoomGesture = watchZoomGesture(shell);
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
+    stopZoomGesture();
     for (const d of disposables) d.dispose();
   };
 }
@@ -248,6 +282,20 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   }
 
   if (!mod) return;
+
+  /*
+   * Zoom, and before the Shift branch below rather than among the plain Ctrl
+   * cases. The same keystroke arrives spelled several ways: on most layouts
+   * Ctrl+plus is physically Ctrl+Shift+`=`, which the browser reports as `+`
+   * with shiftKey set. Down among the unshifted cases it would never be
+   * reached, and plus is the one people press.
+   */
+  if (canZoom(shell) && ['=', '+', '-', '_', '0'].includes(key)) {
+    event.preventDefault();
+    if (key === '0') void resetZoom(shell);
+    else void stepZoom(shell, key === '-' || key === '_' ? -1 : 1);
+    return;
+  }
 
   // Ctrl+Shift+P — the palette. It works with the focus inside an editor too.
   if (event.shiftKey && key === 'p') {

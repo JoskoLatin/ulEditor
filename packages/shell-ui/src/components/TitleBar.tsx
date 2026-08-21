@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 import { FORMATS } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
@@ -6,7 +8,98 @@ import { openFiles, openFolder, saveActive } from '../shell/actions.js';
 import { formatLabel } from '../shell/formats.js';
 import { visibleViews } from '../shell/views.js';
 import { useWorkspace } from '../state/workspace.js';
-import { IconCommand, IconFolderOpen, IconSave } from './Icons.js';
+import {
+  IconCommand,
+  IconFolderOpen,
+  IconMaximise,
+  IconMinimise,
+  IconRestore,
+  IconSave,
+  IconWindowClose,
+} from './Icons.js';
+
+/**
+ * macOS keeps its own title bar, and its window buttons with it.
+ *
+ * The window is undecorated everywhere else, so this bar is the whole frame and
+ * has to carry minimise, maximise and close itself. On macOS the traffic lights
+ * are muscle memory, are placed by the system and behave in ways nothing drawn
+ * in HTML reproduces — full screen on the green one, the pair of them dimming
+ * when the window loses focus. `tauri.macos.conf.json` leaves the decorations in
+ * place there for that reason, and drawing a second set of buttons under the
+ * first would be the visible half of the mistake.
+ */
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
+
+/**
+ * The window buttons.
+ *
+ * Windows 11 loses one thing here that no HTML button can offer: hovering the
+ * maximise button normally opens the snap layouts, which the system draws only
+ * for a button it owns. Dragging to the edge of the screen still snaps.
+ */
+function WindowControls() {
+  const [maximised, setMaximised] = useState(false);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      const read = () => void win.isMaximized().then((v) => !cancelled && setMaximised(v));
+      read();
+      // The window is also maximised by dragging it to the top edge and by a
+      // double-click on the bar, so the icon cannot be flipped from the click.
+      const unlisten = await win.onResized(read);
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    })();
+
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
+
+  const act = (name: 'minimize' | 'toggleMaximize' | 'close') => {
+    void (async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow()[name]();
+    })();
+  };
+
+  return (
+    <div className="window-controls">
+      <button
+        className="window-btn"
+        onClick={() => act('minimize')}
+        title={t('Minimise')}
+        aria-label={t('Minimise')}
+      >
+        <IconMinimise size={16} />
+      </button>
+      <button
+        className="window-btn"
+        onClick={() => act('toggleMaximize')}
+        title={maximised ? t('Restore') : t('Maximise')}
+        aria-label={maximised ? t('Restore') : t('Maximise')}
+      >
+        {maximised ? <IconRestore size={16} /> : <IconMaximise size={16} />}
+      </button>
+      <button
+        className="window-btn"
+        data-close="true"
+        onClick={() => act('close')}
+        title={t('Close window')}
+        aria-label={t('Close window')}
+      >
+        <IconWindowClose size={16} />
+      </button>
+    </div>
+  );
+}
 
 /**
  * The view switch in the title bar.
@@ -50,12 +143,19 @@ export function TitleBar() {
   const active = tabs.find((t) => t.id === activeTabId);
   const format = active ? FORMATS[active.format] : null;
 
+  /*
+   * `data-tauri-drag-region` is what makes an undecorated window movable, and it
+   * works on the element the click actually lands on — so it goes on the bar and
+   * on the title, and never on anything a person is meant to press. A
+   * double-click on it maximises, which the system used to do for us.
+   */
   return (
-    <header className="titlebar">
+    <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left">
-        <div className="brand" title="ulEditor 0.1.0">
+        <div className="brand" title={`ulEditor ${__APP_VERSION__}`}>
           <span>ul</span>
           <b>Editor</b>
+          <small>{__APP_VERSION__}</small>
         </div>
 
         <ViewSwitch />
@@ -91,7 +191,7 @@ export function TitleBar() {
         </button>
       </div>
 
-      <div className="titlebar-title">
+      <div className="titlebar-title" data-tauri-drag-region>
         {active ? (
           <>
             <b>{active.name}</b>
@@ -112,6 +212,8 @@ export function TitleBar() {
           <IconCommand size={13} />
           <kbd>Ctrl ⇧ P</kbd>
         </button>
+
+        {shell.platform === 'desktop' && !IS_MAC ? <WindowControls /> : null}
       </div>
     </header>
   );

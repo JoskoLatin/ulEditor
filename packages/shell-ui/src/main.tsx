@@ -14,8 +14,13 @@ import '@uleditor/editor-pdf/style.css';
 import { App } from './App.js';
 import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
+import { restoreZoom } from './shell/zoom.js';
 
 const shell = createShell();
+
+/* Before the first paint rather than from a component: the interface would
+   otherwise be drawn at the wrong size and resize itself in front of the user. */
+restoreZoom(shell);
 
 /*
  * The language is set before the first render and before commands are registered —
@@ -154,7 +159,7 @@ shell.registry.register(
 );
 
 const container = document.getElementById('root');
-if (!container) throw new Error('Nedostaje #root element.');
+if (!container) throw new Error('The #root element is missing.');
 
 createRoot(container).render(
   <StrictMode>

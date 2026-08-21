@@ -32,7 +32,7 @@ function check(name, passed, detail = '') {
   console.log(`[${mark}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
-/** `content` je string ili polje bajtova (za binarne formate). */
+/** `content` is a string, or an array of bytes for the binary formats. */
 async function dropFile(page, name, content) {
   const bytes = typeof content === 'string' ? null : Array.from(content);
   await page.evaluate(
@@ -64,7 +64,23 @@ try {
 
   /* — okvir — */
   await page.waitForSelector('.shell', { timeout: 15000 });
-  check('shell se renderira', true);
+  check('the shell renders', true);
+
+  /*
+   * The version beside the name. It is written into the bundle by Vite from
+   * tauri.conf.json, and a build with that wiring broken renders the word
+   * "undefined" in the corner of the window rather than failing — nothing else
+   * would notice.
+   */
+  const shownVersion = (await page.locator('.brand small').innerText()).trim();
+  const expectedVersion = JSON.parse(
+    await readFile(resolve(ROOT, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'),
+  ).version;
+  check(
+    'the version beside the name is the one being built',
+    shownVersion === expectedVersion,
+    `${shownVersion} — tauri.conf.json says ${expectedVersion}`,
+  );
 
   for (const [label, selector] of [
     ['title bar', '.titlebar'],
@@ -80,8 +96,8 @@ try {
   await dropFile(page, 'example.ts', TS_SOURCE);
   await page.waitForSelector('.cm-editor', { timeout: 15000 });
   const highlighted = await page.locator('.cm-line span[class*="ͼ"]').count();
-  check('CodeMirror montiran', true);
-  check('sintaksa obojana', highlighted > 0, `${highlighted} obojanih tokena`);
+  check('CodeMirror is mounted', true);
+  check('the syntax is coloured', highlighted > 0, `${highlighted} coloured tokens`);
   check('the tab got its name', (await page.locator('.tab .name').first().innerText()) === 'example.ts');
 
   /* — markdown — */
@@ -89,7 +105,7 @@ try {
   await page.waitForSelector('.ul-md', { timeout: 15000 });
   await page.waitForSelector('.ul-md-preview h1', { timeout: 10000 });
   const previewTitle = await page.locator('.ul-md-preview h1').first().innerText();
-  check('Markdown pregled renderiran', previewTitle.trim() === 'ulEditor', previewTitle.trim());
+  check('the Markdown preview renders', previewTitle.trim() === 'ulEditor', previewTitle.trim());
   check('a table in the preview', (await page.locator('.ul-md-preview table').count()) === 1);
 
   /* — PDF — */
@@ -286,12 +302,12 @@ try {
   const allCommands = await page.locator('.palette-item').count();
 
   const paletteInput = page.locator('.palette-input input');
-  check('paleta se sama fokusira', await paletteInput.evaluate((el) => el === document.activeElement));
+  check('the palette focuses itself', await paletteInput.evaluate((el) => el === document.activeElement));
 
   await paletteInput.pressSequentially('cycle theme');
   const paletteHits = await page.locator('.palette-item').count();
   check(
-    'paleta filtrira naredbe',
+    'the palette filters the commands',
     paletteHits > 0 && paletteHits < allCommands,
     `${allCommands} → ${paletteHits}`,
   );
@@ -383,7 +399,7 @@ try {
   await page.screenshot({ path: resolve(SHOTS, 'find.png') });
   await page.keyboard.press('Escape');
 
-  check('snimke spremljene', true, 'tools/screenshots/');
+  check('the screenshots are saved', true, 'tools/screenshots/');
 
   /* — konzola — */
   const ignorable = (text) => text.includes('Download the React DevTools') || text.includes('[vite]');

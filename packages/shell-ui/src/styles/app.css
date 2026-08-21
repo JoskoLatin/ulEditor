@@ -142,7 +142,6 @@ button {
   background: var(--chrome);
   border-bottom: 1px solid var(--rule);
   user-select: none;
-  -webkit-app-region: drag;
 }
 
 .titlebar-left,
@@ -155,6 +154,58 @@ button {
 
 .titlebar-right {
   justify-content: flex-end;
+}
+
+/*
+ * The window buttons, where the system's used to be.
+ *
+ * 46 px wide because that is what Windows itself uses, and a hand that has been
+ * aiming at that target for years should not have to aim again. The negative
+ * margin cancels the bar's padding so the close button reaches the corner of the
+ * screen — a maximised window puts the pointer there without aiming at all.
+ */
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: 8px;
+  margin-right: -10px;
+}
+
+.window-btn {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  cursor: default;
+  transition: background 90ms ease, color 90ms ease;
+}
+
+.window-btn:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+
+.window-btn:active {
+  background: var(--rule);
+}
+
+/* The one destructive button of the three, and the only colour in the bar. The
+   shade is the system's own, so it does not read as a warning of ours. */
+.window-btn[data-close="true"]:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.window-btn[data-close="true"]:active {
+  background: #b4261a;
+  color: #ffffff;
+}
+
+.window-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
 }
 
 .brand {
@@ -173,6 +224,17 @@ button {
 .brand b {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* The version, next to the name and quieter than it. Present because the answer
+   to "which build is this" should not require opening a menu — and because a bug
+   report without it is a bug report about an unknown program. */
+.brand small {
+  font-size: var(--fs-xs);
+  color: var(--ink-ghost);
+  font-weight: 500;
+  margin-left: 6px;
+  letter-spacing: 0;
 }
 
 .titlebar-title {

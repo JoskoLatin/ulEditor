@@ -164,7 +164,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setQuickOpen: (quickOpen) => set({ quickOpen }),
 }));
 
-/* ── imperativni registri ────────────────────────────────────────────── */
+/* ── the imperative registries ───────────────────────────────────────── */
 
 const documents = new Map<string, DocumentHandle>();
 const instances = new Map<string, EditorInstance>();

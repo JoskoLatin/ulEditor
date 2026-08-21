@@ -230,3 +230,34 @@ export function FolderIcon({ open, size = 16 }: { open: boolean; size?: number }
     </svg>
   );
 }
+
+/*
+ * The window buttons. Drawn on the same 16-grid as the rest, but with a hairline
+ * stroke and square ends: these copy what Windows draws in its own title bar, and
+ * a rounded 1.4 stroke beside the system chrome reads as a different program.
+ */
+export const IconMinimise = (p: IconProps) => (
+  <Svg strokeWidth="1" strokeLinecap="square" {...p}>
+    <path d="M3 8h10" />
+  </Svg>
+);
+
+export const IconMaximise = (p: IconProps) => (
+  <Svg strokeWidth="1" strokeLinecap="square" {...p}>
+    <rect x="3.5" y="3.5" width="9" height="9" />
+  </Svg>
+);
+
+/** Two overlapping frames — the window is maximised and this puts it back. */
+export const IconRestore = (p: IconProps) => (
+  <Svg strokeWidth="1" strokeLinecap="square" {...p}>
+    <rect x="3.5" y="5.5" width="7" height="7" />
+    <path d="M5.5 5.5V3.5h7v7h-2" />
+  </Svg>
+);
+
+export const IconWindowClose = (p: IconProps) => (
+  <Svg strokeWidth="1" strokeLinecap="square" {...p}>
+    <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+  </Svg>
+);

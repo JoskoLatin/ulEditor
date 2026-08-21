@@ -114,7 +114,7 @@ export function App({ shell }: { shell: Shell }) {
     };
   }, [shell]);
 
-  // Upozorenje pri zatvaranju s nespremljenim promjenama.
+  // The warning on closing with unsaved changes.
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       if (useWorkspace.getState().tabs.some((t) => t.dirty)) event.preventDefault();

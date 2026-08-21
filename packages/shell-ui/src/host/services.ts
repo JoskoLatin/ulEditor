@@ -137,7 +137,7 @@ export class Themes implements ThemeService {
   }
 }
 
-/* ── postavke ────────────────────────────────────────────────────────── */
+/* ── settings ────────────────────────────────────────────────────────── */
 
 const STORAGE_KEY = 'uleditor.settings';
 
@@ -172,7 +172,7 @@ export class Settings implements SettingsService {
   }
 }
 
-/* ── obavijesti ──────────────────────────────────────────────────────── */
+/* ── notifications ───────────────────────────────────────────────────── */
 
 export interface ToastRecord {
   id: number;
@@ -181,7 +181,7 @@ export interface ToastRecord {
   actions: NotificationAction[];
   /** The list of unsupported features in a fidelity warning. */
   details?: string[];
-  /** Modalna upozorenja se ne gase sama. */
+  /** A modal warning does not dismiss itself. */
   sticky: boolean;
 }
 
