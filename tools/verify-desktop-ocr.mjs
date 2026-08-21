@@ -1,14 +1,15 @@
 /**
- * Provjera da OCR radi **unutar desktop aplikacije**, gdje vrijedi CSP.
+ * Checking that OCR works **inside the desktop application**, where the CSP
+ * applies.
  *
- * `verify-ocr.mjs` vozi Vite dev server u pregledniku, gdje CSP-a nema. To je
- * dovoljno da se dokaže prepoznavanje, ali ne i da resursi prolaze kroz
- * `default-src 'self'` iz `tauri.conf.json`. Razlika je stvarna: dok je
- * Tesseract vukao worker i modele s CDN-a, u pregledniku je radio, a u
- * aplikaciji ne bi.
+ * `verify-ocr.mjs` drives the Vite dev server in a browser, where there is no
+ * CSP. That is enough to prove recognition, but not that the assets get through
+ * `default-src 'self'` from `tauri.conf.json`. The difference is real: while
+ * Tesseract was pulling its worker and models from a CDN, it worked in the
+ * browser and would not have worked in the application.
  *
- * Provjerava se i da je mreža uopće nepotrebna — svaki vanjski zahtjev se
- * presreće i broji.
+ * It also checks that the network is unnecessary at all — every external request
+ * is intercepted and counted.
  *
  *   node tools/verify-desktop-ocr.mjs
  */
@@ -32,9 +33,9 @@ let session;
 try {
   session = await startDesktop({ port: 9335 });
   const { page } = session;
-  check('spojen na desktop aplikaciju', true);
+  check('attached to the desktop application', true);
 
-  /* Svaki zahtjev izvan aplikacije se bilježi; OCR ne smije nijedan napraviti. */
+  /* Every request leaving the application is recorded; OCR must make none. */
   const external = [];
   page.on('request', (request) => {
     const url = request.url();
@@ -88,21 +89,21 @@ try {
 
   if (!recognised) {
     const toast = await page.locator('.toast p').first().innerText().catch(() => '');
-    check('OCR je prošao kroz CSP', false, toast.slice(0, 120) || 'bez poruke');
+    check('OCR got through the CSP', false, toast.slice(0, 120) || 'no message');
   } else {
     const text = await page.locator('.split .cm-content').innerText();
     check(
-      'prepoznat je tekst unutar aplikacije',
+      'text was recognised inside the application',
       text.replace(/\s+/g, ' ').toUpperCase().includes(PHRASE),
       text.replace(/\s+/g, ' ').slice(0, 60),
     );
   }
 
-  check('CSP nije ništa odbio', violations.length === 0, violations.slice(0, 2).join(' | '));
+  check('the CSP refused nothing', violations.length === 0, violations.slice(0, 2).join(' | '));
   check(
-    'nijedan zahtjev nije izašao iz aplikacije',
+    'no request left the application',
     external.length === 0,
-    external.slice(0, 3).join(' | ') || 'nema vanjskih zahtjeva',
+    external.slice(0, 3).join(' | ') || 'no external requests',
   );
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-ocr.png') });

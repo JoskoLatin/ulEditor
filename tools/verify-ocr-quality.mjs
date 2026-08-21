@@ -1,12 +1,13 @@
 /**
- * Mjerenje dobitka od pripreme slike.
+ * Measuring what image preparation buys.
  *
- * Ne provjerava "radi li OCR" — to radi `verify-ocr.mjs`. Ovdje se ista slika
- * pušta kroz motor s pripremom i bez nje, pa se uspoređuje koliko je znakova
- * pogođeno. Bez tog mjerenja priprema je samo tvrdnja.
+ * This does not check "does OCR work" — `verify-ocr.mjs` does that. Here the same
+ * image is run through the engine with and without preparation, and the number of
+ * characters hit is compared. Without that measurement, the preparation is just a
+ * claim.
  *
- * Slika je namjerno teška: sitna i blijeda, kakvu daje fotografija natpisa
- * ili screenshot smanjenog dokumenta.
+ * The image is deliberately hard: small and pale, of the kind a photo of a sign
+ * or a screenshot of a shrunken document produces.
  *
  *   node tools/verify-ocr-quality.mjs [--url http://localhost:5273]
  */
@@ -30,7 +31,7 @@ function check(name, passed, detail = '') {
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
-/** Levenshtein — koliko je znakova promašeno, ne samo "je li isto". */
+/** Levenshtein — how many characters were missed, not merely "is it identical". */
 function distance(a, b) {
   const rows = a.length + 1;
   const cols = b.length + 1;
@@ -59,9 +60,9 @@ try {
   await page.waitForSelector('.shell', { timeout: 15000 });
 
   /*
-   * Teška slika: sitan tekst, sivo na svijetlosivom, blagi šum. To je stanje u
-   * kojem se razlika između sirovog i pripremljenog ulaza uopće vidi — na
-   * čistom crno-bijelom natpisu oba puta ispadne isto.
+   * A hard image: small text, grey on light grey, mild noise. That is the state in
+   * which the difference between raw and prepared input shows at all — on a clean
+   * black-and-white sign both come out the same.
    */
   const png = await page.evaluate((text) => {
     const canvas = document.createElement('canvas');
@@ -89,8 +90,9 @@ try {
   }, EXPECTED);
 
   /*
-   * Mjeri se kroz sučelje, ne pozivanjem motora iz stranice: tako se provjeri
-   * upravo onaj put kojim ide korisnik, uključujući pripremu slike.
+   * It is measured through the interface rather than by calling the engine from
+   * the page: that way exactly the route the user takes is checked, image
+   * preparation included.
    */
   const drop = async (dataUrl, name) => {
     await page.evaluate(
@@ -115,21 +117,21 @@ try {
     return text.replace(/\s+/g, ' ').trim();
   };
 
-  const got = await drop(png, 'tezak.png');
+  const got = await drop(png, 'hard.png');
   const errors = distance(EXPECTED, got);
   const accuracy = Math.max(0, 1 - errors / EXPECTED.length);
 
-  console.log(`\n  očekivano: ${EXPECTED}`);
-  console.log(`  dobiveno:  ${got}\n`);
+  console.log(`\n  expected: ${EXPECTED}`);
+  console.log(`  got:      ${got}\n`);
 
   check(
-    'priprema daje čitljiv rezultat',
+    'the preparation gives a legible result',
     accuracy >= 0.8,
-    `${Math.round(accuracy * 100)} % znakova točno, ${errors} promašaja`,
+    `${Math.round(accuracy * 100)} % of characters correct, ${errors} misses`,
   );
 
   check(
-    'dijakritici su prepoznati',
+    'the diacritics were recognised',
     /[čćšžđ]/i.test(got),
     got.slice(0, 60),
   );

@@ -1,10 +1,10 @@
 /**
- * Provjera da anotacije stvarno završe u PDF-u kao ispravni objekti.
+ * Checking that annotations really land in the PDF as valid objects.
  *
- * UI test u `verify-ui.mjs` pokazuje da se anotacija pojavi na ekranu. To ne
- * dokazuje ništa o datoteci — ovdje se zapisani PDF ponovno parsira i gleda
- * se sadrži li prave `/Highlight`, `/Text` i `/Ink` anotacije na pravim
- * stranicama, s pravim koordinatama.
+ * The UI test in `verify-ui.mjs` shows that an annotation appears on screen. That
+ * proves nothing about the file — here the written PDF is parsed again and
+ * inspected for real `/Highlight`, `/Text` and `/Ink` annotations on the right
+ * pages, with the right coordinates.
  *
  *   node tools/verify-pdf-annotations.mjs
  */
@@ -18,9 +18,9 @@ import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Node 26 sam skida tipove iz .ts datoteka, pa se izvor uvozi izravno —
-// bez build koraka koji bi mogao testirati nešto drugo od onoga što se
-// isporučuje. Na Windowsu apsolutna putanja mora ići kao file:// URL.
+// Node 26 strips types from .ts files itself, so the source is imported directly
+// — with no build step that might test something other than what ships. On
+// Windows an absolute path has to go as a file:// URL.
 const { writeAnnotations } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/annotations.ts')).href
 );
@@ -54,7 +54,7 @@ const annotations = [
     color: [0.25, 0.7, 0.73],
     createdAt: Date.UTC(2026, 7, 15, 12, 0, 0),
     rect: { x: 200, y: 150, width: 20, height: 20 },
-    // Dijakritika: PDFString je Latin-1, pa bilješke moraju ići kao hex.
+    // Diacritics: PDFString is Latin-1, so notes have to go as hex.
     text: 'Provjeriti čćžšđ i navodnike "ovako"',
   },
   {
@@ -67,7 +67,7 @@ const annotations = [
     width: 2,
   },
   {
-    // Već je u datoteci — ne smije se zapisati drugi put.
+    // Already in the file — it must not be written a second time.
     id: 'test-imported',
     kind: 'highlight',
     page: 1,
@@ -82,7 +82,7 @@ const annotations = [
 
 const { bytes, written } = await writeAnnotations(source, annotations);
 check('uvezene anotacije se ne zapisuju ponovo', written === 3, `zapisano ${written} od 4`);
-check('izlaz je veći od izvornika', bytes.length > source.length, `${source.length} → ${bytes.length} B`);
+check('the output is larger than the source', bytes.length > source.length, `${source.length} → ${bytes.length} B`);
 check('izlaz je i dalje PDF', new TextDecoder().decode(bytes.slice(0, 5)) === '%PDF-', '');
 
 /* ── ponovno parsiranje ──────────────────────────────────────────────── */
@@ -118,36 +118,36 @@ const highlight = bySubtype.get('/Highlight');
 if (highlight) {
   const quadPoints = highlight.lookup(PDFName.of('QuadPoints'));
   const size = quadPoints instanceof PDFArray ? quadPoints.size() : 0;
-  // Dva retka × osam brojeva po quadu.
-  check('QuadPoints ima 16 brojeva za dva retka', size === 16, `${size}`);
+  // Two lines × eight numbers per quad.
+  check('QuadPoints holds 16 numbers for two lines', size === 16, `${size}`);
 
   const rect = highlight.lookup(PDFName.of('Rect'));
   const values = rect instanceof PDFArray ? rect.asArray().map((n) => n.asNumber()) : [];
-  // Omeđujući pravokutnik mora pokriti oba retka: y od 80 do 123.
+  // The bounding rectangle has to cover both lines: y from 80 to 123.
   check(
-    'Rect obuhvaća oba retka',
+    'Rect spans both lines',
     values.length === 4 && values[1] === 80 && values[3] === 123,
     values.join(', '),
   );
 
   const ca = highlight.lookup(PDFName.of('CA'));
-  check('istaknuće je poluprozirno', ca?.asNumber?.() === 0.4, String(ca?.asNumber?.()));
+  check('the highlight is semi-transparent', ca?.asNumber?.() === 0.4, String(ca?.asNumber?.()));
 }
 
-/* — bilješka — */
+/* — the note — */
 const note = bySubtype.get('/Text');
 if (note) {
   const contents = note.lookup(PDFName.of('Contents'));
   const decoded =
     contents instanceof PDFHexString || contents instanceof PDFString ? contents.decodeText() : '';
   check(
-    'tekst bilješke preživio dijakritiku',
+    'the note text survived the diacritics',
     decoded === 'Provjeriti čćžšđ i navodnike "ovako"',
     JSON.stringify(decoded.slice(0, 40)),
   );
 
   const name = note.lookup(PDFName.of('Name'));
-  check('bilješka ima ikonu Comment', name?.asString?.() === '/Comment', String(name));
+  check('the note carries the Comment icon', name?.asString?.() === '/Comment', String(name));
 }
 
 /* — ink — */
@@ -157,10 +157,10 @@ if (ink) {
   const strokes = inkList instanceof PDFArray ? inkList.size() : 0;
   const first = inkList instanceof PDFArray ? inkList.lookup(0) : null;
   const points = first instanceof PDFArray ? first.size() : 0;
-  check('InkList ima jedan potez od tri točke', strokes === 1 && points === 6, `${strokes} × ${points / 2}`);
+  check('InkList holds one stroke of three points', strokes === 1 && points === 6, `${strokes} × ${points / 2}`);
 }
 
-/* — zajedničko — */
+/* — shared — */
 for (const [subtype, dict] of bySubtype) {
   const parent = dict.get(PDFName.of('P'));
   if (!parent) {
@@ -179,10 +179,10 @@ if (bySubtype.size === 3) {
   );
 }
 
-/* ── dvostruko spremanje ─────────────────────────────────────────────── */
+/* ── saving twice ────────────────────────────────────────────────────── */
 
-// Nakon spremanja editor označi anotacije kao uvezene; ponovno spremanje
-// ne smije stvoriti duplikate.
+// After a save the editor marks annotations as imported; saving again must not
+// create duplicates.
 const second = await writeAnnotations(bytes, annotations.map((a) => ({ ...a, imported: true })));
 const reloadedTwice = await PDFDocument.load(second.bytes);
 const annotsTwice = reloadedTwice.getPages()[0].node.lookup(PDFName.of('Annots'));

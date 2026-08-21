@@ -1,10 +1,10 @@
 /**
- * Runtime provjera shella.
+ * Runtime check of the shell.
  *
- * Datoteke se ubacuju kroz pravi `drop` event umjesto kroz sistemski dijalog —
- * File System Access API se ne da voziti iz skripte, a drop prolazi kroz
- * potpuno isti put: adoptFiles → detekcija → registar → lijeni provider →
- * montaža editora. Dakle testira ono što nas zanima.
+ * Files are injected through a real `drop` event rather than the system dialog —
+ * the File System Access API cannot be driven from a script, and a drop takes
+ * exactly the same route: adoptFiles → detection → registry → lazy provider →
+ * editor mount. So it tests what we care about.
  *
  *   node tools/verify-ui.mjs [--url http://localhost:5273] [--headed]
  */
@@ -23,7 +23,7 @@ const headed = args.includes('--headed');
 
 import { MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from './fixtures.mjs';
 
-/* ── pomoćno ─────────────────────────────────────────────────────────── */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -67,13 +67,13 @@ try {
   check('shell se renderira', true);
 
   for (const [label, selector] of [
-    ['naslovna traka', '.titlebar'],
-    ['aktivnosna traka', '.activitybar'],
-    ['bočna ploča', '.sidebar'],
-    ['statusna traka', '.statusbar'],
-    ['pozdravni ekran', '.welcome'],
+    ['title bar', '.titlebar'],
+    ['activity bar', '.activitybar'],
+    ['side panel', '.sidebar'],
+    ['status bar', '.statusbar'],
+    ['welcome screen', '.welcome'],
   ]) {
-    check(`${label} postoji`, await page.locator(selector).isVisible());
+    check(`${label} exists`, await page.locator(selector).isVisible());
   }
 
   /* — kod — */
@@ -99,23 +99,23 @@ try {
   const canvasBox = await page.locator('.ul-pdf-page canvas').first().boundingBox();
   check('PDF stranica renderirana', !!canvasBox && canvasBox.width > 50, `${Math.round(canvasBox?.width ?? 0)}px`);
   const textSpans = await page.locator('.ul-pdf-text span').count();
-  check('tekstualni sloj izgrađen', textSpans > 0, `${textSpans} fragmenata`);
+  check('text layer built', textSpans > 0, `${textSpans} fragments`);
 
-  /* — oštećena datoteka — */
-  // ZIP koji to nije: editor postoji, ali sadržaj se ne da pročitati. Poruka
-  // mora biti ljudska, ne ono što je dobacila biblioteka za raspakiravanje.
+  /* — a damaged file — */
+  // A ZIP that is not one: the editor exists, but the content cannot be read. The
+  // message has to be human, not whatever the unzip library threw.
   await dropFile(page, 'ugovor.docx', makeFakeDocx());
   await page.waitForSelector('.surface-error', { timeout: 10000 });
   const message = await page.locator('.surface-error p').innerText();
-  check('oštećen DOCX daje razumljivu poruku', message.includes('damaged'), message.slice(0, 70));
+  check('a damaged DOCX gives a comprehensible message', message.includes('damaged'), message.slice(0, 70));
 
   /* — anotacije nad PDF-om — */
   await page.locator('.tab').nth(2).click();
   await page.waitForTimeout(300);
 
   await page.locator('.ul-pdf-tool[title*="Highlight"]').click();
-  // Selekcija se pravi programski: pravo povlačenje mišem preko nevidljivog
-  // tekstualnog sloja nije pouzdano na jednom retku teksta.
+  // The selection is made programmatically: a real mouse drag across the invisible
+  // text layer is not reliable on a single line of text.
   await page.evaluate(() => {
     const span = document.querySelector('.ul-pdf-text span');
     const range = document.createRange();
@@ -126,9 +126,9 @@ try {
     document.querySelector('.ul-pdf-scroll').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
   });
   await page.waitForSelector('.ul-pdf-ann-highlight', { timeout: 10000 });
-  check('istaknuće stvoreno iz selekcije', (await page.locator('.ul-pdf-ann-highlight').count()) >= 1);
+  check('a highlight was created from the selection', (await page.locator('.ul-pdf-ann-highlight').count()) >= 1);
   check(
-    'PDF označen kao izmijenjen',
+    'the PDF is marked as modified',
     (await page.locator('.tab[data-dirty="true"]').count()) >= 1,
     await page.locator('.ul-pdf-count').innerText(),
   );
@@ -136,44 +136,44 @@ try {
   await page.locator('.ul-pdf-tool[title*="Note"]').click();
   await page.locator('.ul-pdf-page').first().click({ position: { x: 200, y: 60 } });
   await page.waitForSelector('.ul-pdf-note-popup', { timeout: 5000 });
-  await page.locator('.ul-pdf-note-popup textarea').fill('Provjeriti čćžšđ');
+  await page.locator('.ul-pdf-note-popup textarea').fill('Check čćžšđ');
   const noteBeforeSave = await page.locator('.ul-pdf-ann-note').count();
   await page.locator('.ul-pdf-note-popup button[data-primary="true"]').click();
   await page.waitForTimeout(250);
   const noteAfterSave = await page.locator('.ul-pdf-ann-note').count();
   check(
-    'bilješka postavljena',
+    'the note was placed',
     noteAfterSave === 1,
-    `prije spremanja ${noteBeforeSave}, poslije ${noteAfterSave}, traka: ${await page
+    `before save ${noteBeforeSave}, after ${noteAfterSave}, bar: ${await page
       .locator('.ul-pdf-count')
       .innerText()}`,
   );
 
-  // Postavljanje bilješke i upis teksta su dva odvojena koraka povijesti,
-  // pa prvi undo vraća prazan tekst, a tek drugi miče samu bilješku.
+  // Placing the note and typing its text are two separate history steps, so the
+  // first undo restores the empty text and only the second removes the note.
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(250);
   const titleAfterOne = await page.locator('.ul-pdf-ann-note').first().getAttribute('title');
-  check('prvi undo vraća tekst bilješke', titleAfterOne === 'Note', String(titleAfterOne));
+  check('the first undo restores the note text', titleAfterOne === 'Note', String(titleAfterOne));
 
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(250);
   const notesLeft = await page.locator('.ul-pdf-ann-note').count();
   const highlightsLeft = await page.locator('.ul-pdf-ann-highlight').count();
   check(
-    'drugi undo miče bilješku, istaknuće ostaje',
+    'the second undo removes the note, the highlight stays',
     notesLeft === 0 && highlightsLeft >= 1,
-    `bilješki ${notesLeft}, istaknuća ${highlightsLeft}`,
+    `notes ${notesLeft}, highlights ${highlightsLeft}`,
   );
 
-  // Redo mora vratiti bilješku — inače undo nije reverzibilan.
+  // Redo has to bring the note back — otherwise undo is not reversible.
   await page.keyboard.press('Control+Shift+Z');
   await page.waitForTimeout(250);
-  check('redo vraća bilješku', (await page.locator('.ul-pdf-ann-note').count()) === 1);
+  check('redo brings the note back', (await page.locator('.ul-pdf-ann-note').count()) === 1);
 
   /* — tekst upisan u PDF — */
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
-  check('postavke fonta se pojave tek uz alat za tekst', await page.locator('.ul-pdf-text-opts').isVisible());
+  check('the font settings appear only with the text tool', await page.locator('.ul-pdf-text-opts').isVisible());
 
   await page.locator('.ul-pdf-page').first().click({ position: { x: 90, y: 120 } });
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 10000 });
@@ -182,16 +182,16 @@ try {
   await page.locator('.ul-pdf-text-input').pressSequentially(TYPED);
 
   /*
-   * Font iz kojeg se računa okvir mora biti i onaj kojim se crta na ekranu.
-   * Inače bi se širina okvira i širina teksta razišle, i to različito po
-   * platformama — na Windowsu jedva, na Androidu vidljivo.
+   * The font the box is computed from has to be the one drawn on screen too.
+   * Otherwise the box width and the text width would drift apart, and differently
+   * per platform — barely on Windows, visibly on Android.
    */
   const usesEmbedded = await page.evaluate(() =>
     getComputedStyle(document.querySelector('.ul-pdf-text-input')).fontFamily.includes(
       'ulEditor Sans',
     ),
   );
-  check('polje za tipkanje koristi ugrađeni font', usesEmbedded);
+  check('the typing field uses the embedded font', usesEmbedded);
 
   const grew = await page.evaluate(() => {
     const input = document.querySelector('.ul-pdf-text-input');
@@ -201,11 +201,11 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForSelector('.ul-pdf-ann-text', { timeout: 5000 });
   const boxText = await page.locator('.ul-pdf-ann-text').first().innerText();
-  check('tekst ostaje na stranici nakon tipkanja', boxText === TYPED, JSON.stringify(boxText));
-  check('okvir se proširio uz tekst', grew > 40, `${Math.round(grew)}px`);
+  check('the text stays on the page after typing', boxText === TYPED, JSON.stringify(boxText));
+  check('the box grew with the text', grew > 40, `${Math.round(grew)}px`);
 
-  // Prazan okvir ne smije ostati iza sebe: kliknuti pa se predomisliti je
-  // najčešći potez, a nevidljiva anotacija u dokumentu je smeće.
+  // An empty box must not be left behind: clicking and then changing your mind is
+  // the commonest move, and an invisible annotation in the document is junk.
   const boxesBefore = await page.locator('.ul-pdf-ann-text').count();
   await page.locator('.ul-pdf-page').first().click({ position: { x: 260, y: 200 } });
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 5000 });
@@ -219,11 +219,11 @@ try {
 
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(250);
-  check('undo miče upisani tekst', (await page.locator('.ul-pdf-ann-text').count()) === 0);
+  check('undo removes the typed text', (await page.locator('.ul-pdf-ann-text').count()) === 0);
 
   await page.keyboard.press('Control+Shift+Z');
   await page.waitForTimeout(250);
-  check('redo ga vraća', (await page.locator('.ul-pdf-ann-text').count()) === 1);
+  check('redo brings it back', (await page.locator('.ul-pdf-ann-text').count()) === 1);
 
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
@@ -251,29 +251,29 @@ try {
 
   await page.locator('.findpanel-hit').nth(1).click();
   await page.waitForTimeout(200);
-  check('skok na pogodak radi', (await page.locator('.findpanel-hit[data-active="true"]').count()) === 1);
+  check('jumping to a hit works', (await page.locator('.findpanel-hit[data-active="true"]').count()) === 1);
 
-  // Isti UI nad PDF-om — format koji inače nema nikakvo sučelje za pretragu.
+  // The same UI over a PDF — a format that otherwise has no search interface at all.
   await page.locator('.tab').nth(2).click();
   await page.waitForTimeout(400);
   await page.keyboard.press('Control+Shift+F');
   await page.waitForSelector('.findpanel', { timeout: 5000 });
-  // Upit se namjerno zadržava kroz kartice, pa ga ovdje zamjenjujemo.
+  // The query is deliberately kept across tabs, so we replace it here.
   await page.locator('.findpanel-bar input').fill('ulEditor');
   await page.waitForSelector('.findpanel-hit', { timeout: 15000 });
   const pdfHits = await page.locator('.findpanel-hit').count();
   const pdfLabel = await page.locator('.findpanel-hit .where').first().innerText();
-  check('ista pretraga radi nad PDF-om', pdfHits > 0 && pdfLabel.includes('Page'), `${pdfHits} · ${pdfLabel}`);
+  check('the same search works over a PDF', pdfHits > 0 && pdfLabel.includes('Page'), `${pdfHits} · ${pdfLabel}`);
 
-  // Prebacivanje natrag na kod mora odmah maknuti rezultate iz PDF-a —
-  // `reveal()` na tuđem rezultatu skočio bi u editor koji nije u prvom planu.
+  // Switching back to code has to clear the PDF results at once — a `reveal()` on
+  // somebody else's result would jump into an editor that is not in front.
   await page.locator('.tab').first().click();
   await page.waitForTimeout(120);
   const staleWhere = await page.locator('.findpanel-hit .where').allInnerTexts();
   check(
-    'rezultati iz druge kartice se ne zadržavaju',
+    'results from another tab are not kept',
     !staleWhere.some((t) => t.includes('Page')),
-    staleWhere.slice(0, 2).join(', ') || 'prazno',
+    staleWhere.slice(0, 2).join(', ') || 'empty',
   );
 
   await page.keyboard.press('Escape');
@@ -300,12 +300,12 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForTimeout(250);
   const themeAfter = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system');
-  check('naredba mijenja temu', themeBefore !== themeAfter, `${themeBefore} → ${themeAfter}`);
+  check('the command changes the theme', themeBefore !== themeAfter, `${themeBefore} → ${themeAfter}`);
 
-  /* — uređivanje i oznaka promjene — */
+  /* — editing and the dirty flag — */
   await page.locator('.tab').first().click();
   await page.locator('.cm-content').first().click();
-  await page.keyboard.type('// izmjena\n');
+  await page.keyboard.type('// edit\n');
   await page.waitForTimeout(150);
   // Dvije izmijenjene kartice: kod koji smo upravo tipkali i PDF s anotacijama.
   const dirty = await page.locator('.tab[data-dirty="true"]').count();
@@ -315,8 +315,8 @@ try {
   await dropFile(page, 'visestranicni.pdf', makeMultiPagePdf(3));
   await page.waitForSelector('.tab', { timeout: 10000 });
   await page.locator('.tab').nth(5).click();
-  // Neaktivne kartice ostaju u DOM-u (samo su skrivene), pa se od sada
-  // selektori moraju ograničiti na vidljivu ploču.
+  // Inactive tabs stay in the DOM (they are merely hidden), so from here on the
+  // selectors have to be scoped to the visible pane.
   const pdf = page.locator('.mount:visible');
   await pdf.locator('.ul-pdf-page[data-rendered="true"]').first().waitFor({ timeout: 20000 });
 
@@ -328,16 +328,16 @@ try {
   await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="Rotate right"]').click();
   await page.waitForTimeout(400);
   check(
-    'rotirana stranica je označena kao izmijenjena',
+    'a rotated page is marked as changed',
     (await pdf.locator('.ul-pdf-thumb .num[data-changed="true"]').count()) === 1,
   );
 
   await pdf.locator('.ul-pdf-thumb').nth(1).hover();
   await pdf.locator('.ul-pdf-thumb').nth(1).locator('button[title*="Delete page"]').click();
   await page.waitForTimeout(500);
-  check('brisanje ostavlja dvije stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 2);
+  check('deleting leaves two pages', (await pdf.locator('.ul-pdf-thumb').count()) === 2);
   check(
-    'brojač stranica u traci prati brisanje',
+    'the page counter in the bar follows the deletion',
     (await pdf.locator('.ul-pdf-total').innerText()).includes('2'),
     await pdf.locator('.ul-pdf-total').innerText(),
   );
@@ -349,7 +349,7 @@ try {
 
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(600);
-  check('undo vraća obrisanu stranicu', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+  check('undo brings the deleted page back', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
 
   await page.screenshot({ path: resolve(SHOTS, 'pages.png') });
 
@@ -378,7 +378,7 @@ try {
   await page.keyboard.press('Control+Shift+F');
   await page.locator('.findpanel-bar input').fill('const');
   await page.waitForSelector('.findpanel-hit', { timeout: 10000 });
-  // Animacija ulaska ploče traje 140 ms; snimka prije toga izgleda blijedo.
+  // The panel's entrance animation takes 140 ms; a screenshot before that looks washed out.
   await page.waitForTimeout(400);
   await page.screenshot({ path: resolve(SHOTS, 'find.png') });
   await page.keyboard.press('Escape');
