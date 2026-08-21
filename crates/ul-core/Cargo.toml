@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+# Not published: an application crate whose dependencies are declared by path.
+# cargo-deny only honours `allow-wildcard-paths` for crates that say so.
+publish = false
 
 [dependencies]
 ul-formats = { path = "../ul-formats" }

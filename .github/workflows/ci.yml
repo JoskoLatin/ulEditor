@@ -108,7 +108,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@cargo-deny
+      # Pinned. The unpinned form installs whatever cargo-deny released most
+      # recently, so a change in its config schema turns this job red with no
+      # commit of ours behind it — which is how 0.20 broke it: the meaning of
+      # `allow-wildcard-paths` narrowed to crates marked `publish = false`.
+      # A licence gate that fails for reasons unrelated to licences is a gate
+      # people learn to ignore.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+
       # A copyleft dependency sneaking into the core would change the licence of
       # the whole project. That is why this step blocks rather than warns.
       - run: cargo deny check licenses bans sources
