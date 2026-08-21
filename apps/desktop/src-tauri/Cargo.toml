@@ -1,6 +1,6 @@
 [package]
 name = "uleditor-desktop"
-description = "ulEditor — desktop ljuska"
+description = "ulEditor — desktop shell"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [lib]
 name = "uleditor_lib"
-# staticlib i cdylib su nužni za mobilne targete (faza 4); desktop koristi rlib.
+# staticlib and cdylib are required for mobile targets (phase 4); desktop uses rlib.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

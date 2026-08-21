@@ -3,22 +3,22 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-      Pristup dokumentima na uređaju.
+      Access to documents on the device.
 
-      Bez ovoga editor na Androidu ne vidi ništa: uz scoped storage `readdir`
-      nad dijeljenom pohranom propušta samo direktorije, a sve datoteke filtrira.
-      Izmjereno na uređaju — `adb` je u `Download` vidio 60-ak dokumenata,
-      aplikacija sedam praznih mapa.
+      Without this the editor on Android sees nothing: under scoped storage,
+      `readdir` over shared storage lets only directories through and filters out
+      every file. Measured on a device — `adb` saw around 60 documents in
+      `Download`, the app saw seven empty folders.
 
-      `MANAGE_EXTERNAL_STORAGE` je jedina dozvola koja pokriva i dokumente
-      (PDF, DOCX, EPUB), jer `READ_MEDIA_*` obuhvaća samo slike, zvuk i video.
-      Korisnik je uključuje ručno u postavkama sustava; sustav je ne nudi kroz
-      običan dijalog.
+      `MANAGE_EXTERNAL_STORAGE` is the only permission that also covers documents
+      (PDF, DOCX, EPUB), because `READ_MEDIA_*` spans images, audio and video
+      only. The user turns it on by hand in the system settings; the system does
+      not offer it through an ordinary dialog.
 
-      **Za Google Play ovo nije dovoljno** — ondje se ta dozvola odobrava
-      uglavnom upraviteljima datoteka. Prije objave na Play treba SAF
-      (`ACTION_OPEN_DOCUMENT_TREE`), što traži VFS sloj koji barata `content://`
-      URI-jima. Vidi `docs/adr/0001-runtime.md`.
+      **For Google Play this is not enough** — there the permission is granted
+      mostly to file managers. Publishing on Play requires SAF
+      (`ACTION_OPEN_DOCUMENT_TREE`), which in turn requires a VFS layer that
+      handles `content://` URIs. See `docs/adr/0001-runtime.md`.
     -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission

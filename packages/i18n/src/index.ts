@@ -1,17 +1,17 @@
 /**
- * Prijevodi sučelja.
+ * Interface translations.
  *
- * Ključ je **engleski izvorni tekst**, ne apstraktna oznaka. Razlog je
- * praktičan: engleski je zadani jezik, pa je katalog za njega prazan i ne
- * može se raspasti, a neprevedeni niz pada natrag na čitljiv engleski umjesto
- * na `shell.tab.close.tooltip`. Isti pristup koristi gettext.
+ * The key is **the English source text**, not an abstract identifier. The reason
+ * is practical: English is the default language, so its catalogue is empty and
+ * cannot fall apart, and an untranslated string falls back to readable English
+ * instead of to `shell.tab.close.tooltip`. gettext takes the same approach.
  *
- * Cijena je da promjena engleskog teksta prekida vezu s prijevodom. Zato se
- * engleski niz mijenja samo kad se mijenja značenje — a tada prijevod ionako
- * treba provjeriti.
+ * The cost is that changing the English text severs the link to the translation.
+ * So the English string changes only when the meaning changes — and then the
+ * translation needs checking anyway.
  *
- * Paket namjerno nema ovisnosti: editori su plugini i moraju ga smjeti
- * uvesti bez povlačenja shella za sobom.
+ * The package deliberately has no dependencies: editors are plugins and must be
+ * able to import it without dragging the shell along.
  */
 
 import { hr } from './hr.js';
@@ -20,9 +20,9 @@ export type Locale = 'en' | 'hr';
 
 export interface LocaleDescriptor {
   id: Locale;
-  /** Ime jezika na engleskom — za popis u postavkama. */
+  /** The language name in English — for the list in settings. */
   label: string;
-  /** Ime jezika na tom jeziku. */
+  /** The language name in that language. */
   native: string;
 }
 
@@ -46,21 +46,21 @@ export function isLocale(value: unknown): value is Locale {
 }
 
 /**
- * Postavlja jezik. Zove se **jednom, prije prvog rendera** — promjena jezika
- * u živoj sesiji ide preko ponovnog učitavanja prozora (vidi postavke).
- * Imperativni editori grade DOM izravno, pa bi reaktivna zamjena tražila
- * demontažu svakog otvorenog dokumenta; ponovno učitavanje je pošteniji
- * potez, a sesija se ionako vraća.
+ * Sets the language. Called **once, before the first render** — changing the
+ * language in a live session goes through a window reload (see settings).
+ * Imperative editors build DOM directly, so a reactive swap would require
+ * unmounting every open document; a reload is the more honest move, and the
+ * session is restored anyway.
  */
 export function setLocale(locale: Locale): void {
   current = locale;
 }
 
 /**
- * Prijevod uz umetanje vrijednosti: `t('Page {n} of {total}', { n, total })`.
+ * Translation with value interpolation: `t('Page {n} of {total}', { n, total })`.
  *
- * Ne poziva se u tijelu modula — katalog se bira tek pri pozivu, pa bi niz
- * izračunat pri učitavanju modula zapamtio krivi jezik.
+ * Not to be called in a module body — the catalogue is chosen at call time, so a
+ * string computed while the module loads would remember the wrong language.
  */
 export function t(source: string, params?: Record<string, string | number>): string {
   const translated = CATALOGS[current][source] ?? source;

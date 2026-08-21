@@ -7,15 +7,15 @@ Thumbs.db
 .vite/
 apps/desktop/src-tauri/target/
 
-# Generirani mobilni projekti.
+# Generated mobile projects.
 #
-# Android je iznimka i mora pod verziju: u njegov manifest se upisuju dozvole
-# bez kojih aplikacija na telefonu ne vidi nijednu datoteku. Da je mapa
-# ignorirana, ta bi se izmjena gubila pri svakoj generaciji.
+# Android is the exception and must be versioned: its manifest carries the
+# permissions without which the app on a phone sees no files at all. Were the
+# folder ignored, that edit would be lost on every regeneration.
 #
-# Tauri unutar te mape već ostavlja vlastite `.gitignore` datoteke koje izuzimaju
-# sve build izlaze — prevedeni `.so`, generirani Kotlin i `tauri.conf.json`.
-# Ostaje ~460 KB izvora.
+# Inside that folder Tauri already leaves its own `.gitignore` files excluding
+# every build output — the compiled `.so`, the generated Kotlin and
+# `tauri.conf.json`. About 460 KB of sources remain.
 apps/desktop/src-tauri/gen/*
 !apps/desktop/src-tauri/gen/android
 tools/screenshots/
@@ -24,17 +24,17 @@ tools/screenshots/
 .env.*
 !.env.example
 
-# OCR resursi se kopiraju iz node_modules pri svakom buildu (tools/ocr-assets.mjs).
+# OCR assets are copied out of node_modules on every build (tools/ocr-assets.mjs).
 packages/shell-ui/public/ocr/
 
-# Ispis eleviranog Android builda (tools/android-dev.ps1).
+# Output of the elevated Android build (tools/android-dev.ps1).
 tools/android-dev.log
 
-# Potpisni ključ za Android.
+# The Android signing key.
 #
-# Nikad u repozitorij: tko ga ima, može objaviti aplikaciju pod identitetom
-# `org.uleditor.app`. `keystore.properties` već hvata Tauri-jev vlastiti
-# .gitignore unutar `gen/android`, ovdje je radi sigurnosti još jednom.
+# Never in the repository: whoever holds it can publish an app under the
+# `org.uleditor.app` identity. `keystore.properties` is already caught by Tauri's
+# own .gitignore inside `gen/android`; it is repeated here for safety.
 *.jks
 *.keystore
 keystore.properties

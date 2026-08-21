@@ -1,8 +1,8 @@
-//! Tauri komande — most između shella i `ul-core`.
+//! Tauri commands — the bridge between the shell and `ul-core`.
 //!
-//! Frontend nikad ne dobiva sirov pristup disku. Svaka putanja prolazi kroz
-//! `Workspace::resolve`, koji je odbija ako izlazi izvan mape koju je korisnik
-//! izričito otvorio.
+//! The frontend never gets raw disk access. Every path passes through
+//! `Workspace::resolve`, which refuses it if it leaves the folder the user
+//! explicitly opened.
 
 use std::sync::Mutex;
 
@@ -18,8 +18,8 @@ struct AppState {
     workspace: Mutex<Workspace>,
 }
 
-/// Zaključavanje se nikad ne drži preko `.await` — dijalozi su asinkroni,
-/// pa bi inače prvi otvoreni dijalog zablokirao sve ostale komande.
+/// The lock is never held across an `.await` — dialogs are asynchronous, so the
+/// first open dialog would otherwise block every other command.
 fn with_workspace<T>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&mut Workspace) -> Result<T, VfsError>,
@@ -28,15 +28,15 @@ fn with_workspace<T>(
     f(&mut guard)
 }
 
-/* ── dijalozi ────────────────────────────────────────────────────────── */
+/* ── dialogs ─────────────────────────────────────────────────────────── */
 
-/// Odabir mape.
+/// Folder picker.
 ///
-/// **Samo desktop.** Android nema izbornik direktorija koji bi vratio putanju
-/// — Storage Access Framework daje `content://` URI nad kojim datotečni
-/// sandbox `ul-core`-a nema smisla. Mobilna verzija zato radi s pojedinačnim
-/// dokumentima, a ne s radnim prostorom; ograda je `cfg`, ne runtime greška,
-/// da se nemoguć poziv vidi pri kompajliranju.
+/// **Desktop only.** Android has no directory picker that returns a path — the
+/// Storage Access Framework hands back a `content://` URI, over which
+/// `ul-core`'s file sandbox makes no sense. The mobile build therefore works
+/// with individual documents rather than a workspace; the guard is a `cfg`, not
+/// a runtime error, so an impossible call shows up at compile time.
 #[cfg(desktop)]
 #[tauri::command]
 async fn pick_directory(
@@ -61,7 +61,7 @@ async fn pick_directory(
     })
 }
 
-/// Mobilni parnjak: javlja se pošteno umjesto da šuti.
+/// The mobile counterpart: it speaks up honestly instead of staying silent.
 #[cfg(mobile)]
 #[tauri::command]
 async fn pick_directory(
@@ -69,7 +69,7 @@ async fn pick_directory(
     _state: State<'_, AppState>,
 ) -> Result<Option<Stat>, VfsError> {
     Err(VfsError::Unsupported(
-        "Odabir mape nije dostupan na mobilnim uređajima.".into(),
+        "Choosing a folder is not available on mobile devices.".into(),
     ))
 }
 
@@ -90,8 +90,8 @@ async fn pick_files(
     let mut out = Vec::new();
     for path in paths {
         let Ok(path) = path.into_path() else { continue };
-        // Pojedinačno odabrana datoteka postaje vlastiti korijen — korisnik ju
-        // je izričito pokazao, ali to ne otvara i cijelu mapu oko nje.
+        // A individually chosen file becomes its own root — the user pointed at
+        // it explicitly, but that does not open the whole folder around it.
         let stat = with_workspace(&state, |workspace| {
             if let Some(parent) = path.parent() {
                 workspace.add_root(parent)?;
@@ -124,13 +124,13 @@ async fn pick_save_target(
         .map(|p| p.to_string_lossy().into_owned()))
 }
 
-/* ── datotečni sustav ────────────────────────────────────────────────── */
+/* ── file system ─────────────────────────────────────────────────────── */
 
-/// Preuzima putanje ispuštene u prozor.
+/// Takes in paths dropped onto the window.
 ///
-/// Ispuštanje je izričita korisnikova gesta, pa se roditeljska mapa svake
-/// datoteke dodaje kao korijen — inače bi je sandbox odmah odbio. Mapa
-/// ispuštena izravno postaje korijen sama za sebe.
+/// A drop is an explicit user gesture, so the parent folder of each file is
+/// added as a root — otherwise the sandbox would refuse it immediately. A folder
+/// dropped directly becomes a root in its own right.
 #[tauri::command]
 fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Stat>, VfsError> {
     let mut out = Vec::new();
@@ -144,10 +144,10 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
             }
             workspace.stat(&path)
         });
-        // Jedna neuspjela putanja ne smije srušiti cijelo ispuštanje.
+        // One failed path must not bring down the whole drop.
         match stat {
             Ok(stat) => out.push(stat),
-            Err(err) => eprintln!("[uleditor] ispuštena putanja odbijena: {raw} — {err}"),
+            Err(err) => eprintln!("[uleditor] dropped path refused: {raw} — {err}"),
         }
     }
     Ok(out)
@@ -180,13 +180,13 @@ fn detect_format(state: State<'_, AppState>, path: String) -> Result<Detection, 
     with_workspace(&state, |workspace| workspace.detect_at(&path))
 }
 
-/// Vraća sirove bajtove kroz `Response` umjesto kao `Vec<u8>`. JSON
-/// serijalizacija polja brojeva na desetmegabajtnom PDF-u traje sekundama.
-/// Pretraga po cijelom radnom prostoru.
+/// Returns raw bytes through `Response` rather than as a `Vec<u8>`. JSON
+/// serialisation of a number array takes seconds on a ten-megabyte PDF.
+/// Search across the whole workspace.
 ///
-/// Ide u Rust, ne u JS: skeniranje tisuća datoteka preko IPC-a značilo bi
-/// prenošenje njihovog sadržaja u preglednik. Ovamo ide upit, natrag samo
-/// pogoci.
+/// It lives in Rust, not JS: scanning thousands of files over IPC would mean
+/// shipping their contents into the browser. The query goes in, only the hits
+/// come back.
 #[tauri::command]
 async fn search_workspace(
     state: State<'_, AppState>,
@@ -195,19 +195,20 @@ async fn search_workspace(
     with_workspace(&state, |workspace| workspace.search(&query))
 }
 
-/// Popis datoteka za brzo otvaranje po imenu (`Ctrl+P`).
+/// The file list for quick open by name (`Ctrl+P`).
 #[tauri::command]
 async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat>, VfsError> {
     with_workspace(&state, |workspace| workspace.list_files(limit))
 }
 
-/// Pregled uređaja u potrazi za dokumentima.
+/// A survey of the device in search of documents.
 ///
-/// Mjesta koja se gledaju dolaze iz `ul_core::default_roots()` i ovise o
-/// platformi. Pregledana mapa postaje **korijen knjižnice**, ne obični korijen:
-/// dokument iz popisa se mora dati otvoriti, ali te mape nemaju što raditi u
-/// explorer stablu — inače bi jedan pogled u knjižnicu na desktopu ubacio
-/// Documents, Downloads i Desktop među korisnikove otvorene mape.
+/// The locations looked at come from `ul_core::default_roots()` and depend on
+/// the platform. A scanned folder becomes a **library root**, not an ordinary
+/// root: a document from the list must be openable, but those folders have no
+/// business in the explorer tree — otherwise a single glance at the library on
+/// desktop would drop Documents, Downloads and Desktop among the user's opened
+/// folders.
 #[tauri::command]
 async fn scan_library(
     state: State<'_, AppState>,
@@ -218,7 +219,7 @@ async fn scan_library(
     with_workspace(&state, |workspace| {
         let mut usable = Vec::new();
         for root in &roots {
-            // Nepostojeće mape su očekivane — popis je isti za sve uređaje.
+            // Missing folders are expected — the list is the same for every device.
             if workspace.add_library_root(root).is_ok() {
                 usable.push(root.clone());
             }
@@ -238,7 +239,7 @@ fn write_file(state: State<'_, AppState>, path: String, contents: Vec<u8>) -> Re
     with_workspace(&state, |workspace| workspace.write(&path, &contents))
 }
 
-/* ── pokretanje ──────────────────────────────────────────────────────── */
+/* ── startup ─────────────────────────────────────────────────────────── */
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

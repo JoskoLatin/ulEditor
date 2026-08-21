@@ -1,81 +1,86 @@
-# Izdanja
+# Releases
 
-Jedan tag daje jedno izdanje, a u njemu su i instaleri za računalo i APK za
-telefon. PC i Android nisu odvojene verzije projekta — isti Rust
-([crates/ul-core/](../crates/ul-core/), [crates/ul-formats/](../crates/ul-formats/))
-i isti frontend ([packages/shell-ui/](../packages/shell-ui/)) idu na oba, a
-[gen/android/](../apps/desktop/src-tauri/gen/android/) je samo omotač koji Tauri
-generira iz iste konfiguracije. Razdvajaju se tek na kraju, kao datoteke koje
-korisnik skida.
+One tag produces one release, and it holds both the desktop installers and the
+phone APK. Desktop and Android are not separate versions of the project — the
+same Rust ([crates/ul-core/](../crates/ul-core/),
+[crates/ul-formats/](../crates/ul-formats/)) and the same frontend
+([packages/shell-ui/](../packages/shell-ui/)) go to both, and
+[gen/android/](../apps/desktop/src-tauri/gen/android/) is only a wrapper Tauri
+generates from the same configuration. They part ways at the very end, as files
+the user downloads.
 
-Sve gradi [.github/workflows/release.yml](../.github/workflows/release.yml).
+All of it is built by [.github/workflows/release.yml](../.github/workflows/release.yml).
 
-## Što izlazi iz jednog taga
+## What one tag produces
 
-| Datoteka | Za koga |
+| File | For whom |
 | --- | --- |
 | `ulEditor_0.1.0_x64_en-US.msi`, `ulEditor_0.1.0_x64-setup.exe` | Windows |
 | `ulEditor_0.1.0_aarch64.dmg`, `ulEditor_0.1.0_x64.dmg` | macOS |
 | `ulEditor_0.1.0_amd64.deb`, `ulEditor_0.1.0_amd64.AppImage` | Linux |
-| `ulEditor_0.1.0_android.apk` | Telefon, izravna instalacija |
-| `ulEditor_0.1.0_android.aab` | Google Play, ako ikad zatreba |
+| `ulEditor_0.1.0_android.apk` | A phone, installed directly |
+| `ulEditor_0.1.0_android.aab` | Google Play, should it ever be needed |
 
-## Priprema koja se radi jednom: potpisni ključ
+## One-time preparation: the signing key
 
-Nepotpisan release APK Android odbija instalirati. Ključ se izrađuje jednom i
-vrijedi za sva buduća izdanja.
+Android refuses to install an unsigned release APK. The key is created once and
+serves every future release.
 
 ```powershell
 keytool -genkey -v -keystore uleditor-release.jks -keyalg RSA -keysize 4096 -validity 10000 -alias uleditor
 ```
 
-Datoteku spremi **izvan repozitorija** i napravi joj sigurnosnu kopiju. Ovo nije
-formalnost: izgubiš li ključ, više ne možeš objaviti nadogradnju aplikacije koja
-je već na tuđim telefonima — Android nadogradnju potpisanu drugim ključem
-odbija. Jedini izlaz je nova aplikacija s novim imenom paketa.
+Keep the file **outside the repository** and make a backup of it. This is not a
+formality: lose the key and you can no longer publish an update to an app that is
+already on someone else's phone — Android refuses an update signed with a
+different key. The only way out is a new app under a new package name.
 
-Zatim ključ pretvori u tekst koji GitHub može čuvati:
+Then turn the key into text GitHub can store:
 
 ```powershell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("uleditor-release.jks")) | Set-Clipboard
 ```
 
-I upiši četiri vrijednosti u **Settings → Secrets and variables → Actions**:
+And enter four values under **Settings → Secrets and variables → Actions**:
 
-| Secret | Sadržaj |
+| Secret | Contents |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | ono što je upravo završilo u međuspremniku |
-| `ANDROID_KEYSTORE_PASSWORD` | lozinka keystorea |
+| `ANDROID_KEYSTORE_BASE64` | whatever just landed in the clipboard |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
 | `ANDROID_KEY_ALIAS` | `uleditor` |
-| `ANDROID_KEY_PASSWORD` | lozinka ključa (kod `keytool` postupka gore obično ista) |
+| `ANDROID_KEY_PASSWORD` | the key password (usually the same one, with the `keytool` invocation above) |
 
-Bez `ANDROID_KEYSTORE_BASE64` Android posao staje odmah i kaže zašto. Instaleri
-za računalo se svejedno izgrade — izdanje ne pada zbog telefona.
+Without `ANDROID_KEYSTORE_BASE64` the Android job stops immediately and says why.
+The desktop installers are still built — a release does not fail because of the
+phone.
 
-## Objava
+## Publishing
 
-Verzija se drži na jednom mjestu,
-[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json). Odatle je čitaju i
-instaleri i `versionCode` APK-a, pa se PC i Android ne mogu razići.
+The version lives in one place,
+[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json). Both the installers
+and the APK `versionCode` read it from there, so desktop and Android cannot drift
+apart.
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Izdanje nastaje kao **draft** — artefakti se skupljaju u njega dok se četiri
-buildera vrte, a ti ga objaviš tek kad si ih preuzeo i isprobao. Padne li jedan
-builder, ponovno pokretanje se nadovezuje na isti draft umjesto da otvara novi.
+The release is created as a **draft** — artefacts collect into it while the four
+builders run, and you publish it once you have downloaded and tried them. If one
+builder fails, re-running attaches to the same draft instead of opening a new
+one.
 
-## Lokalni Android build
+## Building for Android locally
 
-Za razvoj se ništa nije promijenilo — [tools/android-dev.ps1](../tools/android-dev.ps1)
-i dalje gradi *debug* APK i ne traži nikakav ključ:
+Nothing has changed for development —
+[tools/android-dev.ps1](../tools/android-dev.ps1) still builds a *debug* APK and
+needs no key at all:
 
 ```powershell
 pnpm android:build
 ```
 
-Potpisani *release* APK lokalno nastaje tek ako uz njega postoje
-`apps/desktop/src-tauri/gen/android/keystore.properties` i `.jks` na koji
-pokazuje. Dok ih nema, gradle taj dio tiho preskače.
+A signed *release* APK is produced locally only if
+`apps/desktop/src-tauri/gen/android/keystore.properties` and the `.jks` it points
+at both exist. While they do not, gradle quietly skips that part.

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Zadane dozvole glavnog prozora. Pristup datotečnom sustavu NE ide kroz fs plugin nego kroz vlastite komande u ul-core, koje provode sandbox po korijenu radnog prostora.",
+  "description": "Default permissions for the main window. File system access does NOT go through the fs plugin but through our own commands in ul-core, which enforce a sandbox rooted at the workspace.",
   "windows": ["main"],
   "permissions": ["core:default", "dialog:default"]
 }

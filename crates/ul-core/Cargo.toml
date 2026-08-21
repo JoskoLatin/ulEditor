@@ -1,6 +1,6 @@
 [package]
 name = "ul-core"
-description = "Jezgra ulEditora: virtualni datotečni sustav i model dokumenta."
+description = "ulEditor core: virtual file system and document model."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

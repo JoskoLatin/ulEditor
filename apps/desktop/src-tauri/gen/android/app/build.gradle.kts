@@ -13,15 +13,15 @@ val tauriProperties = Properties().apply {
     }
 }
 
-// Potpisni ključ za release APK/AAB.
+// The signing key for the release APK/AAB.
 //
-// Nepotpisan release APK Android odbija instalirati, pa bez ovoga izdanje za
-// telefon ne postoji. Ključ se NE drži u repozitoriju: `keystore.properties` i
-// sam `.jks` su ignorirani, a CI ih ispiše iz GitHub Secrets prije builda
-// (vidi .github/workflows/release.yml).
+// Android refuses to install an unsigned release APK, so without this there is
+// no release for the phone. The key is NOT kept in the repository:
+// `keystore.properties` and the `.jks` itself are ignored, and CI writes them
+// out of GitHub Secrets before the build (see .github/workflows/release.yml).
 //
-// Lokalno se release APK gradi tek kad te dvije datoteke postoje. Dok ih nema,
-// blok se preskače i `tauri android build --debug` radi kao i dosad.
+// Locally, a release APK is built only once those two files exist. While they do
+// not, the block is skipped and `tauri android build --debug` works as before.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {

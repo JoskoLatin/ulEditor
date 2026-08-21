@@ -1,6 +1,6 @@
 [package]
 name = "ul-formats"
-description = "Prepoznavanje formata dokumenata po sadržaju."
+description = "Document format detection by content."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

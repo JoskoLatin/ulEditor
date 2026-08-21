@@ -1,17 +1,18 @@
-//! Prepoznavanje formata dokumenata.
+//! Document format detection.
 //!
-//! Mjerodavan je sadržaj, ne ime datoteke — preimenovani `.txt` koji je
-//! zapravo PDF mora otvoriti PDF preglednik, ne tekstualni editor.
+//! Content decides, not the file name — a renamed `.txt` that is really a PDF
+//! must open the PDF viewer, not the text editor.
 //!
-//! Ista logika postoji privremeno i u TypeScriptu (`shell-ui/src/host/detect.ts`);
-//! ovo je verzija koja je preuzima na sva tri targeta. `FormatId` vrijednosti
-//! moraju ostati identične onima u `@uleditor/plugin-sdk`.
+//! The same logic temporarily also exists in TypeScript
+//! (`shell-ui/src/host/detect.ts`); this is the version that takes over on all
+//! three targets. `FormatId` values must stay identical to those in
+//! `@uleditor/plugin-sdk`.
 
 #![deny(clippy::all)]
 
 use serde::{Deserialize, Serialize};
 
-/// Koliko bajtova s početka datoteke je dovoljno za sve potpise koje provjeravamo.
+/// How many bytes from the start of a file suffice for every signature we check.
 pub const PROBE_LEN: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ impl FormatId {
     }
 }
 
-/// Kako je odluka donesena. `Magic` je pouzdan, `Extension` je nagovještaj.
+/// How the decision was reached. `Magic` is reliable, `Extension` is a hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectedVia {
@@ -65,7 +66,7 @@ pub enum DetectedVia {
 pub struct Detection {
     pub format: FormatId,
     pub via: DetectedVia,
-    /// Jezik za bojanje sintakse, kad je primjenjiv.
+    /// Language for syntax highlighting, where applicable.
     pub language: Option<String>,
 }
 
@@ -87,7 +88,7 @@ impl Detection {
     }
 }
 
-/* ── tablice ─────────────────────────────────────────────────────────── */
+/* ── tables ──────────────────────────────────────────────────────────── */
 
 const CODE_LANGUAGES: &[(&str, &str)] = &[
     ("ts", "typescript"),
@@ -147,9 +148,9 @@ pub fn extension_of(name: &str) -> Option<&str> {
     Some(&name[dot + 1..])
 }
 
-/* ── detekcija po imenu ──────────────────────────────────────────────── */
+/* ── detection by name ───────────────────────────────────────────────── */
 
-/// Brza detekcija za popis datoteka, gdje sadržaj još nije pročitan.
+/// Fast detection for file listings, where the content has not been read yet.
 pub fn detect_by_name(name: &str) -> Detection {
     let lower = name.to_ascii_lowercase();
 
@@ -197,7 +198,7 @@ pub fn detect_by_name(name: &str) -> Detection {
     Detection::new(format, DetectedVia::Extension)
 }
 
-/* ── detekcija po sadržaju ───────────────────────────────────────────── */
+/* ── detection by content ────────────────────────────────────────────── */
 
 fn find_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
@@ -206,9 +207,9 @@ fn find_ascii(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// DOCX, XLSX, PPTX, EPUB i ODF su sve ZIP arhive. Razlikuju se po unutarnjim
-/// putanjama, koje se u ZIP zaglavljima pojavljuju kao čist ASCII — dovoljno
-/// za razlikovanje bez raspakiravanja.
+/// DOCX, XLSX, PPTX, EPUB and ODF are all ZIP archives. They differ by their
+/// internal paths, which appear in ZIP headers as plain ASCII — enough to tell
+/// them apart without unpacking.
 fn classify_zip(bytes: &[u8]) -> FormatId {
     let head = &bytes[..bytes.len().min(128)];
     if find_ascii(head, b"mimetypeapplication/epub+zip") {
@@ -228,16 +229,16 @@ fn classify_zip(bytes: &[u8]) -> FormatId {
     if find_ascii(window, b"ppt/presentation.xml") || find_ascii(window, b"ppt/") {
         return FormatId::Pptx;
     }
-    // EPUB bez nekomprimiranog `mimetype` unosa — kontejner je obavezan pa
-    // služi kao rezervni potpis.
+    // EPUB without the uncompressed `mimetype` entry — the container is
+    // mandatory, so it serves as a fallback signature.
     if find_ascii(window, b"META-INF/container.xml") {
         return FormatId::Epub;
     }
     FormatId::Archive
 }
 
-/// NUL bajt gotovo uvijek znači binarni sadržaj; iznad 5 % kontrolnih znakova
-/// tekst više nije čitljiv ni u kojem kodiranju koje podržavamo.
+/// A NUL byte almost always means binary content; above 5 % control characters
+/// the text is no longer readable in any encoding we support.
 fn looks_textual(bytes: &[u8]) -> bool {
     let window = &bytes[..bytes.len().min(2048)];
     if window.is_empty() {
@@ -255,7 +256,7 @@ fn looks_textual(bytes: &[u8]) -> bool {
     (suspicious as f32) / (window.len() as f32) < 0.05
 }
 
-/// Puna detekcija. `bytes` je početak datoteke — vidi [`PROBE_LEN`].
+/// Full detection. `bytes` is the start of the file — see [`PROBE_LEN`].
 pub fn detect(name: &str, bytes: &[u8]) -> Detection {
     if bytes.starts_with(b"%PDF") {
         return Detection::new(FormatId::Pdf, DetectedVia::Magic);
@@ -274,7 +275,7 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
         return Detection::new(FormatId::Image, DetectedVia::Magic);
     }
 
-    // Stari binarni Office (OLE2 compound file) — tip odlučuje ekstenzija.
+    // Legacy binary Office (OLE2 compound file) — the extension decides the type.
     if bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) {
         let by_name = detect_by_name(name);
         return if by_name.format == FormatId::Unknown {
@@ -304,14 +305,14 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
     by_name
 }
 
-/* ── WASM most (spike faze 0) ────────────────────────────────────────── */
+/* ── WASM bridge (phase 0 spike) ─────────────────────────────────────── */
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use wasm_bindgen::prelude::*;
 
-    /// Ista funkcija koju zove i desktop — dokaz da jedna jezgra pokriva
-    /// oba targeta bez grananja u pozivatelju.
+    /// The same function the desktop calls — proof that one core covers both
+    /// targets without branching in the caller.
     #[wasm_bindgen(js_name = detectFormat)]
     pub fn detect_format(name: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&super::detect(name, bytes))
@@ -319,7 +320,7 @@ mod wasm {
     }
 }
 
-/* ── testovi ─────────────────────────────────────────────────────────── */
+/* ── tests ───────────────────────────────────────────────────────────── */
 
 #[cfg(test)]
 mod tests {
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn pdf_wins_over_extension() {
-        // Ovo je cijela poanta detekcije po sadržaju.
+        // This is the whole point of content-based detection.
         let d = detect("biljeske.txt", b"%PDF-1.7\n1 0 obj");
         assert_eq!(d.format, FormatId::Pdf);
         assert_eq!(d.via, DetectedVia::Magic);
@@ -346,12 +347,12 @@ mod tests {
 
     #[test]
     fn epub_is_not_just_another_zip() {
-        // Bez ovoga bi e-knjiga završila kao "arhiva" i ne bi je nitko otvorio.
+        // Without this an e-book would end up as "archive" and nobody would open it.
         let mut epub = b"PK\x03\x04".to_vec();
         epub.extend_from_slice(b"mimetypeapplication/epub+zip");
         assert_eq!(detect("knjiga.bin", &epub).format, FormatId::Epub);
 
-        // Varijanta bez nekomprimiranog `mimetype` unosa.
+        // The variant without the uncompressed `mimetype` entry.
         let mut loose = b"PK\x03\x04".to_vec();
         loose.extend_from_slice(b"........META-INF/container.xml");
         assert_eq!(detect("knjiga.bin", &loose).format, FormatId::Epub);

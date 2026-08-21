@@ -1,18 +1,19 @@
-//! Pretraga po cijelom radnom prostoru.
+//! Search across the whole workspace.
 //!
-//! **Zašto skeniranje, a ne indeks.** Plan je predviđao `tantivy`. Indeks se
-//! isplati kad je korpus velik i upiti česti, ali donosi problem koji nema
-//! rješenje na pola puta: invalidaciju. Datoteka izmijenjena izvan programa,
-//! `git checkout` koji promijeni tisuću datoteka, mapa dodana pa maknuta —
-//! svaki od tih slučajeva mora dogovorno ažurirati indeks, inače pretraga tiho
-//! laže. Skeniranje ne može zastarjeti jer stanja ni nema.
+//! **Why scanning, not an index.** The plan called for `tantivy`. An index pays
+//! off when the corpus is large and queries frequent, but it brings a problem
+//! with no halfway solution: invalidation. A file edited outside the program, a
+//! `git checkout` that touches a thousand files, a folder added and then
+//! removed — every one of those has to update the index by agreement, or search
+//! quietly lies. Scanning cannot go stale because it holds no state at all.
 //!
-//! Za radni prostor od nekoliko tisuća datoteka odgovor stiže u desetinkama
-//! sekunde. Indeks postaje opravdan tek kad to prestane vrijediti, i tada će
-//! imati jasno definiran posao umjesto da bude prva pretpostavka.
+//! For a workspace of a few thousand files the answer arrives in tenths of a
+//! second. An index becomes justified only once that stops being true, and by
+//! then it will have a clearly defined job instead of being the first
+//! assumption.
 //!
-//! Sve prolazi kroz `Workspace::resolve`, pa pretraga ne može izaći iz
-//! sandboxa ni preko simboličkog linka.
+//! Everything goes through `Workspace::resolve`, so search cannot leave the
+//! sandbox, not even via a symlink.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,14 +24,14 @@ use ul_formats::{detect_by_name, FormatId};
 
 use crate::vfs::{display, VfsError, Workspace};
 
-/// Datoteke veće od ovoga gotovo sigurno nisu izvorni kod; skeniranje bi
-/// stajalo više nego što rezultat vrijedi.
+/// Files larger than this are almost certainly not source code; scanning would
+/// cost more than the result is worth.
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Koliko bajtova s početka gledamo da odlučimo je li sadržaj binaran.
+/// How many bytes from the start we look at to decide whether content is binary.
 const PROBE: usize = 8 * 1024;
 
-/// Duljina isječka oko pogotka u prikazu rezultata.
+/// Length of the excerpt around a hit in the results view.
 const PREVIEW_BEFORE: usize = 40;
 const PREVIEW_AFTER: usize = 90;
 
@@ -42,11 +43,11 @@ pub struct SearchQuery {
     pub case_sensitive: bool,
     #[serde(default)]
     pub whole_word: bool,
-    /// Najviše pogodaka koje vraćamo ukupno.
+    /// The most hits we return in total.
     #[serde(default = "default_limit")]
     pub limit: usize,
-    /// Najviše pogodaka po datoteci — bez toga jedna generirana datoteka
-    /// pojede cijelu kvotu.
+    /// The most hits per file — without this one generated file eats the
+    /// entire quota.
     #[serde(default = "default_per_file")]
     pub per_file: usize,
 }
@@ -64,11 +65,11 @@ fn default_per_file() -> usize {
 pub struct SearchHit {
     pub uri: String,
     pub name: String,
-    /// 1-baziran broj retka.
+    /// 1-based line number.
     pub line: u32,
-    /// 1-baziran stupac u znakovima, ne bajtovima.
+    /// 1-based column in characters, not bytes.
     pub column: u32,
-    /// Isječak retka oko pogotka.
+    /// Excerpt of the line around the hit.
     pub preview: String,
 }
 
@@ -76,13 +77,13 @@ pub struct SearchHit {
 #[serde(rename_all = "camelCase")]
 pub struct SearchOutcome {
     pub hits: Vec<SearchHit>,
-    /// Koliko je datoteka uopće pročitano — za poruku "pretraženo N datoteka".
+    /// How many files were read at all — for the "searched N files" message.
     pub scanned: usize,
-    /// Je li pretraga stala zbog ograničenja, a ne zato što je gotova.
+    /// Whether search stopped because of a limit rather than because it finished.
     pub truncated: bool,
-    /// Datoteke koje pretraga nije mogla pročitati kao tekst, ali ih zna
-    /// otvoriti drugi editor (PDF, Word, Excel, e-knjiga). Shell nudi da ih
-    /// pretraži svojim parserima — to je razlika prema običnom grepu.
+    /// Files search could not read as text, but which another editor knows how
+    /// to open (PDF, Word, Excel, e-book). The shell offers to search them with
+    /// its own parsers — that is the difference from a plain grep.
     pub documents: Vec<DocumentCandidate>,
 }
 
@@ -95,7 +96,7 @@ pub struct DocumentCandidate {
     pub format: String,
 }
 
-/// Formati koje sam ne umijem pročitati, ali ih shell umije.
+/// Formats this module cannot read itself, but the shell can.
 fn is_document(format: FormatId) -> bool {
     matches!(
         format,
@@ -103,13 +104,13 @@ fn is_document(format: FormatId) -> bool {
     )
 }
 
-/// NUL bajt gotovo uvijek znači binarni sadržaj; ista heuristika kao u detekciji.
+/// A NUL byte almost always means binary content; the same heuristic as in detection.
 fn looks_textual(bytes: &[u8]) -> bool {
     let window = &bytes[..bytes.len().min(PROBE)];
     !window.contains(&0)
 }
 
-/// Je li pogodak na granici riječi s obje strane.
+/// Whether the hit sits on a word boundary on both sides.
 fn word_bounded(haystack: &str, start: usize, end: usize) -> bool {
     let before = haystack[..start].chars().next_back();
     let after = haystack[end..].chars().next();
@@ -117,7 +118,7 @@ fn word_bounded(haystack: &str, start: usize, end: usize) -> bool {
     !before.is_some_and(is_word) && !after.is_some_and(is_word)
 }
 
-/// Isječak oko pogotka, rezan po granicama znakova.
+/// Excerpt around the hit, cut on character boundaries.
 fn preview_of(line: &str, start: usize, end: usize) -> String {
     let from = line[..start]
         .char_indices()
@@ -151,7 +152,7 @@ struct Needle {
 }
 
 impl Needle {
-    /// Pozicije pogodaka u retku, kao (byte start, byte end).
+    /// Hit positions within the line, as (byte start, byte end).
     fn find_in(&self, line: &str, out: &mut Vec<(usize, usize)>, limit: usize) {
         let haystack = if self.case_sensitive {
             line.to_owned()
@@ -159,9 +160,9 @@ impl Needle {
             line.to_lowercase()
         };
 
-        // Snižavanje slova može promijeniti duljinu (npr. "İ"), pa se traži u
-        // sniženoj kopiji samo kad su duljine iste; inače se pada na točnu
-        // usporedbu, jer bi pomaknuti indeksi dali krivi isječak.
+        // Lowercasing can change the length (e.g. "İ"), so we search the
+        // lowered copy only when the lengths match; otherwise we fall back to an
+        // exact comparison, because shifted indices would give a wrong excerpt.
         if haystack.len() != line.len() && !self.case_sensitive {
             return self.find_exact(line, out, limit);
         }
@@ -197,7 +198,7 @@ impl Needle {
 }
 
 impl Workspace {
-    /// Pretražuje sve korijene radnog prostora.
+    /// Searches every workspace root.
     pub fn search(&self, query: &SearchQuery) -> Result<SearchOutcome, VfsError> {
         let mut outcome = SearchOutcome {
             hits: Vec::new(),
@@ -224,8 +225,8 @@ impl Workspace {
         };
 
         for root in self.roots() {
-            // Korijen je već provjeren pri dodavanju, ali `resolve` je jedino
-            // mjesto koje smije potvrditi da je putanja unutar sandboxa.
+            // The root was already checked when added, but `resolve` is the only
+            // place allowed to confirm a path is inside the sandbox.
             let start = self.resolve(root)?;
             self.walk(&start, &needle, query, &mut outcome);
             if outcome.truncated {
@@ -241,7 +242,7 @@ impl Workspace {
             return;
         };
 
-        // Sortiranje da rezultati budu isti između pokretanja; `read_dir` ne jamči redoslijed.
+        // Sorted so results are stable between runs; `read_dir` guarantees no order.
         let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
         paths.sort();
 
@@ -334,7 +335,7 @@ impl Workspace {
         }
     }
 
-    /// Popis svih datoteka u radnom prostoru — za brzo otvaranje po imenu.
+    /// A list of every file in the workspace — for quick open by name.
     pub fn list_files(&self, limit: usize) -> Result<Vec<Stat>, VfsError> {
         let mut out = Vec::new();
         for root in self.roots() {
@@ -375,7 +376,7 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
     }
 }
 
-/* ── testovi ─────────────────────────────────────────────────────────── */
+/* ── tests ───────────────────────────────────────────────────────────── */
 
 #[cfg(test)]
 mod tests {
@@ -450,8 +451,8 @@ mod tests {
 
     #[test]
     fn documents_are_reported_not_scanned() {
-        // Ovo je razlika prema grepu: PDF se ne preskače nego prijavljuje,
-        // pa ga shell može pretražiti vlastitim parserom.
+        // This is the difference from grep: a PDF is not skipped but reported,
+        // so the shell can search it with its own parser.
         let root = temp_root("docs");
         write(&root, "ugovor.pdf", "%PDF-1.4 needle");
         write(&root, "biljeske.md", "needle\n");
@@ -526,6 +527,6 @@ mod tests {
         let files = ws.list_files(1000).unwrap();
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"a.ts") && names.contains(&"b.ts"));
-        assert!(!names.contains(&"c.ts"), "buka se preskače i ovdje");
+        assert!(!names.contains(&"c.ts"), "noise is skipped here too");
     }
 }

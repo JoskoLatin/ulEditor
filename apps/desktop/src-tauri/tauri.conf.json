@@ -31,7 +31,7 @@
     "targets": "all",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "copyright": "Apache-2.0",
-    "shortDescription": "Editor za kod, Markdown, PDF i Office dokumente",
-    "longDescription": "Jedan open-source editor za kod, Markdown, PDF, Word i Excel — bez prebacivanja između pet aplikacija."
+    "shortDescription": "An editor for code, Markdown, PDF and Office documents",
+    "longDescription": "One open-source editor for code, Markdown, PDF, Word and Excel — without switching between five applications."
   }
 }

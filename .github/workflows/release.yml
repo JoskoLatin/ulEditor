@@ -1,17 +1,17 @@
 name: Release
 
-# Instaleri se grade u CI-u, ne na razvojnom stroju.
+# Installers are built in CI, not on a development machine.
 #
-# Razlog je konkretan: Windows Smart App Control blokira nepotpisane
-# build-script binarije koje cargo generira u release profilu, pa
-# `tauri build` na stroju sa SAC-om u enforcement načinu pada s
-# „An Application Control policy has blocked this file (os error 4551)".
-# GitHub runneri nemaju SAC, a usput dobivamo i sve tri platforme odjednom.
+# The reason is concrete: Windows Smart App Control blocks the unsigned
+# build-script binaries cargo generates in the release profile, so `tauri build`
+# on a machine with SAC in enforcement mode fails with "An Application Control
+# policy has blocked this file (os error 4551)". GitHub runners have no SAC, and
+# we get all three platforms at once as a bonus.
 #
-# Jedan tag daje jedno izdanje sa svime unutra — instaleri za računalo i APK
-# za telefon. Zato `create-release` ide prvi i sam otvara draft: kad bi ga
-# otvarao build, četiri paralelna posla bi se utrkivala tko će ga stvoriti i
-# dobili bismo četiri polovična izdanja.
+# One tag gives one release with everything inside — desktop installers and the
+# phone APK. That is why `create-release` goes first and opens the draft itself:
+# were a build to open it, five parallel jobs would race to create it and we
+# would end up with five half-filled releases.
 
 on:
   push:
@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   create-release:
-    name: Otvori draft izdanja
+    name: Open the release draft
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.draft.outputs.result }}
@@ -31,12 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Izdanje bez taga nema smisla: ime, verzija i poveznice — sve ovisi o njemu.
-      - name: Odredi tag
+      # A release without a tag makes no sense: name, version and links all hang off it.
+      - name: Determine the tag
         id: tag
         run: |
           if [[ "$GITHUB_REF" != refs/tags/* ]]; then
-            echo "::error::Release se gradi samo iz taga. Pokreni: git tag v0.1.0 && git push origin v0.1.0"
+            echo "::error::Releases are built from a tag only. Run: git tag v0.1.0 && git push origin v0.1.0"
             exit 1
           fi
           echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
@@ -61,12 +61,12 @@ jobs:
               });
               return String(data.id);
             } catch (err) {
-              // 422 znači da izdanje za ovaj tag već postoji — tipično kod
-              // ponovnog pokretanja nakon pada jednog buildera. Tada se
-              // nadovezujemo na postojeći draft umjesto da rušimo posao.
+              // A 422 means a release for this tag already exists — typically on
+              // a re-run after one builder failed. In that case we attach to the
+              // existing draft instead of tearing the job down.
               if (err.status !== 422) throw err;
               const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              core.info(`Nadovezujem se na postojeće izdanje ${data.id}`);
+              core.info(`Attaching to existing release ${data.id}`);
               return String(data.id);
             }
 
@@ -94,11 +94,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sistemske ovisnosti (Linux)
+      - name: System dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
             librsvg2-dev patchelf libxdo-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev
 
@@ -145,9 +145,9 @@ jobs:
           ndk-version: r27c
           local-cache: true
 
-      # Dvije arhitekture pokrivaju praktički sve žive Android uređaje. i686 i
-      # x86_64 postoje samo na emulatorima, a svaka dodatna udvostručuje
-      # trajanje Rust builda.
+      # Two architectures cover practically every Android device in the wild.
+      # i686 and x86_64 exist only on emulators, and each extra one doubles the
+      # duration of the Rust build.
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
@@ -162,9 +162,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      # Ključ nikad ne dodiruje repozitorij. Ovdje se iz Secreta ispiše na disk
-      # runnera, koji se briše čim posao završi.
-      - name: Potpisni ključ
+      # The key never touches the repository. Here it is written out of Secrets
+      # onto the runner's disk, which is wiped as soon as the job ends.
+      - name: Signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -172,7 +172,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::Nedostaje ANDROID_KEYSTORE_BASE64. Vidi docs/RELEASE.md."
+            echo "::error::ANDROID_KEYSTORE_BASE64 is missing. See docs/RELEASE.md."
             exit 1
           fi
           cd apps/desktop/src-tauri/gen/android
@@ -185,15 +185,15 @@ jobs:
           EOF
         shell: bash
 
-      - name: Sastavi APK i AAB
+      - name: Build APK and AAB
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: pnpm --filter @uleditor/desktop exec tauri android build --apk --aab --target aarch64 armv7
 
-      # Gradle imenuje izlaz po modulu (`app-universal-release.apk`), što na
-      # stranici izdanja pored `ulEditor_0.1.0_x64.msi` izgleda kao tuđa
-      # datoteka. Preimenuje se u isti obrazac kao instaleri za računalo.
-      - name: Preimenuj i objavi
+      # Gradle names the output after the module (`app-universal-release.apk`),
+      # which on the release page, next to `ulEditor_0.1.0_x64.msi`, looks like
+      # somebody else's file. It is renamed to match the desktop installers.
+      - name: Rename and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
@@ -206,7 +206,7 @@ jobs:
           aab=$(find "$out/bundle" -name '*-release.aab' 2>/dev/null | head -1)
 
           if [ -z "$apk" ]; then
-            echo "::error::APK nije nastao — provjeri ispis gornjeg koraka."
+            echo "::error::No APK was produced — check the output of the step above."
             exit 1
           fi
 

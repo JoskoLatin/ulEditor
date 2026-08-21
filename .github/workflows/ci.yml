@@ -33,16 +33,22 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm --filter @uleditor/shell-ui build
 
-      # Anotacije se provjeravaju bez preglednika: zapisani PDF se ponovno
-      # parsira i gleda sadrži li prave anotacijske objekte.
+      # Annotations are checked without a browser: the written PDF is parsed
+      # again and inspected for real annotation objects.
       - run: pnpm verify:pdf
 
-      # Runtime provjera se vozi pravim preglednikom — statička analiza ne
-      # hvata editor koji se ne montira.
+      # The runtime check is driven by a real browser — static analysis does
+      # not catch an editor that fails to mount.
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Runtime provjera shella
+      - name: Runtime check of the shell
         run: |
           pnpm --filter @uleditor/shell-ui preview --port 5273 &
+          # Without waiting this is a race macOS tends to lose: the check starts
+          # while the server is still coming up and gets ERR_CONNECTION_REFUSED.
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5273 >/dev/null && break
+            sleep 1
+          done
           node tools/verify-ui.mjs --url http://localhost:5273
         shell: bash
 
@@ -63,11 +69,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sistemske ovisnosti (Linux)
+      - name: System dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
             librsvg2-dev patchelf libxdo-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev
 
@@ -90,18 +96,18 @@ jobs:
       - run: cargo test --workspace
 
   licenses:
-    name: Provjera licenci
+    name: Licence check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-deny
-      # Copyleft ovisnost koja se ušulja u core promijenila bi licencu cijelog
-      # projekta. Zato je ovo blokirajući korak, ne upozorenje.
+      # A copyleft dependency sneaking into the core would change the licence of
+      # the whole project. That is why this step blocks rather than warns.
       - run: cargo deny check licenses bans sources
 
   android:
-    name: Android provjera
+    name: Android check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +128,7 @@ jobs:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
 
-      # `generate_context!` čita frontend dist, pa mora postojati i ovdje.
+      # `generate_context!` reads the frontend dist, so it must exist here too.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -131,16 +137,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @uleditor/shell-ui build
 
-      # Mobilni build puca drukčije od desktopa — nedostajući JNI simbol,
-      # ovisnost bez android targeta, kriva minSdk. Bez ove provjere to
-      # otkrivamo tek na dan izdanja, kad je najskuplje.
-      - name: Prevodi li se jezgra za telefon
+      # A mobile build breaks differently from a desktop one — a missing JNI
+      # symbol, a dependency without an android target, a wrong minSdk. Without
+      # this check we would find out on release day, when it costs the most.
+      - name: Does the core compile for a phone
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: cargo check -p uleditor-desktop --target aarch64-linux-android
 
   wasm:
-    name: WASM build jezgre
+    name: WASM build of the core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -148,5 +154,5 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # Dokaz da ista jezgra ide i u preglednik — faza 3 ovisi o tome.
+      # Proof the same core also goes into a browser — phase 3 depends on it.
       - run: cargo build -p ul-formats --target wasm32-unknown-unknown --release

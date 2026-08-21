@@ -1,19 +1,19 @@
-//! Integracijski test cijelog puta kroz VFS.
+//! Integration test of the whole path through the VFS.
 //!
-//! Unit testovi u `vfs.rs` provjeravaju pojedine funkcije. Ovaj test vozi
-//! stvarni redoslijed koji desktop aplikacija radi: otvori mapu → pročitaj
-//! stablo → prepoznaj format → pročitaj → spremi → provjeri da je spremljeno.
+//! The unit tests in `vfs.rs` check individual functions. This test drives the
+//! real sequence the desktop app performs: open a folder → read the tree →
+//! detect the format → read → save → verify it was saved.
 //!
-//! Bez ovoga se ne zna radi li desktop uopće otvoriti datoteku — Tauri
-//! komande su tanak omotač oko ovih poziva.
+//! Without this there is no telling whether the desktop can open a file at all —
+//! the Tauri commands are a thin wrapper around these calls.
 
 use std::fs;
 use std::path::PathBuf;
 
 use ul_core::{FormatId, VfsError, Workspace};
 
-/// Privremena mapa koja se sama briše. Bez vanjske ovisnosti (`tempfile`),
-/// jer je jedina svrha držati nekoliko datoteka tijekom testa.
+/// A temporary folder that deletes itself. No external dependency (`tempfile`),
+/// because its only purpose is to hold a few files for the duration of a test.
 struct TempDir(PathBuf);
 
 impl TempDir {
@@ -47,7 +47,7 @@ impl Drop for TempDir {
     }
 }
 
-/// Put koji desktop aplikacija prolazi pri otvaranju mape i uređivanju datoteke.
+/// The path the desktop app walks when opening a folder and editing a file.
 #[test]
 fn open_folder_read_edit_save() {
     let dir = TempDir::new("flow");
@@ -59,8 +59,8 @@ fn open_folder_read_edit_save() {
     let mut workspace = Workspace::new();
     let root = workspace.add_root(dir.path()).expect("korijen");
 
-    // 1 — stablo
-    let entries = workspace.read_dir(&root).expect("čitanje korijena");
+    // 1 — the tree
+    let entries = workspace.read_dir(&root).expect("reading the root");
     let names: Vec<&str> = entries.iter().map(|e| e.stat.name.as_str()).collect();
 
     assert!(names.contains(&"main.rs"), "nedostaje main.rs: {names:?}");
@@ -74,7 +74,7 @@ fn open_folder_read_edit_save() {
         "node_modules se ne smije pojaviti u stablu: {names:?}"
     );
 
-    // Direktoriji prvi — inače je stablo nečitljivo.
+    // Directories first — otherwise the tree is unreadable.
     let first_file = entries.iter().position(|e| e.stat.kind == "file").unwrap();
     let last_dir = entries
         .iter()
@@ -85,35 +85,35 @@ fn open_folder_read_edit_save() {
         "direktoriji moraju biti prvi: {names:?}"
     );
 
-    // 2 — lijeno čitanje podmape
+    // 2 — lazy read of a subfolder
     let src = entries.iter().find(|e| e.stat.name == "src").expect("src");
-    let nested = workspace.read_dir(&src.stat.uri).expect("čitanje src");
+    let nested = workspace.read_dir(&src.stat.uri).expect("reading src");
     assert_eq!(nested.len(), 1);
     assert_eq!(nested[0].stat.name, "lib.ts");
     assert_eq!(nested[0].detection.format, FormatId::Code);
     assert_eq!(nested[0].detection.language.as_deref(), Some("typescript"));
 
-    // 3 — detekcija po sadržaju
+    // 3 — detection by content
     let rs = dir.path().join("main.rs");
     assert_eq!(
         workspace.detect_at(&rs).expect("detekcija").format,
         FormatId::Code
     );
 
-    // 4 — čitanje
-    let bytes = workspace.read(&rs).expect("čitanje");
+    // 4 — reading
+    let bytes = workspace.read(&rs).expect("reading");
     assert_eq!(bytes, b"fn main() {}\n");
 
-    // 5 — spremanje i provjera da je stvarno na disku
+    // 5 — saving, and checking it really landed on disk
     workspace
         .write(&rs, b"fn main() { println!(\"ok\"); }\n")
         .expect("spremanje");
     assert_eq!(
-        fs::read_to_string(&rs).expect("ponovno čitanje"),
+        fs::read_to_string(&rs).expect("reading back"),
         "fn main() { println!(\"ok\"); }\n"
     );
 
-    // Atomarno spremanje ne smije ostaviti privremenu datoteku.
+    // An atomic save must not leave a temporary file behind.
     let leftovers: Vec<String> = fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
@@ -126,7 +126,7 @@ fn open_folder_read_edit_save() {
     );
 }
 
-/// Preimenovani PDF mora otvoriti PDF preglednik, ne tekstualni editor.
+/// A renamed PDF must open the PDF viewer, not the text editor.
 #[test]
 fn content_beats_extension() {
     let dir = TempDir::new("magic");
@@ -139,11 +139,11 @@ fn content_beats_extension() {
     assert_eq!(detection.format, FormatId::Pdf);
 }
 
-/// Sandbox mora držati i kad putanja postoji i kad ne postoji.
+/// The sandbox must hold whether the path exists or not.
 #[test]
 fn sandbox_holds_both_ways() {
     let outside = TempDir::new("vani");
-    let outside_file = outside.write("tajna.txt", "ne smije se pročitati\n".as_bytes());
+    let outside_file = outside.write("secret.txt", "must not be readable\n".as_bytes());
 
     let inside = TempDir::new("unutra");
     inside.write("ok.txt", b"smije\n");
@@ -151,16 +151,16 @@ fn sandbox_holds_both_ways() {
     let mut workspace = Workspace::new();
     workspace.add_root(inside.path()).expect("korijen");
 
-    // Postojeća datoteka izvan radnog prostora.
+    // An existing file outside the workspace.
     assert!(
         matches!(
             workspace.read(&outside_file),
             Err(VfsError::OutsideWorkspace(_))
         ),
-        "čitanje izvan radnog prostora mora biti odbijeno"
+        "reading outside the workspace must be refused"
     );
 
-    // Nepostojeća putanja s `..` — mora se odbiti prije nego dodirne disk.
+    // A non-existent path with `..` — must be refused before touching the disk.
     let traversal = inside
         .path()
         .join("..")
@@ -175,7 +175,7 @@ fn sandbox_holds_both_ways() {
         "bijeg kroz `..` mora biti odbijen"
     );
 
-    // Pisanje izvan radnog prostora je jednako zabranjeno kao i čitanje.
+    // Writing outside the workspace is forbidden just as reading is.
     assert!(
         matches!(
             workspace.write(&outside_file, b"pokusaj"),
@@ -185,12 +185,12 @@ fn sandbox_holds_both_ways() {
     );
     assert_eq!(
         fs::read_to_string(&outside_file).unwrap(),
-        "ne smije se pročitati\n",
+        "must not be readable\n",
         "datoteka izvan radnog prostora ne smije biti dirnuta"
     );
 }
 
-/// Više otvorenih mapa istovremeno — svaka je vlastiti korijen.
+/// Several folders open at once — each one its own root.
 #[test]
 fn multiple_roots_are_independent() {
     let a = TempDir::new("a");
@@ -200,19 +200,19 @@ fn multiple_roots_are_independent() {
 
     let mut workspace = Workspace::new();
     workspace.add_root(a.path()).expect("korijen A");
-    assert!(workspace.read(&file_b).is_err(), "B još nije otvoren");
+    assert!(workspace.read(&file_b).is_err(), "B is not open yet");
 
     workspace.add_root(b.path()).expect("korijen B");
     assert_eq!(workspace.read(&file_a).expect("A"), b"A\n");
     assert_eq!(workspace.read(&file_b).expect("B"), b"B\n");
     assert_eq!(workspace.roots().len(), 2);
 
-    // Ponovno dodavanje istog korijena ne smije ga duplicirati.
+    // Adding the same root again must not duplicate it.
     workspace.add_root(a.path()).expect("ponovni korijen A");
     assert_eq!(workspace.roots().len(), 2);
 }
 
-/// Spremanje pod novim imenom — datoteka još ne postoji, ali je unutar mape.
+/// Save-as — the file does not exist yet, but it is inside the folder.
 #[test]
 fn save_as_new_file_is_allowed() {
     let dir = TempDir::new("saveas");

@@ -1,9 +1,9 @@
-# Provjera licenci Rust ovisnosti.
+# Licence check for Rust dependencies.
 #
-# Core je Apache-2.0. Copyleft ovisnost koja se ušulja ovamo promijenila bi
-# licencu cijelog projekta — zato je CI korak blokirajući, a ne informativan.
-# Copyleft engine-i (MuPDF, ONLYOFFICE) smiju postojati samo kao zasebni
-# opcionalni paketi u `plugins/`, izvan ovog workspacea.
+# The core is Apache-2.0. A copyleft dependency sneaking in here would change the
+# licence of the whole project — which is why this CI step blocks rather than
+# informs. Copyleft engines (MuPDF, ONLYOFFICE) may exist only as separate
+# optional packages under `plugins/`, outside this workspace.
 
 [graph]
 targets = [
@@ -26,7 +26,7 @@ allow = [
   "BSD-3-Clause",
   "ISC",
   "Zlib",
-  "MPL-2.0",       # LibreOffice i Collabora — copyleft po datoteci, ne po projektu
+  "MPL-2.0",       # LibreOffice and Collabora — copyleft per file, not per project
   "Unicode-3.0",
   "CC0-1.0",
   "Unlicense",
@@ -38,10 +38,14 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Dependencies inside the workspace are declared by `path`, without a version,
+# so cargo-deny otherwise counts them as wildcards. The ban targets external
+# crates.
+allow-wildcard-paths = true
 
-# Ove licence su namjerno izostavljene iz `allow` popisa: GPL-2.0, GPL-3.0,
-# AGPL-3.0, LGPL-3.0, SSPL. Ako cargo-deny prijavi neku od njih, to nije
-# greška u konfiguraciji nego stvarna promjena u stablu ovisnosti.
+# These licences are deliberately absent from the `allow` list: GPL-2.0,
+# GPL-3.0, AGPL-3.0, LGPL-3.0, SSPL. If cargo-deny reports one of them, that is
+# not a configuration mistake but a real change in the dependency tree.
 
 [sources]
 unknown-registry = "deny"

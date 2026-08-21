@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Jedan open-source editor za kod, Markdown, PDF, Word i Excel.",
+  "description": "One open-source editor for code, Markdown, PDF, Word and Excel.",
   "scripts": {
     "dev": "node tools/ocr-assets.mjs && pnpm --filter @uleditor/shell-ui dev",
     "desktop": "pnpm --filter @uleditor/desktop dev",

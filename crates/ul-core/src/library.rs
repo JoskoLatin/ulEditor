@@ -1,21 +1,23 @@
-//! Knjižnica dokumenata — pregled uređaja umjesto stabla direktorija.
+//! Document library — a survey of the device instead of a directory tree.
 //!
-//! **Zašto uopće postoji.** Explorer sa stablom mapa je desktop metafora i na
-//! telefonu ne radi: ondje nitko ne zna gdje mu datoteka fizički stoji, nego
-//! zna da negdje ima nekakav PDF. Zato mobilni prikaz ne traži od korisnika da
-//! otvori mapu, nego sam pregleda uobičajena mjesta i ponudi što je našao,
-//! najnovije prvo.
+//! **Why it exists at all.** An explorer with a folder tree is a desktop
+//! metaphor and does not work on a phone: nobody there knows where a file
+//! physically sits, only that they have some PDF somewhere. So the mobile view
+//! does not ask the user to open a folder; it surveys the usual places itself
+//! and offers what it found, newest first.
 //!
-//! **Skeniranje, ne indeks** — iz istog razloga kao pretraga u [`crate::search`]:
-//! indeks bi tražio invalidaciju, a knjižnica se ionako gleda rijetko i kratko.
+//! **Scanning, not an index** — for the same reason as search in
+//! [`crate::search`]: an index would demand invalidation, and the library is
+//! looked at rarely and briefly anyway.
 //!
-//! **Android ovdje ima zub.** Uz scoped storage `read_dir` nad dijeljenom
-//! pohranom vrati **samo direktorije**, a datoteke tiho izostavi — bez ijedne
-//! greške. Aplikacija tako izgleda kao da na uređaju nema dokumenata, iako ih
-//! ima stotine. Zato skeniranje broji i pregledane mape: prazan rezultat uz
-//! pregledane mape znači „nemaš dokumenata”, a prazan rezultat uz same mape bez
-//! ijedne datoteke znači „nemaš dozvolu”. Ta se razlika vidi u
-//! [`LibraryScan::looks_blocked`] i UI o njoj ovisi.
+//! **Android has a catch here.** Under scoped storage, `read_dir` over shared
+//! storage returns **directories only** and quietly omits the files — without a
+//! single error. The app then looks as if the device holds no documents, even
+//! though it holds hundreds. That is why the scan also counts the folders it
+//! visited: an empty result with visited folders means "you have no documents",
+//! while an empty result with folders but not one file means "you have no
+//! permission". That distinction surfaces in [`LibraryScan::looks_blocked`] and
+//! the UI depends on it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,26 +28,26 @@ use ul_formats::{detect_by_name, FormatId};
 
 use crate::vfs::{display, is_noise, VfsError, Workspace};
 
-/// Dokle se ide u dubinu. Dijeljena pohrana zna imati duboka stabla predmemorije
-/// koja nemaju veze s dokumentima, a svaka razina košta.
+/// How deep we go. Shared storage tends to hold deep cache trees unrelated to
+/// documents, and every level costs.
 const MAX_DEPTH: usize = 6;
 
-/// Gornja granica broja stavki; iznad toga popis ionako nitko ne pregledava.
+/// Upper bound on the number of entries; beyond that nobody reads the list anyway.
 const DEFAULT_LIMIT: usize = 2000;
 
-/// Koliko se slika najviše zadržava.
+/// How many images are kept at most.
 ///
-/// Bez zasebnog proračuna fotografije potpuno progutaju knjižnicu: na
-/// izmjerenom uređaju je od 2000 stavki bilo 1956 slika i 41 PDF, a granica je
-/// udarila usred skeniranja — dokumenti u kasnije pregledanim mapama nisu ni
-/// stigli u popis. Slike su ovdje zbog OCR-a nad fotografiranim dokumentom,
-/// ne da budu galerija, pa dobivaju vlastitu, manju kvotu.
+/// Without a separate budget, photos swallow the library whole: on the device we
+/// measured, 1956 of 2000 entries were images and 41 were PDFs, and the limit
+/// hit mid-scan — documents in folders visited later never even reached the
+/// list. Images are here for OCR over a photographed document, not to be a
+/// gallery, so they get their own, smaller quota.
 const MAX_IMAGES: usize = 400;
 
-/// Mape koje nose podatke aplikacija, ne korisnikove dokumente.
+/// Folders that carry application data, not the user's documents.
 ///
-/// `Android/data` i `Android/obb` su predmemorije drugih programa i skeniranje
-/// ondje traje dugo, a ne nađe ništa što bi korisnik prepoznao kao svoje.
+/// `Android/data` and `Android/obb` are other programs' caches; scanning them
+/// takes a long time and finds nothing the user would recognise as their own.
 const SKIP_DIRS: &[&str] = &[
     "Android",
     "MIUI",
@@ -66,9 +68,9 @@ pub struct LibraryEntry {
     /// `pdf`, `epub`, `docx`, `image` …
     pub format: String,
     pub size: u64,
-    /// Unix ms; `None` kad ga platforma ne daje.
+    /// Unix ms; `None` when the platform does not provide it.
     pub modified: Option<u64>,
-    /// Mapa u kojoj je nađena, relativno na korijen — za grupiranje u prikazu.
+    /// The folder it was found in, relative to the root — for grouping in the view.
     pub folder: String,
 }
 
@@ -76,30 +78,31 @@ pub struct LibraryEntry {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryScan {
     pub entries: Vec<LibraryEntry>,
-    /// Koliko je mapa uspješno pročitano.
+    /// How many folders were read successfully.
     pub scanned_dirs: usize,
-    /// Koliko je datoteka uopće viđeno, prije filtriranja po formatu.
+    /// How many files were seen at all, before filtering by format.
     pub seen_files: usize,
-    /// Je li skeniranje stalo na granici umjesto da je došlo do kraja.
+    /// Whether the scan stopped at a limit instead of reaching the end.
     pub truncated: bool,
 }
 
 impl LibraryScan {
-    /// Razlikuje „nema dokumenata” od „sustav ih skriva”.
+    /// Tells "no documents" apart from "the system is hiding them".
     ///
-    /// Ako smo prošli kroz više mapa a **nijednu datoteku** nismo ni vidjeli,
-    /// to nije prazan telefon nego uskraćen pristup: prava prazna pohrana nema
-    /// ni podmapa. Na temelju ovoga UI nudi uključivanje dozvole umjesto da
-    /// slaže „nema ničega”.
+    /// If we walked through several folders and saw **not one file**, that is
+    /// not an empty phone but denied access: genuinely empty storage has no
+    /// subfolders either. On this basis the UI offers to turn the permission on
+    /// instead of claiming "there is nothing here".
     pub fn looks_blocked(&self) -> bool {
         self.seen_files == 0 && self.scanned_dirs > 1
     }
 }
 
-/// Formati koje knjižnica prikazuje.
+/// Formats the library displays.
 ///
-/// Dokumenti i slike, bez koda i arhiva: na telefonu se otvara ono što se čita,
-/// a `.ts` ili `.zip` u popisu bi bili šum. Na desktopu za to služi explorer.
+/// Documents and images, no code and no archives: on a phone you open what you
+/// read, and a `.ts` or `.zip` in the list would be noise. On desktop the
+/// explorer serves that purpose.
 fn is_library_format(format: FormatId) -> bool {
     matches!(
         format,
@@ -114,15 +117,15 @@ fn is_library_format(format: FormatId) -> bool {
     )
 }
 
-/// Mjesta na kojima se traže dokumenti, po platformi.
+/// Where documents are looked for, per platform.
 ///
-/// Vraćaju se i putanje kojih nema — pozivatelj ionako preskače sve što se ne
-/// da otvoriti, a popis je time čitljiv kao namjera.
+/// Paths that do not exist are returned too — the caller skips anything it
+/// cannot open anyway, and the list then reads as a statement of intent.
 pub fn default_roots() -> Vec<PathBuf> {
     #[cfg(target_os = "android")]
     {
-        // `/sdcard` je simbolički link na `/storage/emulated/0`; koristi se
-        // drugi oblik jer ga `canonicalize` ionako tako vrati.
+        // `/sdcard` is a symlink to `/storage/emulated/0`; we use the latter
+        // form because `canonicalize` returns it that way regardless.
         let base = Path::new("/storage/emulated/0");
         [
             "Download",
@@ -153,12 +156,13 @@ pub fn default_roots() -> Vec<PathBuf> {
 }
 
 impl Workspace {
-    /// Pregledava zadana mjesta i vraća dokumente, najnovije prvo.
+    /// Surveys the default locations and returns documents, newest first.
     ///
-    /// Korijeni se **ne** provlače kroz `resolve`: knjižnica namjerno gleda
-    /// izvan usvojenog radnog prostora, jer bi inače na telefonu bila prazna sve
-    /// dok korisnik ručno ne otvori mapu — a upravo to izbjegavamo.
-    /// Zato je i čitanje ovdje jedina dopuštena radnja.
+    /// The roots are **not** run through `resolve`: the library deliberately
+    /// looks outside the adopted workspace, because otherwise it would be empty
+    /// on a phone until the user opened a folder by hand — which is exactly what
+    /// we are avoiding. That is also why reading is the only operation allowed
+    /// here.
     pub fn scan_library(
         &self,
         roots: &[PathBuf],
@@ -182,10 +186,10 @@ impl Workspace {
         }
 
         /*
-         * Slike se skupljaju bez kvote pa se ovdje režu po vremenu, a ne po
-         * redoslijedu obilaska: mapa se ne pregledava kronološki, pa bi rezanje
-         * u hodu zadržalo nasumičnih 400 fotografija umjesto najnovijih.
-         * Struktura po stavci je sitna, pa je prolazno držanje svih jeftino.
+         * Images are collected without a quota and trimmed here by time, not by
+         * visit order: a folder is not walked chronologically, so trimming on
+         * the fly would keep a random 400 photos instead of the newest ones.
+         * The per-entry struct is tiny, so holding them all transiently is cheap.
          */
         walked.images.sort_by(newest_first);
         if walked.images.len() > MAX_IMAGES {
@@ -210,7 +214,7 @@ impl Workspace {
     }
 }
 
-/// Dokumenti i slike se skupljaju odvojeno da fotografije ne pojedu kvotu.
+/// Documents and images are collected separately so photos do not eat the quota.
 struct Walked {
     documents: Vec<LibraryEntry>,
     images: Vec<LibraryEntry>,
@@ -219,7 +223,7 @@ struct Walked {
     truncated: bool,
 }
 
-/// Najnovije prvo; bez podatka o vremenu na dno, jer se ne da smisleno poredati.
+/// Newest first; entries without a timestamp go last, as they cannot be ordered.
 fn newest_first(a: &LibraryEntry, b: &LibraryEntry) -> std::cmp::Ordering {
     match (b.modified, a.modified) {
         (Some(x), Some(y)) => x.cmp(&y),
@@ -250,7 +254,7 @@ fn walk(root: &Path, dir: &Path, depth: usize, limit: usize, walked: &mut Walked
             continue;
         };
 
-        // `file_type` je jeftiniji od `metadata`: ne dira inode za svaku stavku.
+        // `file_type` is cheaper than `metadata`: it does not touch the inode per entry.
         let Ok(kind) = entry.file_type() else {
             continue;
         };
@@ -292,11 +296,11 @@ fn walk(root: &Path, dir: &Path, depth: usize, limit: usize, walked: &mut Walked
     }
 }
 
-/// Mapa u kojoj datoteka leži, relativno na korijen skeniranja.
+/// The folder a file sits in, relative to the scan root.
 ///
-/// Korijen sam daje ime (`Download`), a dublje se dopisuje putanja
-/// (`Download/Foxit`) — dovoljno da se u popisu vidi odakle je nešto došlo, bez
-/// prikazivanja cijele apsolutne putanje koja na telefonu ništa ne znači.
+/// The root itself supplies the name (`Download`), and deeper levels append the
+/// path (`Download/Foxit`) — enough for the list to show where something came
+/// from, without displaying a full absolute path that means nothing on a phone.
 fn folder_label(root: &Path, path: &Path) -> String {
     let root_name = root
         .file_name()
@@ -401,7 +405,7 @@ mod tests {
         assert_eq!(scan.entries[0].folder, format!("{root_name}/racuni"));
     }
 
-    /// Scoped storage izgleda upravo ovako: mape se vide, datoteke ne.
+    /// Scoped storage looks exactly like this: folders are visible, files are not.
     #[test]
     fn same_mape_bez_datoteka_znace_uskracen_pristup() {
         let dir = temp_dir("blocked");
@@ -417,7 +421,7 @@ mod tests {
         assert!(scan.looks_blocked());
     }
 
-    /// Bez zasebne kvote fotografije istisnu dokumente iz popisa.
+    /// Without a separate quota, photos push documents out of the list.
     #[test]
     fn slike_ne_mogu_istisnuti_dokumente() {
         let dir = temp_dir("photos");
@@ -432,7 +436,7 @@ mod tests {
             .unwrap();
 
         let images = scan.entries.iter().filter(|e| e.format == "image").count();
-        assert_eq!(images, MAX_IMAGES, "slike moraju biti ograničene kvotom");
+        assert_eq!(images, MAX_IMAGES, "images must be capped by the quota");
         assert!(
             scan.entries.iter().any(|e| e.name == "ugovor.pdf"),
             "dokument mora ostati u popisu bez obzira na broj fotografija"
@@ -440,7 +444,7 @@ mod tests {
         assert!(scan.truncated);
     }
 
-    /// Knjižnica smije čitati svoje mape, ali ih ne smije gurnuti u explorer.
+    /// The library may read its own folders, but must not push them into the explorer.
     #[test]
     fn korijeni_knjiznice_ne_ulaze_u_stablo() {
         let dir = temp_dir("roots");
@@ -451,11 +455,11 @@ mod tests {
 
         assert!(
             workspace.roots().is_empty(),
-            "explorer ne smije dobiti mapu koju je otvorila knjižnica"
+            "the explorer must not receive a folder the library opened"
         );
         assert!(
             workspace.read(dir.join("ugovor.pdf")).is_ok(),
-            "dokument iz knjižnice se mora dati otvoriti"
+            "a document from the library must be openable"
         );
     }
 

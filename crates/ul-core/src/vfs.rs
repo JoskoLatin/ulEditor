@@ -1,8 +1,8 @@
-//! Virtualni datotečni sustav sa sandboxom po korijenu radnog prostora.
+//! Virtual file system sandboxed to the workspace roots.
 //!
-//! Korisnik otvara mapu; sve nakon toga mora ostati unutar nje. Bez te
-//! provjere svaki bug u UI-u — ili plugin treće strane — postaje čitanje
-//! proizvoljne datoteke s diska.
+//! The user opens a folder; everything after that must stay inside it. Without
+//! that check, any bug in the UI — or a third-party plugin — turns into reading
+//! an arbitrary file off the disk.
 
 use std::fs;
 use std::io;
@@ -15,16 +15,16 @@ use ul_formats::{detect, detect_by_name, Detection, PROBE_LEN};
 
 #[derive(Debug, Error)]
 pub enum VfsError {
-    #[error("putanja izlazi izvan radnog prostora: {0}")]
+    #[error("path escapes the workspace: {0}")]
     OutsideWorkspace(String),
-    #[error("nije otvoren nijedan radni prostor")]
+    #[error("no workspace is open")]
     NoWorkspace,
-    /// Radnja koju platforma ne podržava — npr. odabir mape na Androidu.
+    /// An operation the platform does not support — e.g. picking a folder on Android.
     #[error("{0}")]
     Unsupported(String),
-    #[error("nije direktorij: {0}")]
+    #[error("not a directory: {0}")]
     NotADirectory(String),
-    #[error("greška datotečnog sustava: {0}")]
+    #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
 
@@ -40,10 +40,10 @@ pub struct Stat {
     pub uri: String,
     pub name: String,
     pub parent: Option<String>,
-    /// `"file"` ili `"directory"` — usklađeno s `FileStat` u plugin-sdk-u.
+    /// `"file"` or `"directory"` — matching `FileStat` in the plugin SDK.
     pub kind: String,
     pub size: u64,
-    /// Unix ms, `None` kad ga platforma ne daje.
+    /// Unix ms, `None` when the platform does not provide it.
     pub modified: Option<u64>,
     pub readonly: bool,
 }
@@ -56,7 +56,7 @@ pub struct DirEntry {
     pub detection: Detection,
 }
 
-/// Direktoriji koji nikad ne zaslužuju mjesto u stablu.
+/// Directories that never deserve a place in the tree.
 const NOISE: &[&str] = &[
     "node_modules",
     ".git",
@@ -67,7 +67,7 @@ const NOISE: &[&str] = &[
     ".venv",
 ];
 
-/// Direktorij koji se nikad ne obilazi — ni u stablu ni u pretrazi.
+/// A directory that is never walked — neither in the tree nor in search.
 pub(crate) fn is_noise(name: &str) -> bool {
     NOISE.contains(&name)
 }
@@ -83,7 +83,7 @@ impl Workspace {
         Self::default()
     }
 
-    /// Mape koje je korisnik izričito otvorio. Ovo je ono što explorer prikazuje.
+    /// Folders the user explicitly opened. This is what the explorer shows.
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
@@ -99,13 +99,13 @@ impl Workspace {
         Ok(canonical)
     }
 
-    /// Mjesto koje je pregledala knjižnica.
+    /// A location the library scanned.
     ///
-    /// Odvojeno od `roots` s razlogom: dokument iz knjižnice se mora dati
-    /// otvoriti, pa njegova mapa mora proći kroz `resolve` — ali ne smije se
-    /// pojaviti u explorer stablu. Inače bi na desktopu jedan pogled u
-    /// knjižnicu tiho ubacio Documents, Downloads, Desktop i Pictures među
-    /// korisnikove otvorene mape, što nitko nije tražio.
+    /// Kept apart from `roots` for a reason: a document from the library must
+    /// be openable, so its folder has to pass through `resolve` — but it must
+    /// not show up in the explorer tree. Otherwise, on desktop, a single glance
+    /// at the library would quietly drop Documents, Downloads, Desktop and
+    /// Pictures among the user's opened folders, which nobody asked for.
     pub fn add_library_root(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
         let canonical = fs::canonicalize(path.as_ref())?;
         if !canonical.is_dir() {
@@ -117,10 +117,10 @@ impl Workspace {
         Ok(canonical)
     }
 
-    /// Razrješava putanju i provjerava da ostaje unutar nekog korijena.
+    /// Resolves a path and checks that it stays inside one of the roots.
     ///
-    /// Ne oslanja se na `canonicalize` za nepostojeće datoteke (spremanje pod
-    /// novim imenom), pa se `..` uklanja leksički prije provjere.
+    /// It does not rely on `canonicalize` for files that do not exist yet
+    /// (save-as), so `..` is removed lexically before the check.
     pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
         if self.roots.is_empty() && self.library_roots.is_empty() {
             return Err(VfsError::NoWorkspace);
@@ -128,7 +128,7 @@ impl Workspace {
 
         let normalized = normalize(path.as_ref());
 
-        // Simbolički link može voditi van; za postojeće putanje provjeravamo i stvarnu.
+        // A symlink can lead outside; for existing paths we check the real one too.
         let effective = fs::canonicalize(&normalized).unwrap_or_else(|_| normalized.clone());
 
         let allowed = self
@@ -177,7 +177,7 @@ impl Workspace {
             entries.push(DirEntry { stat, detection });
         }
 
-        // Direktoriji prvi, zatim abecedno — bez toga je stablo nečitljivo.
+        // Directories first, then alphabetically — without this the tree is unreadable.
         entries.sort_by(|a, b| {
             let dir_a = a.stat.kind == "directory";
             let dir_b = b.stat.kind == "directory";
@@ -193,8 +193,8 @@ impl Workspace {
         Ok(fs::read(resolved)?)
     }
 
-    /// Čita samo početak datoteke — dovoljno za detekciju formata bez
-    /// učitavanja stostraničnog PDF-a u memoriju.
+    /// Reads only the start of a file — enough for format detection without
+    /// loading a hundred-page PDF into memory.
     pub fn detect_at(&self, path: impl AsRef<Path>) -> Result<Detection, VfsError> {
         use std::io::Read;
 
@@ -212,8 +212,8 @@ impl Workspace {
         Ok(detect(&name, &probe))
     }
 
-    /// Piše atomarno: prvo u susjednu privremenu datoteku, pa preimenovanje.
-    /// Prekid struje usred spremanja tako ne ostavlja krnji dokument.
+    /// Writes atomically: first to a neighbouring temporary file, then a
+    /// rename. A power cut mid-save therefore leaves no truncated document.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
         let resolved = self.resolve(path)?;
         let temp = resolved.with_extension(format!(
@@ -233,14 +233,14 @@ impl Workspace {
     }
 }
 
-/* ── pomoćno ─────────────────────────────────────────────────────────── */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
-/// Putanja kakvu vidi korisnik.
+/// The path as the user sees it.
 ///
-/// `fs::canonicalize` na Windowsu vraća verbatim oblik (`\\?\C:\...`), koji je
-/// detalj Win32 API-ja i nema što raditi u naslovu kartice ni u rezultatu
-/// pretrage. `resolve` ga svejedno vraća kad zatreba, pa je skidanje na
-/// granici prema UI-u sigurno.
+/// `fs::canonicalize` on Windows returns the verbatim form (`\\?\C:\...`), which is
+/// a Win32 API detail with no business in a tab title or a search result.
+/// `resolve` still returns it when needed, so stripping it at the boundary
+/// towards the UI is safe.
 pub(crate) fn display(path: &Path) -> String {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\UNC\") {
@@ -249,7 +249,7 @@ pub(crate) fn display(path: &Path) -> String {
     }
 }
 
-/// Leksička normalizacija: uklanja `.` i razrješava `..` bez diranja diska.
+/// Lexical normalisation: drops `.` and resolves `..` without touching the disk.
 fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
@@ -290,7 +290,7 @@ pub(crate) fn stat_of(path: &Path) -> Result<Stat, VfsError> {
     })
 }
 
-/* ── testovi ─────────────────────────────────────────────────────────── */
+/* ── tests ───────────────────────────────────────────────────────────── */
 
 #[cfg(test)]
 mod tests {
@@ -317,7 +317,7 @@ mod tests {
         let dir = std::env::temp_dir();
         workspace.add_root(&dir).expect("temp mora postojati");
 
-        // Klasični pokušaj bijega iz sandboxa.
+        // The classic sandbox escape attempt.
         let escaped = dir.join("..").join("..").join("etc").join("passwd");
         assert!(matches!(
             workspace.resolve(escaped),

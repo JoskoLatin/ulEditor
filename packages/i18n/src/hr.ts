@@ -1,15 +1,15 @@
 /**
- * Hrvatski prijevod sučelja.
+ * The Croatian interface translation.
  *
- * Ključ je engleski izvorni tekst. Niz koji ovdje ne postoji prikazuje se na
- * engleskom — namjerno, da nedostatak prijevoda nikad ne završi kao prazan
- * gumb. Zato je i dopušteno da ovaj katalog zaostaje za engleskim.
+ * The key is the English source text. A string missing from here is shown in
+ * English — deliberately, so that a missing translation never ends up as a blank
+ * button. That is also why this catalogue is allowed to lag behind English.
  */
 
 import type { Catalog } from './index.js';
 
 export const hr: Catalog = {
-  /* ── okvir ─────────────────────────────────────────────────────────── */
+  /* ── frame ─────────────────────────────────────────────────────────── */
   'Open folder': 'Otvori mapu',
   'Open folder…': 'Otvori mapu…',
   'Open folder (Ctrl+K)': 'Otvori mapu (Ctrl+K)',
@@ -39,7 +39,7 @@ export const hr: Catalog = {
   'No matching command.': 'Nema naredbe koja odgovara.',
   'Drop files to open them': 'Ispusti datoteke za otvaranje',
 
-  /* ── ploče ─────────────────────────────────────────────────────────── */
+  /* ── panels ────────────────────────────────────────────────────────── */
   Panels: 'Ploče',
   Explorer: 'Istraživač',
   'Explorer (Ctrl+B)': 'Istraživač (Ctrl+B)',
@@ -52,7 +52,7 @@ export const hr: Catalog = {
   'This browser has no File System Access API — files can be read but not saved. The desktop build has no such limit.':
     'Ovaj preglednik nema File System Access API — datoteke se mogu čitati, ali ne i spremati. Na desktopu to ograničenje ne postoji.',
 
-  /* ── naredbe ───────────────────────────────────────────────────────── */
+  /* ── commands ──────────────────────────────────────────────────────── */
   File: 'Datoteka',
   Edit: 'Uređivanje',
   View: 'Prikaz',
@@ -77,7 +77,7 @@ export const hr: Catalog = {
   'Open a folder first.': 'Prvo otvori mapu.',
   'No matching file.': 'Nema datoteke koja odgovara.',
 
-  /* ── pretraga po projektu ──────────────────────────────────────────── */
+  /* ── project search ────────────────────────────────────────────────── */
   Search: 'Pretraga',
   'Search in project': 'Pretraga po projektu',
   'Search in project…': 'Traži po projektu…',
@@ -99,7 +99,7 @@ export const hr: Catalog = {
   document: 'dokument',
   'Close the split below': 'Zatvori split ispod',
 
-  /* ── pretraga ──────────────────────────────────────────────────────── */
+  /* ── find ──────────────────────────────────────────────────────────── */
   'searching…': 'tražim…',
   'no results': 'nema pogodaka',
   'Match case': 'Razlikuj velika i mala slova',
@@ -108,7 +108,7 @@ export const hr: Catalog = {
   'Next (Enter)': 'Sljedeći (Enter)',
   '…and {n} more results': '…i još {n} pogodaka',
 
-  /* ── statusna traka ────────────────────────────────────────────────── */
+  /* ── status bar ────────────────────────────────────────────────────── */
   commands: 'naredbe',
   'Format: {name}': 'Format: {name}',
   'read-only': 'samo čitanje',
@@ -118,7 +118,7 @@ export const hr: Catalog = {
   'Saving to disk is available': 'Spremanje na disk je dostupno',
   'No write permission': 'Bez dozvole za pisanje',
 
-  /* ── pozdravni ekran ───────────────────────────────────────────────── */
+  /* ── welcome screen ────────────────────────────────────────────────── */
   Start: 'Počni',
   'Working now': 'Radi sada',
   'Code, Markdown, PDF, e-books, Word and Excel in one place.':
@@ -138,7 +138,7 @@ export const hr: Catalog = {
   'preview (editing: phase 2)': 'pregled (uređivanje: faza 2)',
   'LibreOffice conversion': 'LibreOffice konverzija',
 
-  /* ── formati ───────────────────────────────────────────────────────── */
+  /* ── formats ───────────────────────────────────────────────────────── */
   'Plain text': 'Tekst',
   Code: 'Kod',
   'E-book (EPUB)': 'E-knjiga (EPUB)',
@@ -151,7 +151,7 @@ export const hr: Catalog = {
   Unknown: 'Nepoznato',
   Untitled: 'Bez naslova',
 
-  /* ── poruke ────────────────────────────────────────────────────────── */
+  /* ── messages ──────────────────────────────────────────────────────── */
   'This document could not be opened': 'Ovaj dokument nije moguće otvoriti',
   'Loading {name}…': 'Učitavam {name}…',
   'Could not open the document: {reason}': 'Otvaranje nije uspjelo: {reason}',
@@ -181,7 +181,7 @@ export const hr: Catalog = {
   'This browser cannot open folders.': 'Preglednik ne podržava otvaranje mape.',
   'The file is open read-only.': 'Datoteka je otvorena samo za čitanje.',
 
-  /* ── čitaonica ─────────────────────────────────────────────────────── */
+  /* ── reading room ──────────────────────────────────────────────────── */
   'Leave reading mode (Esc)': 'Izađi iz čitanja (Esc)',
   'Previous page': 'Prethodna stranica',
   'Next page': 'Sljedeća stranica',
@@ -210,7 +210,7 @@ export const hr: Catalog = {
   'Reading mode works for e-books, PDF, Word and Markdown. This format does not support it yet.':
     'Način čitanja radi za e-knjige, PDF, Word i Markdown. Ovaj format ga još ne podržava.',
 
-  /* ── postavke ──────────────────────────────────────────────────────── */
+  /* ── settings ──────────────────────────────────────────────────────── */
   Preferences: 'Postavke',
   Language: 'Jezik',
   Theme: 'Tema',
@@ -224,7 +224,7 @@ export const hr: Catalog = {
     'Pismo {face}, {size} px, podloga {tint}. Mijenjaju se u samoj čitaonici.',
   'Reset reading settings': 'Vrati zadane postavke čitanja',
 
-  /* ── e-knjiga ──────────────────────────────────────────────────────── */
+  /* ── e-book ────────────────────────────────────────────────────────── */
   'The preview does not reproduce everything from the book:':
     'Pregled ne reproducira sve iz knjige:',
   'Publisher stylesheets are not applied — the text uses the reader typography.':
@@ -242,7 +242,7 @@ export const hr: Catalog = {
   'The book has no chapters in its reading order (spine).':
     'Knjiga nema nijedno poglavlje u redoslijedu čitanja (spine).',
 
-  /* ── Office pregled ────────────────────────────────────────────────── */
+  /* ── Office viewing ────────────────────────────────────────────────── */
   'Read-only preview — editing arrives in phase 2.':
     'Pregled samo za čitanje — uređivanje stiže u fazi 2.',
   'Word documents are read-only for now — editing arrives in phase 2.':
@@ -330,7 +330,7 @@ export const hr: Catalog = {
   'The chosen PDF has no pages.': 'Odabrani PDF nema nijednu stranicu.',
   'No page selected.': 'Nijedna stranica nije odabrana.',
 
-  /* ── slike i OCR ───────────────────────────────────────────────────── */
+  /* ── images and OCR ────────────────────────────────────────────────── */
   'Could not load the image': 'Neuspješno učitavanje slike',
   '{name} cannot be displayed. This browser may not support the format.':
     '{name} se ne može prikazati. Format možda nije podržan u ovom pregledniku.',
@@ -355,7 +355,7 @@ export const hr: Catalog = {
     'OCR pri prvoj upotrebi preuzima jezične podatke, za što je potrebna internetska veza.',
   'Text from {name}': 'Tekst iz {name}',
 
-  /* ── neimenovani dokumenti i split ─────────────────────────────────── */
+  /* ── untitled documents and split ──────────────────────────────────── */
   'Save as': 'Spremi kao',
   'Choose the format this document is saved in': 'Odaberi format u koji se dokument sprema',
   'Not saved yet': 'Još nije spremljeno',
@@ -363,7 +363,7 @@ export const hr: Catalog = {
   'Split below': 'Split ispod',
   'Resize split': 'Promijeni visinu splita',
 
-  /* ── tekst u PDF-u ─────────────────────────────────────────────────── */
+  /* ── text in PDF ───────────────────────────────────────────────────── */
   'Add text — click where it should go': 'Dodaj tekst — klikni gdje treba stajati',
   'Font style': 'Rez slova',
   'Font size': 'Veličina slova',
@@ -376,7 +376,7 @@ export const hr: Catalog = {
   'The font cannot draw these characters, so they were saved as blanks: {chars}':
     'Font ne zna nacrtati ove znakove, pa su spremljeni kao prazno mjesto: {chars}',
 
-  /* ── brisanje teksta iz PDF-a ──────────────────────────────────────── */
+  /* ── redacting text from PDF ───────────────────────────────────────── */
   'Erase text — drag over what should go': 'Obriši tekst — povuci preko onoga što ide van',
   'Marked for removal — click to undo': 'Označeno za brisanje — klikni za poništavanje',
   'Removed on save — click to bring the text back':
@@ -392,7 +392,7 @@ export const hr: Catalog = {
   'Page {n} was left untouched — the text there cannot be removed safely ({reason}).':
     'Stranica {n} je ostala netaknuta — tekst se ondje ne da pouzdano maknuti ({reason}).',
 
-  /* ── prepisivanje postojećeg teksta ────────────────────────────────── */
+  /* ── rewriting existing text ───────────────────────────────────────── */
   'That text is invisible — it is a recognition layer, not the page.':
     'Taj tekst je nevidljiv — to je sloj iz prepoznavanja, ne sama stranica.',
   'That text is rotated or skewed, so it cannot be retyped in place.':
@@ -407,7 +407,7 @@ export const hr: Catalog = {
     '{font} nije font kojim pišemo — veličina i mjesto ostaju, oblik slova se mijenja.',
   'The original font': 'Izvorni font',
 
-  /* ── izmjena teksta u Wordu ────────────────────────────────────────── */
+  /* ── editing text in Word ──────────────────────────────────────────── */
   'Text can be retyped — double-click it. Layout and styles stay as they are.':
     'Tekst se da prepisati — dvoklik na njega. Raspored i stilovi ostaju kakvi jesu.',
   '{n} words · double-click text to edit': '{n} riječi · dvoklik na tekst za izmjenu',
@@ -415,7 +415,7 @@ export const hr: Catalog = {
   'Only the text you retyped was changed; everything else in the file was copied over unchanged.':
     'Promijenjen je samo tekst koji si prepisao; sve ostalo u datoteci je preneseno nepromijenjeno.',
 
-  /* ── knjižnica ─────────────────────────────────────────────────────── */
+  /* ── library ───────────────────────────────────────────────────────── */
   Library: 'Knjižnica',
   'Library — documents on this device': 'Knjižnica — dokumenti na ovom uređaju',
   'Filter by name': 'Filtriraj po imenu',

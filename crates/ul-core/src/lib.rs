@@ -1,8 +1,8 @@
-//! Jezgra ulEditora — virtualni datotečni sustav i pretraga.
+//! ulEditor core — virtual file system and search.
 //!
-//! Sve što UI radi s diskom prolazi ovuda. Dvije posljedice koje se isplate:
-//! ista se logika kompajlira za desktop i mobile, a pristup datotekama je na
-//! jednom mjestu — dakle i provjerljiv.
+//! Everything the UI does with the disk passes through here. Two consequences
+//! that pay off: the same logic compiles for desktop and mobile, and file
+//! access lives in one place — which makes it auditable.
 
 #![deny(clippy::all)]
 
