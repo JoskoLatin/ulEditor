@@ -1,8 +1,53 @@
-# ulEditor
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/icon.png" width="128" alt="">
+</p>
 
-> One open-source editor for every format — code, Markdown, PDF, Word, Excel — in one place.
+<h1 align="center">ulEditor</h1>
+
+<p align="center">
+  One open-source editor for every format — code, Markdown, PDF, Word, Excel — in one place.
+</p>
+
+<p align="center">
+  <a href="https://github.com/JoskoLatin/ulEditor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/JoskoLatin/ulEditor?label=download&color=2ea44f"></a>
+  <a href="LICENSE"><img alt="Licence" src="https://img.shields.io/badge/licence-Apache--2.0-blue"></a>
+  <a href="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 **Status:** phase 0 complete, phase 1 together. The desktop app runs, seven editors work, e-books and Office documents open. The interface is in English; Croatian can be selected in settings.
+
+## Download
+
+**[→ Get the latest release](https://github.com/JoskoLatin/ulEditor/releases/latest)**
+
+One tag builds every artifact, so the desktop installers and the phone build in
+a release are always the same version of the same code.
+
+| Platform | File | Installing it |
+|---|---|---|
+| **Windows** 10/11 | `…_x64-setup.exe`, or `…_x64_en-US.msi` | Run it. Windows will say "unrecognised app" — see below. |
+| **macOS** Apple Silicon | `…_aarch64.dmg` | Open, drag to Applications. First launch: see below. |
+| **macOS** Intel | `…_x64.dmg` | The same. |
+| **Linux** | `…_amd64.AppImage`, or `…_amd64.deb` | `chmod +x` the AppImage and run it, or `sudo dpkg -i` the .deb. |
+| **Android** 7+ | `ulEditor_…_android.apk` | Allow installing from this source, then open the file. |
+
+### The warning you will see, and why
+
+The desktop builds are **not code-signed**, so on first launch:
+
+- **Windows** shows "Windows protected your PC" → *More info* → *Run anyway*.
+- **macOS** says the app "cannot be opened because the developer cannot be
+  verified" → right-click the app → *Open* → *Open*.
+
+This is not a judgement about the software. Both systems mean "nobody has paid
+for a certificate", nothing more: an Apple Developer ID costs 99 USD a year and
+a Windows certificate a few hundred. Until this is worth that, the warning
+stays — and you can build it yourself from source and compare (see
+[Quick start](#quick-start)).
+
+The Android APK **is** signed, with a key that never leaves GitHub Secrets, so
+updates install over the top. Since it does not come from the Play Store,
+Android still asks you to permit installation from this source once.
 
 ## The thesis
 
