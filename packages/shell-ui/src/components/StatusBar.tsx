@@ -4,13 +4,13 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { formatLabel } from '../shell/formats.js';
-import { useWorkspace } from '../state/workspace.js';
+import { selectActiveTabId, useWorkspace } from '../state/workspace.js';
 import { familyColor } from './Icons.js';
 
 export function StatusBar() {
   const shell = useShell();
   const tabs = useWorkspace((s) => s.tabs);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const activeTabId = useWorkspace(selectActiveTabId);
   const setPaletteOpen = useWorkspace((s) => s.setPaletteOpen);
 
   const active = tabs.find((t) => t.id === activeTabId);

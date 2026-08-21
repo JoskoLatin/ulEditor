@@ -14,27 +14,39 @@
 import type { Uri } from '@uleditor/plugin-sdk';
 
 import type { Shell } from '../host/index.js';
-import { useWorkspace } from '../state/workspace.js';
+import { selectActiveTabId, useWorkspace, type GroupId } from '../state/workspace.js';
 import { addRoot, openUri } from './actions.js';
 
 const KEY = 'session.workspace';
 /** Above this, restoring takes longer than anyone wants to wait for startup. */
 const MAX_TABS = 24;
 
+/**
+ * What a stored session holds.
+ *
+ * `tabs` used to be a plain list of URIs and old settings still contain that
+ * shape, so it is read either way — a person who updates the program should not
+ * lose the session they had open when they did.
+ */
 interface StoredSession {
   roots: Uri[];
-  tabs: Uri[];
+  tabs: Array<Uri | { uri: Uri; group: GroupId }>;
   active: Uri | null;
+  /** The document in front of the second group, when there was one. */
+  activeRight?: Uri | null;
 }
 
 export function saveSession(shell: Shell): void {
   if (shell.platform !== 'desktop') return;
 
-  const { tree, tabs, activeTabId } = useWorkspace.getState();
+  const state = useWorkspace.getState();
+  const { tree, tabs } = state;
+  const uriOf = (id: string | null) => tabs.find((tab) => tab.id === id)?.uri ?? null;
   const session: StoredSession = {
     roots: tree.map((node) => node.uri),
-    tabs: tabs.slice(0, MAX_TABS).map((tab) => tab.uri),
-    active: tabs.find((tab) => tab.id === activeTabId)?.uri ?? null,
+    tabs: tabs.slice(0, MAX_TABS).map((tab) => ({ uri: tab.uri, group: tab.group })),
+    active: uriOf(selectActiveTabId(state)),
+    activeRight: uriOf(state.active.right),
   };
   shell.settings.set(KEY, session);
 }
@@ -58,18 +70,40 @@ export async function restoreSession(shell: Shell): Promise<void> {
     }
   }
 
-  for (const uri of (session.tabs ?? []).slice(0, MAX_TABS)) {
+  /*
+   * Everything is opened into the left group first and moved afterwards. Opening
+   * straight into the right one would create a split with an empty left half for
+   * as long as the restore takes, and the store collapses exactly that — so the
+   * arrangement would be undone while it was still being built.
+   */
+  const entries = (session.tabs ?? []).slice(0, MAX_TABS).map((entry) =>
+    typeof entry === 'string' ? { uri: entry, group: 'left' as GroupId } : entry,
+  );
+
+  for (const entry of entries) {
     try {
-      await openUri(shell, uri, { quiet: true });
+      await openUri(shell, entry.uri, { quiet: true });
     } catch {
       // The file no longer exists.
     }
   }
 
-  if (session.active) {
-    const tab = useWorkspace.getState().tabs.find((t) => t.uri === session.active);
-    if (tab) useWorkspace.getState().activateTab(tab.id);
+  const store = useWorkspace.getState();
+  const byUri = (uri: Uri | null | undefined) =>
+    uri ? store.tabs.find((tab) => tab.uri === uri) : undefined;
+
+  for (const entry of entries) {
+    if (entry.group !== 'right') continue;
+    const tab = byUri(entry.uri);
+    if (tab) useWorkspace.getState().moveTabToOtherGroup(tab.id);
   }
+
+  // The right one first, so the left is what ends up with the focus — which is
+  // where it was when the window closed, unless the session says otherwise.
+  const right = byUri(session.activeRight);
+  if (right) useWorkspace.getState().activateTab(right.id);
+  const active = byUri(session.active);
+  if (active) useWorkspace.getState().activateTab(active.id);
 }
 
 /** Watches for changes and saves them with a delay — not every click in the tree needs a write. */

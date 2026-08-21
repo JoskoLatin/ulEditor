@@ -245,7 +245,7 @@ try {
 
   /* — an image — */
   const png = await readFile(resolve(ROOT, 'apps/desktop/src-tauri/icons/128x128.png'));
-  await dropFile(page, 'ikona.png', png);
+  await dropFile(page, 'icon.png', png);
   await page.waitForSelector('.ul-img', { timeout: 15000 });
   await page.waitForSelector('.ul-img-frame img', { timeout: 10000 });
   const imgBox = await page.locator('.ul-img-frame img').boundingBox();
@@ -253,8 +253,59 @@ try {
   const imgStatus = await page.locator('.statusbar').innerText();
   check('the dimensions are in the status bar', imgStatus.includes('128 × 128'), imgStatus.replace(/\s+/g, ' ').slice(0, 60));
 
-  /* — tabovi — */
+  /* — tabs — */
   check('five open tabs', (await page.locator('.tab').count()) === 5);
+
+  /* — two editor groups — */
+  /*
+   * Driven from the keyboard rather than the store, so what is checked is the
+   * route a person takes: Ctrl+\\ moves the tab in front to the other side.
+   */
+  await page.locator('.tab').last().click();
+  await page.keyboard.press('Control+\\');
+  await page.waitForSelector('.group[data-split="true"]', { timeout: 5000 });
+  check('the split opens with two groups', (await page.locator('.group').count()) === 2);
+  check(
+    'the tab moved rather than being copied',
+    (await page.locator('.tab').count()) === 5,
+    `${await page.locator('.group').nth(0).locator('.tab').count()} + ${await page
+      .locator('.group')
+      .nth(1)
+      .locator('.tab')
+      .count()}`,
+  );
+  check(
+    'the side it moved to has the focus',
+    (await page.locator('.group').nth(1).getAttribute('data-focused')) === 'true',
+  );
+
+  // Clicking into the other group moves the focus without changing which tab is
+  // in front on either side.
+  await page.locator('.group').first().locator('.tab').first().click();
+  check(
+    'clicking a tab moves the focus back',
+    (await page.locator('.group').first().getAttribute('data-focused')) === 'true',
+  );
+
+  // Both documents are on screen at once — the whole point of the split.
+  const leftBox = await page.locator('.group').nth(0).boundingBox();
+  const rightBox = await page.locator('.group').nth(1).boundingBox();
+  check(
+    'both groups are visible side by side',
+    !!leftBox && !!rightBox && leftBox.width > 50 && rightBox.width > 50 && rightBox.x > leftBox.x,
+    `${Math.round(leftBox?.width ?? 0)} + ${Math.round(rightBox?.width ?? 0)} px`,
+  );
+
+  // Emptying a group closes the split rather than leaving half a blank window.
+  await page.locator('.group').nth(1).locator('.tab').first().hover();
+  await page.locator('.group').nth(1).locator('.tab .close').first().click();
+  await page.waitForSelector('.group[data-split="false"]', { timeout: 5000 });
+  check('closing the last tab of a group closes the split', (await page.locator('.group').count()) === 1);
+  check('the remaining tabs are all still open', (await page.locator('.tab').count()) === 4);
+
+  // Back to five, so the checks below see the workspace they expect.
+  await dropFile(page, 'icon.png', png);
+  await page.waitForSelector('.ul-img-frame img', { timeout: 15000 });
 
   /* — in-document search (the same contract for every format) — */
   await page.locator('.tab').first().click();

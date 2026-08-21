@@ -7,7 +7,7 @@ import { useShell } from '../shell/context.js';
 import { openFiles, openFolder, saveActive } from '../shell/actions.js';
 import { formatLabel } from '../shell/formats.js';
 import { visibleViews } from '../shell/views.js';
-import { useWorkspace } from '../state/workspace.js';
+import { selectActiveTabId, useWorkspace } from '../state/workspace.js';
 import {
   IconCommand,
   IconFolderOpen,
@@ -137,7 +137,7 @@ function ViewSwitch() {
 export function TitleBar() {
   const shell = useShell();
   const tabs = useWorkspace((s) => s.tabs);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const activeTabId = useWorkspace(selectActiveTabId);
   const setPaletteOpen = useWorkspace((s) => s.setPaletteOpen);
 
   const active = tabs.find((t) => t.id === activeTabId);

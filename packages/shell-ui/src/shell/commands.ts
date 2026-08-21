@@ -9,7 +9,7 @@
 import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
-import { activeInstance, useWorkspace } from '../state/workspace.js';
+import { activeInstance, activeTabId, useWorkspace } from '../state/workspace.js';
 import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
@@ -38,7 +38,7 @@ export function registerCommands(shell: Shell): () => void {
       title: t('Save'),
       category: t('File'),
       keybinding: ['Ctrl', 'S'],
-      when: () => store().activeTabId !== null,
+      when: () => activeTabId() !== null,
       run: () => saveActive(shell),
     }),
     shell.commands.register({
@@ -46,9 +46,9 @@ export function registerCommands(shell: Shell): () => void {
       title: t('Close tab'),
       category: t('File'),
       keybinding: ['Ctrl', 'W'],
-      when: () => store().activeTabId !== null,
+      when: () => activeTabId() !== null,
       run: () => {
-        const id = store().activeTabId;
+        const id = activeTabId();
         if (id) void closeTab(shell, id);
       },
     }),
@@ -187,6 +187,36 @@ export function registerCommands(shell: Shell): () => void {
       run: () => void resetZoom(shell),
     }),
 
+    /*
+     * The split moves the tab rather than copying it. Two live editors over one
+     * file would each hold their own unsaved text and one of them would lose —
+     * showing one document twice needs the editors to support a second view of
+     * one buffer, and none of them do yet.
+     */
+    shell.commands.register({
+      id: 'view.splitTab',
+      title: t('Move the tab to the other side'),
+      category: t('View'),
+      keybinding: ['Ctrl', '\\'],
+      when: () => activeTabId() !== null,
+      run: () => {
+        const id = activeTabId();
+        if (id) store().moveTabToOtherGroup(id);
+      },
+    }),
+    shell.commands.register({
+      id: 'view.focusOtherGroup',
+      title: t('Go to the other side'),
+      category: t('View'),
+      keybinding: ['Ctrl', '`'],
+      when: () => store().tabs.some((tab) => tab.group === 'right'),
+      run: () => {
+        const state = store();
+        state.focusGroup(state.focused === 'left' ? 'right' : 'left');
+        activeInstance()?.focus();
+      },
+    }),
+
     shell.commands.register({
       id: 'view.preferences',
       title: t('Preferences…'),
@@ -200,7 +230,7 @@ export function registerCommands(shell: Shell): () => void {
       title: t('Next tab'),
       category: t('Navigation'),
       keybinding: ['Ctrl', 'Tab'],
-      when: () => store().tabs.length > 1,
+      when: () => tabsInFocusedGroup() > 1,
       run: () => cycleTab(1),
     }),
     shell.commands.register({
@@ -208,7 +238,7 @@ export function registerCommands(shell: Shell): () => void {
       title: t('Previous tab'),
       category: t('Navigation'),
       keybinding: ['Ctrl', 'Shift', 'Tab'],
-      when: () => store().tabs.length > 1,
+      when: () => tabsInFocusedGroup() > 1,
       run: () => cycleTab(-1),
     }),
   ];
@@ -224,12 +254,20 @@ export function registerCommands(shell: Shell): () => void {
   };
 }
 
+function tabsInFocusedGroup(): number {
+  const state = useWorkspace.getState();
+  return state.tabs.filter((tab) => tab.group === state.focused).length;
+}
+
+/** Within one group. Ctrl+Tab crossing to the other side would be a way of
+ *  losing the document you were reading, not a way of reaching it. */
 function cycleTab(direction: number): void {
-  const { tabs, activeTabId, activateTab } = useWorkspace.getState();
-  if (tabs.length < 2) return;
-  const index = tabs.findIndex((t) => t.id === activeTabId);
-  const next = tabs[(index + direction + tabs.length) % tabs.length];
-  if (next) activateTab(next.id);
+  const state = useWorkspace.getState();
+  const inGroup = state.tabs.filter((tab) => tab.group === state.focused);
+  if (inGroup.length < 2) return;
+  const index = inGroup.findIndex((tab) => tab.id === activeTabId());
+  const next = inGroup[(index + direction + inGroup.length) % inGroup.length];
+  if (next) state.activateTab(next.id);
 }
 
 /**
@@ -357,7 +395,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       break;
     case 'w': {
       event.preventDefault();
-      const id = store.activeTabId;
+      const id = activeTabId();
       if (id) void closeTab(shell, id);
       break;
     }
@@ -365,6 +403,20 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       event.preventDefault();
       cycleTab(1);
       break;
+    case '\\': {
+      event.preventDefault();
+      const id = activeTabId();
+      if (id) store.moveTabToOtherGroup(id);
+      break;
+    }
+    case '`': {
+      event.preventDefault();
+      if (store.tabs.some((tab) => tab.group === 'right')) {
+        store.focusGroup(store.focused === 'left' ? 'right' : 'left');
+        activeInstance()?.focus();
+      }
+      break;
+    }
     case ',':
       event.preventDefault();
       store.setPreferencesOpen(!store.preferencesOpen);

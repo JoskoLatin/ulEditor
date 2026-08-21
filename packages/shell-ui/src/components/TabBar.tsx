@@ -5,15 +5,18 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { closeTab } from '../shell/actions.js';
-import { tabInstances, useWorkspace } from '../state/workspace.js';
+import { tabInstances, useWorkspace, type GroupId } from '../state/workspace.js';
 import { FormatIcon, IconClose } from './Icons.js';
 
-export function TabBar() {
+export function TabBar({ group }: { group: GroupId }) {
   const shell = useShell();
-  const tabs = useWorkspace((s) => s.tabs);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const all = useWorkspace((s) => s.tabs);
+  const activeTabId = useWorkspace((s) => s.active[group]);
   const activateTab = useWorkspace((s) => s.activateTab);
+  const moveTabToOtherGroup = useWorkspace((s) => s.moveTabToOtherGroup);
   const barRef = useRef<HTMLDivElement>(null);
+
+  const tabs = all.filter((tab) => tab.group === group);
 
   // The active tab has to stay visible even when it was opened through the palette.
   useEffect(() => {
@@ -40,6 +43,10 @@ export function TabBar() {
               void closeTab(shell, tab.id);
             }
           }}
+          /* A double-click sends the tab across. Dragging would be the expected
+             gesture and is the next step; a double-click is discoverable from
+             the same command in the palette and costs no drag machinery. */
+          onDoubleClick={() => moveTabToOtherGroup(tab.id)}
           onClick={() => {
             activateTab(tab.id);
             tabInstances.get(tab.id)?.focus();

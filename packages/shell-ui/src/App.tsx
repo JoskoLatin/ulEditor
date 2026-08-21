@@ -6,28 +6,28 @@ import type { Shell } from './host/index.js';
 import { ShellContext } from './shell/context.js';
 import { registerCommands } from './shell/commands.js';
 import { adoptDropped } from './shell/actions.js';
-import { useWorkspace } from './state/workspace.js';
+import { selectActiveTabId, selectSplit, useWorkspace } from './state/workspace.js';
 
 import { exitReading, useReading } from './shell/reading.js';
 import { restoreSession, watchSession } from './shell/session.js';
 
 import { ActivityBar } from './components/ActivityBar.js';
+import { EditorGroup, GroupResizer } from './components/EditorGroup.js';
 import { CommandPalette } from './components/CommandPalette.js';
-import { EditorSurface } from './components/EditorSurface.js';
-import { FindPanel } from './components/FindPanel.js';
 import { Preferences } from './components/Preferences.js';
 import { QuickOpen } from './components/QuickOpen.js';
 import { ReaderBar } from './components/ReaderBar.js';
 import { SplitPane } from './components/SplitPane.js';
 import { Sidebar, SidebarResizer, SidebarScrim } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
-import { TabBar } from './components/TabBar.js';
 import { TitleBar } from './components/TitleBar.js';
 import { Toasts } from './components/Toasts.js';
 
 export function App({ shell }: { shell: Shell }) {
   const sidebarVisible = useWorkspace((s) => s.sidebarVisible);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const activeTabId = useWorkspace(selectActiveTabId);
+  const split = useWorkspace(selectSplit);
+  const splitRatio = useWorkspace((s) => s.splitRatio);
   const reading = useReading((s) => s.active);
   const readingTabId = useReading((s) => s.tabId);
   const [dropActive, setDropActive] = useState(false);
@@ -143,10 +143,19 @@ export function App({ shell }: { shell: Shell }) {
           {sidebarVisible ? <SidebarScrim /> : null}
           <main className="main">
             {reading ? <ReaderBar /> : null}
-            <TabBar />
-            <FindPanel />
-            <EditorSurface />
-            {/* The panel below: the program's own output, not a second tab group. */}
+            {/* Two groups side by side, each with its own tabs and its own
+                document in front. The second exists only while it holds
+                something — see `collapseEmptyGroup` in the store. */}
+            <div
+              className="groups"
+              data-split={split}
+              style={{ gridTemplateColumns: split ? `${splitRatio}fr 5px ${1 - splitRatio}fr` : '1fr' }}
+            >
+              <EditorGroup group="left" />
+              {split ? <GroupResizer /> : null}
+              {split ? <EditorGroup group="right" /> : null}
+            </div>
+            {/* The panel below: the program's own output, not a third tab group. */}
             <SplitPane />
           </main>
         </div>

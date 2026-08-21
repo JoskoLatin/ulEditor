@@ -153,7 +153,7 @@ function draw(size) {
 function encodeIco(pngs) {
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0);
-  header.writeUInt16LE(1, 2); // 1 = ikona
+  header.writeUInt16LE(1, 2); // 1 = icon
   header.writeUInt16LE(pngs.length, 4);
 
   const entries = [];

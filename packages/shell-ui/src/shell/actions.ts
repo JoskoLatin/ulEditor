@@ -14,6 +14,7 @@ import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
 import { isNarrow } from './views.js';
 import {
+  activeTabId,
   tabDocuments,
   tabInstances,
   useWorkspace,
@@ -50,7 +51,7 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
   const provider = shell.registry.resolve(doc);
   const id = nextId();
 
-  const tab: TabState = {
+  const tab: Omit<TabState, 'group'> = {
     id,
     uri: doc.uri,
     name: doc.name,
@@ -272,7 +273,7 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
 }
 
 export async function saveActive(shell: Shell): Promise<void> {
-  const id = useWorkspace.getState().activeTabId;
+  const id = activeTabId();
   if (id) await saveTab(shell, id);
 }
 

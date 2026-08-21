@@ -2,7 +2,13 @@ import { useEffect, useRef } from 'react';
 
 import { t } from '@uleditor/i18n';
 
-import { tabInstances, useWorkspace, type TabState } from '../state/workspace.js';
+import {
+  selectActiveTabId,
+  tabInstances,
+  useWorkspace,
+  type GroupId,
+  type TabState,
+} from '../state/workspace.js';
 import { Welcome } from './Welcome.js';
 import { IconWarning } from './Icons.js';
 
@@ -14,22 +20,32 @@ import { IconWarning } from './Icons.js';
  * scroll position, the cursor and the undo history — which is precisely how you
  * recognise an editor not worth using.
  */
-export function EditorSurface() {
+export function EditorSurface({ group }: { group: GroupId }) {
   const tabs = useWorkspace((s) => s.tabs);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const activeInGroup = useWorkspace((s) => s.active[group]);
+  const focusedTabId = useWorkspace(selectActiveTabId);
 
-  if (tabs.length === 0) return <Welcome />;
+  const mine = tabs.filter((tab) => tab.group === group);
+  if (mine.length === 0) return <Welcome />;
 
   return (
     <div className="surface">
-      {tabs.map((tab) => (
-        <Pane key={tab.id} tab={tab} active={tab.id === activeTabId} />
+      {mine.map((tab) => (
+        <Pane
+          key={tab.id}
+          tab={tab}
+          active={tab.id === activeInGroup}
+          /* In front of its own group, but the caret belongs to one document in
+             the window — taking the focus for the group that does not have it
+             would move the cursor out from under the user's hands. */
+          focused={tab.id === focusedTabId}
+        />
       ))}
     </div>
   );
 }
 
-function Pane({ tab, active }: { tab: TabState; active: boolean }) {
+function Pane({ tab, active, focused }: { tab: TabState; active: boolean; focused: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
 
@@ -40,14 +56,14 @@ function Pane({ tab, active }: { tab: TabState; active: boolean }) {
 
     mounted.current = true;
     void Promise.resolve(instance.mount(ref.current)).then(() => {
-      if (active) instance.focus();
+      if (focused) instance.focus();
     });
-  }, [tab.id, tab.ready, active]);
+  }, [tab.id, tab.ready, focused]);
 
   // The focus follows the active tab, but only once the editor is mounted.
   useEffect(() => {
-    if (active && mounted.current) tabInstances.get(tab.id)?.focus();
-  }, [active, tab.id]);
+    if (focused && mounted.current) tabInstances.get(tab.id)?.focus();
+  }, [focused, tab.id]);
 
   if (tab.error) {
     return (

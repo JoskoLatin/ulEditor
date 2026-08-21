@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { FindResult } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
-import { activeInstance, useWorkspace } from '../state/workspace.js';
+import { activeInstance, selectActiveTabId, useWorkspace } from '../state/workspace.js';
 import { IconClose, IconSearch } from './Icons.js';
 
 /**
@@ -20,11 +20,16 @@ import { IconClose, IconSearch } from './Icons.js';
 export function FindPanel() {
   const open = useWorkspace((s) => s.findOpen);
   const setOpen = useWorkspace((s) => s.setFindOpen);
-  const activeTabId = useWorkspace((s) => s.activeTabId);
+  const activeTabId = useWorkspace(selectActiveTabId);
 
-  const [query, setQuery] = useState('');
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [regex, setRegex] = useState(false);
+  /*
+   * The query lives in the store, not here. The bar belongs to the group that
+   * has the focus, so it is unmounted and mounted again when the focus crosses
+   * to the other side — and a search term that disappears because you clicked
+   * the document beside it is a search term you have to type twice.
+   */
+  const { query, caseSensitive, regex } = useWorkspace((s) => s.find);
+  const setFind = useWorkspace((s) => s.setFind);
   const [results, setResults] = useState<FindResult[]>([]);
   const [selected, setSelected] = useState(0);
   const [searching, setSearching] = useState(false);
@@ -155,7 +160,7 @@ export function FindPanel() {
           value={query}
           placeholder={t('Find in document…')}
           aria-label={t('Find in document')}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => setFind({ query: e.target.value })}
         />
 
         <span className="findpanel-count">{count}</span>
@@ -165,7 +170,7 @@ export function FindPanel() {
           data-active={caseSensitive}
           title={t('Match case')}
           aria-pressed={caseSensitive}
-          onClick={() => setCaseSensitive((v) => !v)}
+          onClick={() => setFind({ caseSensitive: !caseSensitive })}
         >
           Aa
         </button>
@@ -174,7 +179,7 @@ export function FindPanel() {
           data-active={regex}
           title={t('Regular expression')}
           aria-pressed={regex}
-          onClick={() => setRegex((v) => !v)}
+          onClick={() => setFind({ regex: !regex })}
         >
           .*
         </button>

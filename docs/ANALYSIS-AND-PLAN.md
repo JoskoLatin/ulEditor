@@ -204,7 +204,7 @@ State as of 15 August 2026.
 | **OCR over an image + the panel below** (not in the original plan) | **done** |
 | **Text export to txt / md / docx / pdf** (not in the original plan) | **done** |
 | **English as the default interface language, Croatian in settings** | **done** |
-| Split view | **partial** — the horizontal panel below holds one document; two full tab groups remain open |
+| Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
 | `editor-code`: tree-sitter, LSP client | deferred to phase 1.1 |
 | `editor-markdown`: mermaid | deferred to phase 1.1 |
 | Global project-wide search | **done** — scanning in Rust; `tantivy` deferred while scanning suffices |

@@ -5,7 +5,7 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { openFolder, openUri, toggleDirectory } from '../shell/actions.js';
-import { useWorkspace, type TreeNode } from '../state/workspace.js';
+import { selectActiveTabId, useWorkspace, type TreeNode } from '../state/workspace.js';
 import { FolderIcon, FormatIcon, IconChevron, IconFolderOpen } from './Icons.js';
 
 export function Explorer() {
@@ -46,7 +46,7 @@ function EmptyState() {
 
 function Branch({ node }: { node: TreeNode }) {
   const shell = useShell();
-  const activeUri = useWorkspace((s) => s.tabs.find((t) => t.id === s.activeTabId)?.uri);
+  const activeUri = useWorkspace((s) => s.tabs.find((t) => t.id === selectActiveTabId(s))?.uri);
 
   const isDir = node.kind === 'directory';
   const descriptor = FORMATS[node.format];
