@@ -17,9 +17,13 @@ All of it is built by [.github/workflows/release.yml](../.github/workflows/relea
 | --- | --- |
 | `ulEditor_0.1.0_x64_en-US.msi`, `ulEditor_0.1.0_x64-setup.exe` | Windows |
 | `ulEditor_0.1.0_aarch64.dmg`, `ulEditor_0.1.0_x64.dmg` | macOS |
-| `ulEditor_0.1.0_amd64.deb`, `ulEditor_0.1.0_amd64.AppImage` | Linux |
+| `ulEditor_0.1.0_amd64.deb`, `ulEditor_0.1.0_amd64.AppImage`, `ulEditor-0.1.0-1.x86_64.rpm` | Linux |
 | `ulEditor_0.1.0_android.apk` | A phone, installed directly |
 | `ulEditor_0.1.0_android.aab` | Google Play, should it ever be needed |
+
+Tauri also produces `ulEditor_x64.app.tar.gz` and `ulEditor_aarch64.app.tar.gz`.
+Those are the macOS bundles for the built-in updater, not something a person
+downloads — the `.dmg` is what a person downloads.
 
 ## One-time preparation: the signing key
 

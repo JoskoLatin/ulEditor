@@ -28,7 +28,7 @@ a release are always the same version of the same code.
 | **Windows** 10/11 | `…_x64-setup.exe`, or `…_x64_en-US.msi` | Run it. Windows will say "unrecognised app" — see below. |
 | **macOS** Apple Silicon | `…_aarch64.dmg` | Open, drag to Applications. First launch: see below. |
 | **macOS** Intel | `…_x64.dmg` | The same. |
-| **Linux** | `…_amd64.AppImage`, or `…_amd64.deb` | `chmod +x` the AppImage and run it, or `sudo dpkg -i` the .deb. |
+| **Linux** | `…_amd64.AppImage`, `…_amd64.deb`, or `…x86_64.rpm` | `chmod +x` the AppImage and run it; `sudo dpkg -i` the .deb on Debian and Ubuntu; `sudo rpm -i` the .rpm on Fedora and openSUSE. |
 | **Android** 7+ | `ulEditor_…_android.apk` | Allow installing from this source, then open the file. |
 
 ### The warning you will see, and why
