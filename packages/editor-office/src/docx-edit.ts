@@ -196,7 +196,7 @@ export function findRuns(xml: string): RunSpan[] {
   return runs;
 }
 
-/* ── tekst ───────────────────────────────────────────────────────────── */
+/* ── text ────────────────────────────────────────────────────────────── */
 
 const ENTITIES: Record<string, string> = {
   amp: '&',

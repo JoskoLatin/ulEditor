@@ -136,12 +136,12 @@ const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/m
  */
 export function makeEpub(opts = {}) {
   const count = opts.chapters ?? 3;
-  const title = opts.title ?? 'Testna knjiga';
+  const title = opts.title ?? 'A test book';
 
-  const chapterFile = (n) => `poglavlje-${n}.xhtml`;
+  const chapterFile = (n) => `chapter-${n}.xhtml`;
   const chapterBody = (n) =>
     `<?xml version="1.0" encoding="utf-8"?>\n` +
-    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Poglavlje ${n}</title></head><body>\n` +
+    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter ${n}</title></head><body>\n` +
     `<h1 id="p${n}">Chapter ${n}</h1>\n` +
     // A chapter has to be longer than one two-column screen, otherwise pagination
     // has nothing to break and the page-turn check proves nothing.
@@ -182,7 +182,7 @@ export function makeEpub(opts = {}) {
     `<nav epub:type="toc"><ol>\n` +
     Array.from(
       { length: count },
-      (_, i) => `<li><a href="${chapterFile(i + 1)}#p${i + 1}">Poglavlje ${i + 1}</a></li>`,
+      (_, i) => `<li><a href="${chapterFile(i + 1)}#p${i + 1}">Chapter ${i + 1}</a></li>`,
     ).join('\n') +
     `\n</ol></nav></body></html>`;
 

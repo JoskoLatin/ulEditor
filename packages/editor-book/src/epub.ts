@@ -36,7 +36,7 @@ export interface BookOutlineEntry {
   id: string;
   label: string;
   depth: number;
-  /** Indeks poglavlja u `chapters`. */
+  /** The chapter index within `chapters`. */
   chapter: number;
   /** An anchor inside the chapter, if the table of contents names one. */
   anchor: string | null;
@@ -56,7 +56,7 @@ export interface Book {
   release(): void;
 }
 
-/* ── putanje ─────────────────────────────────────────────────────────── */
+/* ── paths ───────────────────────────────────────────────────────────── */
 
 function dirname(path: string): string {
   const slash = path.lastIndexOf('/');

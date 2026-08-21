@@ -49,7 +49,7 @@ try {
     if (/Content Security Policy|Refused to/i.test(message.text())) violations.push(message.text());
   });
 
-  /* Slika s poznatim tekstom, nacrtana u samoj aplikaciji. */
+  /* An image with known text in it, drawn inside the application itself. */
   const bytes = await page.evaluate(async (phrase) => {
     const canvas = document.createElement('canvas');
     canvas.width = 900;
@@ -75,7 +75,7 @@ try {
   }, bytes);
 
   await page.waitForSelector('.ul-img img', { timeout: 30000 });
-  check('slika otvorena u aplikaciji', true);
+  check('the image is open in the application', true);
 
   await page.locator('.ul-img-select').selectOption('eng');
   await page.locator('.ul-img-ocr').click();

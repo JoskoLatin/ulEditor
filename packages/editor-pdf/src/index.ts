@@ -669,7 +669,7 @@ class PdfEditor implements EditorInstance {
     this.#emitStatus();
   }
 
-  /* ── traka s minijaturama ──────────────────────────────────────────── */
+  /* ── the thumbnail rail ────────────────────────────────────────────── */
 
   async #renderRail(): Promise<void> {
     const rail = this.#rail;

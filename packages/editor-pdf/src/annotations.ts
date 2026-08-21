@@ -503,7 +503,7 @@ function textDict(
     DA: PDFString.of(
       `/${FONT_RESOURCE} ${round(size)} Tf ${round(r)} ${round(g)} ${round(b)} rg`,
     ),
-    Q: PDFNumber.of(0), // lijevo poravnanje
+    Q: PDFNumber.of(0), // left alignment
     IT: PDFName.of('FreeTextTypeWriter'),
     // No border: added text is text, not a box.
     BS: context.obj({ W: PDFNumber.of(0) }),
@@ -542,7 +542,7 @@ function annotsArray(page: PDFPage, context: PDFContext): PDFArray {
 
 export interface WriteResult {
   bytes: Uint8Array;
-  /** Koliko je anotacija stvarno zapisano. */
+  /** How many annotations were actually written. */
   written: number;
   /** Characters the embedded font lacks — they were saved as blanks. */
   missingGlyphs: string[];

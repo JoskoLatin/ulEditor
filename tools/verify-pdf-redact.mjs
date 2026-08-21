@@ -1,13 +1,14 @@
 /**
- * Provjera da obrisani tekst **stvarno nestane iz datoteke**.
+ * Checking that deleted text **really leaves the file**.
  *
- * Crni pravokutnik preko teksta izgleda kao brisanje i prolazi svaku provjeru
- * koja gleda sliku. Zato ovdje nijedna provjera ne gleda sliku: raspakirava se
- * tok sadržaja i traži se sam niz bajtova. Ako je ondje, tekst se vadi
- * označavanjem i kopiranjem, bez obzira što se vidi.
+ * A black rectangle over the text looks like deletion and passes every check that
+ * looks at the picture. So no check here looks at the picture: the content stream
+ * is decompressed and the byte sequence itself is searched for. If it is there,
+ * the text comes out by selecting and copying, whatever is on screen.
  *
- * Drugi dio provjere je odbijanje: kad se ne može jamčiti da je sve maknuto,
- * dokument mora ostati netaknut i razlog mora doći do korisnika.
+ * The second half of the check is refusal: when it cannot be guaranteed that
+ * everything was removed, the document has to stay untouched and the reason has
+ * to reach the user.
  *
  *   node tools/verify-pdf-redact.mjs
  */
@@ -51,12 +52,12 @@ const standard = await standardWidths(loadFont);
 
 /* ── fixtures ────────────────────────────────────────────────────────── */
 
-/** PDF s poznatim tekstom na poznatim mjestima. */
+/** A PDF with known text in known places. */
 function buildPdf({ font = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>', extra = '' } = {}) {
   const stream = [
     'BT /F1 12 Tf',
-    '30 150 Td (Tajna: 12345) Tj',
-    '0 -30 Td [(Ostaje ) -200 (netaknuto)] TJ',
+    '30 150 Td (Secret: 12345) Tj',
+    '0 -30 Td [(Remains ) -200 (untouched)] TJ',
     'ET',
     extra,
   ].join('\n');
@@ -86,20 +87,20 @@ function buildPdf({ font = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>', ex
 
 const encode = (text) => new TextEncoder().encode(text);
 
-/** Sirovi tok sadržaja prve stranice, raspakiran. */
+/** The raw content stream of the first page, decompressed. */
 async function streamOf(bytes) {
   const doc = await PDFDocument.load(bytes);
   return new TextDecoder('latin1').decode(contentsOf(doc.getPages()[0]));
 }
 
-/* ── čitanje položaja ────────────────────────────────────────────────── */
+/* ── reading the positions ───────────────────────────────────────────── */
 
 const source = buildPdf();
 const doc = await PDFDocument.load(source);
 const page = doc.getPages()[0];
 const content = readPageContent(page, standard);
 
-check('pronađene su tri tekstualne naredbe', content.operations.length === 2, `${content.operations.length}`);
+check('the text operators were found', content.operations.length === 2, `${content.operations.length}`);
 
 const glyphs = content.operations
   .flatMap((op) => op.parts)
@@ -107,25 +108,25 @@ const glyphs = content.operations
   .flatMap((part) => part.glyphs);
 
 const text = glyphs.map((g) => String.fromCharCode(g.code)).join('');
-check('glifovi su pročitani u ispravnom redoslijedu', text === 'Tajna: 12345Ostaje netaknuto', text);
+check('the glyphs were read in the right order', text === 'Secret: 12345Remains untouched', text);
 
 const first = glyphs[0];
 check(
-  'prvi glif stoji ondje gdje ga je Td postavio',
+  'the first glyph sits where Td put it',
   Math.abs(first.box.x - 30) < 0.01 && first.box.y < 150 && first.box.y + first.box.height > 150,
   `x ${first.box.x.toFixed(1)}, y ${first.box.y.toFixed(1)}–${(first.box.y + first.box.height).toFixed(1)}`,
 );
 
-/* Širina „T” u Helvetici je 611/1000; Liberation Sans mora dati isto. */
+/* The width of "S" in Helvetica is 667/1000; Liberation Sans has to agree. */
 check(
-  'standardni font je izmjeren, ne nagađan',
-  Math.abs(first.advance - (611 / 1000) * 12) < 0.05,
+  'the standard font was measured, not guessed',
+  Math.abs(first.advance - (667 / 1000) * 12) < 0.05,
   `${first.advance.toFixed(3)} pt`,
 );
 
-/* ── brisanje ────────────────────────────────────────────────────────── */
+/* ── deletion ────────────────────────────────────────────────────────── */
 
-/** Pravokutnik koji obuhvaća zadane glifove, s malo zraka na sve strane. */
+/** A rectangle spanning the given glyphs, with a little air on every side. */
 function around(chosen, pad = 0.4) {
   const left = Math.min(...chosen.map((g) => g.box.x));
   const right = Math.max(...chosen.map((g) => g.box.x + g.box.width));
@@ -134,35 +135,36 @@ function around(chosen, pad = 0.4) {
   return { x: left - pad, y: bottom - pad, width: right - left + pad * 2, height: top - bottom + pad * 2 };
 }
 
-// Preko samog broja, bez riječi „Tajna:” ispred njega. Zrak oko pravokutnika
-// je namjeran: povlačenje rukom nikad nije po pikselu, a susjedna slova
-// svejedno moraju ostati.
+// Over the number alone, without the word "Secret:" in front of it. The air
+// around the rectangle is deliberate: a drag by hand is never pixel-exact, and
+// the neighbouring letters have to survive anyway.
 const rect = around(glyphs.filter((g) => g.code >= 0x31 && g.code <= 0x35));
 
 const preview = previewRedaction(page, [rect], standard);
-check('pretpregled najavi točno pet glifova', preview.glyphs === 5, `${preview.glyphs}`);
-check('pretpregled ne prijavljuje prepreku', preview.obstacles.length === 0);
+check('the preview announces exactly five glyphs', preview.glyphs === 5, `${preview.glyphs}`);
+check('the preview reports no obstacle', preview.obstacles.length === 0);
 
 const redacted = await applyRedactions(source, [{ id: 'r1', page: 1, rect }], standard);
-check('pet glifova je maknuto', redacted.removed === 5, `${redacted.removed}`);
-check('ništa nije odbijeno', redacted.refused.length === 0, JSON.stringify(redacted.refused));
+check('five glyphs were removed', redacted.removed === 5, `${redacted.removed}`);
+check('nothing was refused', redacted.refused.length === 0, JSON.stringify(redacted.refused));
 
 const after = await streamOf(redacted.bytes);
 
 /*
- * Ovo je provjera zbog koje ova datoteka postoji. Traži se sam niz bajtova, u
- * oba oblika u kojima se tekst zapisuje — običnom i heksadekadskom.
+ * This is the check this file exists for. The byte sequence itself is searched
+ * for, in both forms text is written in — plain and hexadecimal.
  */
-check('broja više nema kao teksta', !after.includes('12345'));
-check('broja više nema ni heksadekadski', !/3132333435/i.test(after));
+check('the number is no longer there as text', !after.includes('12345'));
+check('the number is not there in hex either', !/3132333435/i.test(after));
 
 /*
- * I u cijeloj datoteci, ne samo u toku koji se crta. Novi tok uz preusmjeren
- * `/Contents` ostavio bi stari kao siroče: nitko ga ne crta, a bajtovi su i
- * dalje ondje i vade se prvim alatom koji raspakira tokove.
+ * And in the whole file, not only in the stream that gets drawn. A new stream
+ * with a redirected `/Contents` would leave the old one orphaned: nobody draws
+ * it, but the bytes are still there and come out with the first tool that
+ * decompresses streams.
  */
 check(
-  'broja nema nigdje u datoteci, ni u napuštenom objektu',
+  'the number is nowhere in the file, not even in an abandoned object',
   !new TextDecoder('latin1').decode(redacted.bytes).includes('12345'),
 );
 
@@ -174,24 +176,24 @@ const afterGlyphs = afterContent.operations
   .flatMap((part) => part.glyphs);
 const afterText = afterGlyphs.map((g) => String.fromCharCode(g.code)).join('');
 
-check('ostatak retka je netaknut', afterText === 'Tajna: Ostaje netaknuto', afterText);
+check('the rest of the line is untouched', afterText === 'Secret: Remains untouched', afterText);
 
 /*
- * Brisanje sredine retka mora ostaviti ostatak na istom mjestu. Bez pomaka u
- * `TJ` polju sve iza obrisanog skliznulo bi ulijevo.
+ * Deleting the middle of a line has to leave the rest in place. Without an
+ * adjustment in the `TJ` array everything after the deletion would slide left.
  */
-const beforeSecondLine = glyphs.find((g) => g.code === 0x4f); // 'O' iz „Ostaje”
-const afterSecondLine = afterGlyphs.find((g) => g.code === 0x4f);
+const beforeSecondLine = glyphs.find((g) => g.code === 0x52); // 'R' from "Remains"
+const afterSecondLine = afterGlyphs.find((g) => g.code === 0x52);
 check(
-  'drugi redak nije pomaknut',
+  'the second line did not move',
   Math.abs(beforeSecondLine.box.x - afterSecondLine.box.x) < 0.01 &&
     Math.abs(beforeSecondLine.box.y - afterSecondLine.box.y) < 0.01,
   `${beforeSecondLine.box.x.toFixed(2)} → ${afterSecondLine.box.x.toFixed(2)}`,
 );
 
-/* ── brisanje sredine riječi ─────────────────────────────────────────── */
+/* ── deleting the middle of a word ───────────────────────────────────── */
 
-// Preko „ajn” usred „Tajna” — najteži slučaj, jer se niz mora rasjeći.
+// Over "ecr" inside "Secret" — the hardest case, because the string has to be cut apart.
 const midRect = around(glyphs.slice(1, 4));
 
 const middle = await applyRedactions(source, [{ id: 'r2', page: 1, rect: midRect }], standard);
@@ -202,7 +204,7 @@ const middleText = middleContent.operations
   .flatMap((part) => part.glyphs)
   .map((g) => String.fromCharCode(g.code))
   .join('');
-check('sredina riječi se da izrezati', middleText === 'Ta: 12345Ostaje netaknuto', middleText);
+check('the middle of a word can be cut out', middleText === 'Set: 12345Remains untouched', middleText);
 
 const tail = middleContent.operations[0].parts
   .filter((p) => p.kind === 'glyphs')
@@ -210,50 +212,50 @@ const tail = middleContent.operations[0].parts
   .find((g) => g.code === 0x3a); // ':'
 const tailBefore = glyphs.find((g) => g.code === 0x3a);
 check(
-  'ostatak riječi ostaje na svom mjestu',
+  'the rest of the word stays in place',
   Math.abs(tail.box.x - tailBefore.box.x) < 0.01,
   `${tailBefore.box.x.toFixed(2)} → ${tail.box.x.toFixed(2)}`,
 );
 
-/* ── odbijanje ───────────────────────────────────────────────────────── */
+/* ── refusal ─────────────────────────────────────────────────────────── */
 
-// Times bez tablice širina: mjere se ne znaju, pa se ništa ne smije dirati.
+// Times with no widths table: the metrics are unknown, so nothing may be touched.
 const unknownFont = buildPdf({ font: '<</Type/Font/Subtype/Type1/BaseFont/Times-Roman>>' });
 const refusedFont = await applyRedactions(unknownFont, [{ id: 'r3', page: 1, rect }], standard);
-check('nepoznat font zaustavi brisanje', refusedFont.refused.length === 1, refusedFont.refused[0]?.reason ?? '');
-check('odbijeni dokument ostaje bajt po bajt isti', refusedFont.bytes === unknownFont);
+check('an unknown font stops the deletion', refusedFont.refused.length === 1, refusedFont.refused[0]?.reason ?? '');
+check('a refused document stays identical byte for byte', refusedFont.bytes === unknownFont);
 
-// Form XObject preko područja: tekst unutra se odavde ne vidi.
+// A Form XObject over the area: the text inside it cannot be seen from here.
 const withForm = buildPdf({ extra: 'q 1 0 0 1 0 0 cm /X1 Do Q' });
 const overForm = { x: 205, y: 25, width: 20, height: 10 };
 const refusedForm = await applyRedactions(withForm, [{ id: 'r4', page: 1, rect: overForm }], standard);
 check(
-  'Form XObject preko područja zaustavi brisanje',
+  'a Form XObject over the area stops the deletion',
   refusedForm.refused.length === 1,
   refusedForm.refused[0]?.reason ?? '',
 );
 
-// Isti taj XObject drugdje na stranici ne smije smetati.
+// That same XObject elsewhere on the page must not get in the way.
 const elsewhere = await applyRedactions(withForm, [{ id: 'r5', page: 1, rect }], standard);
 check(
-  'XObject izvan područja ne smeta',
+  'an XObject outside the area does not interfere',
   elsewhere.refused.length === 0 && elsewhere.removed === 5,
-  `maknuto ${elsewhere.removed}, odbijeno ${elsewhere.refused.length}`,
+  `${elsewhere.removed} removed, ${elsewhere.refused.length} refused`,
 );
 
-/* ── ništa za obrisati ───────────────────────────────────────────────── */
+/* ── nothing to delete ───────────────────────────────────────────────── */
 
 const empty = await applyRedactions(source, [], standard);
-check('bez područja dokument se ne prepisuje', empty.bytes === source && empty.removed === 0);
+check('with no areas the document is not rewritten', empty.bytes === source && empty.removed === 0);
 
 const miss = await applyRedactions(
   source,
   [{ id: 'r6', page: 1, rect: { x: 250, y: 10, width: 20, height: 10 } }],
   standard,
 );
-check('područje bez teksta ne mijenja dokument', miss.bytes === source && miss.removed === 0);
+check('an area with no text leaves the document alone', miss.bytes === source && miss.removed === 0);
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

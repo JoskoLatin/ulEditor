@@ -120,7 +120,7 @@ export function readRelationships(archive: Archive, partPath: string): Relations
   return map;
 }
 
-/* ── slike ───────────────────────────────────────────────────────────── */
+/* ── images ──────────────────────────────────────────────────────────── */
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',

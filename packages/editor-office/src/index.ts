@@ -211,7 +211,7 @@ class DocxPreviewEditor implements EditorInstance {
     this.preview.release();
   }
 
-  /* ── izmjena teksta ──────────────────────────────────────────────── */
+  /* ── editing the text ────────────────────────────────────────────── */
 
   /**
    * A double-click opens **a single run** — a piece of text with one formatting.

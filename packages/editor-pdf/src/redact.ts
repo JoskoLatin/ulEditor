@@ -51,7 +51,7 @@ export interface Redaction {
 
 export interface RedactionResult {
   bytes: Uint8Array;
-  /** Koliko je glifova stvarno maknuto. */
+  /** How many glyphs were actually removed. */
   removed: number;
   /** The pages that could not be cleaned, with the reason. */
   refused: { page: number; reason: string }[];

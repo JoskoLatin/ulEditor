@@ -1,11 +1,11 @@
 /**
- * Provjera operacija nad stranicama.
+ * Checking the page operations.
  *
- * UI pokazuje da minijatura nestane ili se okrene. To ne dokazuje ništa o
- * datoteci — ovdje se zapisani PDF ponovno parsira i gleda koliko stranica
- * ima, kojim redoslijedom i s kojom rotacijom. Uz to se provjerava ono što
- * se najlakše previdi: da anotacija ostane uz SVOJU stranicu i nakon što se
- * stranice presloži.
+ * The UI shows a thumbnail vanishing or turning. That proves nothing about the
+ * file — here the written PDF is parsed again and inspected for how many pages it
+ * has, in what order and at what rotation. Alongside that comes the thing most
+ * easily overlooked: that an annotation stays with ITS OWN page even after the
+ * pages have been reordered.
  *
  *   node tools/verify-pdf-pages.mjs
  */
@@ -40,7 +40,7 @@ function check(name, passed, detail = '') {
 const SOURCE = new TextEncoder().encode(makeMultiPagePdf(3));
 const PAGE_COUNT = 3;
 
-/** Vraća tekst sadržaja svake stranice — tako znamo koja je stvarno gdje. */
+/** Returns the content text of each page — that is how we know which one is really where. */
 async function pageLabels(bytes) {
   const doc = await PDFDocument.load(bytes);
   const labels = [];
@@ -58,65 +58,65 @@ async function rotations(bytes) {
   return doc.getPages().map((p) => p.getRotation().angle);
 }
 
-/* ── čiste funkcije plana ────────────────────────────────────────────── */
+/* ── the pure plan functions ─────────────────────────────────────────── */
 
 const base = identityPlan(3);
-check('početni plan je netaknut', isIdentity(base, 3), JSON.stringify(base.map((e) => e.source)));
+check('the initial plan is untouched', isIdentity(base, 3), JSON.stringify(base.map((e) => e.source)));
 
 check(
-  'rotacija se zbraja po modulu 360',
+  'rotation adds up modulo 360',
   rotatePage(rotatePage(rotatePage(rotatePage(base, 0, 90), 0, 90), 0, 90), 0, 90)[0].rotate === 0,
 );
-check('rotacija ulijevo daje 270, ne -90', rotatePage(base, 0, -90)[0].rotate === 270);
+check('rotating left gives 270, not -90', rotatePage(base, 0, -90)[0].rotate === 270);
 check(
-  'zadnja stranica se ne može obrisati',
+  'the last page cannot be deleted',
   removePage(identityPlan(1), 0).length === 1,
-  'dokument bez stranica nije valjan PDF',
+  'a document with no pages is not a valid PDF',
 );
-check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
+check('a move out of bounds leaves the plan alone', movePage(base, 0, -1) === base);
 
-/* ── brisanje ────────────────────────────────────────────────────────── */
+/* ── deletion ────────────────────────────────────────────────────────── */
 
 {
-  const plan = removePage(base, 1); // miče stranicu 2
+  const plan = removePage(base, 1); // removes page 2
   const { bytes, lost } = await saveDocument(SOURCE, plan, [], PAGE_COUNT);
   const labels = await pageLabels(bytes);
-  check('brisanje ostavlja dvije stranice', labels.length === 2, labels.join(', '));
-  check('ostale su stranice 1 i 3', labels.join(',') === '1,3', labels.join(','));
-  check('brisanje ne prijavljuje gubitak', lost.length === 0, lost.join(' | ') || 'ništa');
+  check('the deletion leaves two pages', labels.length === 2, labels.join(', '));
+  check('pages 1 and 3 are what remain', labels.join(',') === '1,3', labels.join(','));
+  check('deletion reports no loss', lost.length === 0, lost.join(' | ') || 'nothing');
 }
 
-/* ── rotacija ────────────────────────────────────────────────────────── */
+/* ── rotation ────────────────────────────────────────────────────────── */
 
 {
   const plan = rotatePage(rotatePage(base, 0, 90), 2, 180);
   const { bytes, lost } = await saveDocument(SOURCE, plan, [], PAGE_COUNT);
   const angles = await rotations(bytes);
-  check('rotacije su zapisane u datoteku', angles.join(',') === '90,0,180', angles.join(','));
-  check('rotacija ne prijavljuje gubitak', lost.length === 0, lost.join(' | ') || 'ništa');
+  check('the rotations were written into the file', angles.join(',') === '90,0,180', angles.join(','));
+  check('rotation reports no loss', lost.length === 0, lost.join(' | ') || 'nothing');
 }
 
-/* ── preslagivanje ───────────────────────────────────────────────────── */
+/* ── reordering ──────────────────────────────────────────────────────── */
 
 {
   // 1,2,3 → 3,1,2
   const plan = movePage(base, 2, -2);
   const { bytes, lost } = await saveDocument(SOURCE, plan, [], PAGE_COUNT);
   const labels = await pageLabels(bytes);
-  check('preslagivanje mijenja stvarni redoslijed', labels.join(',') === '3,1,2', labels.join(','));
+  check('reordering changes the real order', labels.join(',') === '3,1,2', labels.join(','));
   check(
-    'preslagivanje pošteno prijavljuje gubitak',
+    'reordering reports its loss honestly',
     lost.length === 1 && lost[0].includes('bookmarks'),
     lost.join(' | '),
   );
 }
 
-/* ── anotacija prati svoju stranicu ──────────────────────────────────── */
+/* ── an annotation follows its own page ──────────────────────────────── */
 
 {
-  // Istaknuće na IZVORNOJ stranici 3, koja preslagivanjem ide na prvo mjesto.
+  // A highlight on SOURCE page 3, which the reorder moves into first place.
   const annotation = {
-    id: 'ann-na-trecoj',
+    id: 'ann-on-the-third',
     kind: 'highlight',
     page: 3,
     color: [0.98, 0.79, 0.29],
@@ -125,7 +125,7 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
   };
 
   const plan = movePage(base, 2, -2); // 3,1,2
-  check('mapa stranica vodi izvornu 3 na mjesto 0', pageMapOf(plan).get(3) === 0);
+  check('the page map takes source 3 to position 0', pageMapOf(plan).get(3) === 0);
 
   const { bytes } = await saveDocument(SOURCE, plan, [annotation], PAGE_COUNT);
   const doc = await PDFDocument.load(bytes);
@@ -137,24 +137,24 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
   });
   const labels = await pageLabels(bytes);
   check(
-    'anotacija je otišla sa svojom stranicom',
+    'the annotation went with its page',
     annotated === 0 && labels[0] === 3,
-    `anotacija na mjestu ${annotated}, ondje je stranica ${labels[annotated] ?? '?'}`,
+    `annotation at position ${annotated}, where page ${labels[annotated] ?? '?'} sits`,
   );
 
   const annots = pages[0].node.lookup(PDFName.of('Annots'));
   const dict = annots instanceof PDFArray ? annots.lookup(0) : null;
   check(
-    'i dalje je ispravno istaknuće',
+    'it is still a valid highlight',
     dict instanceof PDFDict && dict.lookup(PDFName.of('Subtype'))?.asString?.() === '/Highlight',
   );
 }
 
-/* ── anotacija na obrisanoj stranici ─────────────────────────────────── */
+/* ── an annotation on a deleted page ─────────────────────────────────── */
 
 {
   const annotation = {
-    id: 'ann-na-obrisanoj',
+    id: 'ann-on-the-deleted-one',
     kind: 'highlight',
     page: 2,
     color: [0.98, 0.79, 0.29],
@@ -162,73 +162,73 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
     quads: [{ x: 30, y: 100, width: 120, height: 20 }],
   };
 
-  const plan = removePage(base, 1); // miče izvornu stranicu 2
+  const plan = removePage(base, 1); // removes source page 2
   const { bytes } = await saveDocument(SOURCE, plan, [annotation], PAGE_COUNT);
   const doc = await PDFDocument.load(bytes);
 
-  // Anotacija sa stranice koje više nema ne smije završiti na tuđoj stranici.
+  // An annotation from a page that is gone must not land on somebody else's page.
   const withAnnots = doc.getPages().filter((page) => {
     const annots = page.node.lookup(PDFName.of('Annots'));
     return annots instanceof PDFArray && annots.size() > 0;
   });
   check(
-    'anotacija s obrisane stranice se ne seli drugdje',
+    'an annotation from a deleted page does not move elsewhere',
     withAnnots.length === 0,
-    `${withAnnots.length} stranica s anotacijama`,
+    `${withAnnots.length} pages carry annotations`,
   );
 }
 
-/* ── rasponi stranica ────────────────────────────────────────────────── */
+/* ── page ranges ─────────────────────────────────────────────────────── */
 
 {
-  check('raspon "1-3" se širi', String(parseRanges('1-3', 5)) === '1,2,3');
-  check('nabrajanje i raspon zajedno', String(parseRanges('1, 3-4', 5)) === '1,3,4');
-  check('obrnuti raspon se ispravlja', String(parseRanges('4-2', 5)) === '2,3,4');
-  check('duplikati se stapaju', String(parseRanges('2,2,2-3', 5)) === '2,3');
-  check('izvan dokumenta se odbacuje', String(parseRanges('0, 4, 99', 3)) === '');
-  check('smeće ne ruši parsiranje', String(parseRanges('abc, , 2', 3)) === '2');
+  check('the range "1-3" expands', String(parseRanges('1-3', 5)) === '1,2,3');
+  check('a list and a range together', String(parseRanges('1, 3-4', 5)) === '1,3,4');
+  check('a reversed range is corrected', String(parseRanges('4-2', 5)) === '2,3,4');
+  check('duplicates are merged', String(parseRanges('2,2,2-3', 5)) === '2,3');
+  check('anything outside the document is dropped', String(parseRanges('0, 4, 99', 3)) === '');
+  check('junk does not break the parsing', String(parseRanges('abc, , 2', 3)) === '2');
 }
 
-/* ── spajanje ────────────────────────────────────────────────────────── */
+/* ── merging ─────────────────────────────────────────────────────────── */
 
 {
   const other = new TextEncoder().encode(makeMultiPagePdf(2));
-  // Umeće se iza prve stranice: 1, [A, B], 2, 3.
+  // Inserted after the first page: 1, [A, B], 2, 3.
   const merged = await mergeInto(SOURCE, base, other, 1);
 
-  check('spajanje javlja koliko je stranica dodano', merged.added === 2, `${merged.added}`);
-  check('plan naraste', merged.plan.length === 5, `${merged.plan.length} stranica`);
+  check('the merge reports how many pages were added', merged.added === 2, `${merged.added}`);
+  check('the plan grows', merged.plan.length === 5, `${merged.plan.length} pages`);
   check(
-    'spajanje prijavljuje što ne prenosi',
+    'the merge reports what it does not carry over',
     merged.lost.some((m) => m.includes('bookmarks')),
     merged.lost.join(' | '),
   );
 
   const { bytes } = await saveDocument(merged.bytes, merged.plan, [], 5);
   const labels = await pageLabels(bytes);
-  // Umetnute stranice dolaze iz drugog dokumenta i nose vlastite oznake 1 i 2.
-  check('umetnute stranice su na traženom mjestu', String(labels) === '1,1,2,2,3', String(labels));
+  // The inserted pages come from the other document and carry their own labels 1 and 2.
+  check('the inserted pages sit where they were asked to', String(labels) === '1,1,2,2,3', String(labels));
 }
 
-/* ── izdvajanje ──────────────────────────────────────────────────────── */
+/* ── extraction ──────────────────────────────────────────────────────── */
 
 {
   const extracted = await extractPages(SOURCE, base, [3, 1]);
   const labels = await pageLabels(extracted);
-  check('izdvajanje poštuje redoslijed stranica', String(labels) === '1,3', String(labels));
+  check('extraction respects the page order', String(labels) === '1,3', String(labels));
 
   const doc = await PDFDocument.load(extracted);
-  check('izdvojeni dokument ima samo tražene stranice', doc.getPageCount() === 2);
+  check('the extracted document holds only the pages asked for', doc.getPageCount() === 2);
 
-  // Izvornik se ne smije promijeniti — to je razlika između izdvajanja i rezanja.
+  // The original must not change — that is the difference between extracting and cutting.
   const original = await PDFDocument.load(SOURCE);
-  check('izvornik ostaje netaknut', original.getPageCount() === PAGE_COUNT);
+  check('the original stays untouched', original.getPageCount() === PAGE_COUNT);
 
   const rotated = rotatePage(base, 0, 90);
   const withRotation = await extractPages(SOURCE, rotated, [1]);
   const rotatedDoc = await PDFDocument.load(withRotation);
   check(
-    'izdvajanje nosi rotaciju iz plana',
+    'extraction carries the rotation from the plan',
     rotatedDoc.getPage(0).getRotation().angle === 90,
     `${rotatedDoc.getPage(0).getRotation().angle}°`,
   );
@@ -239,10 +239,10 @@ check('pomak izvan granica ne mijenja plan', movePage(base, 0, -1) === base);
   } catch {
     refused = true;
   }
-  check('prazan odabir se odbija', refused);
+  check('an empty selection is refused', refused);
 }
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

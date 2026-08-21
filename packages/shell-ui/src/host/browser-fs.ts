@@ -110,7 +110,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
 
   #handle(uri: Uri): FsHandle {
     const h = this.#handles.get(uri);
-    if (!h) throw new Error(`Nepoznat URI: ${uri}`);
+    if (!h) throw new Error(`Unknown URI: ${uri}`);
     return h;
   }
 

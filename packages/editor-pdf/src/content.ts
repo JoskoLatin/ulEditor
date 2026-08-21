@@ -598,7 +598,7 @@ export function readFonts(
   return out;
 }
 
-/* ── obilazak teksta ─────────────────────────────────────────────────── */
+/* ── walking the text ────────────────────────────────────────────────── */
 
 export interface Glyph {
   /** The glyph code; one or two bytes depending on the font. */
@@ -952,7 +952,7 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
           const subtype = dict?.lookup(PDFName.of('Subtype'));
           if (dict && subtype instanceof PDFName && subtype.asString() === '/Form') {
             obstacles.push({
-              reason: `Form XObject ${name.value} — tekst unutra se ne vidi odavde`,
+              reason: `Form XObject ${name.value} — the text inside cannot be seen from here`,
               box: formBox(dict, state.ctm),
             });
           }

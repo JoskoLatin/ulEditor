@@ -131,7 +131,7 @@ button {
   grid-template-columns: var(--activitybar-w) 0 0 minmax(0, 1fr);
 }
 
-/* ── naslovna traka ─────────────────────────────────────────────────── */
+/* ── the title bar ──────────────────────────────────────────────────── */
 
 .titlebar {
   display: grid;
@@ -220,7 +220,7 @@ button {
   line-height: 1.5;
 }
 
-/* ── aktivnosna traka ───────────────────────────────────────────────── */
+/* ── the activity bar ───────────────────────────────────────────────── */
 
 .activitybar {
   background: var(--chrome);
@@ -718,7 +718,7 @@ button {
   color: var(--ink-ghost);
 }
 
-/* ── statusna traka ─────────────────────────────────────────────────── */
+/* ── the status bar ─────────────────────────────────────────────────── */
 
 .statusbar {
   position: relative;

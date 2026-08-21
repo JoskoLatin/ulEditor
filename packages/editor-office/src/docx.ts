@@ -80,7 +80,7 @@ function readNumbering(archive: Archive): Map<string, boolean> {
   return ordered;
 }
 
-/* ── tekst ───────────────────────────────────────────────────────────── */
+/* ── text ────────────────────────────────────────────────────────────── */
 
 interface Context {
   archive: Archive;
@@ -253,7 +253,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
   return out;
 }
 
-/* ── tablice ─────────────────────────────────────────────────────────── */
+/* ── tables ──────────────────────────────────────────────────────────── */
 
 function buildTable(node: Element, ctx: Context): HTMLElement {
   const table = document.createElement('table');

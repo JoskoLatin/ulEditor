@@ -1,11 +1,11 @@
 /**
- * Provjera da dodani tekst stvarno završi u PDF-u — i to čitljiv.
+ * Checking that added text really lands in the PDF — and lands legible.
  *
- * Da se tekst vidi na ekranu ne dokazuje ništa: `/FreeText` bez vlastitog toka
- * izgleda je nevidljiv u gotovo svakom čitaču osim Acrobata, a znak koji font
- * nema pdf-lib tiho zamijeni praznim mjestom. Oboje bi prošlo svaku provjeru
- * koja gleda samo naš model. Zato se ovdje zapisani PDF ponovno parsira i
- * gleda mu se sadržaj toka izgleda, bajt po bajt.
+ * That the text shows on screen proves nothing: a `/FreeText` without an
+ * appearance stream of its own is invisible in nearly every reader bar Acrobat,
+ * and a character the font lacks is quietly replaced by a blank by pdf-lib.
+ * Either would pass any check that looks only at our own model. So here the
+ * written PDF is parsed again and its appearance stream inspected, byte by byte.
  *
  *   node tools/verify-pdf-text.mjs
  */
@@ -39,8 +39,8 @@ function check(name, passed, detail = '') {
 /* ── font ────────────────────────────────────────────────────────────── */
 
 /*
- * Isti font koji preglednik dohvaća preko `fonts.ts`, samo s diska: provjera
- * ne smije ovisiti o Viteu ni o mreži.
+ * The same font the browser fetches through `fonts.ts`, only off disk: the check
+ * must not depend on Vite or on the network.
  */
 const FILES = {
   sans: 'LiberationSans-Regular.ttf',
@@ -53,14 +53,14 @@ const loadFont = async (face) =>
 
 const metrics = metricsOf('sans', await loadFont('sans'));
 
-const CROATIAN = 'Vodice, 15. kolovoza — čćžšđ ČĆŽŠĐ';
+const CROATIAN = 'Vodice, 15 August — čćžšđ ČĆŽŠĐ';
 check(
-  'font pokriva hrvatsku dijakritiku',
+  'the font covers the Croatian diacritics',
   metrics.missing(CROATIAN).length === 0,
-  metrics.missing(CROATIAN).join('') || '(ništa ne nedostaje)',
+  metrics.missing(CROATIAN).join('') || '(nothing missing)',
 );
 
-/* Zašto se font uopće ugrađuje: standardni ga ne bi mogao napisati. */
+/* Why the font is embedded at all: a standard one could not write it. */
 const helvetica = await PDFDocument.create().then((d) => d.embedFont('Helvetica'));
 let standardRefused = false;
 try {
@@ -68,14 +68,14 @@ try {
 } catch {
   standardRefused = true;
 }
-check('standardni PDF font odbija č, pa se mora ugraditi', standardRefused);
+check('a standard PDF font refuses č, so one has to be embedded', standardRefused);
 
-/* ── zapis ───────────────────────────────────────────────────────────── */
+/* ── writing ─────────────────────────────────────────────────────────── */
 
 const source = new TextEncoder().encode(makePdf());
 
 const anchor = { x: 60, top: 200 };
-const twoLines = `${CROATIAN}\nDrugi redak`;
+const twoLines = `${CROATIAN}\nA second line`;
 
 const boxes = [
   {
@@ -103,10 +103,10 @@ const boxes = [
 ];
 
 const written = await writeAnnotations(source, boxes, undefined, loadFont);
-check('oba okvira su zapisana', written.written === 2, `${written.written}`);
-check('nema prijave o nedostajućim znakovima', written.missingGlyphs.length === 0);
+check('both boxes were written', written.written === 2, `${written.written}`);
+check('nothing is reported as a missing character', written.missingGlyphs.length === 0);
 
-/* ── ponovno parsiranje ──────────────────────────────────────────────── */
+/* ── parsing it back ─────────────────────────────────────────────────── */
 
 const reloaded = await PDFDocument.load(written.bytes);
 const page = reloaded.getPages()[0];
@@ -123,7 +123,7 @@ if (annots instanceof PDFArray) {
 const freeText = dicts.filter(
   (d) => d.lookup(PDFName.of('Subtype'))?.asString?.() === '/FreeText',
 );
-check('oba su tipa FreeText', freeText.length === 2, `${freeText.length}`);
+check('both are of type FreeText', freeText.length === 2, `${freeText.length}`);
 
 const first = freeText[0];
 if (first) {
@@ -131,27 +131,27 @@ if (first) {
   const decoded =
     contents instanceof PDFHexString || contents instanceof PDFString ? contents.decodeText() : '';
   check(
-    'tekst je u datoteci s dijakritikom',
+    'the text is in the file, diacritics and all',
     decoded === twoLines,
     JSON.stringify(decoded.slice(0, 36)),
   );
 
   /*
-   * Ovo je provjera zbog koje ova datoteka postoji. Bez `/AP` anotacija je
-   * nevidljiva u pdf.js-u i u preglednicima — dokument bi izgledao prazan
-   * svima osim onome tko ga je napisao.
+   * This is the check this file exists for. Without an `/AP` the annotation is
+   * invisible in pdf.js and in browsers — the document would look empty to
+   * everybody except whoever wrote it.
    */
   const ap = first.lookup(PDFName.of('AP'));
   const normal = ap instanceof PDFDict ? ap.lookup(PDFName.of('N')) : null;
-  check('okvir nosi vlastiti tok izgleda (/AP /N)', !!normal, normal ? 'ima' : 'NEMA');
+  check('the box carries an appearance stream of its own (/AP /N)', !!normal, normal ? 'it does' : 'IT DOES NOT');
 
   if (normal) {
     const dict = normal.dict ?? normal;
 
-    // Tok je flate-komprimiran; bez raspakiravanja bi provjera gledala smeće i
-    // svejedno "prošla" ako se traži nepostojanje nečega.
+    // The stream is flate-compressed; without inflating it the check would be
+    // looking at rubbish and would still "pass" whenever it asserts an absence.
     const filter = String(dict.lookup(PDFName.of('Filter')) ?? '');
-    check('tok izgleda je komprimiran', filter.includes('FlateDecode'), filter || '(bez filtra)');
+    check('the appearance stream is compressed', filter.includes('FlateDecode'), filter || '(no filter)');
 
     const payload = Buffer.from(normal.getContents());
     const stream = new TextDecoder('latin1').decode(
@@ -160,19 +160,19 @@ if (first) {
 
     const lines = linesOf(twoLines);
     check(
-      'tok izgleda crta oba retka',
+      'the appearance stream draws both lines',
       (stream.match(/Tj/g) ?? []).length === lines.length,
-      `${(stream.match(/Tj/g) ?? []).length} od ${lines.length}`,
+      `${(stream.match(/Tj/g) ?? []).length} of ${lines.length}`,
     );
-    check('tok izgleda postavlja font i veličinu', /\/F1 11 Tf/.test(stream), '');
-    check('tekst je kodiran heksadekadski, ne kao Latin-1', /<[0-9a-fA-F]+>\s*Tj/.test(stream));
+    check('the appearance stream sets the font and its size', /\/F1 11 Tf/.test(stream), '');
+    check('the text is encoded as hex, not as Latin-1', /<[0-9a-fA-F]+>\s*Tj/.test(stream));
 
     const bbox = dict.lookup(PDFName.of('BBox'));
     const values = bbox instanceof PDFArray ? bbox.asArray().map((n) => n.asNumber()) : [];
     const rect = first.lookup(PDFName.of('Rect'));
     const rectValues = rect instanceof PDFArray ? rect.asArray().map((n) => n.asNumber()) : [];
     check(
-      'BBox odgovara Rectu, pa se izgled ne rasteže',
+      'the BBox matches the Rect, so the appearance is not stretched',
       values.length === 4 &&
         rectValues.length === 4 &&
         Math.abs(values[2] - (rectValues[2] - rectValues[0])) < 0.01 &&
@@ -183,66 +183,66 @@ if (first) {
     const resources = dict.lookup(PDFName.of('Resources'));
     const fonts = resources instanceof PDFDict ? resources.lookup(PDFName.of('Font')) : null;
     check(
-      'font je u resursima toka izgleda',
+      'the font is in the appearance stream resources',
       fonts instanceof PDFDict && !!fonts.get(PDFName.of('F1')),
     );
   }
 
-  /* `/C` na FreeTextu znači boju POZADINE — postavljena bi obojila okvir. */
-  check('okvir nema postavljenu boju pozadine (/C)', !first.get(PDFName.of('C')));
+  /* `/C` on a FreeText means the BACKGROUND colour — set, it would tint the box. */
+  check('the box has no background colour set (/C)', !first.get(PDFName.of('C')));
   check(
-    'boja teksta je u /DA',
+    'the text colour is in the /DA',
     /0 0 0 rg/.test(first.lookup(PDFName.of('DA'))?.decodeText?.() ?? ''),
     first.lookup(PDFName.of('DA'))?.decodeText?.() ?? '',
   );
 }
 
-/* ── ugrađeni font ───────────────────────────────────────────────────── */
+/* ── the embedded font ───────────────────────────────────────────────── */
 
 const raw = new TextDecoder('latin1').decode(written.bytes);
-check('font je ugrađen kao podskup', /\/FontFile2/.test(raw));
+check('the font is embedded as a subset', /\/FontFile2/.test(raw));
 check(
-  'ugrađen je podskup, ne cijeli font',
+  'a subset is embedded, not the whole font',
   written.bytes.length < 90_000,
-  `${Math.round(written.bytes.length / 1024)} KB naspram 136 KB samog fonta`,
+  `${Math.round(written.bytes.length / 1024)} KB against the 136 KB of the font itself`,
 );
 
-/* ── znak koji font nema ─────────────────────────────────────────────── */
+/* ── a character the font lacks ──────────────────────────────────────── */
 
 const chinese = {
   ...boxes[0],
   id: 'test-missing',
-  text: 'Ovo je 汉字 usred rečenice',
+  text: 'This is 汉字 mid-sentence',
 };
 const withMissing = await writeAnnotations(source, [chinese], undefined, loadFont);
 check(
-  'znak koji font nema se prijavljuje, ne guta',
+  'a character the font lacks is reported, not swallowed',
   withMissing.missingGlyphs.join('') === '汉字',
-  withMissing.missingGlyphs.join('') || '(ništa — a trebalo bi)',
+  withMissing.missingGlyphs.join('') || '(nothing — and there should be)',
 );
 check(
-  'upozorenje dođe do korisnika kao tekst',
+  'the warning reaches the user as text',
   missingGlyphWarning(withMissing.missingGlyphs).length === 1,
   missingGlyphWarning(withMissing.missingGlyphs)[0] ?? '',
 );
 
-/* ── mjere ───────────────────────────────────────────────────────────── */
+/* ── metrics ─────────────────────────────────────────────────────────── */
 
 const wide = layoutTextBox(metrics, 'iii', 11, anchor);
 const wider = layoutTextBox(metrics, 'MMMMMMMMMMMM', 11, anchor);
-check('širi tekst daje širi okvir', wider.width > wide.width, `${wide.width} → ${wider.width}`);
+check('wider text gives a wider box', wider.width > wide.width, `${wide.width} → ${wider.width}`);
 
-const oneLine = layoutTextBox(metrics, 'jedan', 11, anchor);
+const oneLine = layoutTextBox(metrics, 'one', 11, anchor);
 const threeLines = layoutTextBox(metrics, 'a\nb\nc', 11, anchor);
 check(
-  'okvir raste prema dolje, gornji rub ostaje',
+  'the box grows downwards, the top edge stays put',
   Math.abs(oneLine.y + oneLine.height - anchor.top) < 0.01 &&
     Math.abs(threeLines.y + threeLines.height - anchor.top) < 0.01 &&
     threeLines.height > oneLine.height,
-  `1 redak ${oneLine.height.toFixed(1)} pt · 3 retka ${threeLines.height.toFixed(1)} pt`,
+  `1 line ${oneLine.height.toFixed(1)} pt · 3 lines ${threeLines.height.toFixed(1)} pt`,
 );
 
-/* ── ponovno spremanje ───────────────────────────────────────────────── */
+/* ── saving again ────────────────────────────────────────────────────── */
 
 const second = await writeAnnotations(
   written.bytes,
@@ -253,12 +253,12 @@ const second = await writeAnnotations(
 const twice = await PDFDocument.load(second.bytes);
 const annotsTwice = twice.getPages()[0].node.lookup(PDFName.of('Annots'));
 check(
-  'ponovno spremanje ne duplicira okvire',
+  'saving again does not duplicate the boxes',
   annotsTwice instanceof PDFArray && annotsTwice.size() === 2,
   `${annotsTwice instanceof PDFArray ? annotsTwice.size() : '?'}`,
 );
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

@@ -110,7 +110,7 @@ export async function saveDocument(
   plan: PagePlan[],
   annotations: Annotation[],
   pageCount: number,
-  /** Bajtovi fonta za tekstualne okvire. */
+  /** The font bytes for the text boxes. */
   loadFont?: FontLoader,
   /** The areas whose text is removed from the document itself. */
   redactions: Redaction[] = [],

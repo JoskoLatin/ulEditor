@@ -90,7 +90,7 @@ try {
   await page.waitForSelector('.ul-md-preview h1', { timeout: 10000 });
   const previewTitle = await page.locator('.ul-md-preview h1').first().innerText();
   check('Markdown pregled renderiran', previewTitle.trim() === 'ulEditor', previewTitle.trim());
-  check('tablica u pregledu', (await page.locator('.ul-md-preview table').count()) === 1);
+  check('a table in the preview', (await page.locator('.ul-md-preview table').count()) === 1);
 
   /* — PDF — */
   await dropFile(page, 'dokument.pdf', makePdf());
@@ -171,7 +171,7 @@ try {
   await page.waitForTimeout(250);
   check('redo brings the note back', (await page.locator('.ul-pdf-ann-note').count()) === 1);
 
-  /* — tekst upisan u PDF — */
+  /* — text typed into the PDF — */
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
   check('the font settings appear only with the text tool', await page.locator('.ul-pdf-text-opts').isVisible());
 

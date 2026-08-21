@@ -215,7 +215,7 @@ class ImageEditor implements EditorInstance {
 
   #syncButtons: () => void = () => {};
 
-  /* ── prepoznavanje teksta ──────────────────────────────────────────── */
+  /* ── text recognition ──────────────────────────────────────────────── */
 
   /**
    * Reads the text off the image and hands it to the shell, which opens it in
