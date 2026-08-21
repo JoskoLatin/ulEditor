@@ -1,31 +1,33 @@
 /**
- * Način čitanja.
+ * Reading mode.
  *
- * Čitanje knjige nije "editor bez alatnih traka". Traži drukčiju tipografiju,
- * drukčiji tok sadržaja (stranice umjesto svitka), sadržaj po poglavljima i
- * pamćenje mjesta na kojem si stao. Zato je to dio ugovora, a ne trik u
- * shellu: shell nudi jednu čitaonicu, a svaki editor sam zna što je kod njega
- * "stranica" i "poglavlje".
+ * Reading a book is not "an editor without toolbars". It demands different
+ * typography, a different flow of content (pages instead of a scroll), a table
+ * of contents by chapter and a memory of where you stopped. That is why it is
+ * part of the contract rather than a trick in the shell: the shell offers one
+ * reading room, and each editor knows for itself what a "page" and a "chapter"
+ * are.
  *
- * Editor koji ovo ne implementira jednostavno nema `beginReading` — shell tada
- * naredbu ne nudi. Neobavezan član je minor izmjena ugovora.
+ * An editor that does not implement this simply has no `beginReading` — the
+ * shell then does not offer the command. An optional member is a minor change to
+ * the contract.
  */
 
 import type { Event } from './events.js';
 
-/** Podloga čitaonice. Namjerno tri, ne paleta — više izbora nitko ne koristi. */
+/** The reading room background. Three on purpose, not a palette — nobody uses more. */
 export type ReadingTint = 'day' | 'sepia' | 'night';
 
-/** Stranice (stupci koji se listaju) ili neprekinuti svitak. */
+/** Pages (columns that turn) or an unbroken scroll. */
 export type ReadingFlow = 'paged' | 'scroll';
 
 export interface ReadingOptions {
-  /** Serifni za prozu, bezserifni za tehnički tekst. */
+  /** Serif for prose, sans-serif for technical text. */
   typeface: 'serif' | 'sans';
-  /** Osnovna veličina teksta u pikselima. */
+  /** The base text size in pixels. */
   fontSize: number;
   lineHeight: number;
-  /** Širina stupca u znakovima. Preko ~90 oko gubi početak sljedećeg retka. */
+  /** Column width in characters. Past ~90 the eye loses the start of the next line. */
   measure: number;
   tint: ReadingTint;
   flow: ReadingFlow;
@@ -40,35 +42,35 @@ export const DEFAULT_READING: ReadingOptions = {
   flow: 'paged',
 };
 
-/** Stavka sadržaja — poglavlje u knjizi, naslov u Markdownu, stranica u PDF-u. */
+/** A table-of-contents entry — a chapter in a book, a heading in Markdown, a page in a PDF. */
 export interface ReadingOutlineItem {
   id: string;
   label: string;
-  /** 0 = korijenska razina. */
+  /** 0 = the root level. */
   depth: number;
 }
 
 export interface ReadingProgress {
-  /** Udio pročitanog, 0..1. */
+  /** The fraction read, 0..1. */
   fraction: number;
-  /** Kratka oznaka mjesta, npr. "Poglavlje 3 · str. 2/14". */
+  /** A short label for the location, e.g. "Chapter 3 · p. 2/14". */
   label: string;
-  /** Procjena preostalog vremena u minutama, kad je editor može dati. */
+  /** An estimate of the time left in minutes, where the editor can supply one. */
   minutesLeft?: number;
 }
 
 /**
- * Živa sesija čitanja. Traje dok korisnik ne izađe iz čitaonice; `end()` vraća
- * editor u uobičajeno stanje i mora biti idempotentan.
+ * A live reading session. It lasts until the user leaves the reading room;
+ * `end()` returns the editor to its usual state and must be idempotent.
  */
 export interface ReadingSession {
-  /** Nove tipografske postavke bez gubitka mjesta na kojem se čita. */
+  /** New typography settings without losing the place being read. */
   apply(options: ReadingOptions): void;
 
-  /** Pomak za ±1 stranicu (ili ekran, u svitku). */
+  /** A move of ±1 page (or screen, in scroll flow). */
   page(delta: number): void;
 
-  /** Skok na relativnu poziciju 0..1 — vuče se traka napretka. */
+  /** A jump to a relative position 0..1 — dragging the progress bar. */
   seek(fraction: number): void;
 
   outline(): ReadingOutlineItem[];

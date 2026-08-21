@@ -1,7 +1,7 @@
 /**
- * Prepoznavanje formata. Ekstenzija je samo nagovještaj — mjerodavan je
- * sadržaj. `ul-formats` (Rust) radi istu detekciju na core strani; ovi
- * identifikatori moraju ostati usklađeni s njom.
+ * Format detection. The extension is only a hint — the content decides.
+ * `ul-formats` (Rust) performs the same detection on the core side; these
+ * identifiers must stay in step with it.
  */
 
 export type FormatId =
@@ -19,7 +19,7 @@ export type FormatId =
   | 'binary'
   | 'unknown';
 
-/** Obitelj kojoj format pripada — nosi boju i ikonu u UI-u. */
+/** The family a format belongs to — it carries the colour and icon in the UI. */
 export type FormatFamily =
   | 'code'
   | 'document'
@@ -34,13 +34,14 @@ export interface FormatDescriptor {
   id: FormatId;
   family: FormatFamily;
   /**
-   * Ljudski čitljiv naziv na engleskom, npr. "Word document".
+   * A human-readable name in English, e.g. "Word document".
    *
-   * Ugovor nosi engleski izvornik, ne prevedeni niz: `plugin-sdk` ne smije
-   * ovisiti o jeziku sučelja. Shell ga prevodi pri prikazu.
+   * The contract carries the English source, not a translated string:
+   * `plugin-sdk` must not depend on the interface language. The shell translates
+   * it at display time.
    */
   label: string;
-  /** Je li sadržaj tekstualan — određuje smije li ga tekstualni editor otvoriti. */
+  /** Whether the content is textual — decides if a text editor may open it. */
   textual: boolean;
 }
 
@@ -60,11 +61,11 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   unknown: { id: 'unknown', family: 'other', label: 'Unknown', textual: false },
 };
 
-/** Rezultat detekcije, uz razinu pouzdanosti i kako je donesena. */
+/** The detection result, with its confidence and how it was reached. */
 export interface FormatDetection {
   format: FormatId;
-  /** 'magic' = po sadržaju (pouzdano), 'extension' = po imenu (nagovještaj). */
+  /** 'magic' = by content (reliable), 'extension' = by name (a hint). */
   via: 'magic' | 'extension' | 'fallback';
-  /** Jezik za syntax highlighting, kad je primjenjiv. */
+  /** The language for syntax highlighting, where applicable. */
   language?: string;
 }

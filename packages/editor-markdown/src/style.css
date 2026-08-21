@@ -1,12 +1,12 @@
 /*
- * Markdown editor: izvor lijevo, pregled desno.
+ * The Markdown editor: source on the left, preview on the right.
  *
- * Pregled koristi serifni stup jer je to tekst za čitanje, a ne za
- * skeniranje — jedina površina u aplikaciji koja to zaslužuje.
+ * The preview uses a serif column because this is text meant for reading rather
+ * than scanning — the only surface in the application that earns it.
  */
 
 .ul-md {
-  /* Sidro za sloj čitanja koji se podiže iznad uređivača. */
+  /* The anchor for the reading layer raised above the editor. */
   position: relative;
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
@@ -185,8 +185,9 @@
 }
 
 /*
- * Sloj čitanja. Podiže se iznad uređivača, koji ostaje montiran ispod —
- * kursor, povijest i pozicija scrolla prežive ulazak i izlazak iz čitanja.
+ * The reading layer. It is raised above the editor, which stays mounted
+ * beneath — the cursor, history and scroll position survive entering and
+ * leaving reading mode.
  */
 .ul-md-reading {
   position: absolute;

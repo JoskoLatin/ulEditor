@@ -1,8 +1,9 @@
 /**
- * Editor koda i običnog teksta — CodeMirror 6.
+ * The code and plain text editor — CodeMirror 6.
  *
- * CodeMirror je izabran umjesto Monaca jer je mobile deklarirani target, a
- * Monaco na dodirnim uređajima praktično ne radi. Vidi docs/ANALIZA-I-PLAN.md.
+ * CodeMirror was chosen over Monaco because mobile is a declared target, and
+ * Monaco effectively does not work on touch devices. See
+ * docs/ANALYSIS-AND-PLAN.md.
  */
 
 import { EditorState, type Extension } from '@codemirror/state';
@@ -135,8 +136,8 @@ class CodeEditor implements EditorInstance {
   }
 
   #recomputeDirty(): void {
-    // Usporedba sa spremljenim sadržajem, ne brojanje izmjena — undo natrag
-    // do izvornog stanja mora očistiti oznaku promjene.
+    // A comparison against the saved content, not a count of edits — undo back
+    // to the original state must clear the dirty flag.
     const dirty = this.#text() !== this.#savedText;
     if (dirty === this.#dirty) return;
     this.#dirty = dirty;
@@ -165,7 +166,7 @@ class CodeEditor implements EditorInstance {
     await this.host.fs.writeText(uri, text);
     this.#savedText = text;
     this.#recomputeDirty();
-    // Čist tekst nema što izgubiti — round-trip je uvijek potpun.
+    // Plain text has nothing to lose — the round trip is always complete.
     return { uri, lostFidelity: [] };
   }
 
@@ -252,10 +253,10 @@ class CodeEditor implements EditorInstance {
 
 export const codeEditorProvider: EditorProvider = {
   id: 'org.uleditor.code',
-  displayName: 'Editor koda',
+  displayName: 'Code editor',
   matches: {
-    // Uz ekstenzije prihvaća i same identifikatore formata, pa datoteka bez
-    // ekstenzije koja je prepoznata kao tekst svejedno završi ovdje.
+    // Alongside extensions it accepts format identifiers too, so a file with no
+    // extension that was detected as text still ends up here.
     extensions: [...CODE_EXTENSIONS, 'code', 'text'],
   },
   capabilities: ['view', 'edit', 'search'],

@@ -1,10 +1,10 @@
 /*
- * Čitač e-knjiga.
+ * The e-book reader.
  *
- * Podloga čitaonice je namjerno odvojena od teme aplikacije: knjiga se čita
- * satima, pa "sepija" i "noć" moraju vrijediti bez obzira na to je li ostatak
- * programa svijetao ili taman. Zato se boje ovdje vežu na `data-tint`, a ne
- * na `data-theme`.
+ * The reading background is deliberately separate from the application theme: a
+ * book is read for hours, so "sepia" and "night" must hold regardless of whether
+ * the rest of the program is light or dark. That is why the colours here hang
+ * off `data-tint` rather than `data-theme`.
  */
 
 .ul-book {
@@ -40,7 +40,7 @@
   --book-link: #0c5e79;
 }
 
-/* U čitaonici nestaje sve osim teksta. */
+/* In the reading room everything but the text disappears. */
 .ul-book[data-reading='true'] {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -49,7 +49,7 @@
   display: none;
 }
 
-/* ── sadržaj knjige ──────────────────────────────────────────────────── */
+/* ── book content ────────────────────────────────────────────────────── */
 
 .ul-book-toc {
   display: flex;
@@ -132,7 +132,7 @@
   font-weight: 600;
 }
 
-/* ── prostor za čitanje ──────────────────────────────────────────────── */
+/* ── the reading area ────────────────────────────────────────────────── */
 
 .ul-book-main {
   position: relative;
@@ -171,15 +171,16 @@
   margin: 0 auto;
 }
 
-/* Razmak je na toku, ne na prozoru: visina toka se postavlja iz
-   `clientHeight`, koji već uključuje padding prozora — pa bi ga isti razmak
-   dvaput ušao u račun i odsjekao zadnji redak svakog stupca. */
+/* The padding sits on the flow, not the window: the flow height is set from
+   `clientHeight`, which already includes the window padding — so the same
+   padding would enter the sum twice and cut off the last line of every
+   column. */
 .ul-book[data-flow='paged'] .ul-book-flow {
   column-fill: auto;
   padding: 28px 0;
 }
 
-/* Zone za listanje klikom uz rub. Prozirne su — vidi se samo pokazivač. */
+/* The click zones along the edges for turning pages. Transparent — only the cursor shows. */
 .ul-book-edge {
   position: absolute;
   top: 0;
@@ -203,7 +204,7 @@
   display: none;
 }
 
-/* ── tipografija sadržaja ────────────────────────────────────────────── */
+/* ── content typography ──────────────────────────────────────────────── */
 
 .ul-book-chapter {
   color: var(--book-ink);
@@ -225,7 +226,7 @@
   widows: 2;
 }
 
-/* Prvi odlomak poglavlja i odlomak iza naslova ne uvlače se — tipografsko pravilo. */
+/* The first paragraph of a chapter and one after a heading are not indented — a typographic rule. */
 .ul-book-chapter > p:first-child,
 .ul-book-chapter h1 + p,
 .ul-book-chapter h2 + p,
@@ -274,7 +275,7 @@
 .ul-book-chapter svg {
   display: block;
   max-width: 100%;
-  /* Bez ovoga slika viša od stupca nestane u prijelomu. */
+  /* Without this an image taller than the column vanishes in the break. */
   max-height: 86%;
   margin: 1.2em auto;
   break-inside: avoid;

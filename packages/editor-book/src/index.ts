@@ -1,15 +1,15 @@
 /**
- * Čitač e-knjiga (EPUB).
+ * The e-book reader (EPUB).
  *
- * Ovo je prvi editor u projektu koji postoji zbog čitanja, ne zbog uređivanja,
- * pa je i napisan oko toga: dvije vrste toka (stranice i svitak), pamćenje
- * mjesta na kojem si stao, procjena preostalog vremena i sadržaj po
- * poglavljima. Sve što shell treba za čitaonicu ide kroz `beginReading`,
- * pa isti UI radi i nad PDF-om i nad Markdownom.
+ * This is the first editor in the project that exists for reading rather than
+ * editing, and it is written around that: two kinds of flow (pages and scroll), a
+ * memory of where you stopped, an estimate of the time left and a table of
+ * contents by chapter. Everything the shell needs for the reading room goes
+ * through `beginReading`, so the same UI serves PDF and Markdown too.
  *
- * Stranice se ne crtaju ručno — dobiju se CSS stupcima nad jednim poglavljem.
- * Preglednik već zna prelomiti tekst i ne razdvojiti sliku od natpisa; ručno
- * paginiranje bi to izgubilo.
+ * Pages are not drawn by hand — they come from CSS columns over one chapter. The
+ * browser already knows how to break text and how not to separate an image from
+ * its caption; manual pagination would lose that.
  */
 
 import {
@@ -38,12 +38,12 @@ import { openEpub, WORDS_PER_MINUTE, type Book, type BookChapter } from './epub.
 export type { Book, BookChapter } from './epub.js';
 export { openEpub } from './epub.js';
 
-/** Razmak između stupaca u načinu stranica. Ujedno korak listanja. */
+/** The gap between columns in paged mode. Also the page-turn step. */
 const COLUMN_GAP = 56;
-/** Ispod ove širine dvostupčani prijelom postaje uži od udobne mjere. */
+/** Below this width a two-column layout becomes narrower than a comfortable measure. */
 const TWO_COLUMN_MIN = 1180;
 
-/* ── pomoćno ─────────────────────────────────────────────────────────── */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
 function minutes(words: number): number {
   return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
@@ -51,7 +51,7 @@ function minutes(words: number): number {
 
 interface StoredPosition {
   chapter: number;
-  /** Udio unutar poglavlja, 0..1 — preživi promjenu veličine slova i prozora. */
+  /** The fraction within a chapter, 0..1 — it survives font size and window changes. */
   within: number;
 }
 
@@ -70,7 +70,7 @@ class BookEditor implements EditorInstance {
   #page = 0;
   #pages = 1;
 
-  /** Težine poglavlja po broju riječi — napredak mora biti po tekstu, ne po broju poglavlja. */
+  /** Chapter weights by word count — progress must follow the text, not the chapter count. */
   #words: number[];
   #totalWords: number;
 
@@ -103,7 +103,7 @@ class BookEditor implements EditorInstance {
     }
   }
 
-  /** Mjesto na koje treba skočiti čim se zna koliko poglavlje ima stranica. */
+  /** The place to jump to as soon as the chapter's page count is known. */
   #pendingWithin = 0;
   #pendingAnchor: string | null = null;
 
@@ -111,7 +111,7 @@ class BookEditor implements EditorInstance {
     return `book.position.${this.doc.uri}`;
   }
 
-  /* ── montaža ───────────────────────────────────────────────────────── */
+  /* ── mounting ──────────────────────────────────────────────────────── */
 
   mount(container: HTMLElement): void {
     const root = document.createElement('div');
@@ -168,7 +168,7 @@ class BookEditor implements EditorInstance {
     flow.className = 'ul-book-flow';
     view.appendChild(flow);
 
-    // Klik uz rub lista stranicu — jedina gesta koju svaki čitač ima.
+    // A click near the edge turns the page — the one gesture every reader has.
     for (const side of ['prev', 'next'] as const) {
       const edge = document.createElement('button');
       edge.type = 'button';
@@ -245,7 +245,7 @@ class BookEditor implements EditorInstance {
     root.style.setProperty('--book-measure', `${o.measure}ch`);
   }
 
-  /** Puni tok sadržajem: sva poglavlja u svitku, jedno u stranicama. */
+  /** Fills the flow with content: every chapter in scroll, one in paged mode. */
   #renderFlow(): void {
     const flow = this.#flow;
     if (!flow) return;
@@ -261,9 +261,9 @@ class BookEditor implements EditorInstance {
   }
 
   /**
-   * Prijelom u stupce. Stupac je točno širok koliko i prozor (ili pola, na
-   * širokom ekranu), pa je listanje pomak za `širina + razmak` — bez toga se
-   * na svakoj stranici vidi rub sljedeće.
+   * Breaking into columns. A column is exactly as wide as the window (or half of
+   * it, on a wide screen), so turning a page is a shift of `width + gap` —
+   * without that, the edge of the next page shows on every page.
    */
   #relayout(): void {
     const view = this.#view;
@@ -281,9 +281,9 @@ class BookEditor implements EditorInstance {
       return;
     }
 
-    // Broj stupaca se odlučuje po raspoloživom prostoru, a ne po širini samog
-    // prozora čitanja — inače bi max-width koji ovdje postavljamo utjecao na
-    // odluku koja ga je proizvela.
+    // The column count is decided by the available space, not by the width of
+    // the reading window itself — otherwise the max-width we set here would feed
+    // back into the decision that produced it.
     const available = view.parentElement?.clientWidth ?? view.clientWidth;
     const columns = available >= TWO_COLUMN_MIN ? 2 : 1;
     view.style.maxWidth =
@@ -298,8 +298,8 @@ class BookEditor implements EditorInstance {
     flow.style.columnCount = String(columns);
     flow.style.columnGap = `${COLUMN_GAP}px`;
     flow.style.height = `${height}px`;
-    // Stranice se listaju vodoravno; okomiti pomak zaostao iz svitka bi
-    // odsjekao vrh stupca.
+    // Pages turn horizontally; a vertical offset left over from scroll flow
+    // would cut off the top of a column.
     view.scrollTop = 0;
 
     const step = width + COLUMN_GAP;
@@ -452,7 +452,7 @@ class BookEditor implements EditorInstance {
   }
 
   #onKey(event: KeyboardEvent): void {
-    // Razmak lista naprijed, Shift+razmak natrag — navika iz svih čitača.
+    // Space turns forward, Shift+Space back — the habit from every reader.
     if (event.key === ' ') {
       event.preventDefault();
       this.#turn(event.shiftKey ? -1 : 1);
@@ -578,7 +578,7 @@ class BookEditor implements EditorInstance {
     });
   }
 
-  /* ── način čitanja ─────────────────────────────────────────────────── */
+  /* ── reading mode ──────────────────────────────────────────────────── */
 
   beginReading(options: ReadingOptions): ReadingSession {
     this.#reading = true;
@@ -604,12 +604,12 @@ class BookEditor implements EditorInstance {
       },
     };
 
-    // Prvi napredak mora stići nakon što se čitaonica pretplati.
+    // The first progress event must arrive after the reading room subscribes.
     queueMicrotask(() => this.#emitProgress());
     return session;
   }
 
-  /** Nove postavke bez gubitka mjesta: zapamti udio, primijeni, vrati se na njega. */
+  /** New settings without losing the place: remember the fraction, apply, return to it. */
   #setOptions(next: ReadingOptions): void {
     const previous = this.#options;
     const fraction = this.#fraction();
@@ -671,8 +671,8 @@ class BookEditor implements EditorInstance {
   }
 
   /**
-   * Pretraga preko cijele knjige. Radi nad živim DOM čvorovima, pa `reveal`
-   * može istaknuti točan raspon umjesto da samo skoči na odlomak.
+   * Search across the whole book. It works over live DOM nodes, so `reveal` can
+   * highlight the exact range instead of merely jumping to the paragraph.
    */
   async find(query: FindQuery): Promise<FindResult[]> {
     if (!query.query) return [];

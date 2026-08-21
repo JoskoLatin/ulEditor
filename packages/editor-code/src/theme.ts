@@ -1,9 +1,9 @@
 /**
- * CodeMirror tema izgrađena na CSS varijablama.
+ * A CodeMirror theme built on CSS variables.
  *
- * Boje se ne zapisuju doslovno nego kroz `var(--…)`, pa editor prati temu
- * aplikacije bez ijednog listenera — prebacivanje svijetlo/tamno je čista
- * CSS kaskada, bez ponovnog stvaranja EditorState-a.
+ * Colours are not written literally but through `var(--…)`, so the editor
+ * follows the application theme without a single listener — switching between
+ * light and dark is pure CSS cascade, with no EditorState rebuilt.
  */
 
 import { EditorView } from '@codemirror/view';

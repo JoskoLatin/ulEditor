@@ -1,9 +1,9 @@
 /**
- * Preglednik slika.
+ * The image viewer.
  *
- * Za sada samo pregled — kadriranje, rotacija i konverzija dolaze preko
- * `image-rs` u Rust jezgri, da isti kod radi na sve tri platforme i da se
- * veliki JPEG-ovi ne dekodiraju u JS heapu.
+ * Viewing only for now — cropping, rotation and conversion arrive through
+ * `image-rs` in the Rust core, so the same code runs on all three platforms and
+ * large JPEGs are not decoded in the JS heap.
  */
 
 import {
@@ -90,7 +90,7 @@ class ImageEditor implements EditorInstance {
     const img = document.createElement('img');
     img.alt = this.doc.name;
 
-    // Kopija u svjež buffer — Blob ne prihvaća pogled na dijeljeni spremnik.
+    // A copy into a fresh buffer — Blob does not accept a view onto shared memory.
     const blob = new Blob([new Uint8Array(this.bytes).buffer as ArrayBuffer], {
       type: mimeFor(this.doc.name),
     });
@@ -173,14 +173,15 @@ class ImageEditor implements EditorInstance {
     const spacer = document.createElement('span');
     spacer.className = 'spacer';
 
-    /* Veličina datoteke je podatak, ne alat — na uskom ekranu ju nosi statusna
-       traka, pa se iz uspravne trake miče. */
+    /* The file size is information, not a tool — on a narrow screen the status
+       bar carries it, so it leaves the vertical toolbar. */
     const info = document.createElement('span');
     info.className = 'readout';
     info.textContent = humanBytes(this.doc.stat.size);
 
-    /* Prepoznavanje teksta: jezik pa gumb. Jezik stoji uz gumb jer se bira
-       prije pokretanja, a ne u postavkama — ista slika zna imati oba jezika. */
+    /* Text recognition: the language, then the button. The language sits beside
+       the button because it is chosen before each run rather than in settings —
+       the same image often holds both languages. */
     const language = document.createElement('select');
     language.className = 'ul-img-select';
     language.title = t('Recognition language');
@@ -217,10 +218,12 @@ class ImageEditor implements EditorInstance {
   /* ── prepoznavanje teksta ──────────────────────────────────────────── */
 
   /**
-   * Pročita tekst sa slike i preda ga shellu, koji ga otvara u ploči ispod.
+   * Reads the text off the image and hands it to the shell, which opens it in
+   * the panel below.
    *
-   * Editor ne zna ništa o toj ploči — javlja se naredbom. To je isti seam
-   * kojim bi svaki drugi plugin objavio rezultat koji nije datoteka na disku.
+   * The editor knows nothing about that panel — it announces itself through a
+   * command. That is the same seam any other plugin would use to publish a
+   * result that is not a file on disk.
    */
   async readText(): Promise<void> {
     if (this.#ocrBusy) return;
@@ -270,7 +273,7 @@ class ImageEditor implements EditorInstance {
     } finally {
       this.#ocrBusy = false;
       this.#syncButtons();
-      // Vraća uobičajeni status (dimenzije, zoom, veličina).
+      // Restores the usual status (dimensions, zoom, size).
       this.#applyZoom();
     }
   }
@@ -299,7 +302,7 @@ class ImageEditor implements EditorInstance {
     if (!this.#img || !this.#frame || !this.#stage || width === 0) return;
 
     if (this.#fit) {
-      // Slika manja od prozora ne uvećava se — inače mala ikona ispuni ekran.
+      // An image smaller than the window is not enlarged — otherwise a small icon fills the screen.
       this.#scale = Math.min(
         1,
         (this.#stage.clientWidth - MARGIN) / width,
@@ -311,7 +314,7 @@ class ImageEditor implements EditorInstance {
     const h = Math.max(1, Math.round(height * this.#scale));
     this.#img.style.width = `${w}px`;
     this.#img.style.height = `${h}px`;
-    // Interpolacija samo pri smanjenju; uvećano mora pokazati piksele.
+    // Interpolation only when scaling down; enlarged must show the pixels.
     this.#frame.dataset.smooth = String(this.#scale <= 1);
 
     this.#syncButtons();
@@ -321,7 +324,7 @@ class ImageEditor implements EditorInstance {
   }
 
   unmount(): void {
-    // Wasm jezgra drži worker; bez ovoga ostaje živ i nakon zatvaranja slike.
+    // The wasm core holds a worker; without this it stays alive after the image closes.
     void disposeOcr();
     this.#resize?.disconnect();
     this.#stage?.removeEventListener('wheel', this.#onWheel);

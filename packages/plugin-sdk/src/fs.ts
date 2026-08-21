@@ -1,40 +1,40 @@
 /**
- * Virtualni datotečni sustav.
+ * The virtual file system.
  *
- * Isti API vrijedi na sva tri targeta; razlikuje se samo implementacija:
+ * The same API holds on all three targets; only the implementation differs:
  *   desktop / mobile → Tauri commands → Rust `ul-core`
  *   web              → File System Access API + OPFS
  *
- * Editori nikad ne diraju `window.fs`, `fetch` ni Tauri API izravno —
- * uvijek idu kroz `host.fs`. To je ono što ih čini prenosivima.
+ * Editors never touch `window.fs`, `fetch` or the Tauri API directly — they
+ * always go through `host.fs`. That is what makes them portable.
  */
 
 import type { FormatDetection } from './format.js';
 
-/** Neprozirni identifikator resursa. Na desktopu putanja, na webu handle ključ. */
+/** An opaque resource identifier. A path on desktop, a handle key on the web. */
 export type Uri = string;
 
 export interface FileStat {
   uri: Uri;
   name: string;
-  /** Roditeljski direktorij, ili `null` za korijen radnog prostora. */
+  /** The parent directory, or `null` for a workspace root. */
   parent: Uri | null;
   kind: 'file' | 'directory';
   size: number;
-  /** Unix ms. `null` kad ga platforma ne daje (npr. neki web handleovi). */
+  /** Unix ms. `null` when the platform does not provide it (e.g. some web handles). */
   modified: number | null;
   readonly: boolean;
 }
 
 export interface DirectoryEntry extends FileStat {
-  /** Popunjeno tek nakon `readDirectory` — direktoriji se učitavaju lijeno. */
+  /** Filled in only after `readDirectory` — directories load lazily. */
   children?: DirectoryEntry[];
 }
 
 /**
- * Otvoreni dokument. Sadržaj se čita lijeno i preko `bytes()` ili `text()`,
- * nikad se ne drži cijeli u memoriji shell sloja — veliki PDF-ovi i tablice
- * ovise o tome.
+ * An open document. Its content is read lazily through `bytes()` or `text()` and
+ * is never held whole in the shell layer's memory — large PDFs and spreadsheets
+ * depend on that.
  */
 export interface DocumentHandle {
   readonly uri: Uri;
@@ -45,17 +45,17 @@ export interface DocumentHandle {
   bytes(): Promise<Uint8Array>;
   text(encoding?: string): Promise<string>;
 
-  /** Streaming čitanje za formate koji renderiraju po dijelovima. */
+  /** Streaming reads for formats that render in pieces. */
   slice(start: number, end: number): Promise<Uint8Array>;
 }
 
 export interface WriteOptions {
-  /** Kad je `true`, prethodni sadržaj se čuva kao `.bak` uz datoteku. */
+  /** When `true`, the previous content is kept as a `.bak` beside the file. */
   backup?: boolean;
 }
 
 export interface VirtualFileSystem {
-  /** Korijeni radnog prostora — na webu jedan po odabranom direktoriju. */
+  /** The workspace roots — on the web, one per chosen directory. */
   roots(): Promise<DirectoryEntry[]>;
 
   stat(uri: Uri): Promise<FileStat>;
@@ -68,11 +68,11 @@ export interface VirtualFileSystem {
   writeBytes(uri: Uri, data: Uint8Array, opts?: WriteOptions): Promise<void>;
   writeText(uri: Uri, data: string, opts?: WriteOptions): Promise<void>;
 
-  /** Interaktivni odabir — otvara sistemski dijalog. */
+  /** Interactive selection — opens a system dialog. */
   pickFiles(opts?: { multiple?: boolean; extensions?: string[] }): Promise<DocumentHandle[]>;
   pickDirectory(): Promise<DirectoryEntry | null>;
   pickSaveTarget(suggestedName: string, extensions?: string[]): Promise<Uri | null>;
 
-  /** Podržava li platforma pisanje natrag na izvor (web bez dozvole ne podržava). */
+  /** Whether the platform supports writing back to the source (the web does not without permission). */
   canWrite(uri: Uri): Promise<boolean>;
 }

@@ -1,8 +1,9 @@
 /**
- * Ugovor koji svaki editor implementira.
+ * The contract every editor implements.
  *
- * Ovo je javni API projekta i od v0.1 ide pod semver. Dodavanje neobaveznog
- * člana je minor; mijenjanje potpisa ili semantike postojećeg je major.
+ * This is the project's public API and is under semver from v0.1. Adding an
+ * optional member is a minor; changing the signature or semantics of an existing
+ * one is a major.
  */
 
 import type { Event } from './events.js';
@@ -12,26 +13,26 @@ import type { EditorHost } from './host.js';
 import type { ReadingOptions, ReadingSession } from './reading.js';
 
 export type Capability =
-  /** Može prikazati sadržaj. Svaki editor mora imati barem ovo. */
+  /** Can display content. Every editor must have at least this. */
   | 'view'
-  /** Može mijenjati i spremati natrag u izvorni format. */
+  /** Can modify and save back into the source format. */
   | 'edit'
-  /** Može dodavati sloj povrh sadržaja bez mijenjanja originala (PDF bilješke). */
+  /** Can add a layer over the content without changing the original (PDF notes). */
   | 'annotate'
-  /** Može izvesti u drugi format. */
+  /** Can export to another format. */
   | 'export'
-  /** Podržava pretragu unutar dokumenta. */
+  /** Supports search within the document. */
   | 'search'
-  /** Nudi način čitanja — vidi `beginReading`. */
+  /** Offers a reading mode — see `beginReading`. */
   | 'read'
-  /** Spreman za realtime kolaboraciju (faza 5). */
+  /** Ready for realtime collaboration (phase 5). */
   | 'collab';
 
 export interface FormatMatcher {
-  /** Bez točke, malim slovima: `['ts', 'tsx']`. */
+  /** No dot, lower case: `['ts', 'tsx']`. */
   extensions: string[];
   mimeTypes?: string[];
-  /** Potpisi na početku datoteke. Jači signal od ekstenzije. */
+  /** Signatures at the start of the file. A stronger signal than the extension. */
   magic?: Uint8Array[];
 }
 
@@ -43,24 +44,24 @@ export interface FindQuery {
 }
 
 export interface FindResult {
-  /** Oznaka mjesta, npr. "redak 42" ili "stranica 7". */
+  /** A label for the location, e.g. "line 42" or "page 7". */
   label: string;
-  /** Isječak s pogotkom, za prikaz u listi rezultata. */
+  /** The excerpt containing the hit, for the results list. */
   preview: string;
-  /** Skok na pogodak. */
+  /** Jump to the hit. */
   reveal(): void;
 }
 
 export interface SaveResult {
   uri: Uri;
-  /** Značajke izvornog dokumenta koje spremanje nije moglo reproducirati.
-   *  Prazno polje znači potpuni round-trip. */
+  /** Features of the source document the save could not reproduce.
+   *  An empty array means a complete round trip. */
   lostFidelity: string[];
 }
 
 export interface SaveTarget {
   uri: Uri;
-  /** Kad je zadano, editor izvozi u taj format umjesto da sprema izvorni. */
+  /** When given, the editor exports to that format instead of saving the source one. */
   format?: string;
 }
 
@@ -81,36 +82,36 @@ export interface EditorInstance {
   copySelection(): Promise<ClipboardPayload | null>;
   paste(payload: ClipboardPayload): Promise<boolean>;
 
-  /** Fokusira uređivačku površinu — shell zove pri prebacivanju taba. */
+  /** Focuses the editing surface — the shell calls it when switching tabs. */
   focus(): void;
 
   /**
-   * Cijeli dokument kao čist tekst.
+   * The whole document as plain text.
    *
-   * Postoji odvojeno od `copySelection` jer se traži bez selekcije: izvoz u
-   * drugi format i, kasnije, indeksiranje za pretragu preko projekta. Editori
-   * kojima dokument nije tekst (PDF, slika) ovo ne implementiraju.
+   * It exists apart from `copySelection` because it is asked for without a
+   * selection: export to another format and, later, indexing for project-wide
+   * search. Editors whose document is not text (PDF, image) do not implement it.
    */
   plainText?(): Promise<string | null>;
 
   /**
-   * Ulazak u način čitanja. Editori bez sposobnosti `read` ovo ne
-   * implementiraju, pa shell naredbu uopće ne nudi.
+   * Entering reading mode. Editors without the `read` capability do not
+   * implement it, so the shell does not offer the command at all.
    */
   beginReading?(options: ReadingOptions): ReadingSession;
 
   readonly onDirtyChange: Event<boolean>;
-  /** Poruka za statusnu traku, npr. "Red 12, Stup 4" ili "Stranica 3 od 18". */
+  /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */
   readonly onStatusChange: Event<string>;
 }
 
 export interface EditorProvider {
-  /** Reverse-DNS, npr. `org.uleditor.pdf`. */
+  /** Reverse-DNS, e.g. `org.uleditor.pdf`. */
   id: string;
   displayName: string;
   matches: FormatMatcher;
   capabilities: Capability[];
-  /** Veći broj pobjeđuje kad više providera odgovara istoj datoteci. */
+  /** The higher number wins when several providers match the same file. */
   priority: number;
 
   createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance>;

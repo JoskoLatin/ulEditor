@@ -1,27 +1,30 @@
 /**
- * Priprema slike prije prepoznavanja.
+ * Preparing an image before recognition.
  *
- * Tesseract je građen za skenirane dokumente na ~300 DPI. Fotografija s
- * mobitela, screenshot ili sitan natpis mu dolaze kao nešto sasvim drugo, i
- * rezultat pada mnogo više nego što se očekuje. Tri stvari vraćaju najviše, a
- * ne traže ništa osim canvasa:
+ * Tesseract is built for scanned documents at ~300 DPI. A phone photo, a
+ * screenshot or a small caption arrive as something else entirely, and the
+ * result degrades far more than one expects. Three things return the most while
+ * requiring nothing but a canvas:
  *
- * 1. **Povećanje.** Ispod ~20 px visine slova motor gubi oblik. Povećanje na
- *    razumnu veličinu je jedina pretprocesna radnja koja gotovo nikad ne šteti.
- * 2. **Sivi tonovi po percepciji svjetline.** Prosjek kanala izgubi kontrast
- *    kod obojenog teksta; luma ga zadrži.
- * 3. **Rastezanje kontrasta po percentilima.** Fotografirani papir rijetko ima
- *    čistu bijelu i crnu; bez rastezanja motor traži rub koji ne postoji.
+ * 1. **Upscaling.** Below ~20 px of letter height the engine loses the shape.
+ *    Scaling up to a sensible size is the one preprocessing step that almost
+ *    never hurts.
+ * 2. **Greyscale by perceived brightness.** Averaging the channels loses
+ *    contrast on coloured text; luma preserves it.
+ * 3. **Contrast stretching by percentiles.** Photographed paper rarely holds a
+ *    clean white and black; without stretching, the engine looks for an edge
+ *    that does not exist.
  *
- * Binarizacija se namjerno **ne** radi: Tesseract iznutra radi Otsua, i to
- * bolje nego što bismo mi naslijepo. Dvostruka binarizacija guta tanke poteze.
+ * Binarisation is deliberately **not** performed: Tesseract runs Otsu
+ * internally, and does it better than we would blindly. Double binarisation
+ * swallows thin strokes.
  */
 
-/** Ispod ove visine slova motor gubi oblik znaka. */
+/** Below this letter height the engine loses the shape of a character. */
 const TARGET_MIN_SIDE = 1400;
-/** Iznad ovoga prepoznavanje traje dulje nego što dobitak vrijedi. */
+/** Above this, recognition takes longer than the gain is worth. */
 const MAX_SIDE = 4200;
-/** Percentili na koje se rasteže kontrast — otporni na pojedinačne piksele. */
+/** The percentiles contrast is stretched to — resistant to individual pixels. */
 const LOW_PERCENTILE = 0.02;
 const HIGH_PERCENTILE = 0.98;
 
@@ -29,14 +32,14 @@ export interface PreparedImage {
   blob: Blob;
   width: number;
   height: number;
-  /** Faktor povećanja; 1 znači da slika nije dirana po veličini. */
+  /** The upscaling factor; 1 means the image size was left alone. */
   scale: number;
 }
 
 /**
- * Vraća sliku spremnu za OCR. Ako priprema ne uspije (npr. format koji canvas
- * ne dekodira), pozivatelj dobiva `null` i šalje izvornik — bolje slabiji
- * rezultat nego nikakav.
+ * Returns an image ready for OCR. If preparation fails (e.g. a format canvas
+ * cannot decode), the caller gets `null` and sends the original — a weaker
+ * result beats none.
  */
 export async function prepareForOcr(bytes: Uint8Array, mime: string): Promise<PreparedImage | null> {
   const copy = new Uint8Array(bytes.length);
@@ -61,8 +64,8 @@ export async function prepareForOcr(bytes: Uint8Array, mime: string): Promise<Pr
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
 
-    // Glatko skaliranje: pikselizirano povećanje motoru daje stepenaste rubove
-    // koje čita kao šum.
+    // Smooth scaling: a pixelated upscale gives the engine stepped edges it
+    // reads as noise.
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0, width, height);
@@ -86,11 +89,11 @@ function scaleFor(width: number, height: number): number {
   let scale = smaller < TARGET_MIN_SIDE ? TARGET_MIN_SIDE / smaller : 1;
   if (larger * scale > MAX_SIDE) scale = MAX_SIDE / larger;
 
-  // Smanjivanje bi izgubilo podatke; ako je slika već velika, ostaje kakva jest.
+  // Downscaling would lose data; if the image is already large, it stays as it is.
   return Math.max(1, scale);
 }
 
-/** Luma po Rec. 709 — ista težina koju oko daje kanalima. */
+/** Luma per Rec. 709 — the same weighting the eye gives the channels. */
 function toGrayscale(data: Uint8ClampedArray): void {
   for (let i = 0; i < data.length; i += 4) {
     const value = 0.2126 * data[i]! + 0.7152 * data[i + 1]! + 0.0722 * data[i + 2]!;
@@ -101,9 +104,9 @@ function toGrayscale(data: Uint8ClampedArray): void {
 }
 
 /**
- * Rasteže raspon svjetline na puni 0–255, ali po percentilima: pojedinačni
- * bijeli odsjaj ili tamna mrlja inače definiraju cijeli raspon i rastezanje
- * ne napravi ništa.
+ * Stretches the brightness range to the full 0–255, but by percentiles: a single
+ * white glare or dark smudge would otherwise define the whole range and the
+ * stretch would achieve nothing.
  */
 function stretchContrast(data: Uint8ClampedArray): void {
   const histogram = new Uint32Array(256);
@@ -132,7 +135,7 @@ function stretchContrast(data: Uint8ClampedArray): void {
     }
   }
 
-  // Ravna slika (skoro jednobojna) nema što rastegnuti.
+  // A flat image (near single-colour) has nothing to stretch.
   if (high - low < 16) return;
 
   const factor = 255 / (high - low);

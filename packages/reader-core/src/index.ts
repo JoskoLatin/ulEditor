@@ -1,34 +1,34 @@
 /**
- * Listanje jednog dugog dokumenta.
+ * Paginating one long document.
  *
- * Word pregled, Markdown i svaki budući editor koji prikazuje jedan neprekinut
- * tekst dijele isti posao: prelomiti ga u stranice, listati, javljati napredak
- * i pamtiti mjesto. Napisati to triput znači tri različita ponašanja tipke
- * razmaknice, pa stoji ovdje.
+ * The Word view, Markdown and every future editor that displays one unbroken
+ * text share the same job: break it into pages, turn them, report progress and
+ * remember the place. Writing that three times means three different behaviours
+ * for the space bar, so it lives here.
  *
- * Knjiga (`editor-book`) namjerno ima vlastiti motor — EPUB se lomi po
- * poglavljima, montira jedno po jedno, i to je bitno drukčiji problem od
- * jednog dokumenta u jednom komadu.
+ * The book (`editor-book`) deliberately has an engine of its own — an EPUB is
+ * paginated per chapter and mounted one at a time, which is a substantially
+ * different problem from one document in one piece.
  *
- * Stranice se dobivaju CSS stupcima, ne ručnim mjerenjem. Preglednik već zna
- * ne razdvojiti naslov od odlomka koji slijedi.
+ * Pages come from CSS columns, not from manual measurement. The browser already
+ * knows not to separate a heading from the paragraph that follows it.
  */
 
 import type { ReadingOptions, ReadingProgress } from '@uleditor/plugin-sdk';
 
-/** Razmak između stupaca; ujedno dio koraka listanja. */
+/** The gap between columns; also part of the page-turn step. */
 export const COLUMN_GAP = 56;
-/** Ispod ove širine dvostupčani prijelom postaje uži od udobne mjere. */
+/** Below this width a two-column layout becomes narrower than a comfortable measure. */
 const TWO_COLUMN_MIN = 1180;
 
 const WORDS_PER_MINUTE = 220;
 
 export interface PagedFlowHost {
-  /** Element s prijelomom; mora imati fiksnu visinu i skrivati prelijevanje. */
+  /** The paginated element; it must have a fixed height and hide overflow. */
   view: HTMLElement;
-  /** Sadržaj koji se lomi. Dijete `view`-a. */
+  /** The content being paginated. A child of `view`. */
   flow: HTMLElement;
-  /** Broj riječi — za procjenu preostalog vremena. */
+  /** The word count — for estimating the time left. */
   words: number;
   onProgress(progress: ReadingProgress): void;
 }
@@ -39,7 +39,7 @@ export class PagedFlow {
   #page = 0;
   #pages = 1;
   #resize: ResizeObserver;
-  /** Mjesto na koje treba skočiti čim prijelom bude poznat. */
+  /** The place to jump to as soon as the pagination is known. */
   #pending: number | null = null;
 
   constructor(host: PagedFlowHost) {
@@ -58,8 +58,9 @@ export class PagedFlow {
   }
 
   /**
-   * Nove postavke bez gubitka mjesta: zapamti udio, primijeni, vrati se na
-   * njega. Bez ovoga svaka promjena veličine slova baca čitatelja na početak.
+   * New settings without losing the place: remember the fraction, apply, return
+   * to it. Without this every change of font size throws the reader back to the
+   * start.
    */
   apply(options: ReadingOptions, root: HTMLElement): void {
     const at = this.#options ? this.fraction() : 0;
@@ -91,9 +92,9 @@ export class PagedFlow {
       return;
     }
 
-    // Broj stupaca ovisi o raspoloživom prostoru, ne o širini samog prozora
-    // čitanja — inače bi `max-width` koji ovdje postavljamo utjecao na odluku
-    // koja ga je proizvela.
+    // The column count depends on the available space, not on the width of the
+    // reading window itself — otherwise the `max-width` we set here would feed
+    // back into the decision that produced it.
     const available = view.parentElement?.clientWidth ?? view.clientWidth;
     const columns = available >= TWO_COLUMN_MIN ? 2 : 1;
     view.style.maxWidth =
@@ -106,8 +107,8 @@ export class PagedFlow {
     flow.style.columnCount = String(columns);
     flow.style.columnGap = `${COLUMN_GAP}px`;
     flow.style.height = `${height}px`;
-    // Stranice se listaju vodoravno; okomiti pomak zaostao iz svitka bi
-    // odsjekao vrh stupca.
+    // Pages turn horizontally; a vertical offset left over from scroll flow
+    // would cut off the top of a column.
     view.scrollTop = 0;
 
     this.#pages = Math.max(1, Math.round((view.scrollWidth + COLUMN_GAP) / this.step()));
@@ -157,7 +158,7 @@ export class PagedFlow {
     this.#goToPage(Math.round(value * (this.#pages - 1)));
   }
 
-  /** Skok na element unutar sadržaja — sadržaj, pogodak pretrage, sidro. */
+  /** A jump to an element inside the content — a TOC entry, a search hit, an anchor. */
   scrollTo(element: HTMLElement): void {
     const { view } = this.#host;
 
@@ -209,15 +210,16 @@ export class PagedFlow {
   }
 }
 
-/* ── isticanje pogotka ───────────────────────────────────────────────── */
+/* ── highlighting a hit ──────────────────────────────────────────────── */
 
 /**
- * CSS Custom Highlight API. Umetanje `<mark>` elementa razbilo bi tekstualne
- * čvorove na koje pretraga već drži reference, pa bi sljedeći pogodak u istom
- * odlomku pokazivao na krivo mjesto. Ovako se DOM ne dira uopće.
+ * The CSS Custom Highlight API. Inserting a `<mark>` element would split the text
+ * nodes search already holds references to, so the next hit in the same
+ * paragraph would point at the wrong place. This way the DOM is not touched at
+ * all.
  *
- * Gdje API ne postoji, ostaje skok na mjesto bez isticanja — to je gubitak
- * ukrasa, ne funkcije.
+ * Where the API is absent, the jump to the location remains without the
+ * highlight — that is a loss of decoration, not of function.
  */
 interface HighlightRegistry {
   set(name: string, highlight: object): void;
@@ -236,7 +238,7 @@ export function showHit(range: Range | null): void {
   else registry.set(HIT_HIGHLIGHT, new HighlightCtor(range));
 }
 
-/** Tekstualni čvorovi s vidljivim sadržajem — osnova pretrage nad prikazom. */
+/** Text nodes with visible content — the basis of searching the rendered view. */
 export function textNodesOf(root: HTMLElement): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
@@ -248,13 +250,13 @@ export function textNodesOf(root: HTMLElement): Text[] {
   return nodes;
 }
 
-/** Broj riječi u tekstu — ista mjera svugdje, da procjene budu usporedive. */
+/** The word count of a text — the same measure everywhere, so estimates compare. */
 export function wordCount(text: string): number {
   const trimmed = text.trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
 }
 
-/** Naslovi u prikazanom sadržaju → sadržaj za čitaonicu. */
+/** Headings in the rendered content → a table of contents for the reading room. */
 export function headingOutline(root: HTMLElement): { id: string; label: string; depth: number }[] {
   const out: { id: string; label: string; depth: number }[] = [];
   for (const heading of [...root.querySelectorAll('h1, h2, h3, h4')]) {

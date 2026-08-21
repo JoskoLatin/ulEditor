@@ -1,7 +1,7 @@
 /**
- * Jezici se učitavaju lijeno. Bez ovoga svaki jezični paket ulazi u
- * početni bundle — s petnaest jezika to je nekoliko stotina kilobajta
- * koje korisnik plaća pri svakom pokretanju.
+ * Languages are loaded lazily. Without this every language package lands in the
+ * initial bundle — with fifteen languages that is a few hundred kilobytes the
+ * user pays for on every start.
  */
 
 import type { Extension } from '@codemirror/state';
@@ -35,7 +35,7 @@ export async function loadLanguage(language: string | undefined): Promise<Extens
   try {
     return await loader();
   } catch (err) {
-    console.warn(`[uleditor] jezik "${language}" se nije učitao`, err);
+    console.warn(`[uleditor] language "${language}" failed to load`, err);
     return null;
   }
 }

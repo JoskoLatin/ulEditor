@@ -1,19 +1,19 @@
 /**
- * Čitanje EPUB arhive.
+ * Reading an EPUB archive.
  *
- * EPUB je ZIP s XHTML-om unutra, pa je posao u tri koraka: naći kazalo
- * (`container.xml` → OPF), složiti redoslijed poglavlja (spine) i pretvoriti
- * svako poglavlje u siguran DOM.
+ * An EPUB is a ZIP with XHTML inside, so the job comes in three steps: find the
+ * catalogue (`container.xml` → OPF), assemble the chapter order (the spine) and
+ * turn each chapter into safe DOM.
  *
- * Dvije odluke koje se vide korisniku:
+ * Two decisions the user can see:
  *
- * 1. **Izdavačev CSS se namjerno ne primjenjuje.** Knjige nose stilove koji
- *    fiksiraju veličinu slova, boje i margine — točno ono što čitaonica daje
- *    korisniku da mijenja. Tekst se prikazuje tipografijom čitaonice, a to se
- *    pošteno prijavljuje kroz `notes`.
- * 2. **Sadržaj uvijek prolazi kroz DOMPurify.** XHTML dolazi iz datoteke koju
- *    je netko skinuo s interneta; `innerHTML` bez sanitizacije bio bi XSS u
- *    vlastitoj aplikaciji.
+ * 1. **The publisher's CSS is deliberately not applied.** Books carry styles
+ *    that pin down font size, colours and margins — precisely what the reading
+ *    room hands the user to change. The text is displayed in the reading room's
+ *    typography, and that is reported honestly through `notes`.
+ * 2. **Content always passes through DOMPurify.** The XHTML comes from a file
+ *    somebody downloaded off the internet; `innerHTML` without sanitisation
+ *    would be XSS in your own application.
  */
 
 import { unzipSync, strFromU8 } from 'fflate';
@@ -23,12 +23,12 @@ import { t } from '@uleditor/i18n';
 export interface BookChapter {
   /** `id` iz OPF manifesta. */
   id: string;
-  /** Normalizirana putanja unutar arhive — po njoj se razrješavaju veze. */
+  /** The normalised path inside the archive — links are resolved against it. */
   href: string;
   title: string;
-  /** Živi element; drži se između montaža da reference iz pretrage ostanu valjane. */
+  /** The live element; kept between mounts so search references stay valid. */
   body: HTMLElement;
-  /** Čist tekst, za pretragu i procjenu duljine čitanja. */
+  /** Plain text, for search and for estimating the reading length. */
   text: string;
 }
 
@@ -50,9 +50,9 @@ export interface Book {
   cover: string | null;
   chapters: BookChapter[];
   outline: BookOutlineEntry[];
-  /** Što pregled ne reproducira — prikazuje se u čitaonici. */
+  /** What the view does not reproduce — shown in the reading room. */
   notes: string[];
-  /** Oslobađa blob URL-ove slika. Bez ovoga knjiga curi memoriju po zatvaranju. */
+  /** Releases the images' blob URLs. Without this a book leaks memory on close. */
   release(): void;
 }
 
@@ -63,7 +63,7 @@ function dirname(path: string): string {
   return slash === -1 ? '' : path.slice(0, slash);
 }
 
-/** Razrješava relativnu putanju unutar arhive; ZIP nema `..` pa ih rješavamo sami. */
+/** Resolves a relative path inside the archive; ZIP has no `..`, so we resolve them ourselves. */
 function resolvePath(base: string, href: string): string {
   const raw = href.split('#')[0] ?? '';
   if (!raw) return base;
@@ -92,8 +92,8 @@ function parseXml(source: string): Document {
 }
 
 /**
- * Dohvat po lokalnom imenu. EPUB miješa prostore imena (`opf:`, `dc:`, bez
- * prefiksa), a `querySelector` s prefiksom u XML dokumentu ne radi pouzdano.
+ * Lookup by local name. EPUB mixes namespaces (`opf:`, `dc:`, none at all), and
+ * `querySelector` with a prefix does not work reliably in an XML document.
  */
 function byTag(root: ParentNode, local: string): Element[] {
   return [...root.querySelectorAll('*')].filter((el) => el.localName === local);
@@ -135,7 +135,7 @@ interface RawOutline {
   depth: number;
 }
 
-/** EPUB 3: navigacijski dokument s ugniježđenim `<ol>`. */
+/** EPUB 3: the navigation document with a nested `<ol>`. */
 function readNav(doc: Document, base: string): RawOutline[] {
   const navs = byTag(doc, 'nav');
   const toc =
@@ -183,21 +183,21 @@ function readNcx(doc: Document, base: string): RawOutline[] {
   return out;
 }
 
-/** Zadržava sidro, ali putanju normalizira — kazalo cilja `poglavlje.xhtml#s3`. */
+/** Keeps the anchor but normalises the path — a TOC targets `chapter.xhtml#s3`. */
 function resolveHref(base: string, href: string): string {
   const anchor = anchorOf(href);
   const path = resolvePath(base, href);
   return anchor ? `${path}#${anchor}` : path;
 }
 
-/* ── sadržaj poglavlja ───────────────────────────────────────────────── */
+/* ── chapter content ─────────────────────────────────────────────────── */
 
 /**
- * XHTML → siguran, samostalan DOM.
+ * XHTML → safe, self-contained DOM.
  *
- * Slike se prevode na blob URL-ove; one koje nedostaju se uklanjaju umjesto da
- * ostanu kao slomljena ikona. Unutarnje veze zadržavaju odredište u
- * `data-link`, pa čitaonica može skočiti na poglavlje bez navigacije prozora.
+ * Images are rewritten to blob URLs; missing ones are removed rather than left
+ * as a broken icon. Internal links keep their destination in `data-link`, so the
+ * reading room can jump to a chapter without navigating the window.
  */
 function buildBody(
   source: string,
@@ -233,7 +233,7 @@ function buildBody(
     else img.remove();
   }
 
-  // SVG `<image xlink:href>` — česta naslovnica u starijim knjigama.
+  // SVG `<image xlink:href>` — a common cover in older books.
   for (const image of [...body.querySelectorAll('image')]) {
     const href = image.getAttribute('href') ?? image.getAttribute('xlink:href');
     const blob = href ? blobs.get(resolvePath(base, href)) : undefined;
@@ -266,7 +266,7 @@ function titleOf(body: HTMLElement, fallback: string): string {
 export function openEpub(bytes: Uint8Array): Book {
   const files = unzipSync(bytes);
 
-  // DRM se ne zaobilazi. Bolje reći odmah nego prikazati kašu.
+  // DRM is not circumvented. Better to say so at once than to display mush.
   if (files['META-INF/encryption.xml']) {
     throw new Error(
       t('The book is DRM-protected, so its content cannot be read. ulEditor deliberately does not circumvent protection.'),
@@ -313,7 +313,7 @@ export function openEpub(bytes: Uint8Array): Book {
     blobs.set(item.path, URL.createObjectURL(new Blob([copy], { type: item.mediaType })));
   }
 
-  /* Redoslijed čitanja. */
+  /* The reading order. */
   const spine = firstTag(opf, 'spine');
   const order: ManifestItem[] = [];
   if (spine) {
@@ -394,7 +394,7 @@ export function openEpub(bytes: Uint8Array): Book {
     [...items.values()].find((item) => item.properties.split(/\s+/).includes('cover-image'));
   const cover = coverItem ? (blobs.get(coverItem.path) ?? null) : null;
 
-  /* Što pregled ne reproducira. */
+  /* What the view does not reproduce. */
   const notes: string[] = [];
   if ([...items.values()].some((item) => item.mediaType === 'text/css')) {
     notes.push('Publisher stylesheets are not applied — the text uses the reader typography.');
@@ -421,5 +421,5 @@ export function openEpub(bytes: Uint8Array): Book {
   };
 }
 
-/** Prosječna brzina čitanja na koju se oslanja procjena preostalog vremena. */
+/** The average reading speed the time-left estimate relies on. */
 export const WORDS_PER_MINUTE = 220;

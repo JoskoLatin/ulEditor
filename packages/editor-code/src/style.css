@@ -1,9 +1,10 @@
 /*
- * Boje sintakse.
+ * Syntax colours.
  *
- * Zaseban set od tokena shella: sintaksa treba širu paletu nego chrome, a
- * paket mora biti samostalan. Nijansiranje prati istu logiku — hladni
- * neutrali, prigušene boje, akcent rezerviran za ono što se stvarno ističe.
+ * A set apart from the shell tokens: syntax needs a wider palette than chrome
+ * does, and the package has to stand on its own. The shading follows the same
+ * logic — cool neutrals, muted colours, the accent reserved for what genuinely
+ * stands out.
  */
 
 :root {
@@ -74,8 +75,8 @@
   --cm-match: rgba(217, 162, 74, 0.3);
 }
 
-/* Panel pretrage dolazi iz @codemirror/search s vlastitim izgledom —
-   usklađujemo ga s ostatkom aplikacije. */
+/* The search panel comes from @codemirror/search with a look of its own —
+   we bring it into line with the rest of the application. */
 .cm-panels {
   background: var(--surface-raised) !important;
   color: var(--ink) !important;

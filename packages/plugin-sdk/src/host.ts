@@ -1,22 +1,22 @@
 /**
- * Usluge koje shell nudi editorima. Editor koji koristi samo `EditorHost`
- * radi neizmijenjen na desktopu, webu i mobitelu.
+ * The services the shell offers editors. An editor that uses only `EditorHost`
+ * runs unchanged on desktop, web and mobile.
  */
 
 import type { Disposable, Event } from './events.js';
 import type { VirtualFileSystem, Uri } from './fs.js';
 
-/* ── naredbe ─────────────────────────────────────────────────────────── */
+/* ── commands ────────────────────────────────────────────────────────── */
 
 export interface Command {
   id: string;
-  /** Tekst u command palette. */
+  /** The text in the command palette. */
   title: string;
-  /** Grupa u palette, npr. "PDF" ili "Datoteka". */
+  /** The group in the palette, e.g. "PDF" or "File". */
   category?: string;
-  /** Npr. `['Ctrl', 'Shift', 'P']`. Prikazuje se; ne registrira binding sam po sebi. */
+  /** E.g. `['Ctrl', 'Shift', 'P']`. Displayed only; it does not register a binding by itself. */
   keybinding?: string[];
-  /** Kad vrati `false`, naredba je skrivena iz palette. */
+  /** When it returns `false`, the command is hidden from the palette. */
   when?: () => boolean;
   run(...args: unknown[]): void | Promise<void>;
 }
@@ -27,14 +27,14 @@ export interface CommandRegistry {
   all(): Command[];
 }
 
-/* ── teme ────────────────────────────────────────────────────────────── */
+/* ── themes ──────────────────────────────────────────────────────────── */
 
 export type ThemeKind = 'light' | 'dark';
 
 export interface Theme {
   kind: ThemeKind;
-  /** Razriješeni CSS custom properties, da editori s vlastitim canvasom
-   *  (PDF, tablice) mogu bojati u skladu s ostatkom aplikacije. */
+  /** The resolved CSS custom properties, so editors with a canvas of their own
+   *  (PDF, spreadsheets) can paint in step with the rest of the application. */
   tokens: Readonly<Record<string, string>>;
 }
 
@@ -43,7 +43,7 @@ export interface ThemeService {
   readonly onDidChange: Event<Theme>;
 }
 
-/* ── postavke ────────────────────────────────────────────────────────── */
+/* ── settings ────────────────────────────────────────────────────────── */
 
 export interface SettingsService {
   get<T>(key: string, fallback: T): T;
@@ -51,7 +51,7 @@ export interface SettingsService {
   readonly onDidChange: Event<{ key: string }>;
 }
 
-/* ── obavijesti ──────────────────────────────────────────────────────── */
+/* ── notifications ───────────────────────────────────────────────────── */
 
 export type NotificationLevel = 'info' | 'warning' | 'error';
 
@@ -63,21 +63,21 @@ export interface NotificationAction {
 export interface NotificationService {
   show(level: NotificationLevel, message: string, actions?: NotificationAction[]): Disposable;
   /**
-   * Upozorenje o gubitku vjernosti pri spremanju.
+   * A warning about fidelity loss on save.
    *
-   * Editor koji zna da ne može reproducirati sve iz izvornog dokumenta MORA
-   * ovo pozvati prije spremanja. Tiho kvarenje korisnikovog formatiranja je
-   * jedina greška koja trajno ubija povjerenje u editor.
+   * An editor that knows it cannot reproduce everything from the source document
+   * MUST call this before saving. Quietly corrupting a user's formatting is the
+   * one mistake that destroys trust in an editor for good.
    */
   fidelityWarning(uri: Uri, unsupported: string[]): Promise<'save' | 'cancel'>;
 }
 
-/* ── konverzija ──────────────────────────────────────────────────────── */
+/* ── conversion ──────────────────────────────────────────────────────── */
 
 export type ConvertFormat = 'pdf' | 'docx' | 'odt' | 'xlsx' | 'ods' | 'html' | 'txt';
 
 export interface ConversionService {
-  /** Je li konverzijski backend (LibreOffice) dostupan na ovoj platformi. */
+  /** Whether the conversion backend (LibreOffice) is available on this platform. */
   available(): Promise<boolean>;
   convert(source: Uri, target: ConvertFormat): Promise<Uint8Array>;
 }

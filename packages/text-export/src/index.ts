@@ -1,13 +1,13 @@
 /**
- * Izvoz običnog teksta u formate koje netko drugi može otvoriti.
+ * Exporting plain text into formats somebody else can open.
  *
- * Postoji zbog jednog konkretnog toka: tekst koji je nastao unutar programa
- * (OCR sa slike, kasnije konverzije) nema datoteku na disku, pa se pri
- * spremanju mora **odabrati u što** ide. Odabir bez ovoga bi bio samo izbor
- * ekstenzije, što je laž.
+ * It exists for one concrete flow: text produced inside the program (OCR from an
+ * image, conversions later on) has no file on disk, so saving it means
+ * **choosing what it becomes**. Without this, that choice would be a choice of
+ * extension only, which is a lie.
  *
- * Namjerno bez ovisnosti o shellu — poziva se lijeno, pri spremanju, pa
- * pdf-lib ne ulazi u početni bundle.
+ * Deliberately free of any dependency on the shell — it is called lazily, on
+ * save, so pdf-lib never enters the initial bundle.
  */
 
 import { zipSync, strToU8 } from 'fflate';
@@ -37,7 +37,7 @@ export function formatOf(id: string): TextFormatDescriptor {
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
-/** XML tekst mora biti escapean; `&` prije svega ostalog. */
+/** XML text must be escaped; `&` before everything else. */
 function xml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -47,10 +47,11 @@ function xml(text: string): string {
 }
 
 /**
- * Najmanji valjan `.docx`: kontejner, jedna veza i tijelo s odlomcima.
+ * The smallest valid `.docx`: a container, one relationship and a body of
+ * paragraphs.
  *
- * Word ne traži stilove ni numeriranje da bi otvorio dokument — traži točno
- * `[Content_Types].xml`, `_rels/.rels` i dio na koji ta veza pokazuje.
+ * Word does not need styles or numbering to open a document — it needs exactly
+ * `[Content_Types].xml`, `_rels/.rels` and the part that relationship points at.
  */
 export function toDocx(text: string): Uint8Array {
   const paragraphs = text.split(/\r?\n/).map((line) => {
@@ -86,18 +87,18 @@ export function toDocx(text: string): Uint8Array {
 
 /* ── PDF ─────────────────────────────────────────────────────────────── */
 
-const PAGE = { width: 595.28, height: 841.89 }; // A4 u točkama
+const PAGE = { width: 595.28, height: 841.89 }; // A4 in points
 const MARGIN = 56;
 const FONT_SIZE = 11;
 const LEADING = 15;
 
 /**
- * Prelamanje po širini stupca. Riječ dulja od retka se lomi po znakovima —
- * inače bi duga putanja ili URL izašli izvan margine.
+ * Wrapping to the column width. A word longer than a line is broken by
+ * character — otherwise a long path or URL would run past the margin.
  *
- * Izvezeno jer je ovo jedina netrivijalna logika u izvozu; iz gotovog PDF-a
- * se prijelom ne da pročitati natrag (sadržaj je komprimiran stream), pa se
- * provjerava ovdje.
+ * Exported because this is the only non-trivial logic in the export; the
+ * wrapping cannot be read back out of a finished PDF (the content is a
+ * compressed stream), so it is verified here.
  */
 export function wrapLines(
   line: string,
@@ -140,9 +141,10 @@ export function wrapLines(
 }
 
 /**
- * Tekst → PDF. Standardni Helvetica ima WinAnsi kodiranje, koje pokriva
- * hrvatske dijakritike osim `č`, `ć`, `ž`, `š`, `đ` — pa se znakovi koje font
- * ne poznaje zamjenjuju bez dijakritika umjesto da spremanje pukne.
+ * Text → PDF. The standard Helvetica uses WinAnsi encoding, which covers the
+ * Croatian diacritics except `č`, `ć`, `ž`, `š`, `đ` — so characters the font
+ * does not know are substituted without their diacritics rather than letting the
+ * save fail.
  */
 export async function toPdf(text: string, title: string): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
@@ -174,7 +176,7 @@ export async function toPdf(text: string, title: string): Promise<Uint8Array> {
   return doc.save();
 }
 
-/** Znakovi koje WinAnsi ne poznaje → najbliži par bez dijakritike. */
+/** Characters WinAnsi does not know → the closest counterpart without a diacritic. */
 const FOLD: Record<string, string> = {
   č: 'c', ć: 'c', ž: 'z', š: 's', đ: 'd',
   Č: 'C', Ć: 'C', Ž: 'Z', Š: 'S', Đ: 'D',
@@ -189,7 +191,7 @@ function sanitizeForWinAnsi(text: string): string {
 
 export interface ExportResult {
   bytes: Uint8Array;
-  /** Što izvoz nije mogao zadržati — shell to pokazuje prije spremanja. */
+  /** What the export could not preserve — the shell shows this before saving. */
   lost: string[];
 }
 

@@ -1,9 +1,9 @@
 /**
- * Markdown editor — izvor uz živi pregled.
+ * The Markdown editor — source alongside a live preview.
  *
- * Renderirani HTML uvijek prolazi kroz DOMPurify. Markdown može sadržavati
- * doslovni HTML, a dokument dolazi s korisnikovog diska ili s mreže —
- * `html: true` bez sanitizacije bio bi XSS u vlastitoj aplikaciji.
+ * Rendered HTML always passes through DOMPurify. Markdown may contain literal
+ * HTML, and the document comes off the user's disk or off the network —
+ * `html: true` without sanitisation would be XSS in your own application.
  */
 
 import { EditorState } from '@codemirror/state';
@@ -83,10 +83,10 @@ class MarkdownEditor implements EditorInstance {
   #savedText: string;
   #dirty = false;
   #mode: MarkdownViewMode;
-  /** Sprječava povratnu petlju kad sinkroniziramo scroll dviju ploča. */
+  /** Prevents a feedback loop when we synchronise the scroll of two panes. */
   #syncing = false;
 
-  /** Sloj čitanja živi paralelno s uređivanjem — izvor se ne demontira. */
+  /** The reading layer lives alongside editing — the source is not unmounted. */
   #readingLayer: HTMLElement | null = null;
   #readingDoc: HTMLElement | null = null;
   #paged: PagedFlow | null = null;
@@ -206,19 +206,20 @@ class MarkdownEditor implements EditorInstance {
 
   #renderPreview(): void {
     if (this.#preview) this.#preview.innerHTML = render(this.#text());
-    // Dok se čita, izvor je i dalje uređiv u pozadini — pregled mora pratiti.
+    // While reading, the source stays editable underneath — the preview must follow.
     if (this.#readingDoc) {
       this.#readingDoc.innerHTML = render(this.#text());
       this.#paged?.relayout();
     }
   }
 
-  /* ── način čitanja ─────────────────────────────────────────────────── */
+  /* ── reading mode ──────────────────────────────────────────────────── */
 
   /**
-   * Dugi Markdown (README, dokumentacija, rukopis) čita se kao knjiga. Umjesto
-   * da se editor pretvara u čitaonicu, iznad njega se podigne zaseban sloj —
-   * CodeMirror ostaje montiran s kursorom i poviješću na mjestu.
+   * Long Markdown (a README, documentation, a manuscript) is read like a book.
+   * Rather than turning the editor into a reading room, a separate layer is
+   * raised above it — CodeMirror stays mounted with its cursor and history in
+   * place.
    */
   beginReading(options: ReadingOptions): ReadingSession {
     const root = this.#root;
@@ -387,8 +388,8 @@ class MarkdownEditor implements EditorInstance {
   }
 
   /**
-   * Ovdje se cross-format clipboard zaista isplati: raspon kopiran iz
-   * tablice ulazi kao Markdown tablica, ne kao tab-razdvojena kaša.
+   * This is where the cross-format clipboard really pays off: a range copied out
+   * of a spreadsheet arrives as a Markdown table, not as tab-separated mush.
    */
   async paste(payload: ClipboardPayload): Promise<boolean> {
     const view = this.#view;
@@ -424,7 +425,7 @@ export const markdownEditorProvider: EditorProvider = {
     mimeTypes: ['text/markdown'],
   },
   capabilities: ['view', 'edit', 'search', 'export', 'read'],
-  // Viši od editora koda, da .md ne završi kao običan tekst.
+  // Higher than the code editor, so a .md does not end up as plain text.
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {

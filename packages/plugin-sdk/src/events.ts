@@ -1,6 +1,6 @@
 /**
- * Minimalni event primitiv. Namjerno bez ovisnosti — plugin-sdk je javni
- * ugovor i ne smije vući runtime pakete u svaki editor plugin.
+ * A minimal event primitive. Deliberately dependency-free — plugin-sdk is the
+ * public contract and must not drag runtime packages into every editor plugin.
  */
 
 export type Disposable = { dispose(): void };
@@ -24,7 +24,7 @@ export class Emitter<T> {
   };
 
   fire(value: T): void {
-    // Kopija: listener smije dispose-ati sam sebe tijekom emisije.
+    // A copy: a listener may dispose of itself during emission.
     for (const listener of [...this.#listeners]) {
       try {
         listener(value);

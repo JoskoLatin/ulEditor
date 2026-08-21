@@ -1,8 +1,8 @@
 /*
- * Preglednik slika.
+ * The image viewer.
  *
- * Prozirnost se prikazuje šahovnicom u neutralnim tonovima teme, ne u
- * fiksnoj sivoj — inače u tamnoj temi izgleda kao greška u renderu.
+ * Transparency is shown as a chequerboard in the theme's neutral tones rather
+ * than a fixed grey — otherwise, in the dark theme, it reads as a render bug.
  */
 
 .ul-img {
@@ -22,9 +22,9 @@
   flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--rule);
-  /* Traka se lista umjesto da gura: bez ovoga njezina najmanja veličina
-     razvuče cijeli shell, a na telefonu to odzumira stranicu i dodiri
-     promaše gumbe. */
+  /* The bar scrolls instead of pushing: without this its minimum size stretches
+     the whole shell, and on a phone that zooms the page out and taps miss the
+     buttons. */
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -80,7 +80,7 @@
 }
 
 .ul-img-frame {
-  /* Šahovnica za prozirnost — dvije nijanse iz palete, bez fiksnih boja. */
+  /* The transparency chequerboard — two shades from the palette, no fixed colours. */
   background-image:
     linear-gradient(45deg, var(--rule-soft) 25%, transparent 25%),
     linear-gradient(-45deg, var(--rule-soft) 25%, transparent 25%),
@@ -96,7 +96,7 @@
 
 .ul-img-frame img {
   display: block;
-  /* Uvećane slike moraju pokazati piksele, ne zamućenje. */
+  /* Enlarged images must show pixels, not blur. */
   image-rendering: pixelated;
 }
 
@@ -114,7 +114,7 @@
   line-height: 1.7;
 }
 
-/* Odabir jezika za OCR — stoji uz gumb jer se bira prije svakog pokretanja. */
+/* The OCR language picker — beside the button, because it is chosen before every run. */
 .ul-img-select {
   height: 22px;
   padding: 0 4px;
@@ -146,7 +146,7 @@
   height: 0;
 }
 
-/* Kontrole zadržavaju svoju širinu — stisnute do nečitljivosti nikome ne služe. */
+/* Controls keep their width — squeezed past legibility they serve nobody. */
 .ul-img-toolbar > * {
   flex: none;
 }
@@ -154,13 +154,15 @@
 /* ── uski ekran ─────────────────────────────────────────────────────── */
 
 /*
- * Alati idu uz lijevi rub, uspravno.
+ * The tools sit along the left edge, vertically.
  *
- * Na telefonu navigacija stoji u naslovnoj traci, pa je bok slobodan — i bolji
- * je za alate nego vodoravna traka, koja bi na 392 px pojela pola širine ili
- * se morala listati. Uz rub su alati stalno vidljivi i pod palcem.
+ * On a phone the navigation lives in the title bar, so the side is free — and it
+ * suits tools better than a horizontal bar would, since at 392 px that bar would
+ * eat half the width or have to scroll. Along the edge the tools stay visible
+ * and under the thumb.
  *
- * Traka se okreće, ne prepisuje: isti elementi, drugi smjer.
+ * The bar rotates rather than being rewritten: the same elements, a different
+ * direction.
  */
 @media (max-width: 720px) {
   .ul-img {
@@ -180,20 +182,20 @@
     border-right: 1px solid var(--rule);
   }
 
-  /* Samo izravna djeca trake: ugniježđeni gumbi (kvačice boja) imaju
-     vlastitu veličinu, a nametnuta visina ih pretvori u elipse. */
+  /* Direct children of the bar only: nested buttons (the colour swatches) have
+     a size of their own, and an imposed height turns them into ellipses. */
   .ul-img-toolbar > button {
     height: 36px;
   }
 
-  /* Razdjelnik prati smjer trake. */
+  /* The separator follows the direction of the bar. */
   .ul-img-toolbar .sep {
     width: 100%;
     height: 1px;
   }
 
-  /* Razmaknica gura sadržaj udesno kad je traka vodoravna; uspravno bi je
-     rastegnula preko cijele visine i razbila raspored. */
+  /* The spacer pushes content to the right while the bar is horizontal; upright
+     it would stretch across the full height and break the layout. */
   .ul-img-toolbar .spacer {
     display: none;
   }

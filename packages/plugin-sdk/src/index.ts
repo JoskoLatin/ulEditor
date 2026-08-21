@@ -1,9 +1,8 @@
 /**
- * @uleditor/plugin-sdk — javni ugovor između shella i editora.
+ * @uleditor/plugin-sdk — the public contract between the shell and the editors.
  *
- * Editor koji ovisi samo o ovom paketu radi neizmijenjen na desktopu,
- * webu i mobitelu. Sve što je platformski specifično krije se iza
- * `EditorHost`.
+ * An editor that depends on this package alone runs unchanged on desktop, web
+ * and mobile. Everything platform-specific hides behind `EditorHost`.
  */
 
 export * from './events.js';
@@ -14,5 +13,5 @@ export * from './host.js';
 export * from './reading.js';
 export * from './editor.js';
 
-/** Verzija ugovora. Editori je smiju provjeriti pri registraciji. */
+/** The contract version. Editors may check it when registering. */
 export const SDK_VERSION = '0.1.0';
