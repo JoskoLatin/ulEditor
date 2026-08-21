@@ -5,8 +5,8 @@
  * every page turn, and that must not re-render the tree, the tabs and the status
  * bar.
  *
- * Sama sesija (`ReadingSession`) je imperativni objekt editora i ne ide u
- * store — kao ni `EditorInstance`, iz istog razloga.
+ * The session itself (`ReadingSession`) is the editor's imperative object and does
+ * not go into the store — no more than `EditorInstance` does, for the same reason.
  */
 
 import { create } from 'zustand';

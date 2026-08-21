@@ -48,7 +48,7 @@ export const useScratch = create<ScratchState>((set) => ({
   setFormat: (format) => set({ format }),
 }));
 
-/* ── imperativni dio ─────────────────────────────────────────────────── */
+/* ── the imperative part ─────────────────────────────────────────────── */
 
 let instance: EditorInstance | null = null;
 let counter = 0;
@@ -91,7 +91,7 @@ function memoryDocument(name: string, text: string): DocumentHandle {
 }
 
 export interface OpenScratchOptions {
-  /** Ime bez ekstenzije, npr. "Text from slika.png". */
+  /** The name without an extension, e.g. "Text from photo.png". */
   name: string;
   text: string;
   format?: ScratchFormat;

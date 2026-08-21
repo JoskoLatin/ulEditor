@@ -82,7 +82,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
-      # Frontend dist mora postojati prije `generate_context!`.
+      # The frontend dist has to exist before `generate_context!`.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

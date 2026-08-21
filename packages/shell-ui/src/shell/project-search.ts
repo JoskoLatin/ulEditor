@@ -30,10 +30,10 @@ const MAX_DOCUMENT_BYTES = 24 * 1024 * 1024;
 export interface ProjectHit {
   uri: Uri;
   name: string;
-  /** Mjesto pogotka: "line 42" u tekstu, "Chapter 3" ili "Sheet1!B4" u dokumentu. */
+  /** Where the hit is: "line 42" in text, "Chapter 3" or "Sheet1!B4" in a document. */
   where: string;
   preview: string;
-  /** Redak za tekstualne datoteke; dokumenti ga nemaju. */
+  /** The line for text files; documents have none. */
   line?: number;
   format: FormatId;
 }
@@ -51,7 +51,7 @@ interface ProjectSearchState {
   hits: ProjectHit[];
   scanned: number;
   truncated: boolean;
-  /** Koliko je dokumenata ostalo za drugi prolaz — za traku napretka. */
+  /** How many documents are left for the second pass — for the progress bar. */
   pending: number;
   error: string | null;
 

@@ -36,7 +36,7 @@ impl TempDir {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("nadmapa");
         }
-        fs::write(&path, contents).expect("zapis testne datoteke");
+        fs::write(&path, contents).expect("writing the test file");
         path
     }
 }
@@ -54,7 +54,7 @@ fn open_folder_read_edit_save() {
     dir.write("main.rs", b"fn main() {}\n");
     dir.write("README.md", b"# Naslov\n");
     dir.write("src/lib.ts", b"export const x = 1;\n");
-    dir.write("node_modules/paket/index.js", b"// ne smije se pojaviti\n");
+    dir.write("node_modules/paket/index.js", b"// must not show up\n");
 
     let mut workspace = Workspace::new();
     let root = workspace.add_root(dir.path()).expect("korijen");
@@ -71,7 +71,7 @@ fn open_folder_read_edit_save() {
     assert!(names.contains(&"src"), "nedostaje src: {names:?}");
     assert!(
         !names.contains(&"node_modules"),
-        "node_modules se ne smije pojaviti u stablu: {names:?}"
+        "node_modules must not show up in the tree: {names:?}"
     );
 
     // Directories first — otherwise the tree is unreadable.
@@ -82,7 +82,7 @@ fn open_folder_read_edit_save() {
         .unwrap();
     assert!(
         last_dir < first_file,
-        "direktoriji moraju biti prvi: {names:?}"
+        "directories have to come first: {names:?}"
     );
 
     // 2 — lazy read of a subfolder
@@ -107,7 +107,7 @@ fn open_folder_read_edit_save() {
     // 5 — saving, and checking it really landed on disk
     workspace
         .write(&rs, b"fn main() { println!(\"ok\"); }\n")
-        .expect("spremanje");
+        .expect("saving");
     assert_eq!(
         fs::read_to_string(&rs).expect("reading back"),
         "fn main() { println!(\"ok\"); }\n"
@@ -122,7 +122,7 @@ fn open_folder_read_edit_save() {
         .collect();
     assert!(
         leftovers.is_empty(),
-        "zaostale privremene datoteke: {leftovers:?}"
+        "leftover temporary files: {leftovers:?}"
     );
 }
 
@@ -146,7 +146,7 @@ fn sandbox_holds_both_ways() {
     let outside_file = outside.write("secret.txt", "must not be readable\n".as_bytes());
 
     let inside = TempDir::new("unutra");
-    inside.write("ok.txt", b"smije\n");
+    inside.write("ok.txt", b"allowed\n");
 
     let mut workspace = Workspace::new();
     workspace.add_root(inside.path()).expect("korijen");
@@ -172,21 +172,21 @@ fn sandbox_holds_both_ways() {
             workspace.resolve(&traversal),
             Err(VfsError::OutsideWorkspace(_))
         ),
-        "bijeg kroz `..` mora biti odbijen"
+        "an escape through `..` has to be rejected"
     );
 
     // Writing outside the workspace is forbidden just as reading is.
     assert!(
         matches!(
-            workspace.write(&outside_file, b"pokusaj"),
+            workspace.write(&outside_file, b"attempt"),
             Err(VfsError::OutsideWorkspace(_))
         ),
-        "pisanje izvan radnog prostora mora biti odbijeno"
+        "writing outside the workspace has to be rejected"
     );
     assert_eq!(
         fs::read_to_string(&outside_file).unwrap(),
         "must not be readable\n",
-        "datoteka izvan radnog prostora ne smije biti dirnuta"
+        "a file outside the workspace must not be touched"
     );
 }
 
@@ -221,9 +221,9 @@ fn save_as_new_file_is_allowed() {
     let mut workspace = Workspace::new();
     let root = workspace.add_root(dir.path()).expect("korijen");
 
-    let fresh = root.join("nova.md");
+    let fresh = root.join("new.md");
     workspace
-        .write(&fresh, b"# Nova\n")
-        .expect("spremanje nove datoteke");
-    assert_eq!(fs::read_to_string(&fresh).unwrap(), "# Nova\n");
+        .write(&fresh, b"# New\n")
+        .expect("saving the new file");
+    assert_eq!(fs::read_to_string(&fresh).unwrap(), "# New\n");
 }

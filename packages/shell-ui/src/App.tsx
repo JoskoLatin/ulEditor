@@ -103,7 +103,7 @@ export function App({ shell }: { shell: Shell }) {
           void adoptDropped(shell, { paths: payload.paths });
         }
       });
-      // Komponenta se mogla demontirati dok je pretplata bila u tijeku.
+      // The component could have unmounted while the subscription was in flight.
       if (cancelled) stop();
       else unlisten = stop;
     })();

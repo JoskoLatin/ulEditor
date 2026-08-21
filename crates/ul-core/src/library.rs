@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn nalazi_dokumente_i_slike_a_preskace_kod() {
+    fn finds_documents_and_images_and_skips_code() {
         let dir = temp_dir("mix");
         fs::write(dir.join("ugovor.pdf"), b"%PDF-1.4").unwrap();
         fs::write(dir.join("slika.png"), b"\x89PNG").unwrap();
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn preskace_mape_s_podacima_aplikacija() {
+    fn skips_application_data_folders() {
         let dir = temp_dir("skip");
         fs::create_dir_all(dir.join("Android/data")).unwrap();
         fs::write(dir.join("Android/data/tudje.pdf"), b"%PDF").unwrap();
@@ -376,22 +376,22 @@ mod tests {
     }
 
     #[test]
-    fn najnovije_dolazi_prvo() {
+    fn the_most_recent_comes_first() {
         let dir = temp_dir("order");
-        fs::write(dir.join("staro.pdf"), b"%PDF").unwrap();
+        fs::write(dir.join("old.pdf"), b"%PDF").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(dir.join("novo.pdf"), b"%PDF").unwrap();
+        fs::write(dir.join("new.pdf"), b"%PDF").unwrap();
 
         let workspace = Workspace::new();
         let scan = workspace
             .scan_library(std::slice::from_ref(&dir), None)
             .unwrap();
 
-        assert_eq!(scan.entries[0].name, "novo.pdf");
+        assert_eq!(scan.entries[0].name, "new.pdf");
     }
 
     #[test]
-    fn mapa_se_prijavljuje_relativno_na_korijen() {
+    fn the_folder_is_reported_relative_to_the_root() {
         let dir = temp_dir("folder");
         fs::create_dir_all(dir.join("racuni")).unwrap();
         fs::write(dir.join("racuni/r1.pdf"), b"%PDF").unwrap();
@@ -407,7 +407,7 @@ mod tests {
 
     /// Scoped storage looks exactly like this: folders are visible, files are not.
     #[test]
-    fn same_mape_bez_datoteka_znace_uskracen_pristup() {
+    fn folders_alone_with_no_files_mean_access_denied() {
         let dir = temp_dir("blocked");
         fs::create_dir_all(dir.join("Download")).unwrap();
         fs::create_dir_all(dir.join("Documents")).unwrap();
@@ -423,7 +423,7 @@ mod tests {
 
     /// Without a separate quota, photos push documents out of the list.
     #[test]
-    fn slike_ne_mogu_istisnuti_dokumente() {
+    fn images_cannot_crowd_documents_out() {
         let dir = temp_dir("photos");
         for i in 0..(MAX_IMAGES + 50) {
             fs::write(dir.join(format!("IMG_{i:04}.jpg")), b"\xff\xd8").unwrap();
@@ -439,14 +439,14 @@ mod tests {
         assert_eq!(images, MAX_IMAGES, "images must be capped by the quota");
         assert!(
             scan.entries.iter().any(|e| e.name == "ugovor.pdf"),
-            "dokument mora ostati u popisu bez obzira na broj fotografija"
+            "the document has to stay in the list no matter how many photos there are"
         );
         assert!(scan.truncated);
     }
 
     /// The library may read its own folders, but must not push them into the explorer.
     #[test]
-    fn korijeni_knjiznice_ne_ulaze_u_stablo() {
+    fn library_roots_do_not_enter_the_tree() {
         let dir = temp_dir("roots");
         fs::write(dir.join("ugovor.pdf"), b"%PDF").unwrap();
 
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn prazna_mapa_nije_uskracen_pristup() {
+    fn an_empty_folder_is_not_denied_access() {
         let dir = temp_dir("empty");
 
         let workspace = Workspace::new();

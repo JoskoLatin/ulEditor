@@ -7,7 +7,7 @@ import { useShell } from '../shell/context.js';
 import { useWorkspace } from '../state/workspace.js';
 import { IconSearch } from './Icons.js';
 
-/** Podniz-podudaranje s razmacima: "opfo" pronalazi "Open folder". */
+/** Subsequence matching across spaces: "opfo" finds "Open folder". */
 function fuzzy(text: string, query: string): number[] | null {
   if (!query) return [];
   const lower = text.toLowerCase();

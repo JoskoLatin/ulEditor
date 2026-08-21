@@ -34,7 +34,7 @@ export type OcrLanguage = (typeof OCR_LANGUAGES)[number]['id'];
 export interface OcrProgress {
   /** 0..1 */
   fraction: number;
-  /** Faza koju motor upravo radi, npr. `recognizing text`. */
+  /** The phase the engine is in right now, e.g. `recognizing text`. */
   stage: string;
 }
 

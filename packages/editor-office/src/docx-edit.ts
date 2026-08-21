@@ -23,10 +23,10 @@ import { strToU8, zipSync } from 'fflate';
 
 import type { Archive } from './ooxml.js';
 
-/* ── prolazak kroz oznake ────────────────────────────────────────────── */
+/* ── walking the tags ────────────────────────────────────────────────── */
 
 interface Tag {
-  /** Ime s prefiksom, kako stoji u datoteci: `w:r`, `w:t`. */
+  /** The name with its prefix, as it stands in the file: `w:r`, `w:t`. */
   name: string;
   start: number;
   end: number;
@@ -120,7 +120,7 @@ export interface RunSpan {
  */
 const BLOCKING = new Set(['br', 'tab', 'drawing', 'pict', 'object', 'fldChar', 'instrText', 'ruby']);
 
-/** Nalazi sve `w:r` elemente u dokumentu, redom. */
+/** Finds every `w:r` element in the document, in order. */
 export function findRuns(xml: string): RunSpan[] {
   const runs: RunSpan[] = [];
   /** The open runs; the innermost is last. Drawings can contain runs. */
@@ -134,7 +134,7 @@ export function findRuns(xml: string): RunSpan[] {
       const span: RunSpan = { index: runs.length, start: tag.start, end: tag.end, text: null, refusal: null };
       runs.push(span);
       if (!tag.selfClosing) open.push({ span, texts: [], blocked: new Set() });
-      else span.refusal = 'run je prazan';
+      else span.refusal = 'the run is empty';
       continue;
     }
 
@@ -225,7 +225,7 @@ export function runText(xml: string, run: RunSpan): string {
   return unescapeXml(xml.slice(run.text.contentStart, run.text.contentEnd));
 }
 
-/* ── zapis ───────────────────────────────────────────────────────────── */
+/* ── writing ─────────────────────────────────────────────────────────── */
 
 export interface RunEdit {
   index: number;

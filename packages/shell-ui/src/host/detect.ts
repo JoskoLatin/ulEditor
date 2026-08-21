@@ -116,8 +116,8 @@ function classifyZip(bytes: Uint8Array): FormatId {
   if (containsAscii(head, 'word/document.xml', head.length)) return 'docx';
   if (containsAscii(head, 'xl/workbook.xml', head.length)) return 'xlsx';
   if (containsAscii(head, 'ppt/presentation.xml', head.length)) return 'pptx';
-  // EPUB without the uncompressed `mimetype` entry (off-spec, but
-  // postoji u divljini) — prepoznaje se po obaveznom kontejneru.
+  // EPUB without the uncompressed `mimetype` entry (off-spec, but it exists in
+  // the wild) — recognised by its mandatory container.
   if (containsAscii(head, 'META-INF/container.xml', head.length)) return 'epub';
   // Shorter forms — for when the central directory lies outside the window we read.
   if (containsAscii(head, 'word/', head.length)) return 'docx';
@@ -193,7 +193,7 @@ export function detect(name: string, bytes: Uint8Array): FormatDetection {
     return { format: 'image', via: 'magic' };
   }
 
-  // Stari binarni Office (OLE2 compound file).
+  // Old binary Office (an OLE2 compound file).
   if (startsWith(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
     const byName = detectByName(name);
     return byName.format === 'unknown' ? { format: 'binary', via: 'magic' } : { ...byName, via: 'magic' };

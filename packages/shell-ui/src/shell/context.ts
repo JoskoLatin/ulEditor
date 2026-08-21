@@ -6,6 +6,6 @@ export const ShellContext = createContext<Shell | null>(null);
 
 export function useShell(): Shell {
   const shell = useContext(ShellContext);
-  if (!shell) throw new Error('useShell mora biti unutar <ShellContext.Provider>');
+  if (!shell) throw new Error('useShell has to be inside <ShellContext.Provider>');
   return shell;
 }

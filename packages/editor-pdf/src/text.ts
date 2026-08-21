@@ -60,7 +60,7 @@ export interface FaceMetrics {
   bytes: Uint8Array;
   /** The line height in points for a given size. */
   lineHeight(size: number): number;
-  /** Udaljenost od vrha retka do osnovne linije. */
+  /** The distance from the top of the line to the baseline. */
   ascent(size: number): number;
   /** The width of one line in points. */
   measure(line: string, size: number): number;

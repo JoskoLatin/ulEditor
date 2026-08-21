@@ -15,7 +15,7 @@ import { applyRedactions, refusalWarning, type Redaction } from './redact.js';
 import { standardWidths, type FontLoader } from './text.js';
 
 export interface PagePlan {
-  /** Broj stranice u IZVORNOM dokumentu, 1-baziran. */
+  /** The page number in the SOURCE document, 1-based. */
   source: number;
   /** Rotation on top of what the page already has: 0, 90, 180 or 270. */
   rotate: number;
@@ -52,7 +52,7 @@ export function movePage(plan: PagePlan[], index: number, delta: number): PagePl
   return next;
 }
 
-/** Izvorna stranica (1-bazirano) → mjesto u izlazu (0-bazirano). */
+/** Source page (1-based) → position in the output (0-based). */
 export function pageMapOf(plan: PagePlan[]): Map<number, number> {
   const map = new Map<number, number>();
   plan.forEach((entry, index) => {
@@ -176,7 +176,7 @@ export async function saveDocument(
       page.setRotation(degrees((page.getRotation().angle + entry.rotate) % 360));
     }
 
-    // Brisanje ide unatrag da se indeksi ne pomaknu ispod nogu.
+    // Deletion runs backwards so the indices do not shift underfoot.
     for (let i = pageCount; i >= 1; i--) {
       if (!keep.has(i)) doc.removePage(i - 1);
     }

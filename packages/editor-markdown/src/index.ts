@@ -54,7 +54,7 @@ function render(source: string): string {
   });
 }
 
-/** Markdown tablica iz reprezentacije clipboarda — za paste iz tablice. */
+/** A Markdown table out of a clipboard representation — for a paste from a spreadsheet. */
 function tableToMarkdown(rows: string[][], headerRow: boolean): string {
   if (!rows.length) return '';
   const escape = (cell: string) => cell.replace(/\|/g, '\\|').replace(/\n/g, ' ');
@@ -159,7 +159,7 @@ class MarkdownEditor implements EditorInstance {
     this.#emitStatus();
   }
 
-  /** Proporcionalna sinkronizacija — dovoljna bez mapiranja izvor↔izlaz. */
+  /** Proportional syncing — enough without a source↔output mapping. */
   #wireScrollSync(preview: HTMLElement): void {
     const scroller = this.#view?.scrollDOM;
     if (!scroller) return;

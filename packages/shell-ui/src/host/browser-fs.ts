@@ -116,7 +116,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
 
   #fileHandle(uri: Uri): FsFileHandle {
     const h = this.#handle(uri);
-    if (h.kind !== 'file') throw new Error(`${uri} nije datoteka`);
+    if (h.kind !== 'file') throw new Error(`${uri} is not a file`);
     return h;
   }
 
@@ -154,7 +154,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
 
   async readDirectory(uri: Uri): Promise<DirectoryEntry[]> {
     const handle = this.#handle(uri);
-    if (handle.kind !== 'directory') throw new Error(`${uri} nije direktorij`);
+    if (handle.kind !== 'directory') throw new Error(`${uri} is not a directory`);
 
     const entries: DirectoryEntry[] = [];
     for await (const child of handle.values()) {
@@ -227,7 +227,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     };
   }
 
-  /* — pisanje — */
+  /* — writing — */
 
   async canWrite(uri: Uri): Promise<boolean> {
     const handle = this.#handles.get(uri);
@@ -307,7 +307,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
 
   /* — degraded mode: <input type="file"> — */
 
-  /** Otvara datoteke bez FSA API-ja. Rezultat je read-only. */
+  /** Opens files without the FSA API. The result is read-only. */
   async adoptFiles(files: FileList | File[]): Promise<DocumentHandle[]> {
     const docs: DocumentHandle[] = [];
     for (const file of Array.from(files)) {

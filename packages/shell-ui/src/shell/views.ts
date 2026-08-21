@@ -19,11 +19,11 @@ export interface ViewEntry {
   id: SidebarView;
   label: string;
   icon: typeof IconFiles;
-  /** Pogledi koji na uskom ekranu nemaju smisla. */
+  /** The views that make no sense on a narrow screen. */
   desktopOnly?: boolean;
 }
 
-/** Funkcija, ne konstanta: prijevod se mora dogoditi pri renderu. */
+/** A function, not a constant: the translation has to happen at render time. */
 export const views = (): ViewEntry[] => [
   { id: 'library', label: t('Library — documents on this device'), icon: IconBook },
   { id: 'explorer', label: t('Explorer (Ctrl+B)'), icon: IconFiles, desktopOnly: true },

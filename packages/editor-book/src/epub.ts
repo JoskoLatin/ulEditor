@@ -38,7 +38,7 @@ export interface BookOutlineEntry {
   depth: number;
   /** Indeks poglavlja u `chapters`. */
   chapter: number;
-  /** Sidro unutar poglavlja, ako ga kazalo navodi. */
+  /** An anchor inside the chapter, if the table of contents names one. */
   anchor: string | null;
 }
 
@@ -46,7 +46,7 @@ export interface Book {
   title: string;
   author: string;
   language: string;
-  /** Blob URL naslovnice, kad je knjiga ima. */
+  /** The blob URL of the cover, when the book has one. */
   cover: string | null;
   chapters: BookChapter[];
   outline: BookOutlineEntry[];
@@ -121,7 +121,7 @@ function findOpfPath(files: Record<string, Uint8Array>): string {
     const full = rootfile?.getAttribute('full-path');
     if (full) return full;
   }
-  // Neke knjige nemaju ispravan kontejner; OPF je ipak jedinstven po ekstenziji.
+  // Some books have no valid container; the OPF is unique by extension anyway.
   const guess = Object.keys(files).find((name) => name.toLowerCase().endsWith('.opf'));
   if (!guess) throw new Error(t('The archive has no OPF file — this is not an EPUB book.'));
   return guess;
@@ -209,7 +209,7 @@ function buildBody(
     parsed = new DOMParser().parseFromString(source, 'application/xhtml+xml');
     if (parsed.querySelector('parsererror')) throw new Error('xhtml');
   } catch {
-    // Knjige u divljini nisu uvijek valjan XHTML; HTML parser je popustljiv.
+    // Books in the wild are not always valid XHTML; the HTML parser is forgiving.
     parsed = new DOMParser().parseFromString(source, 'text/html');
   }
 
@@ -261,7 +261,7 @@ function titleOf(body: HTMLElement, fallback: string): string {
   return text ? text.slice(0, 120) : fallback;
 }
 
-/* ── otvaranje ───────────────────────────────────────────────────────── */
+/* ── opening ─────────────────────────────────────────────────────────── */
 
 export function openEpub(bytes: Uint8Array): Book {
   const files = unzipSync(bytes);
@@ -302,7 +302,7 @@ export function openEpub(bytes: Uint8Array): Book {
     }
   }
 
-  /* Slike u blob URL-ove — jedini resursi koje uzimamo iz knjige. */
+  /* Images into blob URLs — the only assets we take out of the book. */
   const blobs = new Map<string, string>();
   for (const item of items.values()) {
     if (!IMAGE_TYPES.test(item.mediaType)) continue;
@@ -338,7 +338,7 @@ export function openEpub(bytes: Uint8Array): Book {
     };
   });
 
-  /* Kazalo — EPUB 3 nav, pa EPUB 2 NCX, pa poglavlja kakva jesu. */
+  /* The table of contents — EPUB 3 nav, then EPUB 2 NCX, then the chapters as they are. */
   const byPath = new Map(chapters.map((c, index) => [c.href, index]));
   let raw: RawOutline[] = [];
 

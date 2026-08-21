@@ -31,7 +31,7 @@ export function FindPanel() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  /** Broj zadnje pokrenute pretrage — starije se odbacuju. */
+  /** The number of the last search started — older ones are discarded. */
   const runId = useRef(0);
 
   useLayoutEffect(() => {

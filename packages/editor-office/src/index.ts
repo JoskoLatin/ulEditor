@@ -74,7 +74,7 @@ function buildNotes(notes: string[], headline: string): HTMLElement {
   return bar;
 }
 
-/** Pretraga nad prikazanim tekstom — isti postupak za Word i za tablicu. */
+/** Search over the displayed text — the same procedure for Word and for a spreadsheet. */
 function searchIn(
   root: HTMLElement,
   query: FindQuery,
@@ -124,7 +124,7 @@ class DocxPreviewEditor implements EditorInstance {
   #reading = false;
   #words: number;
 
-  /** Prepisani runovi: redni broj u dokumentu → novi tekst. */
+  /** The rewritten runs: ordinal in the document → new text. */
   #edits = new Map<number, string>();
   #undoStack: Map<number, string>[] = [];
   #redoStack: Map<number, string>[] = [];
@@ -214,8 +214,7 @@ class DocxPreviewEditor implements EditorInstance {
   /* ── izmjena teksta ──────────────────────────────────────────────── */
 
   /**
-   * Dvostruki klik otvara **jedan run** — komad teksta s jednim
-   * formatiranjem.
+   * A double-click opens **a single run** — a piece of text with one formatting.
    *
    * Why a run and not a paragraph: a paragraph often holds a dozen of them, so
    * rewriting a whole paragraph would require the program to guess which

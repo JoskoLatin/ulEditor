@@ -15,7 +15,7 @@ export function TabBar() {
   const activateTab = useWorkspace((s) => s.activateTab);
   const barRef = useRef<HTMLDivElement>(null);
 
-  // Aktivna kartica mora ostati vidljiva i kad je otvorena kroz paletu.
+  // The active tab has to stay visible even when it was opened through the palette.
   useEffect(() => {
     const el = barRef.current?.querySelector<HTMLElement>('[data-active="true"]');
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });

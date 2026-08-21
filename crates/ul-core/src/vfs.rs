@@ -306,7 +306,7 @@ mod tests {
     fn resolve_without_workspace_fails() {
         let workspace = Workspace::new();
         assert!(matches!(
-            workspace.resolve("bilo/sto"),
+            workspace.resolve("anything/at-all"),
             Err(VfsError::NoWorkspace)
         ));
     }
@@ -315,7 +315,7 @@ mod tests {
     fn escape_attempt_is_rejected() {
         let mut workspace = Workspace::new();
         let dir = std::env::temp_dir();
-        workspace.add_root(&dir).expect("temp mora postojati");
+        workspace.add_root(&dir).expect("temp has to exist");
 
         // The classic sandbox escape attempt.
         let escaped = dir.join("..").join("..").join("etc").join("passwd");
@@ -329,7 +329,7 @@ mod tests {
     fn root_itself_resolves() {
         let mut workspace = Workspace::new();
         let dir = std::env::temp_dir();
-        let root = workspace.add_root(&dir).expect("temp mora postojati");
+        let root = workspace.add_root(&dir).expect("temp has to exist");
         assert!(workspace.resolve(&root).is_ok());
     }
 

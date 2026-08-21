@@ -24,7 +24,7 @@ fn with_workspace<T>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&mut Workspace) -> Result<T, VfsError>,
 ) -> Result<T, VfsError> {
-    let mut guard = state.workspace.lock().expect("radni prostor je otrovan");
+    let mut guard = state.workspace.lock().expect("the workspace lock is poisoned");
     f(&mut guard)
 }
 
@@ -267,5 +267,5 @@ pub fn run() {
             scan_library,
         ])
         .run(tauri::generate_context!())
-        .expect("pokretanje ulEditora nije uspjelo");
+        .expect("starting ulEditor failed");
 }

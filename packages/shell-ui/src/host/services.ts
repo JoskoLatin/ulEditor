@@ -56,7 +56,7 @@ export class Commands implements CommandRegistry {
 
 /* ── teme ────────────────────────────────────────────────────────────── */
 
-/** Tokeni koje editori s vlastitim canvasom moraju znati (PDF, tablice). */
+/** The tokens editors with a canvas of their own have to know (PDF, spreadsheets). */
 const EXPOSED_TOKENS = [
   '--ground',
   '--surface',

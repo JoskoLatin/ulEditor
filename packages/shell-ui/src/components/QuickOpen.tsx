@@ -16,14 +16,14 @@ import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon, IconSearch } from './Icons.js';
 import { FORMATS } from '@uleditor/plugin-sdk';
 
-/** Iznad ovoga popis prestaje biti koristan, a dohvat jeftin. */
+/** Above this the list stops being useful and the fetch stops being cheap. */
 const MAX_FILES = 20000;
 const MAX_SHOWN = 60;
 
 interface Entry {
   uri: string;
   name: string;
-  /** Putanja relativno na korijen — razlikuje istoimene datoteke. */
+  /** The path relative to the root — it tells same-named files apart. */
   hint: string;
 }
 
@@ -68,7 +68,7 @@ export function QuickOpen() {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fokus mora biti sinkron: `requestAnimationFrame` gubi utrku s tipkanjem.
+  // The focus has to be synchronous: `requestAnimationFrame` loses the race with typing.
   useLayoutEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
@@ -219,7 +219,7 @@ function Highlighted({ text, positions }: { text: string; positions: number[] })
   );
 }
 
-/** `C:\proj\src\a.ts` uz korijen `C:\proj` → `src\`. */
+/** `C:\proj\src\a.ts` against the root `C:\proj` → `src\`. */
 function relativeDir(uri: string, name: string, prefixes: string[]): string {
   let path = uri.slice(0, Math.max(0, uri.length - name.length));
 

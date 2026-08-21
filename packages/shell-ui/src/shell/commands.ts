@@ -264,7 +264,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       toggleReading(shell);
       return;
     }
-    // Ctrl+Shift+H — pretraga po projektu. Ctrl+Shift+F ostaje dokumentu.
+    // Ctrl+Shift+H — project-wide search. Ctrl+Shift+F stays with the document.
     if (key === 'h') {
       event.preventDefault();
       store.setSidebarView('search');
@@ -280,7 +280,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       activeInstance()?.redo();
     }
     // Ctrl+Shift+F — the search that works across all formats, PDF included.
-    // Ctrl+F ostaje CodeMirroru, koji uz pretragu nudi i zamjenu.
+    // Ctrl+F stays with CodeMirror, which offers replace alongside search.
     if (key === 'f' && activeInstance()) {
       event.preventDefault();
       store.setFindOpen(true);

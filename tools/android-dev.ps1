@@ -1,24 +1,26 @@
-# Pokretanje ulEditora na Android uređaju.
+# Running ulEditor on an Android device.
 #
-# Mora ići kroz elevirani proces: Tauri pri sastavljanju APK-a radi symbolic
-# link na `libuleditor_lib.so`, a Windows to bez Developer Modea dopušta samo
-# administratoru. Alternativa je uključiti Developer Mode i pokretati normalno.
+# It has to go through an elevated process: while assembling the APK, Tauri makes
+# a symbolic link to `libuleditor_lib.so`, and without Developer Mode Windows
+# allows that only to an administrator. The alternative is to turn Developer Mode
+# on and run normally.
 #
-# Ništa se ne instalira ni ne mijenja u sustavu — elevacija služi isključivo
-# za stvaranje symlinka unutar projekta.
+# Nothing is installed or changed on the system — the elevation serves solely to
+# create a symlink inside the project.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\android-dev.ps1 [-Build]
 
 param(
-    # Umjesto dev petlje sastavi samostalan APK i zaustavi se.
+    # Assemble a standalone APK and stop, instead of the dev loop.
     #
-    # Dev petlja učitava sučelje s računala preko LAN-a, pa traži da telefon i
-    # računalo budu na istoj podmreži. Samostalan APK nosi sučelje u sebi i radi
-    # bez ičega — to je ono što se daje na uređaj kad LAN nije opcija.
+    # The dev loop loads the interface off the computer over the LAN, so it needs
+    # the phone and the computer on the same subnet. A standalone APK carries the
+    # interface inside it and works with nothing else — that is what goes onto the
+    # device when the LAN is not an option.
     [switch]$Build,
 
-    # Arhitektura uređaja. Gradnja svih ABI-ja traje višestruko dulje, a na
-    # konkretnom telefonu ionako radi samo jedna.
+    # The device architecture. Building every ABI takes several times as long, and
+    # on any one phone only a single one runs anyway.
     [string]$Abi = 'aarch64'
 )
 
@@ -32,7 +34,7 @@ $sdk = [Environment]::GetEnvironmentVariable('ANDROID_HOME', 'User')
 $ndk = [Environment]::GetEnvironmentVariable('NDK_HOME', 'User')
 
 if (-not $jdk -or -not $sdk -or -not $ndk) {
-    "Nedostaju JAVA_HOME / ANDROID_HOME / NDK_HOME." | Tee-Object -FilePath $log
+    "JAVA_HOME / ANDROID_HOME / NDK_HOME are missing." | Tee-Object -FilePath $log
     exit 1
 }
 
@@ -45,9 +47,9 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$jdk\bin;$sdk\platform-tools;$env:Path"
 Set-Location $root
 
 $command = if ($Build) { "android build --debug --apk --target $Abi" } else { 'android dev' }
-"pokrećem: tauri $command" | Tee-Object -FilePath $log
+"running: tauri $command" | Tee-Object -FilePath $log
 
-# `pnpm.cmd` umjesto `pnpm`: u eleviranoj sesiji PowerShell modul ne mora biti
-# na putanji, a `.cmd` omotač je uvijek uz npm globalne pakete.
+# `pnpm.cmd` rather than `pnpm`: in an elevated session the PowerShell module need
+# not be on the path, while the `.cmd` wrapper always sits beside the npm globals.
 & "$env:APPDATA\npm\pnpm.cmd" --filter '@uleditor/desktop' exec tauri $command.Split(' ') 2>&1 |
     Tee-Object -FilePath $log -Append

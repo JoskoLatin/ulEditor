@@ -26,7 +26,7 @@ export interface LibraryItem {
   name: string;
   format: FormatId;
   size: number;
-  /** Unix ms; nedostaje kad ga platforma ne daje. */
+  /** Unix ms; missing when the platform does not supply it. */
   modified?: number;
   /** The folder it was found in, e.g. `Download/Foxit`. */
   folder: string;
@@ -39,7 +39,7 @@ interface LibraryState {
   items: LibraryItem[];
   /** A filter by name; empty means everything. */
   filter: string;
-  /** Odabrani format ili `null` za sve. */
+  /** The chosen format, or `null` for all of them. */
   format: FormatId | null;
   /** The system is hiding files — a permission is needed, the device is not empty. */
   blocked: boolean;

@@ -390,6 +390,6 @@ mod tests {
 
     #[test]
     fn empty_file_is_text_not_binary() {
-        assert_eq!(detect("prazno.txt", b"").format, FormatId::Text);
+        assert_eq!(detect("empty.txt", b"").format, FormatId::Text);
     }
 }

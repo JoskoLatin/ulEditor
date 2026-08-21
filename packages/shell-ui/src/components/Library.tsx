@@ -28,7 +28,7 @@ export function Library() {
   const setFilter = useLibrary((s) => s.setFilter);
   const setFormat = useLibrary((s) => s.setFormat);
 
-  // Prvi pogled skenira sam; ponovno skeniranje je na gumbu, jer traje.
+  // The first view scans on its own; rescanning sits on a button, because it takes a while.
   useEffect(() => {
     if (useLibrary.getState().phase === 'idle') void scanLibrary();
   }, []);

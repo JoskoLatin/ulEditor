@@ -83,7 +83,7 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 
 const ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4];
 const MARGIN = 48;
-/** Ispod ovoliko piksela poteza smatramo da je korisnik samo kliknuo. */
+/** Below this many pixels of drag we take it that the user merely clicked. */
 const INK_MIN_LENGTH = 4;
 /** The on-screen size of a note icon — independent of zoom. */
 const NOTE_ICON_PX = 20;
@@ -109,9 +109,9 @@ interface TextItemBox {
 }
 
 interface PageView {
-  /** Broj stranice u izvornom dokumentu — nepromjenjiv. */
+  /** The page number in the source document — immutable. */
   source: number;
-  /** Mjesto u trenutnom prikazu, 1-bazirano. Mijenja se preslagivanjem. */
+  /** The position in the current view, 1-based. Reordering changes it. */
   position: number;
   /** Dodatna rotacija iz plana. */
   rotate: number;
@@ -205,7 +205,7 @@ class PdfEditor implements EditorInstance {
   #metrics = new Map<TextFace, FaceMetrics>();
 
   /**
-   * Okvir koji se upravo tipka.
+   * The box currently being typed.
    *
    * The draft is deliberately **not** in `#annotations` while typing is in
    * progress: that way each completed edit leaves exactly one step in the
@@ -241,7 +241,7 @@ class PdfEditor implements EditorInstance {
   constructor(
     private readonly host: EditorHost,
     private readonly docHandle: DocumentHandle,
-    /** Nije `readonly`: spajanje zamjenjuje i dokument i njegove bajtove. */
+    /** Not `readonly`: merging replaces both the document and its bytes. */
     private pdf: PDFDocumentProxy,
     private source: Uint8Array,
   ) {
@@ -501,7 +501,7 @@ class PdfEditor implements EditorInstance {
     }
   }
 
-  /* ── plan stranica ─────────────────────────────────────────────────── */
+  /* ── the page plan ─────────────────────────────────────────────────── */
 
   toggleRail(): void {
     this.#railOpen = !this.#railOpen;
@@ -559,7 +559,7 @@ class PdfEditor implements EditorInstance {
 
     const previous = this.pdf;
     this.source = bytes;
-    // pdf.js preuzima i detachira svoj buffer, pa dobiva vlastitu kopiju.
+    // pdf.js takes over and detaches its buffer, so it gets a copy of its own.
     this.pdf = await getDocument({ data: new Uint8Array(bytes) }).promise;
     void previous.destroy();
 
@@ -728,7 +728,7 @@ class PdfEditor implements EditorInstance {
     rail.replaceChildren(fragment);
   }
 
-  /** Radnje nad cijelim dokumentom, iznad minijatura. */
+  /** Actions over the whole document, above the thumbnails. */
   #buildRailActions(): HTMLElement {
     const box = document.createElement('div');
     box.className = 'ul-pdf-rail-actions';
@@ -780,7 +780,7 @@ class PdfEditor implements EditorInstance {
       await view.page.render({ canvasContext: context, viewport }).promise;
     } catch (err) {
       if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
-        console.warn(`[uleditor] minijatura stranice ${view.source} nije nacrtana`, err);
+        console.warn(`[uleditor] the thumbnail for page ${view.source} was not drawn`, err);
       }
     }
   }
@@ -932,7 +932,7 @@ class PdfEditor implements EditorInstance {
     }
   }
 
-  /* ── render stranice ───────────────────────────────────────────────── */
+  /* ── page rendering ────────────────────────────────────────────────── */
 
   #viewportFor(view: PageView, scale = this.#scale): PageViewport {
     return view.page.getViewport({ scale, rotation: (view.page.rotate + view.rotate) % 360 });
@@ -964,7 +964,7 @@ class PdfEditor implements EditorInstance {
       view.el.dataset.rendered = 'true';
     } catch (err) {
       if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
-        console.error(`[uleditor] render stranice ${view.source} nije uspio`, err);
+        console.error(`[uleditor] rendering page ${view.source} failed`, err);
       }
     } finally {
       view.rendering = false;
@@ -1099,7 +1099,7 @@ class PdfEditor implements EditorInstance {
 
       if (annotation.kind === 'text') {
         // While a box is being typed, its static rendering would be drawn twice
-        // ispod `<textarea>`-e.
+        // underneath the `<textarea>`.
         if (this.#editor?.draft.id === annotation.id) continue;
 
         const el = document.createElement('div');
@@ -1434,7 +1434,7 @@ class PdfEditor implements EditorInstance {
     });
   }
 
-  /* ── brisanje teksta ───────────────────────────────────────────────── */
+  /* ── deleting text ─────────────────────────────────────────────────── */
 
   /** The document opened to read its content; once per version of the source. */
   #openContent(): Promise<PDFDocument> {
@@ -1570,7 +1570,7 @@ class PdfEditor implements EditorInstance {
 
   /* ── tekstualni okviri ─────────────────────────────────────────────── */
 
-  /** Rez koji najbolje odgovara imenu izvornog fonta. */
+  /** The cut that best matches the name of the source font. */
   static #faceFor(baseFont: string): TextFace {
     const lower = baseFont.toLowerCase();
     if (lower.includes('bold')) return 'sans-bold';
@@ -1610,9 +1610,9 @@ class PdfEditor implements EditorInstance {
       if (this.#tool !== 'text' || this.#editor) return;
 
       /*
-       * Zamjena se poravnava po **osnovnoj liniji** izvornog retka, ne po
-       * njegovu okviru: okvir ovisi o tome koja su slova u retku, a osnovna
-       * linija je ista bez obzira na to.
+       * The replacement is aligned on the **baseline** of the source line, not
+       * on its box: the box depends on which letters the line holds, while the
+       * baseline is the same regardless.
        */
       const anchor = {
         x: line.origin.x - TEXT_PADDING,
@@ -1699,7 +1699,7 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Tipkanje okvira na mjestu.
+   * Typing a box in place.
    *
    * The `<textarea>` sits exactly over the box and carries the same font, size
    * and line height, so what is seen while typing is already what will be in the
@@ -2269,7 +2269,7 @@ class PdfEditor implements EditorInstance {
       this.#root.dataset.tint = options.tint;
       this.#root.dataset.flow = options.flow;
     }
-    // "Stranice" kod PDF-a nisu metafora — cijela stranica stane u ekran.
+    // With a PDF "pages" are not a metaphor — a whole page fits on the screen.
     this.setZoomMode(options.flow === 'paged' ? 'fit-page' : 'fit-width');
   }
 
@@ -2353,8 +2353,8 @@ export const pdfEditorProvider: EditorProvider = {
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
     const bytes = await doc.bytes();
-    // Dvije kopije: pdf.js preuzima i detachira svoj buffer, a pdf-lib treba
-    // netaknut izvornik pri spremanju.
+    // Two copies: pdf.js takes over and detaches its buffer, while pdf-lib needs
+    // an untouched original when saving.
     const forRender = new Uint8Array(bytes);
     const forWrite = new Uint8Array(bytes);
     const pdf = await getDocument({ data: forRender }).promise;

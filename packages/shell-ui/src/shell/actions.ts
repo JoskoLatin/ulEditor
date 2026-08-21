@@ -205,7 +205,7 @@ export async function toggleDirectory(shell: Shell, node: TreeNode): Promise<voi
   }
 }
 
-/* ── zatvaranje ──────────────────────────────────────────────────────── */
+/* ── closing ─────────────────────────────────────────────────────────── */
 
 export async function closeTab(shell: Shell, id: string): Promise<void> {
   const tab = useWorkspace.getState().tabs.find((t) => t.id === id);
@@ -240,7 +240,7 @@ function confirmDiscard(shell: Shell, tab: TabState): Promise<'save' | 'discard'
   });
 }
 
-/* ── spremanje ───────────────────────────────────────────────────────── */
+/* ── saving ──────────────────────────────────────────────────────────── */
 
 export async function saveTab(shell: Shell, id: string): Promise<boolean> {
   const state = useWorkspace.getState();

@@ -38,7 +38,7 @@ export interface EditableLine {
   size: number;
   color: Rgb;
   baseFont: string;
-  /** Koliko glifova odlazi; pokazuje se prije potvrde. */
+  /** How many glyphs are going; shown before confirmation. */
   glyphs: number;
   /**
    * Whether our font's metrics match the original's.

@@ -29,7 +29,7 @@ export type Matrix = [number, number, number, number, number, number];
 
 export const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
-/** `m` pa `n` — redoslijed kao u PDF-u: prvo lijeva, onda desna. */
+/** `m` then `n` — the order as in the PDF: the left one first, then the right. */
 export function multiply(m: Matrix, n: Matrix): Matrix {
   return [
     m[0] * n[0] + m[1] * n[2],
@@ -88,7 +88,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
       continue;
     }
 
-    // Komentar do kraja retka.
+    // A comment to the end of the line.
     if (byte === 0x25) {
       while (i < bytes.length && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i++;
       continue;
@@ -111,7 +111,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
         tokens.push({ kind: 'dict-open', start, end: i });
         continue;
       }
-      // Heksadekadski niz.
+      // A hexadecimal string.
       i++;
       const out: number[] = [];
       let high = -1;
@@ -154,7 +154,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
             case 0x74: out.push(0x09); break;
             case 0x62: out.push(0x08); break;
             case 0x66: out.push(0x0c); break;
-            case 0x0a: break; // nastavak retka
+            case 0x0a: break; // a line continuation
             case 0x0d:
               if (bytes[i] === 0x0a) i++;
               break;
@@ -434,7 +434,7 @@ function compositeWidths(descendant: PDFDict): (code: number) => number {
       const end = numberAt(w, i + 1);
       const width = numberAt(w, i + 2);
       if (end === undefined || width === undefined) break;
-      // Raspon zna biti golem u CJK fontovima; pamti se pravilo, ne svaki kod.
+      // The range can be enormous in CJK fonts; the rule is kept, not every code.
       if (end - start <= 65535) {
         for (let code = start; code <= end; code++) table.set(code, width);
       }
@@ -515,14 +515,14 @@ export function readFonts(
       const encoding = font.lookup(PDFName.of('Encoding'));
       const encodingName = encoding instanceof PDFName ? encoding.asString() : '';
       if (encodingName !== '/Identity-H' && encodingName !== '/Identity-V') {
-        // An embedded CMap would need a parser of its own to know how many
-        // bajtova jedan kod.
+        // An embedded CMap would need a parser of its own to know how many bytes
+        // make up one code.
         out.set(
           name,
           describe({
             twoByte: true,
             widthOf: () => 0,
-            unsupported: `kodiranje ${encodingName || 'bez imena'}`,
+            unsupported: `the ${encodingName || 'unnamed'} encoding`,
           }),
         );
         continue;
@@ -534,7 +534,7 @@ export function readFonts(
       if (!(descendant instanceof PDFDict)) {
         out.set(
           name,
-          describe({ twoByte: true, widthOf: () => 0, unsupported: 'nema DescendantFonts' }),
+          describe({ twoByte: true, widthOf: () => 0, unsupported: 'no DescendantFonts' }),
         );
         continue;
       }
@@ -601,12 +601,12 @@ export function readFonts(
 /* ── obilazak teksta ─────────────────────────────────────────────────── */
 
 export interface Glyph {
-  /** Kod glifa; jedan ili dva bajta ovisno o fontu. */
+  /** The glyph code; one or two bytes depending on the font. */
   code: number;
   bytes: Uint8Array;
   /** The bounding rectangle in the page's user space. */
   box: Rect;
-  /** Pomak koji ovaj glif unosi, u tekstualnom prostoru. */
+  /** The advance this glyph contributes, in text space. */
   advance: number;
 }
 
@@ -617,16 +617,16 @@ export interface TextOperation {
   operator: 'Tj' | 'TJ' | "'" | '"';
   /** The parts of the operator in order: glyph strings and the numeric offsets from `TJ`. */
   parts: ({ kind: 'glyphs'; glyphs: Glyph[] } | { kind: 'adjust'; value: number })[];
-  /** Stanje teksta u trenutku naredbe — treba pri prepisivanju. */
+  /** The text state at the time of the operator — needed when rewriting. */
   fontSize: number;
   charSpacing: number;
   wordSpacing: number;
   horizontalScale: number;
-  /** Naredbe `'` i `"` u sebi nose i prelazak u novi redak. */
+  /** The `'` and `"` operators carry a move to a new line inside them. */
   leading: number;
 
   font: FontInfo;
-  /** 0 = ispuna, 3 = nevidljivo (sloj iz OCR-a), ostalo su obrubi. */
+  /** 0 = fill, 3 = invisible (an OCR layer), the rest are strokes. */
   renderMode: number;
   /** The fill colour, or `null` when the colour space is not recognised. */
   fill: Rgb | null;
@@ -680,7 +680,7 @@ export function boundsOfOperation(operation: TextOperation): Rect | null {
 /** Why a page is not safe to modify. */
 export interface Obstacle {
   reason: string;
-  /** Mjesto na koje se odnosi, ako je poznato. */
+  /** The position it refers to, when that is known. */
   box?: Rect;
 }
 
@@ -705,7 +705,7 @@ interface State {
   fillSpace: string;
 }
 
-/** Pretvara operande boje u RGB, ili `null` kad prostor nije prepoznat. */
+/** Converts colour operands to RGB, or `null` when the space is not recognised. */
 function colorFrom(operator: string, values: number[], space: string): Rgb | null {
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -716,7 +716,7 @@ function colorFrom(operator: string, values: number[], space: string): Rgb | nul
     }
     if (count === 3) return [clamp(values[0] ?? 0), clamp(values[1] ?? 0), clamp(values[2] ?? 0)];
     if (count === 4) {
-      // CMYK → RGB, jednostavnom pretvorbom; profil boje ovdje ne igra ulogu.
+      // CMYK → RGB, by a simple conversion; a colour profile plays no part here.
       const [c = 0, m = 0, y = 0, k = 0] = values;
       return [clamp((1 - c) * (1 - k)), clamp((1 - m) * (1 - k)), clamp((1 - y) * (1 - k))];
     }
@@ -748,7 +748,7 @@ function cloneState(state: State): State {
   return { ...state };
 }
 
-/** Visina glifa iznad i ispod osnovne linije, u jedinicama em-a. */
+/** The glyph height above and below the baseline, in em units. */
 const ASCENT = 0.78;
 const DESCENT = -0.22;
 
@@ -879,7 +879,7 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
         }
         if (!state.font && name?.kind === 'name' && !seenUnsupported.has(name.value)) {
           seenUnsupported.add(name.value);
-          obstacles.push({ reason: `${name.value}: font nije u resursima stranice` });
+          obstacles.push({ reason: `${name.value}: the font is not in the page resources` });
         }
         break;
       }

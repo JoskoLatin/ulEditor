@@ -60,7 +60,7 @@ export function child(root: Element, local: string): Element | null {
   return children(root, local)[0] ?? null;
 }
 
-/** Atribut bez obzira na prefiks prostora imena. */
+/** An attribute regardless of its namespace prefix. */
 export function attr(el: Element | null, local: string): string | null {
   if (!el) return null;
   for (const a of [...el.attributes]) {

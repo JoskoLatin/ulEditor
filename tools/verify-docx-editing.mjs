@@ -1,10 +1,11 @@
 /**
- * Prepisivanje Word dokumenta u **pravoj desktop aplikaciji**, do diska i natrag.
+ * Rewriting a Word document in **the real desktop application**, out to disk and
+ * back.
  *
- * `verify-docx-edit.mjs` dokazuje da zapis dira samo ono što treba. Ovdje se
- * dokazuje da taj zapis uopće dolazi do datoteke: dvoklik, tipkanje,
- * `Ctrl+S`, ponovno otvaranje. Između toga stoji sve što se u Nodeu ne da
- * provjeriti — `contenteditable`, prijenos kroz Rust VFS i ponovno čitanje.
+ * `verify-docx-edit.mjs` proves that the write touches only what it should. Here
+ * it is proved that the write reaches the file at all: double-click, typing,
+ * `Ctrl+S`, reopening. In between stands everything that cannot be checked from
+ * Node — `contenteditable`, the trip through the Rust VFS and reading it back.
  *
  *   node tools/verify-docx-editing.mjs
  */
@@ -21,7 +22,7 @@ import { makeDocx } from './fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9336;
-const REPLACEMENT = 'Prepisano u ulEditoru — čćžšđ';
+const REPLACEMENT = 'Rewritten in ulEditor — čćžšđ';
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -30,7 +31,7 @@ function check(name, passed, detail = '') {
 }
 
 const workspace = await mkdtemp(join(tmpdir(), 'ul-docx-'));
-const file = join(workspace, 'izvjestaj.docx');
+const file = join(workspace, 'report.docx');
 await writeFile(file, makeDocx());
 
 const before = unzipSync(await readFile(file));
@@ -57,7 +58,7 @@ async function connect(timeoutMs) {
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  throw lastError ?? new Error('CDP se nije otvorio');
+  throw lastError ?? new Error('the CDP endpoint never opened');
 }
 
 let browser;
@@ -68,7 +69,7 @@ try {
   const contexts = browser.contexts();
   page = contexts[0]?.pages()[0] ?? (await contexts[0].waitForEvent('page'));
   await page.waitForSelector('.shell', { timeout: 30000 });
-  check('spojen na desktop aplikaciju', true);
+  check('attached to the desktop application', true);
 
   for (let guard = 0; guard < 20 && (await page.locator('.tab').count()) > 0; guard++) {
     await page.locator('.tab .close').first().click();
@@ -83,17 +84,17 @@ try {
   const open = async () => {
     await page.keyboard.press('Control+P');
     await page.waitForSelector('.palette-input input', { timeout: 10000 });
-    await page.locator('.palette-input input').fill('izvjestaj.docx');
+    await page.locator('.palette-input input').fill('report.docx');
     await page.waitForSelector('.palette-item', { timeout: 15000 });
     await page.locator('.palette-item').first().click();
     await page.waitForSelector('.ul-office-doc', { timeout: 30000 });
   };
 
   await open();
-  check('Word dokument je otvoren', true);
+  check('the Word document is open', true);
 
   const runs = await page.locator('.ul-office-run').count();
-  check('prepisivi komadi teksta su označeni', runs > 0, `${runs}`);
+  check('the rewritable pieces of text are marked', runs > 0, `${runs}`);
 
   const first = page.locator('.ul-office-run').first();
   const originalText = await first.innerText();
@@ -102,15 +103,15 @@ try {
   const editing = await page.evaluate(
     () => document.querySelector('.ul-office-run')?.isContentEditable ?? false,
   );
-  check('dvoklik otvara tekst za tipkanje', editing);
+  check('a double-click opens the text for typing', editing);
 
   await page.keyboard.press('Control+A');
   await page.keyboard.type(REPLACEMENT);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
 
-  check('tekst je zamijenjen u pregledu', (await first.innerText()) === REPLACEMENT, await first.innerText());
-  check('dokument je označen kao izmijenjen', (await page.locator('.tab[data-dirty="true"]').count()) === 1);
+  check('the text was replaced in the view', (await first.innerText()) === REPLACEMENT, await first.innerText());
+  check('the document is marked as modified', (await page.locator('.tab[data-dirty="true"]').count()) === 1);
 
   await page.keyboard.press('Control+S');
   let saved = true;
@@ -123,25 +124,25 @@ try {
     saved = false;
   }
   check(
-    'spremanje je prošlo bez zapreke',
+    'the save went through without obstruction',
     saved,
     (await page.locator('.toast p').last().innerText().catch(() => '')).slice(0, 160),
   );
 
-  /* ── što je na disku ───────────────────────────────────────────────── */
+  /* ── what is on disk ───────────────────────────────────────────────── */
 
   const after = unzipSync(await readFile(file));
 
   check(
-    'izmjena je u dokumentu',
-    strFromU8(after['word/document.xml']).includes('Prepisano u ulEditoru'),
+    'the change is in the document',
+    strFromU8(after['word/document.xml']).includes('Rewritten in ulEditor'),
   );
-  check('izvornog teksta više nema', !strFromU8(after['word/document.xml']).includes(originalText));
+  check('the original text is gone', !strFromU8(after['word/document.xml']).includes(originalText));
 
   /*
-   * Glavna provjera cijelog Office smjera: uređivanje ne smije usput
-   * prepisati stilove, numeriranje ni metapodatke. Tiho gubljenje tuđeg
-   * formatiranja je jedina greška od koje se povjerenje ne oporavi.
+   * The central check of the whole Office direction: editing must not rewrite
+   * styles, numbering or metadata along the way. Quietly losing somebody else's
+   * formatting is the one mistake trust does not recover from.
    */
   const drifted = otherParts.filter((path) => {
     const a = before[path];
@@ -149,20 +150,20 @@ try {
     return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
   });
   check(
-    'nijedan drugi dio datoteke nije dirnut',
+    'no other part of the file was touched',
     drifted.length === 0,
-    drifted.join(', ') || `${otherParts.length} dijelova nepromijenjeno`,
+    drifted.join(', ') || `${otherParts.length} parts unchanged`,
   );
 
-  /* ── ponovno otvaranje ─────────────────────────────────────────────── */
+  /* ── reopening ─────────────────────────────────────────────────────── */
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);
   await open();
 
   const reopened = await page.locator('.ul-office-doc').innerText();
-  check('prepisani tekst se čita natrag', reopened.includes(REPLACEMENT));
-  check('izvornog teksta nema ni u pregledu', !reopened.includes(originalText));
+  check('the rewritten text reads back', reopened.includes(REPLACEMENT));
+  check('the original text is not in the view either', !reopened.includes(originalText));
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-docx-edit.png') });
 } catch (err) {

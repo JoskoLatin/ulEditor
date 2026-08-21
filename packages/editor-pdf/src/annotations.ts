@@ -179,7 +179,7 @@ function fontSizeFrom(item: RawAnnotation): number {
 
 function colorFrom(raw: RawAnnotation['color'], fallback: Rgb): Rgb {
   if (!raw || raw.length < 3) return fallback;
-  // pdf.js daje 0–255, PDF interno 0–1.
+  // pdf.js gives 0–255, the PDF internally 0–1.
   return [(raw[0] ?? 0) / 255, (raw[1] ?? 0) / 255, (raw[2] ?? 0) / 255];
 }
 
@@ -331,7 +331,7 @@ function normalizeInkLists(raw: RawAnnotation['inkLists']): Point[][] {
   return (raw as Point[][]).filter((s) => Array.isArray(s) && s.length > 0);
 }
 
-/* ── zapis u PDF ─────────────────────────────────────────────────────── */
+/* ── writing into the PDF ────────────────────────────────────────────── */
 
 function rgbArray(context: PDFContext, color: Rgb): PDFArray {
   const array = context.obj([]) as PDFArray;
@@ -447,7 +447,7 @@ interface EmbeddedFace {
   metrics: FaceMetrics;
 }
 
-/** Ime pod kojim font stoji u `Resources` toka izgleda. */
+/** The name the font stands under in the appearance stream's `Resources`. */
 const FONT_RESOURCE = 'F1';
 
 /**
@@ -563,7 +563,7 @@ async function embedFaces(
   if (boxes.length === 0) return faces;
 
   if (!loadFont) {
-    throw new Error('Za zapis teksta u PDF potreban je izvor fonta (FontLoader).');
+    throw new Error('Writing text into a PDF needs a font source (FontLoader).');
   }
 
   doc.registerFontkit(fontkit);

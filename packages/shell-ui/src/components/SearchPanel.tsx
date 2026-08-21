@@ -82,8 +82,8 @@ export function SearchPanel() {
         </div>
 
         {/*
-          The second pass is what sets this program apart from a code editor
-          koda — i skuplji je, pa se bira, ne pretpostavlja.
+          The second pass is what sets this program apart from a code editor —
+          and it costs more, so it is chosen rather than assumed.
         */}
         <label className="search-docs">
           <input

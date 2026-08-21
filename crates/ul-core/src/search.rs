@@ -434,7 +434,7 @@ mod tests {
         ws.add_root(&root).unwrap();
 
         let out = ws.search(&query("needle")).unwrap();
-        assert_eq!(out.hits.len(), 1, "samo src/a.ts");
+        assert_eq!(out.hits.len(), 1, "src/a.ts only");
         assert!(out.hits[0].uri.contains("src"));
     }
 
@@ -461,7 +461,7 @@ mod tests {
         ws.add_root(&root).unwrap();
 
         let out = ws.search(&query("needle")).unwrap();
-        assert_eq!(out.hits.len(), 1, "samo Markdown je skeniran");
+        assert_eq!(out.hits.len(), 1, "only Markdown was scanned");
         assert_eq!(out.documents.len(), 1);
         assert_eq!(out.documents[0].format, "pdf");
     }
@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(
             ws.search(&sensitive).unwrap().hits.len(),
             1,
-            "samo 'needles'"
+            "'needles' only"
         );
 
         let mut whole = query("needle");
@@ -505,7 +505,7 @@ mod tests {
 
         let out = ws.search(&limited).unwrap();
         assert_eq!(out.hits.len(), 8);
-        assert!(out.truncated, "prekid se mora prijaviti");
+        assert!(out.truncated, "the truncation has to be reported");
     }
 
     #[test]

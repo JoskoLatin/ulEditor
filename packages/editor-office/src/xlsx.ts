@@ -40,7 +40,7 @@ export interface Workbook {
   notes: string[];
 }
 
-/** Iznad ovoga preglednik prestaje biti upotrebljiv, a rijetko tko toliko gleda odjednom. */
+/** Above this the viewer stops being usable, and few people look at that much at once. */
 const MAX_ROWS = 5000;
 const MAX_COLS = 256;
 
@@ -64,7 +64,7 @@ function parseRef(ref: string): { row: number; col: number } | null {
   return { row: Number(match[2]) - 1, col: col - 1 };
 }
 
-/* ── formati brojeva ─────────────────────────────────────────────────── */
+/* ── number formats ──────────────────────────────────────────────────── */
 
 /** Excel's built-in formats that are dates or times. */
 const BUILTIN_DATE = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
@@ -144,7 +144,7 @@ function readSharedStrings(archive: Archive): string[] {
   );
 }
 
-/** Indeks stila → kod formata broja. */
+/** Style index → number format code. */
 function readStyles(archive: Archive): { formats: (string | undefined)[]; ids: number[] } {
   const doc = readXml(archive, 'xl/styles.xml');
   if (!doc) return { formats: [], ids: [] };
@@ -319,7 +319,7 @@ function readCell(
   }
 }
 
-/* ── prikaz ──────────────────────────────────────────────────────────── */
+/* ── rendering ───────────────────────────────────────────────────────── */
 
 /** The grid for one sheet. Built only when the sheet is opened — workbooks can be large. */
 export function renderSheet(sheet: Sheet): HTMLElement {

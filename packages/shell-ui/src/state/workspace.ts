@@ -28,7 +28,7 @@ export interface TabState {
   format: FormatId;
   providerId: string | null;
   dirty: boolean;
-  /** Tekst za statusnu traku koji editor sam objavljuje. */
+  /** The status bar text the editor publishes itself. */
   status: string;
   /** The message for when a document cannot be opened. */
   error: string | null;
@@ -147,7 +147,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
       if (index === -1) return {};
       const current = s.tabs[index]!;
       const merged = { ...current, ...patch };
-      // Bez ovoga svaki status tick izaziva render cijele liste tabova.
+      // Without this every status tick renders the whole tab list.
       const same = (Object.keys(patch) as (keyof TabState)[]).every((k) => current[k] === merged[k]);
       if (same) return {};
       const tabs = [...s.tabs];

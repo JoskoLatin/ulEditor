@@ -196,7 +196,7 @@ class CodeEditor implements EditorInstance {
 
     const results: FindResult[] = [];
     let from = 0;
-    // Gornja granica: lista rezultata iznad ~500 pogodaka ionako nije upotrebljiva.
+    // An upper bound: a result list beyond ~500 hits is unusable anyway.
     while (results.length < 500) {
       const index = haystack.indexOf(needle, from);
       if (index === -1) break;
@@ -232,7 +232,7 @@ class CodeEditor implements EditorInstance {
   async paste(payload: ClipboardPayload): Promise<boolean> {
     const view = this.#view;
     if (!view) return false;
-    // Tablica zalijepljena u kod ima smisla kao tab-razdvojeni tekst.
+    // A spreadsheet pasted into code makes sense as tab-separated text.
     const text = payload['text/plain'];
     const { from, to } = view.state.selection.main;
     view.dispatch({
@@ -271,7 +271,7 @@ export const codeEditorProvider: EditorProvider = {
 
 export default codeEditorProvider;
 
-// Dijeli se s editor-markdown, da oba tekstualna editora izgledaju isto.
+// Shared with editor-markdown, so both text editors look the same.
 export { ulTheme } from './theme.js';
 export { loadLanguage, hasLanguage } from './languages.js';
 

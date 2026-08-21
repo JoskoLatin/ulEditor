@@ -232,7 +232,7 @@ class BookEditor implements EditorInstance {
     this.book.release();
   }
 
-  /* ── prikaz ────────────────────────────────────────────────────────── */
+  /* ── rendering ─────────────────────────────────────────────────────── */
 
   #applyOptionsTo(root: HTMLElement): void {
     const o = this.#options;
@@ -341,7 +341,7 @@ class BookEditor implements EditorInstance {
     this.#emitProgress();
   }
 
-  /** Skok na relativno mjesto unutar trenutnog poglavlja, u svitku. */
+  /** A jump to a relative position inside the current chapter, in scroll mode. */
   #scrollWithinChapter(within: number): void {
     const view = this.#view;
     const body = this.book.chapters[this.#chapter]?.body;
@@ -377,7 +377,7 @@ class BookEditor implements EditorInstance {
 
     const next = this.#page + delta;
     if (next < 0) {
-      // S prve stranice unatrag → kraj prethodnog poglavlja.
+      // Backwards off the first page → the end of the previous chapter.
       if (this.#chapter > 0) this.#openChapter(this.#chapter - 1, 'end');
       return;
     }
@@ -432,7 +432,7 @@ class BookEditor implements EditorInstance {
     if (this.#options.flow === 'scroll') {
       const view = this.#view;
       if (!view) return;
-      // Poglavlje je ono koje pokriva sredinu vidljivog dijela.
+      // The chapter is the one covering the middle of the visible area.
       const middle = view.scrollTop + view.clientHeight / 2;
       let index = 0;
       this.book.chapters.forEach((chapter, i) => {

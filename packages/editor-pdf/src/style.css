@@ -585,7 +585,7 @@
   line-height: 1.7;
 }
 
-/* ── radnje nad cijelim dokumentom (vrh trake sa stranicama) ─────────── */
+/* ── actions over the whole document (top of the page rail) ──────────── */
 
 .ul-pdf-rail-actions {
   display: grid;

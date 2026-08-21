@@ -87,7 +87,7 @@ export function Preferences() {
                 onClick={() => {
                   shell.theme.setPreference(kind);
                   shell.settings.set('theme', kind);
-                  // Tema mijenja samo CSS varijable, pa je dovoljan render.
+                  // The theme changes only CSS variables, so a render is enough.
                   setOpen(true);
                 }}
               >

@@ -23,7 +23,7 @@ import {
 } from '../shell/reading.js';
 import { IconArrow, IconClose, IconList, IconType } from './Icons.js';
 
-/** Funkcije, ne konstante: prijevod se mora dogoditi pri renderu. */
+/** Functions, not constants: the translation has to happen at render time. */
 const tints = (): { id: ReadingTint; label: string }[] => [
   { id: 'day', label: t('Day') },
   { id: 'sepia', label: t('Sepia') },

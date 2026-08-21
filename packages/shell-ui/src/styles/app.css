@@ -370,7 +370,7 @@ button {
   background: var(--accent);
 }
 
-/* ── stablo datoteka ────────────────────────────────────────────────── */
+/* ── the file tree ──────────────────────────────────────────────────── */
 
 .tree-row {
   display: flex;
@@ -900,7 +900,7 @@ button.status-item:hover {
   font-weight: 600;
 }
 
-/* ── pretraga u dokumentu ───────────────────────────────────────────── */
+/* ── in-document search ─────────────────────────────────────────────── */
 
 .findpanel {
   flex: none;
@@ -1462,7 +1462,7 @@ button.status-item:hover {
   color: var(--ink-inverse);
 }
 
-/* ── split ispod ─────────────────────────────────────────────────────── */
+/* ── the split below ─────────────────────────────────────────────────── */
 
 .split-resizer {
   height: 4px;
@@ -1560,7 +1560,7 @@ button.status-item:hover {
   color: var(--ink-faint);
 }
 
-/* ── pretraga po projektu ────────────────────────────────────────────── */
+/* ── project-wide search ─────────────────────────────────────────────── */
 
 .search-panel {
   display: flex;
@@ -1883,7 +1883,7 @@ button.status-item:hover {
     display: none;
   }
 
-  /* Kratica za paletu na telefonu nema tipkovnicu iza sebe. */
+  /* On a phone the palette shortcut has no keyboard behind it. */
   .titlebar .chrome-btn kbd {
     display: none;
   }
@@ -1986,7 +1986,7 @@ button.status-item:hover {
   column-gap: 9px;
   align-items: center;
   width: 100%;
-  /* Visoko dovoljno da se pogodi prstom bez zumiranja. */
+  /* Tall enough to hit with a finger without zooming. */
   min-height: 46px;
   padding: 6px 8px;
   border-radius: var(--radius);

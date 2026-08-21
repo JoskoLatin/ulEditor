@@ -87,13 +87,13 @@ interface Context {
   rels: Relationships;
   urls: string[];
   notes: Set<string>;
-  /** Redni broj svakog `w:r`, isti kojim ih broji `findRuns`. */
+  /** The ordinal of each `w:r`, the same one `findRuns` counts them by. */
   runIndex: Map<Element, number>;
   /** The runs that can be rewritten; the rest are displayed but not offered. */
   editable: Set<number>;
 }
 
-/** Jedan `w:r` — nosilac svog formatiranja. */
+/** A single `w:r` — the carrier of its own formatting. */
 function buildRun(run: Element, ctx: Context): Node[] {
   const props = child(run, 'rPr');
   const out: Node[] = [];
@@ -435,7 +435,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
     body.appendChild(p);
   }
 
-  /* Dijelovi dokumenta koje pregled ne pokazuje. */
+  /* The parts of the document the view does not show. */
   if (Object.keys(archive).some((name) => /^word\/(header|footer)\d*\.xml$/.test(name))) {
     ctx.notes.add('Page headers and footers are not shown.');
   }
