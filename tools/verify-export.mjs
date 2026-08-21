@@ -1,9 +1,9 @@
 /**
- * Provjera izvoza teksta.
+ * Checking the text export.
  *
- * Ne gleda se je li spremanje "prošlo" — spremljena datoteka se ponovno
- * otvara i iz nje se vadi tekst. Tako se vidi razlika između "napisao sam
- * bajtove" i "Word i Acrobat to mogu otvoriti".
+ * Whether the save "went through" is not what is looked at — the saved file is
+ * opened again and the text taken back out of it. That is how the difference
+ * between "I wrote some bytes" and "Word and Acrobat can open this" shows.
  *
  *   node tools/verify-export.mjs
  */
@@ -27,32 +27,32 @@ function check(name, passed, detail = '') {
 }
 
 const SOURCE = [
-  'Prvi redak s dijakriticima: čćšžđ.',
+  'The first line, with diacritics: čćšžđ.',
   '',
-  'Drugi odlomak & znak koji XML mora escapeati < > ".',
-  'Vrlo dug redak koji mora biti prelomljen jer daleko premašuje širinu A4 stranice ' +
-    'umanjenu za margine, pa se u PDF-u ne smije izliti izvan lista nego mora prijeći ' +
-    'u sljedeći redak kao što bi to napravio svaki uređivač teksta.',
+  'A second paragraph & the characters XML has to escape < > ".',
+  'A very long line that has to be wrapped because it far exceeds the width of an ' +
+    'A4 page less its margins, so in the PDF it must not spill off the sheet but ' +
+    'move to the next line as any text editor would do.',
 ].join('\n');
 
-/* ── popis formata ───────────────────────────────────────────────────── */
+/* ── the format list ─────────────────────────────────────────────────── */
 
-check('nude se četiri formata', TEXT_FORMATS.length === 4, TEXT_FORMATS.map((f) => f.id).join(', '));
-check('nepoznat format pada na tekst', formatOf('nepostoji').id === 'txt');
+check('four formats are offered', TEXT_FORMATS.length === 4, TEXT_FORMATS.map((f) => f.id).join(', '));
+check('an unknown format falls back to text', formatOf('does-not-exist').id === 'txt');
 
-/* ── čist tekst ──────────────────────────────────────────────────────── */
+/* ── plain text ──────────────────────────────────────────────────────── */
 
 {
   const { bytes, lost } = await exportText(SOURCE, 'txt', 'test');
-  check('tekst je zapisan kao UTF-8', strFromU8(bytes) === SOURCE);
-  check('tekst ne gubi ništa', lost.length === 0);
+  check('the text was written as UTF-8', strFromU8(bytes) === SOURCE);
+  check('the text loses nothing', lost.length === 0);
 }
 
 /* ── Markdown ────────────────────────────────────────────────────────── */
 
 {
   const { bytes } = await exportText(SOURCE, 'md', 'test');
-  check('markdown je isti sadržaj', strFromU8(bytes) === SOURCE);
+  check('the markdown is the same content', strFromU8(bytes) === SOURCE);
 }
 
 /* ── DOCX ────────────────────────────────────────────────────────────── */
@@ -62,95 +62,95 @@ check('nepoznat format pada na tekst', formatOf('nepostoji').id === 'txt');
   const files = unzipSync(bytes);
 
   check(
-    'docx ima obavezne dijelove',
+    'the docx has its mandatory parts',
     !!files['[Content_Types].xml'] && !!files['_rels/.rels'] && !!files['word/document.xml'],
     Object.keys(files).join(', '),
   );
 
   const document = strFromU8(files['word/document.xml']);
-  check('docx čuva dijakritike', document.includes('čćšžđ'));
-  check('docx escapea XML znakove', document.includes('&amp;') && document.includes('&lt;'));
+  check('the docx keeps the diacritics', document.includes('čćšžđ'));
+  check('the docx escapes the XML characters', document.includes('&amp;') && document.includes('&lt;'));
   check(
-    'prazan redak je prazan odlomak',
+    'an empty line is an empty paragraph',
     document.includes('<w:p/>'),
-    'w:p bez sadržaja',
+    'a w:p with no content',
   );
 
   const paragraphs = (document.match(/<w:p[\s/>]/g) ?? []).length;
-  check('svaki redak je odlomak', paragraphs === SOURCE.split('\n').length, `${paragraphs} odlomaka`);
+  check('every line is a paragraph', paragraphs === SOURCE.split('\n').length, `${paragraphs} paragraphs`);
 
-  // Detekcija formata u samom programu mora prepoznati ovo kao Word.
+  // The program's own format detection has to recognise this as Word.
   const { detect } = await import(
     pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/host/detect.ts')).href
   );
-  check('program prepoznaje izvezeni docx', detect('a.bin', bytes).format === 'docx');
+  check('the program recognises the exported docx', detect('a.bin', bytes).format === 'docx');
 }
 
 /* ── PDF ─────────────────────────────────────────────────────────────── */
 
 {
-  const { bytes, lost } = await exportText(SOURCE, 'pdf', 'Naslov dokumenta');
+  const { bytes, lost } = await exportText(SOURCE, 'pdf', 'The document title');
   const doc = await PDFDocument.load(bytes);
 
-  check('pdf je valjan i ima stranicu', doc.getPageCount() >= 1, `${doc.getPageCount()} stranica`);
-  check('pdf nosi naslov', doc.getTitle() === 'Naslov dokumenta', String(doc.getTitle()));
+  check('the pdf is valid and has a page', doc.getPageCount() >= 1, `${doc.getPageCount()} pages`);
+  check('the pdf carries its title', doc.getTitle() === 'The document title', String(doc.getTitle()));
   check(
-    'gubitak dijakritika je prijavljen',
+    'the loss of the diacritics is reported',
     lost.length === 1 && lost[0].includes('diacritics'),
     lost.join(' | '),
   );
 
-  // Tekst bez dijakritika ne smije ništa prijaviti.
+  // Text without diacritics must report nothing.
   const plain = await exportText('Plain ASCII only.', 'pdf', 'x');
-  check('čisti ASCII ne prijavljuje gubitak', plain.lost.length === 0);
+  check('pure ASCII reports no loss', plain.lost.length === 0);
 
-  // Puno teksta mora prijeći na sljedeću stranicu, ne se izliti izvan lista.
+  // A lot of text has to move onto the next page rather than spill off the sheet.
   const many = await exportText(
-    Array.from({ length: 200 }, (_, i) => `redak ${i}`).join('\n'),
+    Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n'),
     'pdf',
     'x',
   );
   const paged = await PDFDocument.load(many.bytes);
-  check('dokument se lomi na stranice', paged.getPageCount() > 1, `${paged.getPageCount()} stranica`);
+  check('the document breaks into pages', paged.getPageCount() > 1, `${paged.getPageCount()} pages`);
 }
 
-/* ── prijelom redaka ─────────────────────────────────────────────────── */
+/* ── line wrapping ───────────────────────────────────────────────────── */
 
 {
-  // Mjera: jedan znak = jedna jedinica, pa je očekivani prijelom očit.
+  // The measure: one character = one unit, so the expected wrap is obvious.
   const measure = (text) => text.length;
 
-  check('kratak redak se ne dira', String(wrapLines('kratko', 20, measure)) === 'kratko');
+  check('a short line is left alone', String(wrapLines('short', 20, measure)) === 'short');
 
-  const wrapped = wrapLines('jedan dva tri cetiri pet sest', 12, measure);
+  const wrapped = wrapLines('one two three four five six', 12, measure);
   check(
-    'redak se lomi po riječima',
-    wrapped.every((line) => line.length <= 12) && wrapped.join(' ') === 'jedan dva tri cetiri pet sest',
+    'a line wraps on word boundaries',
+    wrapped.every((line) => line.length <= 12) && wrapped.join(' ') === 'one two three four five six',
     wrapped.join(' | '),
   );
 
-  // Riječ dulja od retka (URL, putanja) mora se lomiti po znakovima.
+  // A word longer than the line (a URL, a path) has to wrap on characters.
   const long = wrapLines('abcdefghijklmnopqrstuvwxyz', 10, measure);
   check(
-    'preduga riječ se lomi po znakovima',
+    'an over-long word wraps on characters',
     long.length === 3 && long.every((line) => line.length <= 10),
     long.join(' | '),
   );
 
-  check('prazan redak ostaje redak', String(wrapLines('', 10, measure)) === '');
+  check('an empty line stays a line', String(wrapLines('', 10, measure)) === '');
 }
 
-/* ── prazan ulaz ─────────────────────────────────────────────────────── */
+/* ── empty input ─────────────────────────────────────────────────────── */
 
 {
-  const { bytes } = await exportText('', 'docx', 'prazno');
-  check('prazan tekst daje valjan docx', unzipSync(bytes)['word/document.xml'] !== undefined);
+  const { bytes } = await exportText('', 'docx', 'empty');
+  check('empty text gives a valid docx', unzipSync(bytes)['word/document.xml'] !== undefined);
 
-  const pdf = await exportText('', 'pdf', 'prazno');
-  check('prazan tekst daje valjan pdf', (await PDFDocument.load(pdf.bytes)).getPageCount() === 1);
+  const pdf = await exportText('', 'pdf', 'empty');
+  check('empty text gives a valid pdf', (await PDFDocument.load(pdf.bytes)).getPageCount() === 1);
 }
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(ROOT, 'packages/shell-ui/public/ocr');
 
-/** pnpm izolira ovisnosti po paketu, pa `require.resolve` iz korijena ne vidi sve. */
+/** pnpm isolates dependencies per package, so `require.resolve` from the root does not see everything. */
 const SEARCH = [
   resolve(ROOT, 'packages/shell-ui/node_modules'),
   resolve(ROOT, 'packages/editor-image/node_modules'),
@@ -106,7 +106,7 @@ async function main() {
   let total = 0;
   for (const entry of entries) total += (await stat(join(OUT, entry))).size;
 
-  console.log(`OCR resursi u packages/shell-ui/public/ocr — ${entries.length} datoteka, ${(total / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`OCR assets in packages/shell-ui/public/ocr — ${entries.length} files, ${(total / 1024 / 1024).toFixed(1)} MB`);
   console.log(`jezici: ${languages.join(', ')}`);
 }
 

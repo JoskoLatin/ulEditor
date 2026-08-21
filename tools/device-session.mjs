@@ -21,10 +21,10 @@ const run = promisify(execFile);
 
 const PACKAGE = 'org.uleditor.app';
 
-/** `adb` nije na putanji; SDK zna gdje je. */
+/** `adb` is not on the path; the SDK knows where it is. */
 export function adbPath() {
   const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
-  if (!sdk) throw new Error('ANDROID_HOME nije postavljen.');
+  if (!sdk) throw new Error('ANDROID_HOME is not set.');
   return join(sdk, 'platform-tools', 'adb.exe');
 }
 
@@ -81,7 +81,7 @@ export async function startDevice(opts = {}) {
     await new Promise((r) => setTimeout(r, 1500));
   }
 
-  throw lastError ?? new Error('WebView nije otvorio devtools socket');
+  throw lastError ?? new Error('the WebView never opened a devtools socket');
 }
 
 /**

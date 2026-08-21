@@ -131,17 +131,17 @@ try {
   /* — drugi prolaz: dokumenti — */
   await page.keyboard.press('Control+Shift+H');
 
-  await runSearch('jedinstvenoword', true);
+  await runSearch('uniqueword', true);
   const docHits = await page.locator('.search-file .name').allInnerTexts();
   check('Word dokument je pretražen', docHits.includes('izvjestaj.docx'), docHits.join(', '));
 
-  await runSearch('jedinstvenoexcel', true);
+  await runSearch('uniqueexcel', true);
   const xlsHits = await page.locator('.search-file .name').allInnerTexts();
   check('Excel tablica je pretražena', xlsHits.includes('promet.xlsx'), xlsHits.join(', '));
   const cell = await page.locator('.search-hit .where').first().innerText();
   check('pogodak u tablici nosi adresu ćelije', /![A-Z]+\d+$/.test(cell), cell);
 
-  await runSearch('jedinstvenopoglavlje1', true);
+  await runSearch('uniquechapter1', true);
   const bookHits = await page.locator('.search-file .name').allInnerTexts();
   check('e-knjiga je pretražena', bookHits.includes('knjiga.epub'), bookHits.join(', '));
 
@@ -152,7 +152,7 @@ try {
   check('pogodak u PDF-u nosi stranicu', /page \d+/.test(pdfWhere), pdfWhere);
 
   /* — bez drugog prolaza dokumenti se ne diraju — */
-  await runSearch('jedinstvenoword', false);
+  await runSearch('uniqueword', false);
   const withoutDocs = await page.locator('.search-file .name').allInnerTexts();
   check(
     'bez kvačice dokumenti se ne čitaju',

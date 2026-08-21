@@ -95,10 +95,10 @@ const boxes = [
     page: 1,
     color: [0.88, 0.44, 0.37],
     createdAt: Date.UTC(2026, 7, 15, 12, 0, 0),
-    text: 'Podebljano',
+    text: 'Bold',
     size: 14,
     face: 'sans-bold',
-    rect: layoutTextBox(metrics, 'Podebljano', 14, { x: 60, top: 120 }),
+    rect: layoutTextBox(metrics, 'Bold', 14, { x: 60, top: 120 }),
   },
 ];
 

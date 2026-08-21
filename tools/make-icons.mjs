@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(ROOT, 'apps/desktop/src-tauri/icons');
 
-/* ── PNG zapis ───────────────────────────────────────────────────────── */
+/* ── writing the PNG ─────────────────────────────────────────────────── */
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -48,7 +48,7 @@ function encodePng(rgba, size) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // dubina po kanalu
+  ihdr[8] = 8; // bits per channel
   ihdr[9] = 6; // RGBA
   ihdr[10] = 0;
   ihdr[11] = 0;
@@ -166,7 +166,7 @@ function encodeIco(pngs) {
     entry[2] = 0;
     entry[3] = 0;
     entry.writeUInt16LE(1, 4); // planes
-    entry.writeUInt16LE(32, 6); // bitova po pikselu
+    entry.writeUInt16LE(32, 6); // bits per pixel
     entry.writeUInt32LE(data.length, 8);
     entry.writeUInt32LE(offset, 12);
     entries.push(entry);

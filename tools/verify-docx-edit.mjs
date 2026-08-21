@@ -1,11 +1,11 @@
 /**
- * Provjera da izmjena Word dokumenta dira **samo ono što je korisnik dirao**.
+ * Checking that editing a Word document touches **only what the user touched**.
  *
- * Uređivanje Officea bez ovoga znači tiho gubljenje tuđeg formatiranja, i to
- * je najveći rizik cijelog projekta. Zato ovdje glavna provjera nije da se
- * tekst promijenio nego suprotno: da je **sve ostalo ostalo isto** — svaki
- * drugi dio arhive bajt za bajt, a unutar `document.xml` svaki znak osim
- * prepisanih raspona.
+ * Editing Office without this means quietly losing somebody else's formatting,
+ * and that is the biggest risk in the whole project. So the central check here is
+ * not that the text changed but the opposite: that **everything else stayed the
+ * same** — every other part of the archive byte for byte, and inside
+ * `document.xml` every character outside the rewritten ranges.
  *
  *   node tools/verify-docx-edit.mjs
  */
@@ -29,106 +29,107 @@ function check(name, passed, detail = '') {
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
-/* ── čitanje runova ──────────────────────────────────────────────────── */
+/* ── reading the runs ────────────────────────────────────────────────── */
 
 const original = makeDocx();
 const archive = unzipSync(original);
 const xml = strFromU8(archive['word/document.xml']);
 
 const runs = findRuns(xml);
-check('runovi su pronađeni', runs.length > 0, `${runs.length}`);
+check('the runs were found', runs.length > 0, `${runs.length}`);
 
 const editable = runs.filter((run) => !run.refusal);
-check('barem jedan run se da prepisati', editable.length > 0, `${editable.length} od ${runs.length}`);
+check('at least one run can be rewritten', editable.length > 0, `${editable.length} of ${runs.length}`);
 
 const texts = editable.map((run) => runText(xml, run));
-check('tekst runa je pročitan', texts.every((text) => text.length > 0), JSON.stringify(texts[0]));
+check('the run text was read', texts.every((text) => text.length > 0), JSON.stringify(texts[0]));
 
-/* Rasponi moraju stajati unutar samog runa, inače bi zamjena pojela susjedni XML. */
+/* The ranges have to sit inside the run itself, or a replacement would eat the neighbouring XML. */
 check(
-  'raspon teksta leži unutar svog runa',
+  'the text range lies inside its own run',
   editable.every((run) => run.text.start >= run.start && run.text.end <= run.end),
 );
 
-/* ── odbijanja ───────────────────────────────────────────────────────── */
+/* ── refusals ────────────────────────────────────────────────────────── */
 
 const tricky = [
   '<w:document xmlns:w="x"><w:body>',
-  '<w:p><w:r><w:t>Dobar</w:t></w:r></w:p>',
-  '<w:p><w:r><w:t>Prvi</w:t><w:br/><w:t>Drugi</w:t></w:r></w:p>',
-  '<w:p><w:r><w:tab/><w:t>Uvučeno</w:t></w:r></w:p>',
-  '<w:p><w:r><w:drawing><wp:inline><w:txbxContent><w:p><w:r><w:t>Unutra</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r></w:p>',
-  '<w:p><w:r><w:t>Pola</w:t><w:t>vice</w:t></w:r></w:p>',
+  '<w:p><w:r><w:t>Plain</w:t></w:r></w:p>',
+  '<w:p><w:r><w:t>First</w:t><w:br/><w:t>Second</w:t></w:r></w:p>',
+  '<w:p><w:r><w:tab/><w:t>Indented</w:t></w:r></w:p>',
+  '<w:p><w:r><w:drawing><wp:inline><w:txbxContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p></w:txbxContent></wp:inline></w:drawing></w:r></w:p>',
+  '<w:p><w:r><w:t>Half</w:t><w:t>way</w:t></w:r></w:p>',
   '</w:body></w:document>',
 ].join('');
 
 const trickyRuns = findRuns(tricky);
-check('svi runovi su prebrojani, i ugniježđeni', trickyRuns.length === 6, `${trickyRuns.length}`);
-check('običan run je prepisiv', trickyRuns[0].refusal === null, trickyRuns[0].refusal ?? '');
-check('run s prijelomom retka se odbija', /br/.test(trickyRuns[1].refusal ?? ''), trickyRuns[1].refusal ?? '');
-check('run s tabulatorom se odbija', /tab/.test(trickyRuns[2].refusal ?? ''), trickyRuns[2].refusal ?? '');
+check('every run was counted, nested ones included', trickyRuns.length === 6, `${trickyRuns.length}`);
+check('a plain run is rewritable', trickyRuns[0].refusal === null, trickyRuns[0].refusal ?? '');
+check('a run with a line break is refused', /br/.test(trickyRuns[1].refusal ?? ''), trickyRuns[1].refusal ?? '');
+check('a run with a tab is refused', /tab/.test(trickyRuns[2].refusal ?? ''), trickyRuns[2].refusal ?? '');
 check(
-  'run s crtežom se odbija',
-  /drawing|ugniježđeni/.test(trickyRuns[3].refusal ?? ''),
+  'a run with a drawing is refused',
+  /drawing|nested/.test(trickyRuns[3].refusal ?? ''),
   trickyRuns[3].refusal ?? '',
 );
 check(
-  'run unutar crteža se i dalje da prepisati',
-  trickyRuns[4].refusal === null && runText(tricky, trickyRuns[4]) === 'Unutra',
+  'a run inside a drawing is still rewritable',
+  trickyRuns[4].refusal === null && runText(tricky, trickyRuns[4]) === 'Inside',
   trickyRuns[4].refusal ?? runText(tricky, trickyRuns[4]),
 );
 check(
-  'razbijen tekst se odbija, ne spaja se nasumično',
-  /više dijelova/.test(trickyRuns[5].refusal ?? ''),
+  'split text is refused rather than joined at random',
+  /several parts/.test(trickyRuns[5].refusal ?? ''),
   trickyRuns[5].refusal ?? '',
 );
 
-/* ── zamjena ─────────────────────────────────────────────────────────── */
+/* ── replacement ─────────────────────────────────────────────────────── */
 
 const target = editable[0];
-const REPLACEMENT = 'Prepisano & <provjereno> — čćžšđ';
+const REPLACEMENT = 'Rewritten & <checked> — čćžšđ';
 const edited = applyRunEdits(xml, runs, [{ index: target.index, text: REPLACEMENT }]);
 
-check('novi tekst je u XML-u, s escapeanim znakovima', edited.includes(escapeXml(REPLACEMENT)));
-check('sirovi `&` nije ušao u XML', !edited.includes('Prepisano & <provjereno>'));
+check('the new text is in the XML, with its characters escaped', edited.includes(escapeXml(REPLACEMENT)));
+check('a raw `&` did not get into the XML', !edited.includes('Rewritten & <checked>'));
 check(
-  'razmaci se čuvaju',
+  'the spaces are preserved',
   /<w:t xml:space="preserve">/.test(edited),
-  'xml:space="preserve" je postavljen',
+  'xml:space="preserve" is set',
 );
 
 const reread = findRuns(edited);
 check(
-  'prepisani run se ponovno čita kao ono što je upisano',
+  'the rewritten run reads back as what was typed',
   runText(edited, reread[target.index]) === REPLACEMENT,
   runText(edited, reread[target.index]),
 );
 
 /*
- * Sve osim jednog `w:t` elementa mora ostati isto. Usporedba ide nad XML-om iz
- * kojeg su izbačeni svi `w:t` — ostatak je struktura dokumenta.
+ * Everything bar a single `w:t` element has to stay the same. The comparison runs
+ * over the XML with every `w:t` stripped out — what is left is the document
+ * structure.
  */
 const skeleton = (source) => source.replace(/<w:t[^>]*>[\s\S]*?<\/w:t>|<w:t\/>/g, '<w:t/>');
-check('struktura dokumenta je netaknuta', skeleton(xml) === skeleton(edited));
+check('the document structure is untouched', skeleton(xml) === skeleton(edited));
 
 const otherTexts = (source) =>
   findRuns(source)
     .filter((run) => !run.refusal && run.index !== target.index)
     .map((run) => runText(source, run));
 check(
-  'ostali runovi nisu dirani',
+  'the other runs were not touched',
   JSON.stringify(otherTexts(xml)) === JSON.stringify(otherTexts(edited)),
 );
 
-/* ── cijela datoteka ─────────────────────────────────────────────────── */
+/* ── the whole file ──────────────────────────────────────────────────── */
 
 const rebuilt = writeDocx(archive, runs, xml, [{ index: target.index, text: REPLACEMENT }]);
 const after = unzipSync(rebuilt);
 
 check(
-  'arhiva ima iste dijelove',
+  'the archive has the same parts',
   JSON.stringify(Object.keys(after).sort()) === JSON.stringify(Object.keys(archive).sort()),
-  `${Object.keys(after).length} dijelova`,
+  `${Object.keys(after).length} parts`,
 );
 
 const untouched = Object.keys(archive).filter((path) => path !== 'word/document.xml');
@@ -138,33 +139,33 @@ const identical = untouched.filter((path) => {
   return a.length === b.length && a.every((byte, i) => byte === b[i]);
 });
 check(
-  'svi ostali dijelovi su bajt za bajt isti',
+  'every other part is identical byte for byte',
   identical.length === untouched.length,
-  `${identical.length} od ${untouched.length}: ${untouched.filter((p) => !identical.includes(p)).join(', ') || 'nijedan ne odstupa'}`,
+  `${identical.length} of ${untouched.length}: ${untouched.filter((p) => !identical.includes(p)).join(', ') || 'none drifted'}`,
 );
 
 check(
-  'izmjena je stigla u datoteku',
+  'the change reached the file',
   strFromU8(after['word/document.xml']).includes(escapeXml(REPLACEMENT)),
 );
 
-/* ── entiteti ────────────────────────────────────────────────────────── */
+/* ── entities ────────────────────────────────────────────────────────── */
 
 check(
-  'čitanje razrješava entitete',
-  // 268 je Č, 0x107 je ć — brojčani entiteti idu i dekadski i heksadekadski.
+  'reading resolves the entities',
+  // 268 is Č, 0x107 is ć — numeric entities come both decimal and hexadecimal.
   unescapeXml('a &amp; b &lt;c&gt; &#268;&#x107;') === 'a & b <c> Čć',
   unescapeXml('a &amp; b &lt;c&gt; &#268;&#x107;'),
 );
 
-/* Prazan tekst mora ostati valjan XML, a ne nestati zajedno s elementom. */
+/* Empty text has to stay valid XML rather than vanish along with its element. */
 const emptied = applyRunEdits(xml, runs, [{ index: target.index, text: '' }]);
 check(
-  'prazan tekst ostavlja prazan element',
+  'empty text leaves an empty element',
   findRuns(emptied)[target.index].refusal === null && runText(emptied, findRuns(emptied)[target.index]) === '',
 );
 
-/* ── ishod ───────────────────────────────────────────────────────────── */
+/* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

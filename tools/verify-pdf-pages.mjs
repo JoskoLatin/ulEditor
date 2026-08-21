@@ -47,7 +47,7 @@ async function pageLabels(bytes) {
   for (const page of doc.getPages()) {
     const contents = page.node.Contents();
     const stream = contents?.getContentsString?.() ?? '';
-    const match = /\(STRANICA (\d+)\)/.exec(stream);
+    const match = /\(PAGE (\d+)\)/.exec(stream);
     labels.push(match ? Number(match[1]) : 0);
   }
   return labels;

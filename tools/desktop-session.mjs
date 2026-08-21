@@ -53,14 +53,14 @@ export async function startDesktop(opts = {}) {
   }
 
   app.kill();
-  throw lastError ?? new Error('WebView2 nije otvorio CDP endpoint');
+  throw lastError ?? new Error('WebView2 never opened a CDP endpoint');
 }
 
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});
   session?.app?.kill();
-  // Tauri ostavlja podprocese iza sebe.
+  // Tauri leaves child processes behind.
   spawn('taskkill', ['/F', '/IM', 'uleditor-desktop.exe'], { shell: true, stdio: 'ignore' });
   await new Promise((r) => setTimeout(r, 1500));
 }

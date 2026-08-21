@@ -144,7 +144,7 @@ try {
   await page.waitForTimeout(400);
   const jumped = await page.locator('.reader-status span').first().innerText();
   // Naslov poglavlja dolazi iz same knjige, ne iz sučelja — ostaje kakav jest.
-  check('skok na poglavlje iz sadržaja', jumped.includes('Poglavlje 3'), jumped);
+  check('a jump to a chapter from the contents', jumped.includes('Chapter 3'), jumped);
 
   /* — tipografija — */
   await page.locator('.reader-btn', { hasText: 'Layout' }).click();
@@ -184,7 +184,7 @@ try {
   check('sadržaj knjige se vraća', await page.locator('.ul-book-toc').isVisible());
 
   /* — pretraga po cijeloj knjizi — */
-  const bookHits = await search(page, 'jedinstvenopoglavlje3');
+  const bookHits = await search(page, 'uniquechapter3');
   check('pretraga nalazi tekst u dubljem poglavlju', bookHits === 1, `${bookHits} pogodaka`);
 
   /* ── Word ──────────────────────────────────────────────────────────── */
@@ -194,11 +194,11 @@ try {
   check('DOCX otvoren', true);
 
   const heading = await page.locator('.ul-office-doc h1').innerText();
-  check('naslov mapiran u h1', heading === 'Izvještaj o vjernosti', heading);
+  check('the heading is mapped to an h1', heading === 'Fidelity report', heading);
 
   check('podnaslovi mapirani', (await page.locator('.ul-office-doc h2').count()) === 2);
   check('podebljano zadržano', (await page.locator('.ul-office-doc strong').count()) === 1);
-  check('nakošeno zadržano', (await page.locator('.ul-office-doc em').count()) === 1);
+  check('the italic was kept', (await page.locator('.ul-office-doc em').count()) === 1);
 
   const bullets = await page.locator('.ul-office-doc ul li').count();
   check('lista prepoznata kao lista', bullets === 2, `${bullets} stavki`);
@@ -217,7 +217,7 @@ try {
     await page.locator('.statusbar').innerText().then((t) => t.length > 0),
   );
 
-  const docxHits = await search(page, 'jedinstvenoword');
+  const docxHits = await search(page, 'uniqueword');
   check('pretraga radi nad Word pregledom', docxHits === 1, `${docxHits} pogodaka`);
 
   await page.keyboard.press('Control+Shift+R');
@@ -244,7 +244,7 @@ try {
   const cell = (row, col) => page.locator(`.ul-sheet td[data-ref="${row},${col}"]`);
 
   const cellA2 = await cell(1, 0).innerText();
-  check('dijeljeni nizovi razriješeni', cellA2 === 'Siječanj', cellA2);
+  check('the shared strings were resolved', cellA2 === 'January', cellA2);
 
   const cellB2 = await cell(1, 1).innerText();
   check('broj formatiran po formatu ćelije', cellB2.includes('1.234,50'), cellB2);
@@ -266,7 +266,7 @@ try {
 
   await page.screenshot({ path: resolve(SHOTS, 'excel.png') });
 
-  const xlsxHits = await search(page, 'jedinstvenoexcel');
+  const xlsxHits = await search(page, 'uniqueexcel');
   check('pretraga prelazi preko listova', xlsxHits === 1, `${xlsxHits} pogodaka`);
 
   /* ── PDF u čitaonici ───────────────────────────────────────────────── */

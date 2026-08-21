@@ -21,7 +21,7 @@ const EMPTY_RELS = `<?xml version="1.0"?><Relationships xmlns="${PKG_REL_NS}"/>`
 
 export const TS_SOURCE = `import { createShell } from './host';
 
-/** Provjera bojanja sintakse i preloma redaka. */
+/** A check of syntax colouring and line wrapping. */
 export function main(): number {
   const shell = createShell();
   const formats = ['pdf', 'docx', 'xlsx'] as const;
@@ -31,14 +31,14 @@ export function main(): number {
 
 export const MD_SOURCE = `# ulEditor
 
-Provjera **živog pregleda**.
+A check of the **live preview**.
 
-| Format | Faza |
+| Format | Phase |
 | --- | --- |
 | PDF | 1 |
 | XLSX | 2 |
 
-> Dokument se nikad ne sprema tiho pokvaren.
+> A document is never quietly saved broken.
 
 \`\`\`ts
 const x: number = 42;
@@ -82,7 +82,7 @@ export function makePdf(text = 'ulEditor PDF') {
  */
 export function makeMultiPagePdf(count = 3) {
   const objects = [];
-  // 1 = katalog, 2 = stablo stranica, zatim po dva objekta na stranicu.
+  // 1 = the catalog, 2 = the page tree, then two objects per page.
   const pageRefs = [];
   for (let i = 0; i < count; i++) pageRefs.push(3 + i * 2);
 
@@ -96,7 +96,7 @@ export function makeMultiPagePdf(count = 3) {
       `<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents ${contentRef} 0 R` +
         `/Resources<</Font<</F1 ${fontRef} 0 R>>>>>>`,
     );
-    const stream = `BT /F1 20 Tf 30 110 Td (STRANICA ${i + 1}) Tj ET`;
+    const stream = `BT /F1 20 Tf 30 110 Td (PAGE ${i + 1}) Tj ET`;
     objects.push(`<</Length ${stream.length}>>\nstream\n${stream}\nendstream`);
   }
   objects.push('<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>');
@@ -142,16 +142,17 @@ export function makeEpub(opts = {}) {
   const chapterBody = (n) =>
     `<?xml version="1.0" encoding="utf-8"?>\n` +
     `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Poglavlje ${n}</title></head><body>\n` +
-    `<h1 id="p${n}">Poglavlje ${n}</h1>\n` +
+    `<h1 id="p${n}">Chapter ${n}</h1>\n` +
     // A chapter has to be longer than one two-column screen, otherwise pagination
     // has nothing to break and the page-turn check proves nothing.
     Array.from(
       { length: 40 },
       (_, i) =>
-        `<p>Odlomak ${i + 1} u poglavlju ${n}. Teksta ima toliko da prijelom u stupce ima ` +
-        `što lomiti, pa se listanje stranica može stvarno provjeriti. Dijakritici: čćšžđ.</p>`,
+        `<p>Paragraph ${i + 1} in chapter ${n}. There is enough text here for the column ` +
+        `break to have something to break, so turning pages can really be checked. ` +
+        `Diacritics: čćšžđ.</p>`,
     ).join('\n') +
-    `\n<p>Kraj poglavlja ${n} spominje jedinstvenopoglavlje${n} radi pretrage.</p>\n` +
+    `\n<p>The end of chapter ${n} mentions uniquechapter${n} for the sake of search.</p>\n` +
     `</body></html>`;
 
   const manifest = Array.from(
@@ -202,7 +203,7 @@ export function makeEpub(opts = {}) {
   return zipSync(files);
 }
 
-/** DOCX s naslovima, formatiranjem, listom i tablicom. */
+/** A DOCX with headings, formatting, a list and a table. */
 export function makeDocx() {
   const paragraph = (text, style) =>
     `<w:p>${style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ''}` +
@@ -217,16 +218,16 @@ export function makeDocx() {
 
   const document =
     `<?xml version="1.0" encoding="UTF-8"?>\n<w:document ${W_NS}><w:body>\n` +
-    paragraph('Izvještaj o vjernosti', 'Heading1') +
-    paragraph('Uvodni odlomak s dijakriticima: čćšžđ.') +
-    `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Podebljano </w:t></w:r>` +
-    `<w:r><w:rPr><w:i/></w:rPr><w:t>i nakošeno</w:t></w:r></w:p>` +
-    paragraph('Popis zahtjeva', 'Heading2') +
-    bullet('prvi zahtjev') +
-    bullet('drugi zahtjev') +
-    paragraph('Tablica', 'Heading2') +
-    `<w:tbl>${row('Format', 'Faza')}${row('PDF', '1')}${row('XLSX', '2')}</w:tbl>` +
-    paragraph('Zaključak spominje jedinstvenoword radi pretrage.') +
+    paragraph('Fidelity report', 'Heading1') +
+    paragraph('An opening paragraph with diacritics: čćšžđ.') +
+    `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Bold </w:t></w:r>` +
+    `<w:r><w:rPr><w:i/></w:rPr><w:t>and italic</w:t></w:r></w:p>` +
+    paragraph('List of requirements', 'Heading2') +
+    bullet('the first requirement') +
+    bullet('the second requirement') +
+    paragraph('Table', 'Heading2') +
+    `<w:tbl>${row('Format', 'Phase')}${row('PDF', '1')}${row('XLSX', '2')}</w:tbl>` +
+    paragraph('The conclusion mentions uniqueword for the sake of search.') +
     `<w:sectPr/></w:body></w:document>`;
 
   const numbering =
@@ -244,12 +245,12 @@ export function makeDocx() {
 
 /** An XLSX with two sheets, shared strings, a formula, a date and merged cells. */
 export function makeXlsx() {
-  const strings = ['Mjesec', 'Iznos', 'Siječanj', 'Veljača', 'Ukupno', 'jedinstvenoexcel'];
+  const strings = ['Month', 'Amount', 'January', 'February', 'Total', 'uniqueexcel'];
 
   const workbook =
     `<?xml version="1.0"?>\n<workbook xmlns="${SHEET_NS}" xmlns:r="${REL_NS}"><sheets>` +
-    `<sheet name="Promet" sheetId="1" r:id="rId1"/>` +
-    `<sheet name="Napomene" sheetId="2" r:id="rId2"/>` +
+    `<sheet name="Sales" sheetId="1" r:id="rId1"/>` +
+    `<sheet name="Notes" sheetId="2" r:id="rId2"/>` +
     `</sheets></workbook>`;
 
   const rels =

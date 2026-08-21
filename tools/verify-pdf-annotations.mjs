@@ -55,7 +55,7 @@ const annotations = [
     createdAt: Date.UTC(2026, 7, 15, 12, 0, 0),
     rect: { x: 200, y: 150, width: 20, height: 20 },
     // Diacritics: PDFString is Latin-1, so notes have to go as hex.
-    text: 'Provjeriti čćžšđ i navodnike "ovako"',
+    text: 'Check čćžšđ and quotation marks "like this"',
   },
   {
     id: 'test-ink',
@@ -78,10 +78,10 @@ const annotations = [
   },
 ];
 
-/* ── zapis ───────────────────────────────────────────────────────────── */
+/* ── writing ─────────────────────────────────────────────────────────── */
 
 const { bytes, written } = await writeAnnotations(source, annotations);
-check('uvezene anotacije se ne zapisuju ponovo', written === 3, `zapisano ${written} od 4`);
+check('imported annotations are not written again', written === 3, `${written} of 4 written`);
 check('the output is larger than the source', bytes.length > source.length, `${source.length} → ${bytes.length} B`);
 check('izlaz je i dalje PDF', new TextDecoder().decode(bytes.slice(0, 5)) === '%PDF-', '');
 
@@ -91,7 +91,7 @@ const reloaded = await PDFDocument.load(bytes);
 const page = reloaded.getPages()[0];
 const annots = page.node.lookup(PDFName.of('Annots'));
 
-check('stranica ima Annots polje', annots instanceof PDFArray, annots ? annots.constructor.name : 'nema');
+check('the page has an Annots array', annots instanceof PDFArray, annots ? annots.constructor.name : 'none');
 
 const dicts = [];
 if (annots instanceof PDFArray) {
@@ -100,7 +100,7 @@ if (annots instanceof PDFArray) {
     if (value instanceof PDFDict) dicts.push(value);
   }
 }
-check('tri anotacije u datoteci', dicts.length === 3, `${dicts.length}`);
+check('three annotations in the file', dicts.length === 3, `${dicts.length}`);
 
 const bySubtype = new Map();
 for (const dict of dicts) {
@@ -142,7 +142,7 @@ if (note) {
     contents instanceof PDFHexString || contents instanceof PDFString ? contents.decodeText() : '';
   check(
     'the note text survived the diacritics',
-    decoded === 'Provjeriti čćžšđ i navodnike "ovako"',
+    decoded === 'Check čćžšđ and quotation marks "like this"',
     JSON.stringify(decoded.slice(0, 40)),
   );
 
@@ -164,17 +164,17 @@ if (ink) {
 for (const [subtype, dict] of bySubtype) {
   const parent = dict.get(PDFName.of('P'));
   if (!parent) {
-    check(`${subtype} pokazuje na stranicu`, false, 'nedostaje /P');
+    check(`${subtype} points at its page`, false, '/P is missing');
     break;
   }
 }
 if (bySubtype.size === 3) {
   check(
-    'sve anotacije pokazuju na stranicu (/P)',
+    'every annotation points at its page (/P)',
     [...bySubtype.values()].every((d) => !!d.get(PDFName.of('P'))),
   );
   check(
-    'sve nose ime tvorca (/T)',
+    'every one carries an author name (/T)',
     [...bySubtype.values()].every((d) => d.lookup(PDFName.of('T'))?.decodeText?.() === 'ulEditor'),
   );
 }
@@ -187,7 +187,7 @@ const second = await writeAnnotations(bytes, annotations.map((a) => ({ ...a, imp
 const reloadedTwice = await PDFDocument.load(second.bytes);
 const annotsTwice = reloadedTwice.getPages()[0].node.lookup(PDFName.of('Annots'));
 check(
-  'ponovno spremanje ne duplicira anotacije',
+  'saving again does not duplicate the annotations',
   annotsTwice instanceof PDFArray && annotsTwice.size() === 3,
   `${annotsTwice instanceof PDFArray ? annotsTwice.size() : '?'}`,
 );

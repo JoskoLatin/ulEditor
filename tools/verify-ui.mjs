@@ -76,13 +76,13 @@ try {
     check(`${label} exists`, await page.locator(selector).isVisible());
   }
 
-  /* — kod — */
-  await dropFile(page, 'primjer.ts', TS_SOURCE);
+  /* — code — */
+  await dropFile(page, 'example.ts', TS_SOURCE);
   await page.waitForSelector('.cm-editor', { timeout: 15000 });
   const highlighted = await page.locator('.cm-line span[class*="ͼ"]').count();
   check('CodeMirror montiran', true);
   check('sintaksa obojana', highlighted > 0, `${highlighted} obojanih tokena`);
-  check('kartica dobila ime', (await page.locator('.tab .name').first().innerText()) === 'primjer.ts');
+  check('the tab got its name', (await page.locator('.tab .name').first().innerText()) === 'example.ts');
 
   /* — markdown — */
   await dropFile(page, 'biljeske.md', MD_SOURCE);
@@ -97,7 +97,7 @@ try {
   await page.waitForSelector('.ul-pdf', { timeout: 20000 });
   await page.waitForSelector('.ul-pdf-page[data-rendered="true"]', { timeout: 20000 });
   const canvasBox = await page.locator('.ul-pdf-page canvas').first().boundingBox();
-  check('PDF stranica renderirana', !!canvasBox && canvasBox.width > 50, `${Math.round(canvasBox?.width ?? 0)}px`);
+  check('the PDF page was rendered', !!canvasBox && canvasBox.width > 50, `${Math.round(canvasBox?.width ?? 0)}px`);
   const textSpans = await page.locator('.ul-pdf-text span').count();
   check('text layer built', textSpans > 0, `${textSpans} fragments`);
 
@@ -109,7 +109,7 @@ try {
   const message = await page.locator('.surface-error p').innerText();
   check('a damaged DOCX gives a comprehensible message', message.includes('damaged'), message.slice(0, 70));
 
-  /* — anotacije nad PDF-om — */
+  /* — annotations over the PDF — */
   await page.locator('.tab').nth(2).click();
   await page.waitForTimeout(300);
 
@@ -212,9 +212,9 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(250);
   check(
-    'prazan okvir se ne sprema',
+    'an empty box is not saved',
     (await page.locator('.ul-pdf-ann-text').count()) === boxesBefore,
-    `${boxesBefore} prije, ${await page.locator('.ul-pdf-ann-text').count()} poslije`,
+    `${boxesBefore} before, ${await page.locator('.ul-pdf-ann-text').count()} after`,
   );
 
   await page.keyboard.press('Control+Z');
@@ -240,14 +240,14 @@ try {
   /* — tabovi — */
   check('pet otvorenih kartica', (await page.locator('.tab').count()) === 5);
 
-  /* — pretraga u dokumentu (isti ugovor za sve formate) — */
+  /* — in-document search (the same contract for every format) — */
   await page.locator('.tab').first().click();
   await page.keyboard.press('Control+Shift+F');
   await page.waitForSelector('.findpanel', { timeout: 5000 });
   await page.locator('.findpanel-bar input').pressSequentially('formats');
   await page.waitForSelector('.findpanel-hit', { timeout: 10000 });
   const codeHits = await page.locator('.findpanel-hit').count();
-  check('pretraga u kodu', codeHits >= 2, `${codeHits} pogodaka`);
+  check('search in code', codeHits >= 2, `${codeHits} hits`);
 
   await page.locator('.findpanel-hit').nth(1).click();
   await page.waitForTimeout(200);
@@ -278,7 +278,7 @@ try {
 
   await page.keyboard.press('Escape');
   await page.waitForTimeout(150);
-  check('Esc zatvara pretragu', (await page.locator('.findpanel').count()) === 0);
+  check('Esc closes the search', (await page.locator('.findpanel').count()) === 0);
 
   /* — paleta naredbi — */
   await page.keyboard.press('Control+Shift+P');
@@ -307,11 +307,11 @@ try {
   await page.locator('.cm-content').first().click();
   await page.keyboard.type('// edit\n');
   await page.waitForTimeout(150);
-  // Dvije izmijenjene kartice: kod koji smo upravo tipkali i PDF s anotacijama.
+  // Two modified tabs: the code we have just typed and the PDF with annotations.
   const dirty = await page.locator('.tab[data-dirty="true"]').count();
   check('oznaka nespremljenog na obje izmijenjene kartice', dirty === 2, `${dirty}`);
 
-  /* — operacije nad stranicama — */
+  /* — page operations — */
   await dropFile(page, 'visestranicni.pdf', makeMultiPagePdf(3));
   await page.waitForSelector('.tab', { timeout: 10000 });
   await page.locator('.tab').nth(5).click();
@@ -322,7 +322,7 @@ try {
 
   await pdf.locator('.ul-pdf-btn[title*="Pages"]').click();
   await pdf.locator('.ul-pdf-thumb').first().waitFor({ timeout: 10000 });
-  check('traka pokazuje tri stranice', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+  check('the rail shows three pages', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
 
   await pdf.locator('.ul-pdf-thumb').first().hover();
   await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="Rotate right"]').click();
@@ -342,7 +342,7 @@ try {
     await pdf.locator('.ul-pdf-total').innerText(),
   );
   check(
-    'izmjene stranica su opisane',
+    'the page changes are described',
     (await pdf.locator('.ul-pdf-count').innerText()).includes('deleted'),
     await pdf.locator('.ul-pdf-count').innerText(),
   );
