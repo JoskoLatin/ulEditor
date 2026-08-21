@@ -137,7 +137,12 @@ jobs:
         id: ndk
         with:
           ndk-version: r27c
-          local-cache: true
+          # Not cached. The cache round-trip restores the NDK incomplete — the
+          # per-API wrapper scripts survive but `bin/clang` itself does not, so
+          # the linker fails with exit 127 and a "No such file or directory"
+          # buried four lines into a shell script. Re-downloading costs a
+          # minute; debugging that costs an afternoon.
+          local-cache: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -156,10 +161,15 @@ jobs:
       # A mobile build breaks differently from a desktop one — a missing JNI
       # symbol, a dependency without an android target, a wrong minSdk. Without
       # this check we would find out on release day, when it costs the most.
-      - name: Does the core compile for a phone
+      #
+      # `build`, not `check`: check stops before linking, and the first Android
+      # release failed in exactly the step check skips — a broken NDK whose
+      # `bin/clang` was missing. A check that cannot fail the way the release
+      # fails is not covering the release.
+      - name: Does the core build for a phone
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo check -p uleditor-desktop --target aarch64-linux-android
+        run: cargo build -p uleditor-desktop --target aarch64-linux-android --lib
 
   wasm:
     name: WASM build of the core

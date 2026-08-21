@@ -143,7 +143,12 @@ jobs:
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
-          local-cache: true
+          # Not cached. The cache round-trip restores the NDK incomplete — the
+          # per-API wrapper scripts survive but `bin/clang` itself does not, so
+          # the linker fails with exit 127 and a "No such file or directory"
+          # buried four lines into a shell script. Re-downloading costs a
+          # minute; debugging that costs an afternoon.
+          local-cache: false
 
       # Two architectures cover practically every Android device in the wild.
       # i686 and x86_64 exist only on emulators, and each extra one doubles the
