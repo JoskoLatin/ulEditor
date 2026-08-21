@@ -24,7 +24,10 @@ fn with_workspace<T>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&mut Workspace) -> Result<T, VfsError>,
 ) -> Result<T, VfsError> {
-    let mut guard = state.workspace.lock().expect("the workspace lock is poisoned");
+    let mut guard = state
+        .workspace
+        .lock()
+        .expect("the workspace lock is poisoned");
     f(&mut guard)
 }
 
