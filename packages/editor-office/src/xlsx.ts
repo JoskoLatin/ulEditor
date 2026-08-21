@@ -1,10 +1,10 @@
 /**
- * XLSX → mreža (samo čitanje).
+ * XLSX → a grid (read-only).
  *
- * Tablica se ne prikazuje kao "tekst iz ćelija" nego kao mreža s oznakama
- * stupaca i redaka, jer se proračunska tablica čita položajem koliko i
- * sadržajem. Formule se ne računaju — prikazuje se vrijednost koju je
- * spremio Excel, a sama formula stoji u opisu ćelije.
+ * A spreadsheet is not shown as "text out of cells" but as a grid with column
+ * and row labels, because a spreadsheet is read by position as much as by
+ * content. Formulas are not evaluated — the value Excel saved is displayed, and
+ * the formula itself sits in the cell's description.
  */
 
 import { attr, attrNum, openArchive, readRelationships, readXml, tag, tags, type Archive } from './ooxml.js';
@@ -29,7 +29,7 @@ export interface Sheet {
   name: string;
   rows: number;
   cols: number;
-  /** Ključ je `red,stupac`, oba 0-bazirana. Rijetke tablice ne troše memoriju. */
+  /** The key is `row,column`, both 0-based. Sparse sheets cost no memory. */
   cells: Map<string, Cell>;
   merges: Merge[];
   widths: Map<number, number>;
@@ -44,7 +44,7 @@ export interface Workbook {
 const MAX_ROWS = 5000;
 const MAX_COLS = 256;
 
-/* ── reference ćelija ────────────────────────────────────────────────── */
+/* ── cell references ─────────────────────────────────────────────────── */
 
 export function columnName(index: number): string {
   let name = '';
@@ -66,10 +66,10 @@ function parseRef(ref: string): { row: number; col: number } | null {
 
 /* ── formati brojeva ─────────────────────────────────────────────────── */
 
-/** Ugrađeni Excelovi formati koji su datumi ili vrijeme. */
+/** Excel's built-in formats that are dates or times. */
 const BUILTIN_DATE = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
 
-/** Iz koda formata miče doslovne dijelove, pa `[Red]"kn"` ne izgleda kao datum. */
+/** Strips literal parts out of a format code, so `[Red]"kn"` does not look like a date. */
 function formatSkeleton(code: string): string {
   return code
     .replace(/\[[^\]]*\]/g, '')
@@ -92,8 +92,8 @@ function decimalsOf(code: string | undefined): number {
 }
 
 /**
- * Excelov serijski broj → datum. Nula je 30. 12. 1899. zbog poznate greške
- * kompatibilnosti (Excel misli da je 1900. bila prijestupna).
+ * An Excel serial number → a date. Zero is 30 December 1899 because of the
+ * well-known compatibility bug (Excel believes 1900 was a leap year).
  */
 function serialToDate(serial: number): Date {
   return new Date(Date.UTC(1899, 11, 30) + Math.round(serial * 86400000));
@@ -132,7 +132,7 @@ function formatNumber(value: number, code: string | undefined): string {
   return `${new Intl.NumberFormat('hr-HR', options).format(scaled)}${percent ? ' %' : ''}`;
 }
 
-/* ── čitanje ─────────────────────────────────────────────────────────── */
+/* ── reading ─────────────────────────────────────────────────────────── */
 
 function readSharedStrings(archive: Archive): string[] {
   const doc = readXml(archive, 'xl/sharedStrings.xml');
@@ -321,12 +321,12 @@ function readCell(
 
 /* ── prikaz ──────────────────────────────────────────────────────────── */
 
-/** Mreža jednog lista. Gradi se tek kad se list otvori — knjige znaju biti velike. */
+/** The grid for one sheet. Built only when the sheet is opened — workbooks can be large. */
 export function renderSheet(sheet: Sheet): HTMLElement {
   const table = document.createElement('table');
   table.className = 'ul-sheet';
 
-  /* Ćelije prekrivene spajanjem preskačemo, a nosiocu dajemo raspon. */
+  /* Cells covered by a merge are skipped, and the anchor gets the span. */
   const covered = new Set<string>();
   const spans = new Map<string, Merge>();
   for (const merge of sheet.merges) {
@@ -367,8 +367,8 @@ export function renderSheet(sheet: Sheet): HTMLElement {
       if (covered.has(key)) continue;
 
       const td = document.createElement('td');
-      // Referenca ostaje na ćeliji: spajanja pomiču položaj u retku, pa
-      // brojanje djece nije pouzdan način da se ćelija poslije nađe.
+      // The reference stays on the cell: merges shift positions within a row,
+      // so counting children is not a reliable way to find a cell later.
       td.dataset.ref = key;
       const merge = spans.get(key);
       if (merge) {

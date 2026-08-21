@@ -1,11 +1,10 @@
 /**
- * Plan stranica i zapis izmijenjenog dokumenta.
+ * The page plan and writing the modified document.
  *
- * Operacije nad stranicama ne mijenjaju ništa dok se ne spremi — do tada
- * postoji samo *plan*: koja izvorna stranica ide na koje mjesto i s kojom
- * rotacijom. To je ono što čini undo trivijalnim i što omogućuje da se
- * anotacije drže uz svoju izvornu stranicu bez obzira koliko se puta
- * preslože.
+ * Page operations change nothing until a save — until then there is only a
+ * *plan*: which source page goes where, and with what rotation. That is what
+ * makes undo trivial, and what lets annotations stay with their source page no
+ * matter how many times the pages are shuffled.
  */
 
 import { PDFDocument, degrees } from 'pdf-lib';
@@ -18,7 +17,7 @@ import { standardWidths, type FontLoader } from './text.js';
 export interface PagePlan {
   /** Broj stranice u IZVORNOM dokumentu, 1-baziran. */
   source: number;
-  /** Dodatna rotacija povrh one koju stranica već ima: 0, 90, 180 ili 270. */
+  /** Rotation on top of what the page already has: 0, 90, 180 or 270. */
   rotate: number;
 }
 
@@ -26,7 +25,7 @@ export function identityPlan(pageCount: number): PagePlan[] {
   return Array.from({ length: pageCount }, (_, i) => ({ source: i + 1, rotate: 0 }));
 }
 
-/** Je li plan netaknut — isti redoslijed, sve stranice, bez rotacija. */
+/** Whether the plan is untouched — same order, every page, no rotations. */
 export function isIdentity(plan: PagePlan[], pageCount: number): boolean {
   if (plan.length !== pageCount) return false;
   return plan.every((entry, index) => entry.source === index + 1 && entry.rotate === 0);
@@ -39,7 +38,7 @@ export function rotatePage(plan: PagePlan[], index: number, delta: number): Page
 }
 
 export function removePage(plan: PagePlan[], index: number): PagePlan[] {
-  // Dokument bez ijedne stranice nije valjan PDF.
+  // A document with no pages at all is not a valid PDF.
   if (plan.length <= 1) return plan;
   return plan.filter((_, i) => i !== index);
 }
@@ -57,13 +56,13 @@ export function movePage(plan: PagePlan[], index: number, delta: number): PagePl
 export function pageMapOf(plan: PagePlan[]): Map<number, number> {
   const map = new Map<number, number>();
   plan.forEach((entry, index) => {
-    // Ako se ista stranica pojavi više puta, anotacije idu na prvu pojavu.
+    // If the same page appears more than once, annotations go to the first occurrence.
     if (!map.has(entry.source)) map.set(entry.source, index);
   });
   return map;
 }
 
-/** Koliko je stranica obrisano, rotirano i premješteno — za opis izmjena. */
+/** How many pages were deleted, rotated and moved — for describing the changes. */
 export function describePlan(plan: PagePlan[], pageCount: number): string[] {
   const changes: string[] = [];
 
@@ -79,7 +78,7 @@ export function describePlan(plan: PagePlan[], pageCount: number): string[] {
   return changes;
 }
 
-/** Je li redoslijed stranica promijenjen (a ne samo skraćen s kraja). */
+/** Whether the page order changed (rather than merely being cut short at the end). */
 function isReordered(plan: PagePlan[]): boolean {
   for (let i = 1; i < plan.length; i++) {
     if (plan[i]!.source < plan[i - 1]!.source) return true;
@@ -89,21 +88,22 @@ function isReordered(plan: PagePlan[]): boolean {
 
 export interface SaveDocumentResult {
   bytes: Uint8Array;
-  /** Značajke izvornog dokumenta koje ovaj zapis nije mogao zadržati. */
+  /** Features of the source document this write could not preserve. */
   lost: string[];
 }
 
 /**
- * Zapisuje dokument prema planu i s anotacijama.
+ * Writes the document according to the plan, with its annotations.
  *
- * Dva puta, namjerno:
+ * Two paths, on purpose:
  *
- * - **Rotacija i brisanje** se rade na izvornom dokumentu. Sve što nas se ne
- *   tiče — oznake, obrasci, metapodaci, priloge — ostaje netaknuto.
- * - **Preslagivanje** zahtijeva presnimavanje stranica u novi dokument, jer
- *   stablo stranica u PDF-u može biti ugniježđeno i nije ga sigurno prepisivati
- *   ručno. Cijena je gubitak onoga što živi izvan samih stranica, pa se to
- *   prijavljuje pozivatelju umjesto da se tiho izgubi.
+ * - **Rotation and deletion** are performed on the source document. Everything
+ *   that is none of our business — outlines, forms, metadata, attachments —
+ *   stays untouched.
+ * - **Reordering** requires copying pages into a new document, because a PDF
+ *   page tree can be nested and rewriting it by hand is not safe. The cost is
+ *   losing what lives outside the pages themselves, so that is reported to the
+ *   caller rather than lost quietly.
  */
 export async function saveDocument(
   source: Uint8Array,
@@ -112,19 +112,19 @@ export async function saveDocument(
   pageCount: number,
   /** Bajtovi fonta za tekstualne okvire. */
   loadFont?: FontLoader,
-  /** Područja iz kojih se tekst miče iz samog dokumenta. */
+  /** The areas whose text is removed from the document itself. */
   redactions: Redaction[] = [],
 ): Promise<SaveDocumentResult> {
   const lost: string[] = [];
 
   /*
-   * Brisanje ide prvo i nad izvornim stranicama: područja su zabilježena nad
-   * onim što je korisnik vidio, prije nego što ih plan preslaže ili obriše.
+   * Redaction goes first, over the source pages: the areas were recorded against
+   * what the user saw, before the plan reorders or deletes them.
    */
   const cleaned = await applyRedactions(
     source,
     redactions,
-    // Mjere standardnih fontova dolaze iz istog fonta kojim se i piše.
+    // The metrics of the standard fonts come from the same font we write with.
     loadFont && redactions.length > 0 ? await standardWidths(loadFont) : undefined,
   );
   lost.push(...refusalWarning(cleaned.refused));
@@ -158,7 +158,7 @@ export async function saveDocument(
       rebuilt.addPage(page);
     });
 
-    // Metapodaci se prenose ručno; ostalo izvan stranica se gubi.
+    // Metadata is carried over by hand; the rest outside the pages is lost.
     rebuilt.setTitle(original.getTitle() ?? '');
     rebuilt.setAuthor(original.getAuthor() ?? '');
     rebuilt.setSubject(original.getSubject() ?? '');
@@ -166,7 +166,7 @@ export async function saveDocument(
     lost.push(t('Reordering pages does not preserve bookmarks, forms or attachments.'));
     working = await rebuilt.save({ useObjectStreams: false });
   } else {
-    // Samo rotacije i brisanja — radi se na izvorniku, bez gubitka.
+    // Rotations and deletions only — done on the original, without loss.
     const doc = await PDFDocument.load(source, { ignoreEncryption: true });
     const keep = new Set(plan.map((entry) => entry.source));
 
@@ -193,15 +193,15 @@ export async function saveDocument(
   return { bytes, lost: [...lost, ...missingGlyphWarning(missingGlyphs)] };
 }
 
-/* ── spajanje i izdvajanje ───────────────────────────────────────────── */
+/* ── merging and extracting ──────────────────────────────────────────── */
 
 /**
- * Spaja stranice drugog PDF-a u postojeći plan.
+ * Merges the pages of another PDF into the existing plan.
  *
- * Vraća **nove bajtove izvornika** uz prošireni plan: spajanje se, za razliku
- * od rotacije i brisanja, ne može opisati planom nad starim izvornikom, jer
- * stranice koje se dodaju u njemu ne postoje. Zato je ovo jedina operacija nad
- * stranicama koja odmah mijenja izvornik u memoriji.
+ * It returns **new source bytes** alongside the extended plan: unlike rotation
+ * and deletion, a merge cannot be described by a plan over the old source,
+ * because the pages being added do not exist in it. That makes this the one page
+ * operation that changes the source in memory immediately.
  */
 export async function mergeInto(
   source: Uint8Array,
@@ -219,7 +219,7 @@ export async function mergeInto(
   const added = pages.length;
   if (added === 0) throw new Error(t('The chosen PDF has no pages.'));
 
-  // Nove stranice su na kraju izvornika, ali u planu idu na traženo mjesto.
+  // The new pages sit at the end of the source, but in the plan they go where asked.
   const inserted: PagePlan[] = Array.from({ length: added }, (_, i) => ({
     source: before + i + 1,
     rotate: 0,
@@ -237,9 +237,9 @@ export async function mergeInto(
 }
 
 /**
- * Izdvaja podskup stranica u novi dokument. Izvornik ostaje netaknut — zato
- * "izdvajanje", a ne "razdvajanje": nitko ne želi da mu se dokument raspolovi
- * na disku zato što je htio izvući tri stranice.
+ * Extracts a subset of pages into a new document. The source stays untouched —
+ * hence "extract" rather than "split": nobody wants their document halved on
+ * disk because they wanted three pages out of it.
  */
 export async function extractPages(
   source: Uint8Array,
@@ -269,7 +269,7 @@ export async function extractPages(
   return out.save({ useObjectStreams: false });
 }
 
-/** `1-3, 7, 10-12` → `[1,2,3,7,10,11,12]`, ograničeno na postojeće stranice. */
+/** `1-3, 7, 10-12` → `[1,2,3,7,10,11,12]`, clamped to the pages that exist. */
 export function parseRanges(input: string, max: number): number[] {
   const out = new Set<number>();
 

@@ -1,12 +1,14 @@
 /**
- * DOCX → HTML pregled (samo čitanje).
+ * DOCX → an HTML view (read-only).
  *
- * Cilj nije savršena reprodukcija Wordovog prijeloma — to je posao faze 2 i
- * pravog fidelity harnessa. Cilj je da čovjek otvori `.docx` i **pročita ga**:
- * naslovi, odlomci, podebljano, liste, tablice i slike na svom mjestu.
+ * The aim is not a perfect reproduction of Word's layout — that is the job of
+ * phase 2 and a real fidelity harness. The aim is for a person to open a `.docx`
+ * and **read it**: headings, paragraphs, bold, lists, tables and images in their
+ * places.
  *
- * Sve što se ne prenosi skuplja se u `notes` i prikazuje iznad dokumenta.
- * Pregled koji šuti o tome što je izgubio je gori od pregleda koji to kaže.
+ * Everything not carried across is collected into `notes` and displayed above
+ * the document. A view that stays silent about what it lost is worse than one
+ * that says so.
  */
 
 import {
@@ -42,10 +44,10 @@ export interface Preview {
   notes: string[];
   release(): void;
 
-  /** Sve što treba da se izmjena upiše natrag u datoteku. */
+  /** Everything needed to write an edit back into the file. */
   source: {
     archive: Archive;
-    /** Sirovi `word/document.xml`; izmjene se rade nad njim, ne nad DOM-om. */
+    /** The raw `word/document.xml`; edits are made against it, not against the DOM. */
     xml: string;
     runs: RunSpan[];
   };
@@ -55,7 +57,7 @@ const HEADING = /^heading\s*([1-6])$/i;
 
 /* ── numeriranje ─────────────────────────────────────────────────────── */
 
-/** `numId` → je li razina označena kuglicom ili brojem. */
+/** `numId` → whether the level is marked with a bullet or a number. */
 function readNumbering(archive: Archive): Map<string, boolean> {
   const doc = readXml(archive, 'word/numbering.xml');
   const ordered = new Map<string, boolean>();
@@ -87,7 +89,7 @@ interface Context {
   notes: Set<string>;
   /** Redni broj svakog `w:r`, isti kojim ih broji `findRuns`. */
   runIndex: Map<Element, number>;
-  /** Runovi koji se daju prepisati; ostali se prikazuju, ali ne nude. */
+  /** The runs that can be rewritten; the rest are displayed but not offered. */
   editable: Set<number>;
 }
 
@@ -164,11 +166,11 @@ function buildRun(run: Element, ctx: Context): Node[] {
 }
 
 /**
- * Označava run u pregledu tako da se zna kojem komadu XML-a pripada.
+ * Marks a run in the view so we know which piece of XML it belongs to.
  *
- * Omotač dobivaju **samo runovi koje se stvarno da prepisati**. Ponuditi
- * izmjenu ondje gdje se ne može provesti znači obećati nešto što se ne
- * ispuni tek pri spremanju.
+ * A wrapper is given **only to runs that can genuinely be rewritten**. Offering
+ * an edit where it cannot be carried out means making a promise that goes unkept
+ * until the moment of saving.
  */
 function tagRun(run: Element, ctx: Context, nodes: Node[]): Node[] {
   const index = ctx.runIndex.get(run);
@@ -209,7 +211,7 @@ function buildImage(node: Element, ctx: Context): HTMLElement | null {
   return img;
 }
 
-/** Sadržaj jednog `w:p` — runovi, veze i praćene promjene. */
+/** The content of one `w:p` — runs, links and tracked changes. */
 function paragraphContent(paragraph: Element, ctx: Context): Node[] {
   const out: Node[] = [];
 
@@ -232,7 +234,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
         break;
       }
       case 'ins':
-        // Prihvaćena praćena promjena — tekst pripada dokumentu.
+        // An accepted tracked change — the text belongs to the document.
         for (const run of children(node, 'r')) out.push(...tagRun(run, ctx, buildRun(run, ctx)));
         break;
       case 'del':
@@ -240,7 +242,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
         break;
       case 'fldSimple':
       case 'sdt':
-        // Polja (broj stranice, sadržaj) nemaju smisla izvan Wordovog prijeloma.
+        // Fields (page number, table of contents) make no sense outside Word's layout.
         for (const run of tags(node, 'r')) out.push(...tagRun(run, ctx, buildRun(run, ctx)));
         break;
       default:
@@ -255,7 +257,7 @@ function paragraphContent(paragraph: Element, ctx: Context): Node[] {
 
 function buildTable(node: Element, ctx: Context): HTMLElement {
   const table = document.createElement('table');
-  /** Ćelija koja "drži" spajanje po stupcima — na nju ide rowspan. */
+  /** The cell that "holds" a vertical merge — the rowspan goes on it. */
   const open = new Map<number, HTMLTableCellElement>();
 
   for (const rowNode of children(node, 'tr')) {
@@ -314,10 +316,10 @@ export function renderDocx(bytes: Uint8Array): Preview {
   }
 
   /*
-   * Runovi se broje nad sirovim XML-om, a u pregled se preslikavaju preko
-   * poretka elemenata. Oba obilaska idu redoslijedom dokumenta, pa se
-   * `n`-ti `w:r` u jednom poklapa s `n`-tim u drugom — bez toga bi izmjena
-   * mogla završiti u krivom komadu teksta.
+   * Runs are counted over the raw XML and mapped into the view by element order.
+   * Both traversals follow document order, so the `n`-th `w:r` in one matches
+   * the `n`-th in the other — without that, an edit could land in the wrong
+   * piece of text.
    */
   const xml = readText(archive, 'word/document.xml') ?? '';
   const runs = findRuns(xml);
@@ -334,8 +336,8 @@ export function renderDocx(bytes: Uint8Array): Preview {
     urls: [],
     notes: new Set(),
     runIndex,
-    /* Broj se mora poklopiti; ako se ne poklapa, ne nudi se ništa umjesto da
-       se pogodi krivi run. */
+    /* The counts must match; if they do not, nothing is offered rather than
+       guessing at the wrong run. */
     editable:
       seen === runs.length
         ? new Set(runs.filter((run) => !run.refusal).map((run) => run.index))
@@ -369,7 +371,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
     const numbering = props ? child(props, 'numPr') : null;
     const content = paragraphContent(node, ctx);
 
-    /* Liste: uzastopni odlomci s istim `numId` čine jedan popis. */
+    /* Lists: consecutive paragraphs with the same `numId` form one list. */
     if (numbering) {
       const numId = attr(child(numbering, 'numId'), 'val') ?? '0';
       const level = attrNum(child(numbering, 'ilvl'), 'val') ?? 0;
@@ -391,7 +393,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
     closeList();
 
     if (content.length === 0) {
-      // Prazan odlomak u Wordu je namjeran razmak, ne smeće.
+      // An empty paragraph in Word is deliberate spacing, not junk.
       const spacer = document.createElement('p');
       spacer.className = 'ul-office-blank';
       body.appendChild(spacer);

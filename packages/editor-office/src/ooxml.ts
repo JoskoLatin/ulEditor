@@ -1,12 +1,13 @@
 /**
- * Zajedničko za OOXML kontejnere (DOCX, XLSX).
+ * What OOXML containers (DOCX, XLSX) have in common.
  *
- * Oba su ZIP s XML-om i oba dijele isti sustav veza (`_rels`), pa parsiranje
- * kontejnera stoji ovdje, a mapiranje sadržaja u `docx.ts` odnosno `xlsx.ts`.
+ * Both are ZIP with XML inside and both share the same relationship system
+ * (`_rels`), so parsing the container lives here while mapping the content lives
+ * in `docx.ts` and `xlsx.ts` respectively.
  *
- * Namjerna granica: ovaj sloj **samo čita**. Faza 2 donosi pisanje natrag
- * (ProseMirror + Univer), i tek tada postaje važno pravilo o vjernosti —
- * dok se ne sprema, ništa se ne može tiho pokvariti.
+ * A deliberate boundary: this layer **only reads**. Phase 2 brings writing back
+ * (ProseMirror + Univer), and only then does the fidelity rule start to matter —
+ * while nothing is saved, nothing can be quietly corrupted.
  */
 
 import { unzipSync, strFromU8 } from 'fflate';
@@ -18,14 +19,14 @@ export function openArchive(bytes: Uint8Array): Archive {
   try {
     return unzipSync(bytes);
   } catch {
-    // Poruka iz fflate ("invalid zip data") korisniku ne znači ništa.
+    // The message from fflate ("invalid zip data") means nothing to a user.
     throw new Error(
       t('This is not a valid Office archive — it is probably damaged or incompletely downloaded.'),
     );
   }
 }
 
-/** Sirovi tekst dijela arhive — izmjene se rade nad njim, ne nad DOM-om. */
+/** The raw text of an archive part — edits are made against it, not against the DOM. */
 export function readText(archive: Archive, path: string): string | null {
   const data = archive[path];
   return data ? strFromU8(data) : null;
@@ -39,8 +40,8 @@ export function readXml(archive: Archive, path: string): Document | null {
 }
 
 /**
- * Dohvat po lokalnom imenu. OOXML je pun prefiksa (`w:`, `a:`, `r:`) koje
- * `querySelector` u XML dokumentu ne razrješava pouzdano.
+ * Lookup by local name. OOXML is full of prefixes (`w:`, `a:`, `r:`) that
+ * `querySelector` does not resolve reliably in an XML document.
  */
 export function tags(root: ParentNode, local: string): Element[] {
   return [...root.querySelectorAll('*')].filter((el) => el.localName === local);
@@ -50,7 +51,7 @@ export function tag(root: ParentNode, local: string): Element | null {
   return tags(root, local)[0] ?? null;
 }
 
-/** Samo izravna djeca — bitno kod ugniježđenih tablica i odlomaka. */
+/** Direct children only — it matters with nested tables and paragraphs. */
 export function children(root: Element, local: string): Element[] {
   return [...root.children].filter((el) => el.localName === local);
 }
@@ -136,9 +137,9 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 /**
- * Blob URL za ugrađenu sliku. EMF/WMF su Windows vektorski formati koje
- * preglednik ne zna prikazati — vraćamo `null` da pozivatelj to prijavi
- * umjesto da ostane slomljena ikona.
+ * A blob URL for an embedded image. EMF/WMF are Windows vector formats a browser
+ * cannot display — we return `null` so the caller reports it instead of leaving
+ * a broken icon.
  */
 export function imageUrl(archive: Archive, path: string): string | null {
   const data = archive[path];
@@ -154,7 +155,7 @@ export function imageUrl(archive: Archive, path: string): string | null {
   return URL.createObjectURL(new Blob([copy], { type: mime }));
 }
 
-/** EMU (English Metric Unit) je jedinica OOXML-a: 914 400 po inču. */
+/** EMU (English Metric Unit) is the OOXML unit: 914,400 per inch. */
 export function emuToPx(emu: number): number {
   return Math.round(emu / 9525);
 }

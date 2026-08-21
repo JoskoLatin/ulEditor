@@ -1,14 +1,14 @@
 /**
- * Pregled Office dokumenata — Word i Excel, samo čitanje.
+ * Viewing Office documents — Word and Excel, read-only.
  *
- * Ovo je stavka zbog koje teza "sve na jednom mjestu" vrijedi već u v0.1: bez
- * nje ulEditor otvara kod, tekst i PDF, ali `.docx` iz privitka pošte i dalje
- * traži drugi program.
+ * This is the item that makes the "everything in one place" thesis hold as early
+ * as v0.1: without it ulEditor opens code, text and PDF, but a `.docx` from an
+ * email attachment still needs another program.
  *
- * Uređivanje stiže u fazi 2 (ProseMirror za Word, Univer za Excel) i tek tada
- * postaje važno pravilo o vjernosti. Dok se ne sprema, ništa se ne može tiho
- * pokvariti — zato ovi editori nemaju sposobnost `edit`, a ne "imaju je, ali
- * javljaju grešku".
+ * Editing arrives in phase 2 (ProseMirror for Word, Univer for Excel) and only
+ * then does the fidelity rule start to matter. While nothing is saved, nothing
+ * can be quietly corrupted — which is why these editors do not have the `edit`
+ * capability, rather than "having it but reporting an error".
  */
 
 import {
@@ -39,14 +39,15 @@ export { columnName, readXlsx, renderSheet } from './xlsx.js';
 export type { Preview } from './docx.js';
 export type { Sheet, Workbook } from './xlsx.js';
 
-/* ── zajedničko ──────────────────────────────────────────────────────── */
+/* ── shared ──────────────────────────────────────────────────────────── */
 
 /**
- * Traka koja kaže što se s dokumentom smije i što pregled ne pokazuje.
+ * The bar that states what may be done with the document and what the view does
+ * not show.
  *
- * Opseg mora stajati napisan prije nego korisnik pritisne `Ctrl+S`, a ne
- * poslije: u Wordu se tekst da prepisati, ali raspored, stilovi i sve ostalo
- * ostaju kakvi jesu.
+ * The scope has to be written down before the user presses `Ctrl+S`, not after:
+ * in Word the text can be rewritten, but the layout, the styles and everything
+ * else stay as they are.
  */
 function buildNotes(notes: string[], headline: string): HTMLElement {
   const bar = document.createElement('div');
@@ -216,11 +217,12 @@ class DocxPreviewEditor implements EditorInstance {
    * Dvostruki klik otvara **jedan run** — komad teksta s jednim
    * formatiranjem.
    *
-   * Zašto run, a ne odlomak: odlomak ih zna imati desetak, pa bi prepisivanje
-   * cijelog odlomka tražilo da program pogodi koje formatiranje ide na koje
-   * novo slovo. Run se prepisuje bez ijedne takve odluke.
+   * Why a run and not a paragraph: a paragraph often holds a dozen of them, so
+   * rewriting a whole paragraph would require the program to guess which
+   * formatting applies to which new letter. A run is rewritten without a single
+   * such decision.
    *
-   * Jednostruki klik ostaje slobodan za označavanje teksta pri čitanju.
+   * A single click stays free for selecting text while reading.
    */
   #onDoubleClick = (event: MouseEvent): void => {
     const target = (event.target as HTMLElement | null)?.closest('.ul-office-run');
@@ -251,7 +253,7 @@ class DocxPreviewEditor implements EditorInstance {
         target.blur();
         return;
       }
-      // Novi redak u Wordu je vlastiti element, ne znak u tekstu.
+      // A new line in Word is an element of its own, not a character in the text.
       if (key.key === 'Enter') {
         key.preventDefault();
         target.blur();
@@ -271,7 +273,7 @@ class DocxPreviewEditor implements EditorInstance {
 
   #restore(edits: Map<number, string>): void {
     this.#edits = edits;
-    // Pregled se vraća na ono što u izmjenama piše, uključujući izvorni tekst.
+    // The view returns to whatever the edit list says, including the original text.
     for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run')) {
       const index = Number(el.dataset.run);
       const run = this.preview.source.runs[index];
@@ -307,12 +309,12 @@ class DocxPreviewEditor implements EditorInstance {
     await this.host.fs.writeBytes(uri, writeDocx(archive, runs, xml, edits));
 
     /*
-     * Spremljeno postaje nova polazna točka. Bez toga bi sljedeće spremanje
-     * krenulo od izvornog XML-a s praznim popisom izmjena — i tiho vratilo
-     * dokument na staro.
+     * What was saved becomes the new starting point. Without this the next save
+     * would begin from the original XML with an empty edit list — and quietly
+     * revert the document.
      *
-     * Redni brojevi runova preživljavaju jer se mijenja samo sadržaj `w:t`,
-     * ne i njihov redoslijed; rasponi se preračunavaju.
+     * Run ordinals survive because only the content of `w:t` changes, not their
+     * order; the ranges are recomputed.
      */
     this.preview.source.xml = nextXml;
     this.preview.source.runs = findRuns(nextXml);
@@ -322,10 +324,10 @@ class DocxPreviewEditor implements EditorInstance {
     this.#emitDirty();
 
     /*
-     * Bez upozorenja o vjernosti, i to s razlogom: zapis mijenja točno one
-     * raspone koje je korisnik prepisao, a svaki drugi dio arhive prolazi
-     * nedirnut. Upozorenje na svako spremanje otupi ono jedno koje stvarno
-     * nešto znači.
+     * No fidelity warning, and for a reason: the write changes exactly the
+     * ranges the user rewrote, and every other part of the archive passes
+     * through untouched. A warning on every save blunts the one that actually
+     * means something.
      */
     return { uri, lostFidelity: [] };
   }
@@ -402,7 +404,7 @@ class DocxPreviewEditor implements EditorInstance {
         this.#reading = false;
         if (!this.#root) return;
         this.#root.dataset.reading = 'false';
-        // Izvan čitanja dokument se vraća u svitak s bojama aplikacije.
+        // Outside reading mode the document returns to a scroll in the application colours.
         this.#flow?.apply({ ...(this.#flow.options ?? options), flow: 'scroll' }, this.#root);
         this.#statusEmitter.fire(t('{n} words · read-only', { n: this.#words }));
       },
@@ -410,7 +412,7 @@ class DocxPreviewEditor implements EditorInstance {
   }
 }
 
-/** Najbliži naslov iznad pogotka — smisleniji trag od broja retka. */
+/** The nearest heading above the hit — a more meaningful trail than a line number. */
 function nearestHeading(node: Text): string | null {
   let current: Element | null = node.parentElement;
   while (current) {
@@ -430,7 +432,7 @@ class XlsxPreviewEditor implements EditorInstance {
   #root: HTMLElement | null = null;
   #grid: HTMLElement | null = null;
   #active = 0;
-  /** Mreže se grade lijeno — radna knjiga zna imati desetke listova. */
+  /** Grids are built lazily — a workbook can hold dozens of sheets. */
   #rendered = new Map<number, HTMLElement>();
 
   #dirtyEmitter = new Emitter<boolean>();
@@ -530,8 +532,8 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   /**
-   * Pretraga ide po podacima, ne po prikazanoj mreži — inače bi našla samo
-   * list koji je trenutno otvoren, a to nije ono što itko očekuje.
+   * Search runs over the data, not over the rendered grid — otherwise it would
+   * find only the sheet currently open, which is not what anyone expects.
    */
   async find(query: FindQuery): Promise<FindResult[]> {
     if (!query.query) return [];
@@ -578,8 +580,8 @@ class XlsxPreviewEditor implements EditorInstance {
     const text = window.getSelection()?.toString() ?? '';
     if (!text.trim()) return null;
 
-    // Tablica u međuspremniku nosi i strukturu — Markdown editor je zna
-    // umetnuti kao tablicu umjesto kao tab-razdvojenu kašu.
+    // A table on the clipboard carries structure too — the Markdown editor knows
+    // to insert it as a table instead of tab-separated mush.
     const rows = text.split(/\r?\n/).map((line) => line.split('\t'));
     return {
       ...plainPayload(text, { editorId: 'org.uleditor.xlsx', uri: this.doc.uri }),
@@ -605,8 +607,9 @@ export const docxPreviewProvider: EditorProvider = {
     extensions: ['docx'],
     mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
   },
-  /* `edit` znači točno ono što editor doista može: prepisati postojeći tekst.
-     Raspored, stilovi i sve ostalo se ne dira, i to piše iznad dokumenta. */
+  /* `edit` means exactly what the editor can genuinely do: rewrite existing
+     text. The layout, the styles and everything else are left alone, and that is
+     stated above the document. */
   capabilities: ['view', 'search', 'read', 'edit'],
   priority: 30,
 

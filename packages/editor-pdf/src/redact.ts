@@ -1,18 +1,19 @@
 /**
- * Brisanje teksta iz dokumenta — stvarno, a ne prekrivanjem.
+ * Deleting text from a document — genuinely, not by covering it up.
  *
- * Crni pravokutnik preko teksta nije brisanje: tekst ostaje u toku sadržaja i
- * vadi se označavanjem, kopiranjem ili bilo kojim alatom koji čita PDF. To je
- * greška koja je više puta objavila tuđe tajne i razlog zbog kojeg ovaj kod
- * postoji.
+ * A black rectangle over text is not deletion: the text stays in the content
+ * stream and comes back out through selection, copying, or any tool that reads
+ * PDF. That is the mistake that has repeatedly published other people's secrets,
+ * and the reason this code exists.
  *
- * Ovdje se glifovi **izbacuju iz naredbi koje ih crtaju**, a razmak koji su
- * zauzimali nadomješta se pomakom u `TJ` polju — tako ostatak retka ostaje
- * točno gdje je bio.
+ * Here the glyphs are **removed from the operators that draw them**, and the
+ * space they occupied is made up with an offset in the `TJ` array — so the rest
+ * of the line stays exactly where it was.
  *
- * Kad se ne može jamčiti da je sve maknuto, ništa se ne mijenja i razlog se
- * prijavljuje. Redakcija koja tiho promaši dio teksta gora je od one koje
- * nema: korisnik misli da je posao obavljen i pošalje dokument dalje.
+ * When it cannot be guaranteed that everything was removed, nothing is changed
+ * and the reason is reported. A redaction that quietly misses part of the text
+ * is worse than none at all: the user believes the job is done and sends the
+ * document on.
  */
 
 import { PDFArray, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
@@ -25,24 +26,25 @@ import type { StandardWidths } from './text.js';
 
 export interface Redaction {
   id: string;
-  /** Stranica u IZVORNOM dokumentu, 1-bazirano. */
+  /** The page in the SOURCE document, 1-based. */
   page: number;
-  /** Područje u korisničkom prostoru stranice. */
+  /** The area in the page's user space. */
   rect: Rect;
   /**
-   * Već je provedeno u spremljenoj datoteci.
+   * Already carried out in the saved file.
    *
-   * Oznaka ostaje u popisu jer se svako spremanje gradi iz **netaknutog**
-   * izvornika: brisanje se time ponavlja s istim ishodom, a micanje oznake
-   * vraća tekst. Zato je i poslije spremanja poništavanje stvarno moguće.
+   * The mark stays in the list because every save is built from the **untouched**
+   * source: the redaction is therefore repeated with the same outcome, and
+   * removing the mark brings the text back. That is what makes undo genuinely
+   * possible even after a save.
    */
   applied?: boolean;
   /**
-   * Na to mjesto dolazi nov tekst.
+   * New text is coming to this spot.
    *
-   * Prikaz je zbog toga neproziran: da se stari i novi redak ne vide jedan
-   * preko drugoga dok se ne spremi. Kod običnog brisanja se namjerno **ne**
-   * prekriva ništa — ondje je važno vidjeti što odlazi.
+   * The on-screen mark is therefore opaque, so the old and new lines are not seen
+   * through one another before saving. For a plain deletion nothing is covered
+   * **on purpose** — there it matters to see what is going away.
    */
   replaced?: boolean;
 }
@@ -51,11 +53,11 @@ export interface RedactionResult {
   bytes: Uint8Array;
   /** Koliko je glifova stvarno maknuto. */
   removed: number;
-  /** Stranice koje se nisu dale očistiti, s razlogom. */
+  /** The pages that could not be cleaned, with the reason. */
   refused: { page: number; reason: string }[];
 }
 
-/** Presijecaju li se pravokutnici po površini, a ne samo rubom. */
+/** Whether the rectangles overlap by area rather than merely at an edge. */
 function overlaps(a: Rect, b: Rect): boolean {
   return (
     a.x < b.x + b.width &&
@@ -66,15 +68,15 @@ function overlaps(a: Rect, b: Rect): boolean {
 }
 
 /**
- * Ulazi li glif u područje — po svom središtu, ne po dodiru.
+ * Whether a glyph falls inside the area — by its centre, not by contact.
  *
- * Glifovi u retku dodiruju se rubovima, pa bi pravilo „bilo kakav dodir” od
- * pravokutnika povučenog rukom pojelo i susjedno slovo: promašaj od pola
- * točke pri povlačenju je normalan, a tiho izgubljeno slovo nije.
+ * Glyphs in a line touch at their edges, so an "any contact" rule would let a
+ * hand-drawn rectangle swallow the neighbouring letter too: being half a point
+ * off while dragging is normal, a quietly lost letter is not.
  *
- * Sigurnost time ne trpi. Glif kojem je središte izvan pravokutnika većim je
- * dijelom izvan njega, pa ga korisnik i vidi da je ostao — ništa se ne krije
- * ispod ničega, jer se preko obrisanog ne crta pravokutnik.
+ * Safety does not suffer for it. A glyph whose centre lies outside the rectangle
+ * is mostly outside it, so the user can see it stayed — nothing is hidden under
+ * anything, because no rectangle is drawn over what was removed.
  */
 function covers(rect: Rect, box: Rect): boolean {
   const x = box.x + box.width / 2;
@@ -93,11 +95,11 @@ function round(value: number): number {
 }
 
 /**
- * Pomak koji nadomješta maknuti glif.
+ * The offset that makes up for a removed glyph.
  *
- * `TJ` broj pomiče tekst za `-(n/1000) · Tfs · Th`, pa je `n` negativan kad
- * treba pomaknuti unaprijed. Bez toga bi ostatak retka skliznuo ulijevo za
- * širinu maknutog teksta.
+ * A `TJ` number shifts text by `-(n/1000) · Tfs · Th`, so `n` is negative when it
+ * has to move forward. Without it the rest of the line would slide left by the
+ * width of the removed text.
  */
 function adjustmentFor(advance: number, operation: TextOperation): number {
   const scale = operation.fontSize * operation.horizontalScale;
@@ -106,12 +108,12 @@ function adjustmentFor(advance: number, operation: TextOperation): number {
 }
 
 /**
- * Prepisuje jednu naredbu bez maknutih glifova.
+ * Rewrites one operator without the removed glyphs.
  *
- * Izlaz je uvijek `TJ`, bez obzira što je bio ulaz: `TJ` je jedini oblik koji
- * uz nizove nosi i pomake, a pomak je ono što drži ostatak retka na mjestu.
- * Naredbe `'` i `"` u sebi nose i prelazak u novi redak, pa se on ispisuje
- * zasebno.
+ * The output is always `TJ`, whatever the input was: `TJ` is the only form that
+ * carries offsets alongside strings, and the offset is what holds the rest of the
+ * line in place. The `'` and `"` operators also carry a move to the next line, so
+ * that is emitted separately.
  */
 function rewrite(operation: TextOperation, doomed: Set<Glyph>): string {
   const pieces: string[] = [];
@@ -170,7 +172,7 @@ function rewrite(operation: TextOperation, doomed: Set<Glyph>): string {
   }
 }
 
-/** Zamjenjuje raspone bajtova, od kraja prema početku da se odmaci ne pomaknu. */
+/** Replaces byte ranges, from the end backwards so the offsets do not shift. */
 function splice(bytes: Uint8Array, edits: { start: number; end: number; text: string }[]): Uint8Array {
   const ordered = [...edits].sort((a, b) => b.start - a.start);
   const encoder = new TextEncoder();
@@ -188,7 +190,7 @@ function splice(bytes: Uint8Array, edits: { start: number; end: number; text: st
   return out;
 }
 
-/** Prepreke koje dodiruju područje koje se briše — ostale se ne tiču ovog posla. */
+/** Obstacles touching the area being redacted — the rest are none of this job's business. */
 function blockingObstacles(obstacles: Obstacle[], rects: Rect[]): Obstacle[] {
   return obstacles.filter(
     (obstacle) => !obstacle.box || rects.some((rect) => overlaps(rect, obstacle.box!)),
@@ -196,10 +198,10 @@ function blockingObstacles(obstacles: Obstacle[], rects: Rect[]): Obstacle[] {
 }
 
 /**
- * Što bi brisanje maknulo — bez mijenjanja dokumenta.
+ * What a redaction would remove — without changing the document.
  *
- * Postoji da bi se korisniku moglo pokazati što točno nestaje **prije** nego
- * pritisne potvrdu, jer se obrisani tekst ne vraća iz datoteke.
+ * It exists so the user can be shown exactly what disappears **before** they
+ * confirm, because deleted text does not come back out of the file.
  */
 export function previewRedaction(
   page: PDFPage,
@@ -222,10 +224,10 @@ export function previewRedaction(
 }
 
 /**
- * Miče tekst iz označenih područja i vraća nove bajtove dokumenta.
+ * Removes the text from the marked areas and returns new document bytes.
  *
- * Radi nad IZVORNIM stranicama, prije nego plan preslaže ili briše stranice —
- * područja su zabilježena nad onim što je korisnik vidio.
+ * It works over the SOURCE pages, before the plan reorders or deletes any — the
+ * areas were recorded against what the user saw.
  */
 export async function applyRedactions(
   source: Uint8Array,
@@ -258,7 +260,7 @@ export async function applyRedactions(
 
     const blocking = blockingObstacles(content.obstacles, rects);
     if (blocking.length > 0) {
-      // Ništa se ne dira: djelomično obrisana stranica izgleda obavljeno.
+      // Nothing is touched: a partially redacted page looks like a finished job.
       refused.push({ page: pageNumber, reason: blocking.map((o) => o.reason).join('; ') });
       continue;
     }
@@ -293,16 +295,17 @@ export async function applyRedactions(
 }
 
 /**
- * Zamjenjuje tok sadržaja stranice jednim novim.
+ * Replaces a page's content stream with a single new one.
  *
- * **Piše preko postojećeg objekta, ne pokraj njega.** Novi tok uz preusmjeren
- * `/Contents` ostavio bi stari kao siroče: na njega više ništa ne pokazuje,
- * nijedan čitač ga ne crta — a bajtovi s obrisanim tekstom i dalje su u
- * datoteci i vade se prvim alatom koji raspakira tokove. Provjera je upravo
- * to i uhvatila.
+ * **It writes over the existing object, not beside it.** A new stream with
+ * `/Contents` redirected would leave the old one orphaned: nothing points at it
+ * any more and no reader draws it — yet the bytes with the deleted text are still
+ * in the file and come out with the first tool that unpacks streams. The check
+ * caught exactly that.
  *
- * Polje tokova se pritom sažima u prvi — pročitano je kao jedno, pa se kao
- * jedno i vraća; ostali se prazne da ne ostane ništa staro.
+ * The array of streams is collapsed into the first one in the process — it was
+ * read as one, so it is written back as one; the rest are emptied so nothing old
+ * remains.
  */
 function replaceContents(doc: PDFDocument, page: PDFPage, bytes: Uint8Array): void {
   const raw = page.node.get(PDFName.of('Contents'));
@@ -329,7 +332,7 @@ function replaceContents(doc: PDFDocument, page: PDFPage, bytes: Uint8Array): vo
   page.node.set(PDFName.of('Contents'), first);
 }
 
-/** Poruka o stranicama koje se nisu dale očistiti. */
+/** The message about pages that could not be cleaned. */
 export function refusalWarning(refused: RedactionResult['refused']): string[] {
   return refused.map(({ page, reason }) =>
     t('Page {n} was left untouched — the text there cannot be removed safely ({reason}).', {

@@ -1,14 +1,14 @@
 /**
- * Model anotacija i njihov zapis u PDF.
+ * The annotation model and how it is written into a PDF.
  *
- * Anotacije se zapisuju kao PRAVI PDF anotacijski objekti (`/Highlight`,
- * `/Text`, `/Ink`), ne kao crtež utisnut u sadržaj stranice. Razlika je bitna:
- * utisnuti crtež je nepovratan i nijedan drugi čitač ga ne prepoznaje kao
- * bilješku, dok prave anotacije Acrobat i preglednici otvaraju, uređuju i
- * brišu kao svoje.
+ * Annotations are written as REAL PDF annotation objects (`/Highlight`, `/Text`,
+ * `/Ink`), not as a drawing stamped into the page content. The difference
+ * matters: a stamped drawing is irreversible and no other reader recognises it
+ * as a note, while real annotations are opened, edited and deleted by Acrobat and
+ * browsers as their own.
  *
- * Koordinate se čuvaju u PDF prostoru (ishodište dolje-lijevo, točke), ne u
- * pikselima ekrana — inače bi bilješka pobjegla čim se promijeni zoom.
+ * Coordinates are kept in PDF space (origin bottom-left, points), not in screen
+ * pixels — otherwise a note would run away the moment the zoom changed.
  */
 
 import { PDFDocument, PDFName, PDFArray, PDFDict, PDFNumber, PDFString, PDFHexString } from 'pdf-lib';
@@ -28,7 +28,7 @@ import {
 
 export type AnnotationKind = 'highlight' | 'note' | 'ink' | 'text';
 
-/** RGB, svaka komponenta 0–1, kako PDF očekuje. */
+/** RGB, each component 0–1, as PDF expects. */
 export type Rgb = [number, number, number];
 
 export interface Point {
@@ -46,18 +46,18 @@ export interface Rect {
 interface Base {
   id: string;
   kind: AnnotationKind;
-  /** 1-bazirano, kao što korisnik broji stranice. */
+  /** 1-based, the way a user counts pages. */
   page: number;
   color: Rgb;
   /** Unix ms. */
   createdAt: number;
-  /** Anotacija pročitana iz datoteke, ne stvorena u ovoj sesiji. */
+  /** An annotation read from the file rather than created in this session. */
   imported?: boolean;
 }
 
 export interface HighlightAnnotation extends Base {
   kind: 'highlight';
-  /** Jedan pravokutnik po retku teksta — istaknuti odlomak ih ima više. */
+  /** One rectangle per line of text — a highlighted paragraph has several. */
   quads: Rect[];
 }
 
@@ -74,17 +74,17 @@ export interface InkAnnotation extends Base {
 }
 
 /**
- * Tekst koji korisnik sam dopisuje u dokument.
+ * Text the user adds to the document themselves.
  *
- * `rect` se ne postavlja ručno nego se računa iz teksta i veličine slova
- * (`layoutTextBox`); sidro je gornji-lijevi kut. Time okvir na ekranu i okvir
- * u datoteci nastaju iz istog računa, pa ne mogu odlutati jedan od drugoga.
+ * `rect` is not set by hand but computed from the text and the font size
+ * (`layoutTextBox`); the anchor is the top-left corner. The box on screen and the
+ * box in the file therefore come out of the same maths and cannot drift apart.
  */
 export interface TextBoxAnnotation extends Base {
   kind: 'text';
   rect: Rect;
   text: string;
-  /** Veličina slova u točkama. */
+  /** The font size in points. */
   size: number;
   face: TextFace;
 }
@@ -101,13 +101,13 @@ export const PALETTE: { name: string; color: Rgb }[] = [
   { name: 'Green', color: [0.36, 0.69, 0.51] },
   { name: 'Red', color: [0.88, 0.44, 0.37] },
   { name: 'Purple', color: [0.65, 0.58, 0.85] },
-  // Za tekst, gdje je crna jedina razumna zadana boja. Kao istaknuće nema
-  // smisla, ali skrivanje boje ovisno o alatu bi zbunilo više nego što bi
-  // pomoglo.
+  // For text, where black is the only sensible default. It makes no sense as a
+  // highlight, but hiding a colour depending on the tool would confuse more than
+  // it would help.
   { name: 'Black', color: [0, 0, 0] },
 ];
 
-/** Veličina ikone bilješke u PDF točkama. */
+/** The size of a note icon in PDF points. */
 export const NOTE_SIZE = 20;
 
 let counter = 0;
@@ -149,9 +149,9 @@ function unionOf(rects: Rect[]): Rect {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/* ── čitanje iz postojećeg PDF-a ─────────────────────────────────────── */
+/* ── reading from an existing PDF ────────────────────────────────────── */
 
-/** Podskup pdf.js anotacije koji nas zanima. */
+/** The subset of a pdf.js annotation we care about. */
 interface RawAnnotation {
   id?: string;
   subtype?: string;
@@ -162,12 +162,12 @@ interface RawAnnotation {
   contents?: string;
   contentsObj?: { str?: string };
   borderStyle?: { width?: number };
-  /** pdf.js razlaže `/DA` ovdje; starije verzije daju samo sirovi niz. */
+  /** pdf.js parses `/DA` here; older versions give only the raw string. */
   defaultAppearanceData?: { fontSize?: number; fontColor?: Uint8ClampedArray | number[] };
   defaultAppearance?: string;
 }
 
-/** Veličina slova iz `/DA` — `… /Helv 11 Tf …`. */
+/** The font size out of `/DA` — `… /Helv 11 Tf …`. */
 function fontSizeFrom(item: RawAnnotation): number {
   const parsed = item.defaultAppearanceData?.fontSize;
   if (typeof parsed === 'number' && parsed > 0) return parsed;
@@ -195,11 +195,11 @@ function rectFrom(raw: number[] | undefined): Rect | null {
 }
 
 /**
- * Pretvara anotacije koje je pročitao pdf.js u naš model.
+ * Converts the annotations pdf.js read into our model.
  *
- * Podržani su tipovi koje i sami pišemo; ostali (linkovi, obrasci, potpisi)
- * se namjerno preskaču — ostaju netaknuti u datoteci jer se pri spremanju
- * dodaju samo nove anotacije, a postojeće se ne diraju.
+ * The supported types are the ones we write ourselves; the rest (links, forms,
+ * signatures) are deliberately skipped — they stay untouched in the file, because
+ * saving adds only new annotations and leaves existing ones alone.
  */
 export function importAnnotations(raw: unknown[], page: number): Annotation[] {
   const out: Annotation[] = [];
@@ -254,9 +254,10 @@ export function importAnnotations(raw: unknown[], page: number): Annotation[] {
         rect,
         text: item.contentsObj?.str ?? item.contents ?? '',
         size: fontSizeFrom(item),
-        /* Iz datoteke se rez ne da pouzdano pročitati — `/DA` nosi ime resursa,
-           ne obitelj. Pretpostavlja se osnovni; važno je samo ako korisnik
-           takav okvir počne uređivati, a tada se ionako zapisuje nanovo. */
+        /* The face cannot be read reliably out of the file — `/DA` carries a
+           resource name, not a family. The regular one is assumed; it only
+           matters if the user starts editing such a box, and then it is written
+           afresh anyway. */
         face: 'sans',
       });
       continue;
@@ -281,11 +282,11 @@ export function importAnnotations(raw: unknown[], page: number): Annotation[] {
   return out;
 }
 
-/** pdf.js je kroz verzije mijenjao oblik quadPoints — podržavamo oba. */
+/** pdf.js changed the shape of quadPoints across versions — we support both. */
 function normalizeQuadPoints(raw: RawAnnotation['quadPoints']): Rect[] {
   if (!raw || raw.length === 0) return [];
 
-  // Stariji oblik: polje od 8 brojeva po quadu.
+  // The older shape: an array of 8 numbers per quad.
   if (typeof raw[0] === 'number') {
     const flat = raw as number[];
     const rects: Rect[] = [];
@@ -299,7 +300,7 @@ function normalizeQuadPoints(raw: RawAnnotation['quadPoints']): Rect[] {
     return rects;
   }
 
-  // Noviji oblik: polje točaka po quadu.
+  // The newer shape: an array of points per quad.
   const groups = raw as unknown as { x: number; y: number }[][];
   return groups
     .filter((g) => Array.isArray(g) && g.length >= 4)
@@ -360,10 +361,11 @@ function pdfDate(ms: number): string {
 }
 
 /**
- * Zajedničko za sve anotacije.
+ * What every annotation has in common.
  *
- * `withColor` postoji zbog `/FreeText`, gdje `/C` znači **boju pozadine**, a ne
- * boju sadržaja. Postavljanje boje teksta ondje bi okvir obojilo iza teksta.
+ * `withColor` exists because of `/FreeText`, where `/C` means **the background
+ * colour**, not the colour of the content. Setting the text colour there would
+ * paint the box behind the text.
  */
 function baseDict(
   context: PDFContext,
@@ -374,7 +376,7 @@ function baseDict(
   const dict: Record<string, unknown> = {
     Type: PDFName.of('Annot'),
     Rect: pdfRect(context, rect),
-    /** `/P` se popunjava nakon što znamo referencu stranice. */
+    /** `/P` is filled in once we know the page reference. */
     F: PDFNumber.of(4), // Print
     NM: PDFString.of(annotation.id),
     M: PDFString.of(pdfDate(annotation.createdAt)),
@@ -387,7 +389,7 @@ function baseDict(
 function highlightDict(context: PDFContext, annotation: HighlightAnnotation): PDFDict {
   const quadPoints = context.obj([]) as PDFArray;
   for (const quad of annotation.quads) {
-    // Redoslijed po specifikaciji: gore-lijevo, gore-desno, dolje-lijevo, dolje-desno.
+    // The order per the specification: top-left, top-right, bottom-left, bottom-right.
     const top = quad.y + quad.height;
     for (const value of [
       quad.x, top,
@@ -413,7 +415,7 @@ function noteDict(context: PDFContext, annotation: NoteAnnotation): PDFDict {
     ...baseDict(context, annotation, annotation.rect),
     Subtype: PDFName.of('Text'),
     Name: PDFName.of('Comment'),
-    // Hex kodiranje: bilješke sadrže dijakritiku, a PDFString je Latin-1.
+    // Hex encoding: notes contain diacritics, and PDFString is Latin-1.
     Contents: PDFHexString.fromText(annotation.text),
     Open: false,
   }) as PDFDict;
@@ -439,7 +441,7 @@ function inkDict(context: PDFContext, annotation: InkAnnotation): PDFDict {
   }) as PDFDict;
 }
 
-/** Jedan ugrađen rez: pdf-lib ga zapisuje, fontkit mjeri. */
+/** One embedded face: pdf-lib writes it, fontkit measures it. */
 interface EmbeddedFace {
   font: PDFFont;
   metrics: FaceMetrics;
@@ -449,15 +451,16 @@ interface EmbeddedFace {
 const FONT_RESOURCE = 'F1';
 
 /**
- * Tekstualni okvir kao `/FreeText` s vlastitim tokom izgleda.
+ * A text box as a `/FreeText` with its own appearance stream.
  *
- * Dva izbora vrijedi obrazložiti:
+ * Two choices are worth explaining:
  *
- * - **Anotacija, ne utisnut sadržaj.** Tekst utisnut u tok stranice je
- *   nepovratan; ovako ostaje predmet koji i ulEditor i Acrobat mogu poslije
- *   pomaknuti, prepraviti ili obrisati.
- * - **Vlastiti `/AP`.** Bez njega `/FreeText` u pdf.js-u i preglednicima
- *   ostaje nevidljiv, jer izgled iz `/DA` ne sastavljaju sami.
+ * - **An annotation, not stamped content.** Text stamped into the page stream is
+ *   irreversible; this way it stays an object that both ulEditor and Acrobat can
+ *   later move, rewrite or delete.
+ * - **Its own `/AP`.** Without one, a `/FreeText` stays invisible in pdf.js and
+ *   in browsers, because they do not assemble the appearance from `/DA`
+ *   themselves.
  */
 function textDict(
   context: PDFContext,
@@ -492,16 +495,17 @@ function textDict(
   return context.obj({
     ...baseDict(context, annotation, rect, false),
     Subtype: PDFName.of('FreeText'),
-    // Hex kodiranje: sadržaj nosi dijakritiku, a PDFString je Latin-1.
+    // Hex encoding: the content carries diacritics, and PDFString is Latin-1.
     Contents: PDFHexString.fromText(annotation.text),
-    /* Čitač koji sam presloži izgled treba znati čime — ime resursa pritom
-       vrijedi tek uz `/DR` u obrascu dokumenta, pa je ovo pomoć, ne oslonac. */
+    /* A reader that rebuilds the appearance itself needs to know with what — the
+       resource name only means something alongside a `/DR` in the document's
+       form, so this is a help, not something to rely on. */
     DA: PDFString.of(
       `/${FONT_RESOURCE} ${round(size)} Tf ${round(r)} ${round(g)} ${round(b)} rg`,
     ),
     Q: PDFNumber.of(0), // lijevo poravnanje
     IT: PDFName.of('FreeTextTypeWriter'),
-    // Bez okvira: dodani tekst je tekst, ne kućica.
+    // No border: added text is text, not a box.
     BS: context.obj({ W: PDFNumber.of(0) }),
     AP: context.obj({ N: context.register(appearance) }),
   }) as PDFDict;
@@ -521,7 +525,7 @@ function dictFor(
       return inkDict(context, annotation);
     case 'text': {
       const embedded = faces.get(annotation.face);
-      // Bez fonta se tekst ne da zapisati; preskakanje je bolje od praznog okvira.
+      // Without a font the text cannot be written; skipping beats an empty box.
       return embedded ? textDict(context, annotation, embedded) : null;
     }
   }
@@ -540,15 +544,15 @@ export interface WriteResult {
   bytes: Uint8Array;
   /** Koliko je anotacija stvarno zapisano. */
   written: number;
-  /** Znakovi koje ugrađeni font nema — spremljeni su kao prazno mjesto. */
+  /** Characters the embedded font lacks — they were saved as blanks. */
   missingGlyphs: string[];
 }
 
 /**
- * Ugrađuje rezove koje traže tekstualni okviri.
+ * Embeds the faces the text boxes require.
  *
- * Podskup, ne cijeli font: u izlaz idu samo glifovi koji su stvarno
- * upotrijebljeni, pa potpis na obrascu doda nekoliko kilobajta umjesto 140.
+ * A subset, not the whole font: only the glyphs actually used go into the
+ * output, so a signature on a form adds a few kilobytes instead of 140.
  */
 async function embedFaces(
   doc: PDFDocument,
@@ -576,23 +580,23 @@ async function embedFaces(
 }
 
 /**
- * Upisuje anotacije u PDF i vraća nove bajtove.
+ * Writes the annotations into the PDF and returns new bytes.
  *
- * Postojeće anotacije u datoteci se ne diraju — one koje smo pročitali pri
- * otvaranju već su u dokumentu, pa bi ponovno pisanje stvorilo duplikate.
- * Zato se zapisuju samo one nastale u ovoj sesiji.
+ * Existing annotations in the file are left alone — the ones we read on opening
+ * are already in the document, so writing them again would create duplicates.
+ * Only those created in this session are written.
  */
 export async function writeAnnotations(
   source: Uint8Array,
   annotations: Annotation[],
   /**
-   * Izvorna stranica (1-bazirano) → mjesto u izlazu (0-bazirano). Potreban
-   * je kad su stranice preslagane ili obrisane; bez njega se pretpostavlja
-   * da je redoslijed netaknut. Stranica koje nema u mapi znači da je
-   * obrisana — njezine anotacije se preskaču.
+   * Source page (1-based) → position in the output (0-based). It is needed when
+   * pages were reordered or deleted; without it the order is assumed untouched.
+   * A page missing from the map means it was deleted — its annotations are
+   * skipped.
    */
   pageMap?: Map<number, number>,
-  /** Bajtovi fonta za tekstualne okvire; bez okvira se ne poziva. */
+  /** The font bytes for text boxes; not called when there are none. */
   loadFont?: FontLoader,
 ): Promise<WriteResult> {
   const doc = await PDFDocument.load(source, { ignoreEncryption: true });
@@ -618,9 +622,10 @@ export async function writeAnnotations(
 
     if (annotation.kind === 'text') {
       /*
-       * Znak koji font nema pdf-lib tiho zamijeni praznim mjestom. Tiho je
-       * ovdje najgore što se može dogoditi — korisnik bi dobio spremljen
-       * dokument s rupom umjesto slova i saznao za to od nekog drugog.
+       * A character the font lacks is quietly replaced with a blank by pdf-lib.
+       * Quiet is the worst thing that can happen here — the user would get a
+       * saved document with a hole instead of a letter and hear about it from
+       * somebody else.
        */
       for (const ch of faces.get(annotation.face)?.metrics.missing(annotation.text) ?? []) {
         if (!missingGlyphs.includes(ch)) missingGlyphs.push(ch);
@@ -639,7 +644,7 @@ export async function writeAnnotations(
   return { bytes: await doc.save({ useObjectStreams: false }), written, missingGlyphs };
 }
 
-/** Koje značajke izvornog dokumenta spremanje ne može reproducirati. */
+/** Which features of the source document a save cannot reproduce. */
 export function fidelityGaps(annotations: Annotation[]): string[] {
   const gaps: string[] = [];
   if (annotations.some((a) => a.kind === 'note' && a.text.length > 0)) {
@@ -649,10 +654,10 @@ export function fidelityGaps(annotations: Annotation[]): string[] {
 }
 
 /**
- * Poruka o znakovima koje ugrađeni font ne poznaje.
+ * The message about characters the embedded font does not know.
  *
- * Ide istim putem kojim ide i gubitak oznaka pri preslagivanju stranica: ne
- * kao tiha zamjena, nego kao izričito upozorenje uz spremanje.
+ * It travels the same route as the loss of outlines when pages are reordered: not
+ * as a quiet substitution, but as an explicit warning alongside the save.
  */
 export function missingGlyphWarning(characters: string[]): string[] {
   if (characters.length === 0) return [];

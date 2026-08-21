@@ -1,19 +1,19 @@
 /**
- * Čitanje toka sadržaja stranice — gdje koji glif stvarno stoji.
+ * Reading a page's content stream — where each glyph actually sits.
  *
- * PDF nema rečenice nego naredbe koje crtaju glifove na zadanim mjestima. Da
- * bi se tekst mogao **maknuti iz dokumenta**, a ne prekriti pravokutnikom,
- * mora se znati koji bajt u toku sadržaja odgovara kojem glifu i koliko taj
- * glif zauzima. To ovdje piše.
+ * A PDF has no sentences, only operators that draw glyphs at given positions. For
+ * text to be **removed from the document** rather than covered with a rectangle,
+ * one has to know which byte in the content stream corresponds to which glyph and
+ * how much space that glyph takes. That is what this file works out.
  *
- * Pravilo koje oblikuje sve ostalo: **kad se ne zna, ne dira se.** Tok koji
- * koristi font bez tablice širina, Type3 font ili tekst unutar Form XObjecta
- * ovaj kod ne pretvara u nagađanje nego prijavi da ne može. Redakcija koja
- * tiho promaši dio teksta gora je od redakcije koje nema — korisnik u prvom
- * slučaju misli da je posao obavljen.
+ * The rule that shapes everything else: **when it is not known, it is not
+ * touched.** A stream that uses a font without a widths table, a Type3 font or
+ * text inside a Form XObject is not turned into guesswork here; the code reports
+ * that it cannot. A redaction that quietly misses part of the text is worse than
+ * no redaction at all — in the first case the user believes the job is done.
  *
- * Namjerno bez DOM-a i bez pdf.js-a: isto se vrti u pregledniku i u
- * provjerama pod Nodeom.
+ * Deliberately free of DOM and of pdf.js: the same code runs in the browser and
+ * in the checks under Node.
  */
 
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
@@ -24,7 +24,7 @@ import { winAnsiCodePoint, type StandardWidths } from './text.js';
 
 /* ── matrice ─────────────────────────────────────────────────────────── */
 
-/** `[a b c d e f]`, kako ih PDF piše. */
+/** `[a b c d e f]`, the way PDF writes them. */
 export type Matrix = [number, number, number, number, number, number];
 
 export const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
@@ -45,7 +45,7 @@ export function apply(m: Matrix, x: number, y: number): [number, number] {
   return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 }
 
-/* ── leksičko čitanje ────────────────────────────────────────────────── */
+/* ── lexical scanning ────────────────────────────────────────────────── */
 
 const WHITESPACE = new Set([0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20]);
 const DELIMITER = new Set([0x28, 0x29, 0x3c, 0x3e, 0x5b, 0x5d, 0x7b, 0x7d, 0x2f, 0x25]);
@@ -70,11 +70,11 @@ function hexValue(byte: number): number {
 }
 
 /**
- * Rastavlja tok na tokene, svaki sa svojim rasponom bajtova.
+ * Splits the stream into tokens, each with its own byte range.
  *
- * Rasponi su ono zbog čega ovo postoji: izlaz se ne sastavlja iznova nego se
- * u izvorne bajtove ubacuje zamjena samo ondje gdje treba. Sve što ovaj kod
- * ne razumije ostaje netaknuto, bajt za bajt.
+ * The ranges are why this exists: the output is not reassembled from scratch, a
+ * replacement is spliced into the source bytes only where it belongs. Everything
+ * this code does not understand stays untouched, byte for byte.
  */
 export function tokenize(bytes: Uint8Array): Token[] {
   const tokens: Token[] = [];
@@ -125,7 +125,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
           high = -1;
         }
       }
-      // Neparan broj znamenki: zadnja se dopunjava nulom, kako spec traži.
+      // An odd number of digits: the last is padded with a zero, as the spec requires.
       if (high >= 0) out.push(high * 16);
       i++; // '>'
       tokens.push({ kind: 'string', start, end: i, bytes: Uint8Array.from(out) });
@@ -206,7 +206,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
       continue;
     }
 
-    // Zagrade `{}` postoje samo u funkcijama za sjenčanje; preskaču se kao znak.
+    // Braces `{}` occur only in shading functions; they are skipped as a character.
     if (byte === 0x7b || byte === 0x7d) {
       i++;
       tokens.push({ kind: 'operator', start, end: i, value: String.fromCharCode(byte) });
@@ -219,7 +219,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
       i++;
     }
     if (raw.length === 0) {
-      // Nepoznat razgraničnik — pomak da se ne zaglavi.
+      // An unknown delimiter — advance so we do not get stuck.
       i++;
       continue;
     }
@@ -229,7 +229,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
       continue;
     }
 
-    // Ugrađena slika: iza `ID` slijede sirovi bajtovi do `EI`.
+    // An inline image: raw bytes follow `ID` up to `EI`.
     if (raw === 'BI') {
       const idAt = indexOfOperator(bytes, i, 'ID');
       if (idAt >= 0) {
@@ -246,7 +246,7 @@ export function tokenize(bytes: Uint8Array): Token[] {
   return tokens;
 }
 
-/** Traži operator kao samostalnu riječ, ne kao dio niza bajtova. */
+/** Looks for an operator as a standalone word, not as part of a byte string. */
 function indexOfOperator(bytes: Uint8Array, from: number, word: string): number {
   const first = word.charCodeAt(0);
   const second = word.charCodeAt(1);
@@ -261,41 +261,41 @@ function indexOfOperator(bytes: Uint8Array, from: number, word: string): number 
   return -1;
 }
 
-/* ── fontovi ─────────────────────────────────────────────────────────── */
+/* ── fonts ───────────────────────────────────────────────────────────── */
 
 /**
- * Ono što o fontu treba znati da bi se glifovi mogli izmjeriti.
+ * What has to be known about a font for its glyphs to be measured.
  *
- * Ne zanima nas kako font izgleda — samo koliko koji kod zauzima i koliko je
- * bajtova jedan kod. Bez toga se ne zna gdje jedan glif prestaje a drugi
- * počinje, pa se ne zna ni što je unutar pravokutnika.
+ * How the font looks is of no interest — only how much space each code takes and
+ * how many bytes one code is. Without that there is no telling where one glyph
+ * ends and the next begins, and therefore no telling what is inside a rectangle.
  */
 export interface FontInfo {
   name: string;
-  /** `/BaseFont` bez podskupovnog prefiksa. */
+  /** `/BaseFont` without its subset prefix. */
   baseFont: string;
-  /** Kompozitni font s Identity kodiranjem — dva bajta po kodu. */
+  /** A composite font with Identity encoding — two bytes per code. */
   twoByte: boolean;
-  /** Širina koda u tisućinkama tekstualne jedinice. */
+  /** The width of a code in thousandths of a text unit. */
   widthOf(code: number): number;
   /**
-   * Kod → znak, ako se pouzdano zna.
+   * Code → character, where it is reliably known.
    *
-   * `null` znači da se kod ne da pretvoriti u slovo: bez `/ToUnicode` i bez
-   * poznatog kodiranja tekst se može maknuti, ali ne i pročitati — pa se ne
-   * može ponuditi ni na prepisivanje.
+   * `null` means the code cannot be turned into a letter: without `/ToUnicode`
+   * and without a known encoding the text can be removed but not read — so it
+   * cannot be offered for rewriting either.
    */
   decode(code: number): string | null;
-  /** Zašto se font ne da izmjeriti; `null` kad je sve u redu. */
+  /** Why the font cannot be measured; `null` when all is well. */
   unsupported: string | null;
 }
 
 /**
- * Čita `/ToUnicode` CMap — jedini pouzdan put od koda do slova.
+ * Reads the `/ToUnicode` CMap — the only reliable route from a code to a letter.
  *
- * Format je PostScriptu sličan, pa se čita istim leksičkim rastavom kojim i
- * tok sadržaja. Odredišta su UTF-16BE nizovi, jer jedan kod smije davati i
- * više znakova (ligature).
+ * The format resembles PostScript, so it is scanned with the same lexer as the
+ * content stream. The destinations are UTF-16BE strings, because one code is
+ * allowed to yield several characters (ligatures).
  */
 function parseToUnicode(bytes: Uint8Array): Map<number, string> {
   const map = new Map<number, string>();
@@ -339,7 +339,7 @@ function parseToUnicode(bytes: Uint8Array): Map<number, string> {
         if (low === null || high === null || !third) break;
 
         if (third.kind === 'array-open') {
-          // Oblik `<lo> <hi> [<d1> <d2> …]`: po jedno odredište za svaki kod.
+          // The form `<lo> <hi> [<d1> <d2> …]`: one destination per code.
           let index = 0;
           let at = k + 3;
           while (at < tokens.length && tokens[at]!.kind !== 'array-close') {
@@ -354,7 +354,7 @@ function parseToUnicode(bytes: Uint8Array): Map<number, string> {
 
         const start = asText(third);
         if (start === null) break;
-        // Oblik `<lo> <hi> <početak>`: zadnji znak odredišta se uvećava.
+        // The form `<lo> <hi> <start>`: the last character of the destination increments.
         const prefix = start.slice(0, -1);
         const last = start.charCodeAt(start.length - 1);
         for (let code = low; code <= high && code - low <= 65535; code++) {
@@ -400,11 +400,11 @@ function simpleWidths(font: PDFDict): ((code: number) => number) | null {
 }
 
 /**
- * Širine kompozitnog fonta iz `/W` polja.
+ * The widths of a composite font from the `/W` array.
  *
- * Format je dvojak: `c [w1 w2 …]` nabraja uzastopne kodove, a `c1 c2 w` daje
- * jednu širinu cijelom rasponu. Podržana su oba, jer se u praksi javljaju
- * pomiješano u istoj datoteci.
+ * The format is twofold: `c [w1 w2 …]` enumerates consecutive codes, while
+ * `c1 c2 w` gives one width to a whole range. Both are supported, because in
+ * practice they turn up mixed within one file.
  */
 function compositeWidths(descendant: PDFDict): (code: number) => number {
   const defaultWidth = (() => {
@@ -445,13 +445,13 @@ function compositeWidths(descendant: PDFDict): (code: number) => number {
   return (code) => table.get(code) ?? defaultWidth;
 }
 
-/** Ima li font vlastito preslikavanje kodova, koje bi tablicu širina pomaklo. */
+/** Whether the font has its own code mapping, which would shift the widths table. */
 function hasDifferences(font: PDFDict): boolean {
   const encoding = font.lookup(PDFName.of('Encoding'));
   return encoding instanceof PDFDict && !!encoding.get(PDFName.of('Differences'));
 }
 
-/** Čita `/Font` iz resursa stranice i pretvara ga u mjerljive opise. */
+/** Reads `/Font` out of the page resources and turns it into measurable descriptions. */
 export function readFonts(
   resources: PDFDict | undefined,
   standard?: StandardWidths,
@@ -464,7 +464,7 @@ export function readFonts(
     const name = key.asString().replace(/^\//, '');
     const font = fonts.lookup(key);
 
-    /** Popunjava zajednička polja da ih svaka grana ne ponavlja. */
+    /** Fills in the shared fields so every branch does not repeat them. */
     const describe = (partial: Omit<FontInfo, 'name' | 'baseFont' | 'decode'>): FontInfo => {
       const raw = font instanceof PDFDict ? font.lookup(PDFName.of('BaseFont')) : undefined;
       const baseFont = (raw instanceof PDFName ? raw.asString() : '')
@@ -482,9 +482,9 @@ export function readFonts(
           const mapped = toUnicode?.get(code);
           if (mapped !== undefined) return mapped;
           /*
-           * Bez `/ToUnicode` jedini pošten oslonac je standardno kodiranje
-           * jednobajtnog fonta. Kompozitni font s Identity kodiranjem daje
-           * broj glifa u fontu, a taj o slovu ne govori ništa.
+           * Without `/ToUnicode` the only honest footing is the standard encoding
+           * of a single-byte font. A composite font with Identity encoding gives
+           * a glyph number inside the font, which says nothing about the letter.
            */
           if (!winAnsi) return null;
           const cp = winAnsiCodePoint(code);
@@ -496,7 +496,7 @@ export function readFonts(
     if (!(font instanceof PDFDict)) {
       out.set(
         name,
-        describe({ twoByte: false, widthOf: () => 0, unsupported: 'font se ne da pročitati' }),
+        describe({ twoByte: false, widthOf: () => 0, unsupported: 'the font cannot be read' }),
       );
       continue;
     }
@@ -505,8 +505,8 @@ export function readFonts(
     const kind = subtype instanceof PDFName ? subtype.asString() : '';
 
     if (kind === '/Type3') {
-      // Glifovi su vlastiti tokovi sadržaja; njihova širina ovisi o matrici
-      // fonta i ne da se očitati iz tablice.
+      // The glyphs are content streams of their own; their width depends on the
+      // font matrix and cannot be read out of a table.
       out.set(name, describe({ twoByte: false, widthOf: () => 0, unsupported: 'Type3 font' }));
       continue;
     }
@@ -515,7 +515,7 @@ export function readFonts(
       const encoding = font.lookup(PDFName.of('Encoding'));
       const encodingName = encoding instanceof PDFName ? encoding.asString() : '';
       if (encodingName !== '/Identity-H' && encodingName !== '/Identity-V') {
-        // Ugrađen CMap bi tražio vlastiti parser da bi se znalo koliko je
+        // An embedded CMap would need a parser of its own to know how many
         // bajtova jedan kod.
         out.set(
           name,
@@ -553,9 +553,9 @@ export function readFonts(
     }
 
     /*
-     * Standardnih četrnaest fontova smije izostaviti `/Widths` — mjere su
-     * dogovorene. `standardWidths` ih zna za Helveticu i Courier; ostale
-     * priznajemo da ne znamo.
+     * The standard fourteen fonts are allowed to omit `/Widths` — the metrics are
+     * agreed. `standardWidths` knows them for Helvetica and Courier; for the rest
+     * we admit we do not know.
      */
     const baseFont = font.lookup(PDFName.of('BaseFont'));
     const baseName = baseFont instanceof PDFName ? baseFont.asString() : '';
@@ -566,7 +566,7 @@ export function readFonts(
         describe({
           twoByte: false,
           widthOf: () => 0,
-          unsupported: 'vlastito preslikavanje kodova bez tablice širina',
+          unsupported: 'a custom code mapping without a widths table',
         }),
       );
       continue;
@@ -590,7 +590,7 @@ export function readFonts(
       describe({
         twoByte: false,
         widthOf: () => 0,
-        unsupported: `${baseName || 'font'} bez tablice širina`,
+        unsupported: `${baseName || 'font'} without a widths table`,
       }),
     );
   }
@@ -604,7 +604,7 @@ export interface Glyph {
   /** Kod glifa; jedan ili dva bajta ovisno o fontu. */
   code: number;
   bytes: Uint8Array;
-  /** Omeđujući pravokutnik u korisničkom prostoru stranice. */
+  /** The bounding rectangle in the page's user space. */
   box: Rect;
   /** Pomak koji ovaj glif unosi, u tekstualnom prostoru. */
   advance: number;
@@ -615,7 +615,7 @@ export interface TextOperation {
   start: number;
   end: number;
   operator: 'Tj' | 'TJ' | "'" | '"';
-  /** Dijelovi naredbe redom: nizovi glifova i brojčani pomaci iz `TJ`. */
+  /** The parts of the operator in order: glyph strings and the numeric offsets from `TJ`. */
   parts: ({ kind: 'glyphs'; glyphs: Glyph[] } | { kind: 'adjust'; value: number })[];
   /** Stanje teksta u trenutku naredbe — treba pri prepisivanju. */
   fontSize: number;
@@ -628,25 +628,25 @@ export interface TextOperation {
   font: FontInfo;
   /** 0 = ispuna, 3 = nevidljivo (sloj iz OCR-a), ostalo su obrubi. */
   renderMode: number;
-  /** Boja ispune, ili `null` kad se prostor boje ne prepoznaje. */
+  /** The fill colour, or `null` when the colour space is not recognised. */
   fill: Rgb | null;
   /**
-   * Veličina slova kakva se stvarno vidi na stranici — `Tf` pomnožen svime
-   * što je matricama došlo na njega.
+   * The font size as actually seen on the page — `Tf` multiplied by everything
+   * the matrices piled on top of it.
    */
   effectiveSize: number;
-  /** Početak osnovne linije prvog glifa, u korisničkom prostoru. */
+  /** The baseline start of the first glyph, in user space. */
   origin: { x: number; y: number };
   /**
-   * Stoji li tekst vodoravno i neiskrivljen.
+   * Whether the text sits horizontally and undistorted.
    *
-   * Zarotiran ili nagnut tekst se da maknuti, ali ne i prepisati: naši
-   * tekstualni okviri stoje uspravno, pa bi zamjena stajala nakrivo.
+   * Rotated or skewed text can be removed but not rewritten: our text boxes stand
+   * upright, so a replacement would sit crooked.
    */
   axisAligned: boolean;
 }
 
-/** Tekst naredbe, ili `null` ako se kodovi ne daju pretvoriti u slova. */
+/** The operator's text, or `null` if the codes cannot be turned into letters. */
 export function textOf(operation: TextOperation): string | null {
   let out = '';
   for (const part of operation.parts) {
@@ -660,7 +660,7 @@ export function textOf(operation: TextOperation): string | null {
   return out;
 }
 
-/** Omeđujući pravokutnik svih glifova naredbe. */
+/** The bounding rectangle of all the operator's glyphs. */
 export function boundsOfOperation(operation: TextOperation): Rect | null {
   const boxes = operation.parts
     .filter((part) => part.kind === 'glyphs')
@@ -677,7 +677,7 @@ export function boundsOfOperation(operation: TextOperation): Rect | null {
   };
 }
 
-/** Zašto neka stranica nije sigurna za izmjenu. */
+/** Why a page is not safe to modify. */
 export interface Obstacle {
   reason: string;
   /** Mjesto na koje se odnosi, ako je poznato. */
@@ -701,7 +701,7 @@ interface State {
   rise: number;
   renderMode: number;
   fill: Rgb | null;
-  /** Ime prostora boje postavljenog s `cs`; treba za tumačenje `sc`/`scn`. */
+  /** The name of the colour space set by `cs`; needed to interpret `sc`/`scn`. */
   fillSpace: string;
 }
 
@@ -732,9 +732,9 @@ function colorFrom(operator: string, values: number[], space: string): Rgb | nul
       return fromCount(4);
     case 'sc':
     case 'scn': {
-      // Imenovani prostori (ICC, Separation, Pattern) traže vlastito tumačenje;
-      // pogađanje po broju operanada dalo bi krivu boju bez ijednog znaka
-      // upozorenja, pa se radije priznaje da se ne zna.
+      // Named spaces (ICC, Separation, Pattern) need interpreting of their own;
+      // guessing by operand count would give the wrong colour without a single
+      // sign of warning, so we would rather admit we do not know.
       const device =
         space === '/DeviceGray' || space === '/DeviceRGB' || space === '/DeviceCMYK';
       return device ? fromCount(values.length) : null;
@@ -774,7 +774,7 @@ function glyphsFrom(
     const [x0, y0] = apply(trm, 0, DESCENT);
     const [x1, y1] = apply(trm, width, ASCENT);
 
-    // Zarotirani tekst daje kutove u bilo kojem redoslijedu.
+    // Rotated text yields its corners in any order.
     const box: Rect = {
       x: Math.min(x0, x1),
       y: Math.min(y0, y1),
@@ -795,12 +795,12 @@ function glyphsFrom(
 }
 
 /**
- * Prolazi kroz tok sadržaja i vraća sve naredbe koje crtaju tekst, s
- * položajem svakog glifa.
+ * Walks the content stream and returns every operator that draws text, with the
+ * position of each glyph.
  *
- * Prepreke se skupljaju usput: font koji se ne da izmjeriti, Type3 glifovi i
- * Form XObjecti koji mogu sadržavati vlastiti tekst. Pozivatelj odlučuje što
- * s njima, ali se ne može praviti da ih nema.
+ * Obstacles are collected along the way: a font that cannot be measured, Type3
+ * glyphs and Form XObjects that may contain text of their own. The caller decides
+ * what to do with them, but cannot pretend they are not there.
  */
 export function readPageContent(page: PDFPage, standard?: StandardWidths): PageContent {
   const bytes = contentsOf(page);
@@ -822,7 +822,7 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
     leading: 0,
     rise: 0,
     renderMode: 0,
-    // PDF kreće od crne ispune u DeviceGray.
+    // PDF starts from a black fill in DeviceGray.
     fill: [0, 0, 0],
     fillSpace: '/DeviceGray',
   };
@@ -833,7 +833,7 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
 
   /** Operandi skupljeni od zadnjeg operatora. */
   let operands: Token[] = [];
-  /** Gdje počinje trenutna naredba — prvi operand, ili sam operator. */
+  /** Where the current operator begins — the first operand, or the operator itself. */
   let operandStart = 0;
 
   const numbers = () => operands.filter((o) => o.kind === 'number').map((o) => o.value);
@@ -905,7 +905,7 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
       case 'cs': {
         const space = operands.find((o) => o.kind === 'name');
         state.fillSpace = space?.kind === 'name' ? `/${space.value}` : '';
-        // Novi prostor boje poništava staru vrijednost, kako spec traži.
+        // A new colour space clears the old value, as the spec requires.
         state.fill = state.fillSpace === '/Pattern' ? null : [0, 0, 0];
         break;
       }
@@ -975,11 +975,11 @@ export function readPageContent(page: PDFPage, standard?: StandardWidths): PageC
 
         const font = state.font;
         if (!font || font.unsupported) {
-          // Bez mjera se ne zna gdje su glifovi; prepreka je već zabilježena.
+          // Without metrics there is no telling where the glyphs are; the obstacle is already recorded.
           break;
         }
 
-        /* Matrica prije nego glifovi pomaknu tekst — odatle kreće redak. */
+        /* The matrix before the glyphs advance the text — this is where the line starts. */
         const trm = multiply(
           [state.fontSize * state.horizontalScale, 0, 0, state.fontSize, 0, state.rise],
           multiply(tm, state.ctm),
@@ -1066,10 +1066,10 @@ function formBox(dict: PDFDict, ctm: Matrix): Rect | undefined {
 }
 
 /**
- * Bajtovi toka sadržaja stranice.
+ * The bytes of a page's content stream.
  *
- * `/Contents` smije biti i polje tokova koje se čita kao jedan; spajaju se
- * novim retkom, jer se naredba ne smije prelomiti preko granice.
+ * `/Contents` may also be an array of streams read as one; they are joined with a
+ * newline, because an operator must not be broken across the boundary.
  */
 export function contentsOf(page: PDFPage): Uint8Array {
   const contents = page.node.Contents();

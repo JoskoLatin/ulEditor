@@ -1,8 +1,9 @@
 /*
- * PDF preglednik.
+ * The PDF viewer.
  *
- * Stranica se prikazuje na neutralnoj podlozi s mekom sjenom — papir mora
- * čitljivo odskakati od pozadine u obje teme, bez lažnog "skeuomorfnog" ruba.
+ * The page is shown on a neutral ground with a soft shadow — the paper has to
+ * stand out legibly from the background in both themes, without a fake
+ * "skeuomorphic" edge.
  */
 
 .ul-pdf {
@@ -22,9 +23,9 @@
   flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--rule);
-  /* Traka se lista umjesto da gura: bez ovoga njezina najmanja veličina
-     razvuče cijeli shell, a na telefonu to odzumira stranicu i dodiri
-     promaše gumbe. */
+  /* The bar scrolls instead of pushing: without this its minimum size stretches
+     the whole shell, and on a phone that zooms the page out and taps miss the
+     buttons. */
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -209,7 +210,7 @@
   box-shadow: var(--shadow-md);
   border-radius: 2px;
   flex: none;
-  /* Rezervira mjesto prije nego se stranica renderira, pa scrollbar ne skače. */
+  /* Reserves the space before the page renders, so the scrollbar does not jump. */
   contain: layout paint;
 }
 
@@ -229,8 +230,9 @@
   font-size: 12px;
 }
 
-/* Nevidljivi tekstualni sloj povrh canvasa — omogućuje selekciju i pretragu.
-   Glifovi se poravnavaju s otisnutima, pa selekcija izgleda kao prava. */
+/* The invisible text layer above the canvas — it makes selection and search
+   possible. The glyphs line up with the printed ones, so a selection looks
+   real. */
 .ul-pdf-text {
   position: absolute;
   inset: 0;
@@ -302,8 +304,8 @@
   padding-left: 8px;
 }
 
-/* Sloj anotacija hvata pokazivač samo kad je alat aktivan — inače bi
-   blokirao selekciju teksta ispod sebe. */
+/* The annotation layer captures the pointer only while a tool is active —
+   otherwise it would block selecting the text beneath it. */
 .ul-pdf-annots {
   position: absolute;
   inset: 0;
@@ -331,7 +333,7 @@
   cursor: text;
 }
 
-/* Tekstualni sloj se mora moći označiti i kad je sloj anotacija iznad. */
+/* The text layer must stay selectable even with the annotation layer above it. */
 .ul-pdf[data-tool='select'] .ul-pdf-text,
 .ul-pdf[data-tool='highlight'] .ul-pdf-text {
   pointer-events: auto;
@@ -363,13 +365,13 @@
   filter: brightness(1.08);
 }
 
-/* ── brisanje teksta ─────────────────────────────────────────────────── */
+/* ── redacting text ──────────────────────────────────────────────────── */
 
 /*
- * Označeno područje se **ne** prekriva neprozirnom zakrpom. Tekst ispod mora
- * ostati vidljiv dok se ne spremi, jer do tada nije obrisan — a lažan dojam
- * gotovog posla je upravo ono zbog čega crni pravokutnici u drugim alatima
- * objave ono što su trebali sakriti.
+ * A marked area is **not** covered with an opaque patch. The text underneath has
+ * to stay visible until the save, because until then it has not been deleted —
+ * and a false impression of a finished job is exactly why black rectangles in
+ * other tools publish what they were meant to hide.
  */
 .ul-pdf-redaction {
   position: absolute;
@@ -387,7 +389,7 @@
 .ul-pdf-redaction:hover {
   background: rgba(190, 60, 60, 0.3);
 }
-/* Provedeno pri spremanju: mirnije, jer više nije nedovršen posao. */
+/* Carried out on save: calmer, because it is no longer unfinished work. */
 .ul-pdf-redaction[data-applied='true'] {
   border-style: solid;
   border-color: var(--rule-strong);
@@ -395,9 +397,10 @@
 }
 
 /*
- * Prepisani redak je iznimka od pravila o prozirnosti: ovdje na to mjesto
- * dolazi nov tekst, pa bi se stari i novi vidjeli jedan preko drugoga. Ništa
- * se time ne skriva — što je ispod, korisnik je upravo pročitao i prepisao.
+ * A rewritten line is the exception to the transparency rule: new text is coming
+ * to this spot, so the old and the new would be seen through one another.
+ * Nothing is hidden by it — what lies beneath is what the user just read and
+ * rewrote.
  */
 .ul-pdf-redaction[data-replaced='true'] {
   background: #fff;
@@ -415,13 +418,13 @@
   background: rgba(190, 60, 60, 0.12);
 }
 
-/* ── tekstualni okviri ───────────────────────────────────────────────── */
+/* ── text boxes ──────────────────────────────────────────────────────── */
 
 /*
- * Okvir i polje za tipkanje dijele mjere namjerno: ono što se vidi dok se
- * tipka mora biti ono što ostane u datoteci. Zato oba imaju `box-sizing:
- * border-box`, `white-space: pre` (bez prelamanja, kao ni u zapisu) i font
- * koji postavlja JS iz istih mjera kojima se računa okvir.
+ * The box and the typing field share their metrics on purpose: what is seen while
+ * typing has to be what ends up in the file. So both carry `box-sizing:
+ * border-box`, `white-space: pre` (no wrapping, just as in the written output)
+ * and a font that JS sets from the same metrics the box is computed with.
  */
 .ul-pdf-ann-text,
 .ul-pdf-text-input {
@@ -437,8 +440,8 @@
 .ul-pdf-ann-text {
   pointer-events: auto;
   cursor: text;
-  /* Jedva vidljiv obrub: okvir se mora dati pogoditi, ali ne smije izgledati
-     kao da je dio dokumenta. U ispisu ga nema — postoji samo ovdje. */
+  /* A barely visible border: the box has to be findable, but must not look like
+     part of the document. It is absent from the print — it exists only here. */
   outline: 1px dashed transparent;
   outline-offset: 1px;
 }
@@ -455,7 +458,7 @@
   pointer-events: auto;
   outline: 1px dashed var(--accent);
   outline-offset: 1px;
-  /* Blijeda podloga da se vidi dokle okvir seže preko gustog dokumenta. */
+  /* A pale ground so the box's extent shows over a dense document. */
   background: rgba(255, 255, 255, 0.55);
 }
 
@@ -634,12 +637,13 @@
   border-color: var(--accent);
 }
 
-/* ── način čitanja ───────────────────────────────────────────────────── */
+/* ── reading mode ────────────────────────────────────────────────────── */
 
 /*
- * PDF je fiksni prijelom, pa čitaonica ovdje ne dira tipografiju — mijenja
- * okvir i podlogu. "Noć" je invertirani prikaz, kao u svakom čitaču: bijela
- * stranica u mračnoj sobi je jedini razlog zbog kojeg ljudi traže tamnu temu.
+ * A PDF is a fixed layout, so the reading room does not touch typography here —
+ * it changes the frame and the ground. "Night" inverts the rendering, as in every
+ * reader: a white page in a dark room is the only reason people ask for a dark
+ * theme.
  */
 
 .ul-pdf[data-reading='true'] .ul-pdf-toolbar,
@@ -684,15 +688,15 @@
   height: 0;
 }
 
-/* Kontrole zadržavaju svoju širinu — stisnute do nečitljivosti nikome ne služe. */
+/* Controls keep their width — squeezed past legibility they serve nobody. */
 .ul-pdf-toolbar > * {
   flex: none;
 }
 
-/* ── uski ekran ─────────────────────────────────────────────────────── */
+/* ── narrow screens ─────────────────────────────────────────────────── */
 
-/* Isti razlog kao kod preglednika slika: navigacija je gore, bok je slobodan
-   za alate, a vodoravna traka bi na 392 px pojela pola širine. */
+/* The same reason as in the image viewer: the navigation is at the top, the side
+   is free for tools, and a horizontal bar would eat half the width at 392 px. */
 @media (max-width: 720px) {
   .ul-pdf {
     flex-direction: row;
@@ -711,8 +715,8 @@
     border-right: 1px solid var(--rule);
   }
 
-  /* Samo izravna djeca trake: ugniježđeni gumbi (kvačice boja) imaju
-     vlastitu veličinu, a nametnuta visina ih pretvori u elipse. */
+  /* Direct children of the bar only: nested buttons (the colour swatches) have
+     a size of their own, and an imposed height turns them into ellipses. */
   .ul-pdf-toolbar > button {
     height: 36px;
   }
@@ -730,7 +734,7 @@
     display: none;
   }
 
-  /* Ni alati ni kvačice ne stanu u red od 48 px, pa se slažu u dva. */
+  /* Neither the tools nor the swatches fit a 48 px row, so they stack into two. */
   .ul-pdf-tools {
     flex-wrap: wrap;
     justify-content: center;
@@ -744,7 +748,7 @@
     margin-left: 0;
   }
 
-  /* Rez i veličina jedan ispod drugoga; u red od 48 px ne stanu jedan uz drugi. */
+  /* The face and the size one below the other; they do not fit side by side in a 48 px row. */
   .ul-pdf[data-tool='text'] .ul-pdf-text-opts {
     display: flex;
     flex-direction: column;
@@ -757,7 +761,7 @@
     height: 30px;
   }
 
-  /* Prstom se cilja lošije nego mišem, pa je polje šire od okvira koji piše. */
+  /* A finger aims worse than a mouse, so the field is wider than the box it writes. */
   .ul-pdf-text-input {
     min-width: 44px;
     min-height: 32px;

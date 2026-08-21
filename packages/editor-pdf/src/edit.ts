@@ -1,23 +1,24 @@
 /**
- * Prepisivanje teksta koji je već u dokumentu.
+ * Rewriting text that is already in the document.
  *
- * Izmjena je sastavljena od dvije stvari koje projekt već ima: stari se redak
- * **makne iz sadržaja** (vidi [`redact.ts`](./redact.ts)), a novi se **upiše
- * kao tekst** (vidi [`text.ts`](./text.ts)). Ništa se ne prekriva i ništa ne
- * ostaje ispod.
+ * The edit is assembled from two things the project already has: the old line is
+ * **removed from the content stream** (see [`redact.ts`](./redact.ts)) and the
+ * new one is **written as text** (see [`text.ts`](./text.ts)). Nothing is
+ * covered over and nothing is left underneath.
  *
- * Piše se **našim ugrađenim fontom**, ne izvornim. To je svjestan izbor s
- * cijenom koju treba znati:
+ * It is written **with our embedded font**, not the original one. That is a
+ * deliberate choice with a cost worth knowing:
  *
- * - Za Helveticu i Arial razlike nema — Liberation Sans je napravljen da im
- *   se širine poklapaju, pa prepisani redak sjedne točno kao stari.
- * - Za sve ostalo veličina, boja i položaj ostaju isti, ali oblik slova nije.
- *   To se kaže prije nego se počne tipkati, a ne poslije spremanja.
+ * - For Helvetica and Arial there is no difference — Liberation Sans was built
+ *   to match their widths, so a rewritten line sits exactly where the old one
+ *   did.
+ * - For everything else the size, colour and position stay the same, but the
+ *   letterforms do not. This is said before typing starts, not after saving.
  *
- * Zašto ne izvornim fontom: ugrađeni podskup sadrži samo glifove koje je
- * dokument već koristio. Čim se dopiše slovo kojeg ondje nema — a `č`, `ć`,
- * `ž`, `š` i `đ` u tuđim dokumentima gotovo nikad nema — ispalo bi prazno
- * mjesto usred rečenice.
+ * Why not the original font: an embedded subset contains only the glyphs that
+ * document already used. The moment a letter that is not there gets added — and
+ * `č`, `ć`, `ž`, `š` and `đ` are almost never there in somebody else's
+ * documents — it would come out as a blank in the middle of a sentence.
  */
 
 import type { PDFPage } from 'pdf-lib';
@@ -27,12 +28,12 @@ import type { Rect, Rgb } from './annotations.js';
 import { boundsOfOperation, readPageContent, textOf } from './content.js';
 import type { StandardWidths } from './text.js';
 
-/** Redak dokumenta ponuđen na prepisivanje. */
+/** A line of the document offered for rewriting. */
 export interface EditableLine {
   text: string;
-  /** Područje koje zauzima; iz njega nastaje oznaka za brisanje. */
+  /** The area it occupies; the redaction mark is derived from it. */
   bounds: Rect;
-  /** Početak osnovne linije — po njemu se poravnava zamjena. */
+  /** The start of the baseline — the replacement is aligned to it. */
   origin: { x: number; y: number };
   size: number;
   color: Rgb;
@@ -40,27 +41,27 @@ export interface EditableLine {
   /** Koliko glifova odlazi; pokazuje se prije potvrde. */
   glyphs: number;
   /**
-   * Poklapaju li se mjere našeg fonta s izvornim.
+   * Whether our font's metrics match the original's.
    *
-   * Kad ne, zamjena je iste veličine i na istom mjestu, ali drukčijeg oblika
-   * slova — pa se to kaže unaprijed.
+   * When they do not, the replacement is the same size and in the same place but
+   * with different letterforms — so that is said in advance.
    */
   metricsMatch: boolean;
 }
 
-/** Fontovi kojima Liberation Sans odgovara u širinu, znak za znak. */
+/** Fonts Liberation Sans matches in width, character for character. */
 function matchesOurMetrics(baseFont: string): boolean {
   const lower = baseFont.toLowerCase();
   return lower.startsWith('helvetica') || lower.startsWith('arial') || lower.startsWith('liberationsans');
 }
 
 /**
- * Traži redak pod zadanom točkom.
+ * Finds the line under a given point.
  *
- * Jedinica je jedna naredba iz toka sadržaja, jer je to jedini komad za koji
- * se pouzdano zna gdje počinje i gdje završava. Vizualni redak zna biti
- * razlomljen na više naredbi; tada se prepisuje samo dio pod prstom, a
- * korisniku se pokaže točno koji.
+ * The unit is one operator from the content stream, because that is the only
+ * piece whose start and end are reliably known. A visual line is often broken
+ * across several operators; in that case only the part under the finger is
+ * rewritten, and the user is shown exactly which.
  */
 export function findEditableLine(
   page: PDFPage,
@@ -82,7 +83,7 @@ export function findEditableLine(
     }
 
     if (operation.renderMode === 3) {
-      // Nevidljiv tekst je sloj iz prepoznavanja; mijenja se slika ispod, ne on.
+      // Invisible text is a recognition layer; the image beneath changes, not it.
       return { refusal: t('That text is invisible — it is a recognition layer, not the page.') };
     }
     if (!operation.axisAligned) {
@@ -124,7 +125,7 @@ export function findEditableLine(
   return null;
 }
 
-/** Upozorenje kad se oblik slova neće poklopiti s izvornim. */
+/** The warning for when the letterforms will not match the original. */
 export function metricsWarning(line: EditableLine): string | null {
   if (line.metricsMatch) return null;
   return t('{font} is not the font we write with — size and position stay, the letterforms change.', {

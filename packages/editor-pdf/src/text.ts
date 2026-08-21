@@ -1,17 +1,17 @@
 /**
- * Tekst koji se dodaje u PDF — font, mjere i izgled.
+ * Text added to a PDF — the font, the metrics and the appearance.
  *
- * Ovdje je namjerno samo račun, bez dohvaćanja datoteka i bez DOM-a, pa se
- * isti kod vrti u pregledniku i u provjerama pod Nodeom. Bajtove fonta dodaje
- * pozivatelj kroz `FontLoader`.
+ * This file is deliberately maths only, with no file fetching and no DOM, so the
+ * same code runs in the browser and in the checks under Node. The font bytes are
+ * supplied by the caller through `FontLoader`.
  *
- * **Zašto se font uopće ugrađuje.** Standardnih četrnaest PDF fontova koristi
- * WinAnsi kodiranje, u kojem `č`, `ć`, `ž`, `š` i `đ` ne postoje — pdf-lib na
- * njima baca grešku, a čitači koji je ne bace nacrtaju krivo slovo. Hrvatski
- * se dakle ne da napisati bez ugrađenog fonta. Uzet je Liberation Sans koji
- * ionako stiže s pdf.js-om (SIL OFL 1.1, metrički jednak Arialu), pa u repou
- * nema binarnog priloga, a u izlaz ide samo podskup stvarno upotrijebljenih
- * glifova — nekoliko kilobajta.
+ * **Why the font is embedded at all.** The standard fourteen PDF fonts use
+ * WinAnsi encoding, in which `č`, `ć`, `ž`, `š` and `đ` do not exist — pdf-lib
+ * throws on them, and readers that do not throw draw the wrong letter. Croatian
+ * therefore cannot be written without an embedded font. We use Liberation Sans,
+ * which arrives with pdf.js anyway (SIL OFL 1.1, metrically identical to Arial),
+ * so no binary is committed to the repository and only the subset of glyphs
+ * actually used goes into the output — a few kilobytes.
  */
 
 import * as fontkitModule from '@pdf-lib/fontkit';
@@ -20,9 +20,10 @@ import type { Font as FontkitFont } from '@pdf-lib/fontkit';
 import type { Rect, Rgb } from './annotations.js';
 
 /*
- * `@pdf-lib/fontkit` ima ESM build s default izvozom i UMD build s imenovanim,
- * a tipovi opisuju samo imenovane. Vite uzima jedno, Node drugo — pa se uzima
- * ono što stvarno postoji umjesto da se pogađa po okruženju.
+ * `@pdf-lib/fontkit` has an ESM build with a default export and a UMD build with
+ * named ones, while the types describe only the named. Vite takes one, Node the
+ * other — so we take whatever actually exists instead of guessing by
+ * environment.
  */
 interface Fontkit {
   create(bytes: Uint8Array): FontkitFont;
@@ -31,7 +32,7 @@ export const fontkit: Fontkit =
   (fontkitModule as unknown as { default?: Fontkit }).default ??
   (fontkitModule as unknown as Fontkit);
 
-/** Rezovi koje nudimo. Liberation Sans ih ima četiri; kosi podebljani ne treba. */
+/** The faces we offer. Liberation Sans has four; bold italic is not needed. */
 export type TextFace = 'sans' | 'sans-bold' | 'sans-italic';
 
 export const TEXT_FACES: { id: TextFace; label: string; weight: number; style: string }[] = [
@@ -40,16 +41,16 @@ export const TEXT_FACES: { id: TextFace; label: string; weight: number; style: s
   { id: 'sans-italic', label: 'Italic', weight: 400, style: 'italic' },
 ];
 
-/** Obitelj pod kojom se isti font registrira u pregledniku, da se prikaz poklopi sa zapisom. */
+/** The family the same font is registered under in the browser, so the view matches the file. */
 export const FONT_FAMILY = 'ulEditor Sans';
 
 export const TEXT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 24, 32];
 export const DEFAULT_TEXT_SIZE = 11;
 
-/** Razmak od ruba okvira do teksta, u točkama. */
+/** The padding from the box edge to the text, in points. */
 export const TEXT_PADDING = 2;
 
-/** Dohvat bajtova jednog reza. Preglednik ih skida, provjera čita s diska. */
+/** Fetching the bytes of one face. The browser downloads them, a check reads them off disk. */
 export type FontLoader = (face: TextFace) => Promise<Uint8Array>;
 
 /* ── mjere ───────────────────────────────────────────────────────────── */
@@ -57,15 +58,15 @@ export type FontLoader = (face: TextFace) => Promise<Uint8Array>;
 export interface FaceMetrics {
   face: TextFace;
   bytes: Uint8Array;
-  /** Visina retka u točkama za zadanu veličinu. */
+  /** The line height in points for a given size. */
   lineHeight(size: number): number;
   /** Udaljenost od vrha retka do osnovne linije. */
   ascent(size: number): number;
-  /** Širina jednog retka u točkama. */
+  /** The width of one line in points. */
   measure(line: string, size: number): number;
-  /** Širina jednog znaka u tisućinkama em-a — mjera kojom PDF računa. */
+  /** The width of one character in thousandths of an em — the unit PDF works in. */
   widthOfCodePoint(codePoint: number): number;
-  /** Znakovi koje ovaj rez nema — jedinstveni, redoslijedom pojavljivanja. */
+  /** Characters this face lacks — unique, in order of appearance. */
   missing(text: string): string[];
 }
 
@@ -80,8 +81,8 @@ export function metricsOf(face: TextFace, bytes: Uint8Array): FaceMetrics {
     ascent: (size) => (font.ascent / perEm) * size,
     measure: (line, size) => {
       if (line.length === 0) return 0;
-      /* Isti račun kojim pdf-lib slaže glifove pri zapisu, pa se okvir na
-         ekranu i okvir u datoteci ne razilaze. */
+      /* The same maths pdf-lib uses to lay out glyphs when writing, so the box
+         on screen and the box in the file do not drift apart. */
       return (font.layout(line).advanceWidth / perEm) * size;
     },
     widthOfCodePoint: (codePoint) => {
@@ -101,7 +102,7 @@ export function metricsOf(face: TextFace, bytes: Uint8Array): FaceMetrics {
   };
 }
 
-/** Učitani rezovi po fontu — isti se ne parsira dvaput. */
+/** Loaded faces by font — the same one is not parsed twice. */
 const cache = new Map<TextFace, Promise<FaceMetrics>>();
 
 export function loadFace(face: TextFace, loader: FontLoader): Promise<FaceMetrics> {
@@ -110,7 +111,7 @@ export function loadFace(face: TextFace, loader: FontLoader): Promise<FaceMetric
 
   const pending = loader(face).then((bytes) => metricsOf(face, bytes));
   cache.set(face, pending);
-  // Neuspjeh se ne pamti: sljedeći pokušaj mora smjeti probati ponovno.
+  // A failure is not remembered: the next attempt must be allowed to try again.
   void pending.catch(() => cache.delete(face));
   return pending;
 }
@@ -118,10 +119,11 @@ export function loadFace(face: TextFace, loader: FontLoader): Promise<FaceMetric
 /* ── metrike standardnih fontova ─────────────────────────────────────── */
 
 /**
- * Kodovi 0x80–0x9F u WinAnsi kodiranju.
+ * The codes 0x80–0x9F in WinAnsi encoding.
  *
- * Ispod 0x80 je WinAnsi jednak ASCII-ju, a od 0xA0 nadalje Latin-1; razlikuje
- * se samo ovaj komad, u kojem stoje navodnici, crte i slična interpunkcija.
+ * Below 0x80 WinAnsi equals ASCII, and from 0xA0 on it is Latin-1; only this
+ * stretch differs, and it holds the quotation marks, dashes and similar
+ * punctuation.
  */
 const WIN_ANSI_HIGH = [
   0x20ac, 0x0000, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
@@ -139,7 +141,7 @@ export function winAnsiCodePoint(code: number): number | null {
 }
 
 export interface StandardWidths {
-  /** Širina koda u tisućinkama, ili `null` ako se font ne prepoznaje. */
+  /** The width of a code in thousandths, or `null` if the font is not recognised. */
   widthOf(baseFont: string, code: number): number | null;
 }
 
@@ -149,16 +151,16 @@ function baseName(name: string): string {
 }
 
 /**
- * Mjere za standardnih četrnaest fontova, koji smiju izostaviti `/Widths`.
+ * Metrics for the standard fourteen fonts, which are allowed to omit `/Widths`.
  *
- * Bez ovoga bi svaki jednostavno generiran PDF — a takvi su gotovo svi
- * računi, potvrde i obrasci — ispao „ne da se dirati”, jer se bez širina ne
- * zna gdje jedan glif prestaje.
+ * Without this every simply generated PDF — and nearly all invoices, receipts
+ * and forms are exactly that — would come out as "cannot be touched", because
+ * without widths there is no telling where one glyph ends.
  *
- * Helvetica se mjeri Liberation Sansom. To nije aproksimacija: Liberation je
- * napravljen tako da mu se širine poklapaju s Arialom, a Arial s Helveticom.
- * Courier je monoprostorni s 600 posvuda. Times, Symbol i ZapfDingbats
- * ostaju neprepoznati i to se prijavljuje, umjesto da se nagađa.
+ * Helvetica is measured with Liberation Sans. That is not an approximation:
+ * Liberation was built so its widths match Arial's, and Arial's match
+ * Helvetica's. Courier is monospaced at 600 throughout. Times, Symbol and
+ * ZapfDingbats stay unrecognised and that is reported, rather than guessed at.
  */
 export async function standardWidths(load: FontLoader): Promise<StandardWidths> {
   const regular = await loadFace('sans', load);
@@ -167,8 +169,8 @@ export async function standardWidths(load: FontLoader): Promise<StandardWidths> 
   const faceFor = (name: string): FaceMetrics | null => {
     const lower = name.toLowerCase();
     if (lower.startsWith('helvetica') || lower.startsWith('arial')) {
-      // Kurziv ima iste širine kao uspravni rez — kod Ariala i Helvetice
-      // razlikuje se oblik, ne razmak.
+      // Italic has the same widths as the upright face — in Arial and Helvetica
+      // the shape differs, not the spacing.
       return lower.includes('bold') ? bold : regular;
     }
     return null;
@@ -193,7 +195,7 @@ export async function standardWidths(load: FontLoader): Promise<StandardWidths> 
 
 /* ── raspored okvira ─────────────────────────────────────────────────── */
 
-/** Prazan okvir mora ostati dovoljno velik da se u njega da kliknuti. */
+/** An empty box must stay large enough to be clickable. */
 const MIN_WIDTH_EM = 4;
 
 export function linesOf(text: string): string[] {
@@ -201,16 +203,16 @@ export function linesOf(text: string): string[] {
 }
 
 /**
- * Okvir za zadani tekst.
+ * The box for a given text.
  *
- * Sidro je **gornji-lijevi kut**, jer se pri tipkanju okvir širi prema dolje i
- * udesno — kao i svugdje drugdje. PDF broji od dolje, pa se to ovdje pretvara
- * jednom i dalje se ne razmišlja o tome.
+ * The anchor is the **top-left corner**, because while typing the box grows down
+ * and to the right — as it does everywhere else. PDF counts from the bottom, so
+ * that is converted here once and then never thought about again.
  *
- * Prelamanja nema: redak je ono što je korisnik napisao kao redak. Automatsko
- * prelamanje bi tražilo da se prijelom u `<textarea>` i prijelom u datoteci
- * poklope u pikselu, a ne poklapaju se — pa bi spremljeni PDF izgledao drukčije
- * od onoga što je korisnik vidio dok je tipkao.
+ * There is no wrapping: a line is what the user typed as a line. Automatic
+ * wrapping would require the break in a `<textarea>` and the break in the file
+ * to agree to the pixel, and they do not — so the saved PDF would look different
+ * from what the user saw while typing.
  */
 export function layoutTextBox(
   metrics: FaceMetrics,
@@ -227,7 +229,7 @@ export function layoutTextBox(
   return { x: anchor.x, y: anchor.top - height, width, height };
 }
 
-/** Gornji rub okvira — sidro po kojem se preračunava kad se tekst promijeni. */
+/** The top edge of the box — the anchor it is recomputed from when the text changes. */
 export function topOf(rect: Rect): number {
   return rect.y + rect.height;
 }
@@ -239,15 +241,16 @@ function round(value: number): number {
 }
 
 /**
- * Sadržaj toka izgleda za `/FreeText`.
+ * The appearance stream content for a `/FreeText`.
  *
- * Bez njega većina čitača ne nacrta ništa: specifikacija dopušta da čitač sam
- * složi izgled iz `/DA`, ali pdf.js i preglednici to za `/FreeText` ne rade.
- * Anotacija bez `/AP` je zato nevidljiva svugdje osim u Acrobatu — a nevidljiv
- * potpis je gori od nikakvog.
+ * Without one, most readers draw nothing: the specification permits a reader to
+ * assemble the appearance from `/DA`, but pdf.js and browsers do not do so for
+ * `/FreeText`. An annotation without `/AP` is therefore invisible everywhere
+ * except Acrobat — and an invisible signature is worse than none.
  *
- * Koordinate su unutar `BBox`-a, dakle od dolje-lijevo, s ishodištem u kutu
- * okvira. `resource` je ime pod kojim je font upisan u `Resources` toka.
+ * The coordinates live inside the `BBox`, so from the bottom left, with the
+ * origin at the corner of the box. `resource` is the name the font is registered
+ * under in the stream's `Resources`.
  */
 export function appearanceContent(
   lines: string[],
@@ -272,7 +275,7 @@ export function appearanceContent(
   ];
 
   lines.forEach((line, index) => {
-    // `T*` prije retka, ne poslije: prvi redak je već postavljen s `Td`.
+    // `T*` before the line, not after: the first line is already positioned by `Td`.
     if (index > 0) out.push('T*');
     if (line.length > 0) out.push(`${encodeLine(line)} Tj`);
   });

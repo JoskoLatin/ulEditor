@@ -1,13 +1,13 @@
 /**
- * PDF preglednik, anotator i organizator stranica.
+ * The PDF viewer, annotator and page organiser.
  *
- * pdf.js prikazuje, pdf-lib zapisuje. Na desktopu pdf.js u fazi 1 zamjenjuje
- * pdfium preko Rusta; ugovor `EditorInstance` ostaje isti, pa shell razliku
- * ne vidi.
+ * pdf.js displays, pdf-lib writes. On desktop, pdf.js is replaced in phase 1 by
+ * pdfium through Rust; the `EditorInstance` contract stays the same, so the shell
+ * does not see the difference.
  *
- * Operacije nad stranicama ne mijenjaju dokument dok se ne spremi — postoji
- * samo plan (vidi `document.ts`). Anotacije se vežu uz IZVORNU stranicu, pa
- * preslagivanje ne razdvaja bilješku od onoga na što se odnosi.
+ * Page operations do not change the document until a save — there is only a plan
+ * (see `document.ts`). Annotations bind to the SOURCE page, so reordering does
+ * not separate a note from what it refers to.
  */
 
 import { PDFDocument } from 'pdf-lib';
@@ -85,17 +85,17 @@ const ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4];
 const MARGIN = 48;
 /** Ispod ovoliko piksela poteza smatramo da je korisnik samo kliknuo. */
 const INK_MIN_LENGTH = 4;
-/** Veličina ikone bilješke na ekranu — ne ovisi o zoomu. */
+/** The on-screen size of a note icon — independent of zoom. */
 const NOTE_ICON_PX = 20;
 const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
 type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'redact';
 
-/** Manje od ovoliko piksela nije povlačenje nego promašen klik. */
+/** Fewer pixels than this is not a drag but a missed click. */
 const REDACT_MIN_SIZE = 6;
 
-/** Ispod ovoliko piksela pomak se broji kao klik, ne kao povlačenje okvira. */
+/** Below this many pixels a move counts as a click, not as dragging the box. */
 const TEXT_DRAG_SLOP = 3;
 
 interface TextItemBox {
@@ -135,9 +135,9 @@ interface Snapshot {
   redactions: Redaction[];
   plan: PagePlan[];
   /**
-   * Bajtovi izvornika u trenutku snimke. Isti su za sve korake osim spajanja,
-   * koje jedino ne može biti opisano planom nad starim izvornikom — pa se
-   * referenca nosi da bi i spajanje imalo poništavanje.
+   * The source bytes at the moment of the snapshot. They are the same for every
+   * step except a merge, which alone cannot be described by a plan over the old
+   * source — so the reference is carried along to give merging an undo too.
    */
   source: Uint8Array;
 }
@@ -166,7 +166,7 @@ class PdfEditor implements EditorInstance {
   #zoomLabel: HTMLElement | null = null;
   #popup: HTMLElement | null = null;
 
-  /** Poredano po prikazu; `source` čuva izvorni broj stranice. */
+  /** Ordered as displayed; `source` keeps the original page number. */
   #pages: PageView[] = [];
   #observer: IntersectionObserver | null = null;
   #resize: ResizeObserver | null = null;
@@ -178,10 +178,10 @@ class PdfEditor implements EditorInstance {
   #plan: PagePlan[];
   #annotations: Annotation[] = [];
   /**
-   * Područja iz kojih tekst odlazi iz samog dokumenta.
+   * The areas whose text leaves the document itself.
    *
-   * Kao i operacije nad stranicama: do spremanja postoji samo namjera, pa je
-   * poništavanje obično micanje iz popisa, a ne vraćanje obrisanog.
+   * As with page operations: until the save there is only intent, so undo is an
+   * ordinary removal from the list rather than restoring deleted content.
    */
   #redactions: Redaction[] = [];
   #undoStack: Snapshot[] = [];
@@ -191,7 +191,7 @@ class PdfEditor implements EditorInstance {
 
   #reading = false;
   #outline: ReadingOutlineItem[] = [];
-  /** Sadržaj cilja IZVORNE stranice; plan ih može premjestiti. */
+  /** The outline targets SOURCE pages; the plan may move them. */
   #outlineTargets = new Map<string, number>();
 
   #tool: Tool = 'select';
@@ -199,17 +199,18 @@ class PdfEditor implements EditorInstance {
 
   #textSize = DEFAULT_TEXT_SIZE;
   #textFace: TextFace = 'sans';
-  /** Tekst ima vlastitu boju: žuta je dobra kao istaknuće, kao slovo nije. */
+  /** Text has a colour of its own: yellow works as a highlight, not as a letter. */
   #textColor: Rgb = [0, 0, 0];
-  /** Mjere učitanih rezova; prazno dok se font ne zatreba. */
+  /** The metrics of loaded faces; empty until a font is needed. */
   #metrics = new Map<TextFace, FaceMetrics>();
 
   /**
    * Okvir koji se upravo tipka.
    *
-   * Nacrt namjerno **nije** u `#annotations` dok traje tipkanje: tako svako
-   * dovršeno uređivanje ostavi točno jedan korak u povijesti, umjesto jednog
-   * po pritisnutoj tipki. `origin` je `null` kad okvir tek nastaje.
+   * The draft is deliberately **not** in `#annotations` while typing is in
+   * progress: that way each completed edit leaves exactly one step in the
+   * history, rather than one per keystroke. `origin` is `null` when the box is
+   * only just being created.
    */
   #editor: {
     view: PageView;
@@ -218,16 +219,16 @@ class PdfEditor implements EditorInstance {
     input: HTMLTextAreaElement;
     warning: HTMLElement;
     metrics: FaceMetrics;
-    /** Područje izvornog retka koji ova izmjena zamjenjuje. */
+    /** The area of the source line this edit replaces. */
     replaces: Rect | null;
-    /** Što treba reći prije spremanja, neovisno o tipkanju. */
+    /** What has to be said before saving, regardless of typing. */
     notes: string[];
   } | null = null;
 
   #drawing: { view: PageView; points: Point[] } | null = null;
   #marquee: { view: PageView; origin: Point; el: HTMLElement } | null = null;
 
-  /** Dokument otvoren radi čitanja sadržaja; prati `source`. */
+  /** The document opened to read its content; it tracks `source`. */
   #contentDoc: { source: Uint8Array; doc: Promise<PDFDocument> } | null = null;
   #standard: Promise<StandardWidths> | null = null;
 
@@ -247,7 +248,7 @@ class PdfEditor implements EditorInstance {
     this.#plan = identityPlan(pdf.numPages);
   }
 
-  /* ── montaža ───────────────────────────────────────────────────────── */
+  /* ── mounting ──────────────────────────────────────────────────────── */
 
   async mount(container: HTMLElement): Promise<void> {
     const root = document.createElement('div');
@@ -358,8 +359,8 @@ class PdfEditor implements EditorInstance {
       { tool: 'redact', label: '⌫', title: t('Erase text — drag over what should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
-    /* Klasa, ne inline stil: na uskom ekranu se traka okreće uspravno i grupa
-       se mora prelomiti, a inline stil bi to nadjačao. */
+    /* A class, not an inline style: on a narrow screen the bar turns upright and
+       the group has to wrap, which an inline style would override. */
     const toolGroup = document.createElement('span');
     toolGroup.className = 'ul-pdf-tools';
     for (const { tool, label, title } of tools) {
@@ -383,9 +384,9 @@ class PdfEditor implements EditorInstance {
       swatchButtons.push({ el: b, color });
     }
 
-    /* Rez i veličina se tiču samo pisanja teksta, pa ih CSS pokazuje tek kad je
-       taj alat izabran — inače bi traka nosila dvije kontrole koje devedeset
-       posto vremena ne rade ništa. */
+    /* The face and the size concern writing text only, so CSS reveals them once
+       that tool is selected — otherwise the bar would carry two controls that do
+       nothing ninety per cent of the time. */
     const textOpts = document.createElement('span');
     textOpts.className = 'ul-pdf-text-opts';
 
@@ -536,14 +537,14 @@ class PdfEditor implements EditorInstance {
     this.#setPlan(movePage(this.#plan, position - 1, delta));
   }
 
-  /* ── spajanje i izdvajanje ─────────────────────────────────────────── */
+  /* ── merging and extracting ────────────────────────────────────────── */
 
   /**
-   * Ponovno učitavanje dokumenta iz novih bajtova.
+   * Reloading the document from new bytes.
    *
-   * Traži ga samo spajanje: nakon njega postoje stranice koje u učitanom
-   * pdf.js dokumentu ne postoje, pa se plan nad njim više ne može razriješiti.
-   * Rotacija, brisanje i preslagivanje i dalje rade nad istim dokumentom.
+   * Only a merge requires it: afterwards there are pages that do not exist in the
+   * loaded pdf.js document, so the plan can no longer be resolved against it.
+   * Rotation, deletion and reordering still work over the same document.
    */
   async #reload(bytes: Uint8Array, plan: PagePlan[]): Promise<void> {
     const scroll = this.#scroll;
@@ -568,7 +569,7 @@ class PdfEditor implements EditorInstance {
     await this.#applyPlan();
   }
 
-  /** Umeće stranice drugog PDF-a iza trenutne. */
+  /** Inserts the pages of another PDF after the current one. */
   async mergeFrom(incoming: Uint8Array, at = this.#current): Promise<number> {
     const result = await mergeInto(this.source, this.#plan, incoming, at);
     this.#snapshot();
@@ -576,7 +577,7 @@ class PdfEditor implements EditorInstance {
     return result.added;
   }
 
-  /** Otvara odabir datoteke i umeće je — radnja iz trake sa stranicama. */
+  /** Opens the file picker and inserts it — the action from the pages rail. */
   async insertPdf(): Promise<void> {
     try {
       const [picked] = await this.host.fs.pickFiles({ extensions: ['pdf'] });
@@ -600,9 +601,9 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Izdvaja raspon stranica u novu datoteku. Izvornik ostaje netaknut — nitko
-   * ne želi da mu se dokument raspolovi na disku zato što je htio izvući tri
-   * stranice.
+   * Extracts a range of pages into a new file. The source stays untouched —
+   * nobody wants their document halved on disk because they wanted three pages
+   * out of it.
    */
   async extractTo(ranges: string): Promise<void> {
     const positions = parseRanges(ranges, this.#plan.length);
@@ -630,7 +631,7 @@ class PdfEditor implements EditorInstance {
     }
   }
 
-  /** Usklađuje DOM i stanje pogleda s trenutnim planom. */
+  /** Brings the DOM and the view state into line with the current plan. */
   async #applyPlan(): Promise<void> {
     const scroll = this.#scroll;
     if (!scroll) return;
@@ -647,8 +648,8 @@ class PdfEditor implements EditorInstance {
       ordered.push(view);
     }
 
-    // Stranice izvan plana su obrisane — sklanjaju se iz prikaza, ali se
-    // pogled zadržava jer ih undo može vratiti.
+    // Pages outside the plan were deleted — they leave the display, but the view
+    // is kept because undo can bring them back.
     for (const view of this.#pages) {
       if (!ordered.includes(view)) view.el.remove();
     }
@@ -720,7 +721,7 @@ class PdfEditor implements EditorInstance {
       item.appendChild(actions);
       fragment.appendChild(item);
 
-      // Minijatura se crta nakon umetanja da canvas ima izmjerenu širinu.
+      // The thumbnail is drawn after insertion so the canvas has a measured width.
       void this.#renderThumb(view, canvas, entry.rotate);
     }
 
@@ -791,8 +792,8 @@ class PdfEditor implements EditorInstance {
     if (this.#root) this.#root.dataset.tool = tool;
     this.#closePopup();
     this.#finishTextEdit();
-    // Font se skida čim korisnik posegne za alatom, ne pri prvom kliku — inače
-    // se prvi okvir stvara uz vidljivo čekanje.
+    // The font is fetched the moment the user reaches for the tool, not on the
+    // first click — otherwise the first box appears after a visible wait.
     if (tool === 'text') void this.#face(this.#textFace);
     this.#syncToolbar();
   }
@@ -807,7 +808,7 @@ class PdfEditor implements EditorInstance {
     this.#syncToolbar();
   }
 
-  /** Boja na koju se odnose kvačice — ovisi o tome što se upravo radi. */
+  /** The colour the swatches refer to — it depends on what is being done. */
   #activeColor(): Rgb {
     return this.#tool === 'text' || this.#editor ? this.#textColor : this.#color;
   }
@@ -830,10 +831,10 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Mjere jednog reza, spremne za sinkronu upotrebu.
+   * The metrics of one face, ready for synchronous use.
    *
-   * Uz bajtove se registrira i isti font u pregledniku, jer okvir na ekranu i
-   * okvir u datoteci moraju imati istu širinu.
+   * Alongside the bytes, the same font is registered in the browser, because the
+   * box on screen and the box in the file must have the same width.
    */
   async #face(face: TextFace): Promise<FaceMetrics> {
     const ready = this.#metrics.get(face);
@@ -866,7 +867,7 @@ class PdfEditor implements EditorInstance {
     this.zoomBy(event.deltaY < 0 ? 1 : -1);
   };
 
-  /** Dimenzije stranice uz rotaciju iz plana — 90° zamjenjuje širinu i visinu. */
+  /** The page dimensions with the plan's rotation — 90° swaps width and height. */
   #sizeOf(view: PageView): { width: number; height: number } {
     const swap = (view.rotate / 90) % 2 !== 0;
     return swap
@@ -909,9 +910,9 @@ class PdfEditor implements EditorInstance {
       view.hitsEl.replaceChildren();
     }
 
-    // Nakon promjene mjerila stranice imaju druge visine, pa isti `scrollTop`
-    // više ne pokazuje na istu stranicu. Bez ovoga svaka promjena zooma i svaka
-    // promjena veličine prozora izbaci čitatelja s mjesta na kojem je stao.
+    // After a scale change the pages have different heights, so the same
+    // `scrollTop` no longer points at the same page. Without this, every zoom
+    // change and every window resize throws the reader off their place.
     const target = visible[anchor - 1];
     if (target) scroll.scrollTop = Math.max(0, target.el.offsetTop - 20);
 
@@ -1037,7 +1038,7 @@ class PdfEditor implements EditorInstance {
         this.#syncToolbar();
       }
     } catch (err) {
-      console.warn(`[uleditor] anotacije stranice ${view.source} se nisu učitale`, err);
+      console.warn(`[uleditor] annotations for page ${view.source} failed to load`, err);
     }
   }
 
@@ -1048,10 +1049,10 @@ class PdfEditor implements EditorInstance {
     const fragment = document.createDocumentFragment();
 
     /*
-     * Označeno za brisanje se crta kao **namjera**, ne kao gotov posao: tekst
-     * ispod se još nazire. Neprozirna zakrpa bi izgledala kao da je već
-     * obrisan, a to je upravo dojam koji crni pravokutnik u drugim alatima
-     * ostavlja lažno.
+     * An area marked for redaction is drawn as an **intent**, not as finished
+     * work: the text underneath still shows through. An opaque patch would look
+     * as though it had already been deleted, and that is precisely the false
+     * impression a black rectangle leaves in other tools.
      */
     for (const redaction of this.#redactions) {
       if (redaction.page !== view.source) continue;
@@ -1076,8 +1077,8 @@ class PdfEditor implements EditorInstance {
     }
 
     for (const annotation of this.#annotations) {
-      // Vezuje se uz IZVORNU stranicu, pa preslagivanje ne razdvaja bilješku
-      // od onoga na što se odnosi.
+      // It binds to the SOURCE page, so reordering does not separate a note from
+      // what it refers to.
       if (annotation.page !== view.source) continue;
 
       if (annotation.kind === 'highlight') {
@@ -1097,7 +1098,7 @@ class PdfEditor implements EditorInstance {
       }
 
       if (annotation.kind === 'text') {
-        // Dok se okvir tipka, njegov statični prikaz bi se dvostruko iscrtao
+        // While a box is being typed, its static rendering would be drawn twice
         // ispod `<textarea>`-e.
         if (this.#editor?.draft.id === annotation.id) continue;
 
@@ -1119,8 +1120,8 @@ class PdfEditor implements EditorInstance {
         el.dataset.id = annotation.id;
         el.style.left = `${box.left}px`;
         el.style.top = `${box.top}px`;
-        // Fiksna veličina na ekranu, kao u svakom PDF čitaču: bilješka je
-        // oznaka, ne sadržaj stranice, pa se ne smije napuhati sa zoomom.
+        // A fixed on-screen size, as in every PDF reader: a note is a marker, not
+        // page content, so it must not balloon with the zoom.
         el.style.width = `${NOTE_ICON_PX}px`;
         el.style.height = `${NOTE_ICON_PX}px`;
         el.style.background = cssRgb(annotation.color);
@@ -1160,9 +1161,9 @@ class PdfEditor implements EditorInstance {
 
     view.annotEl.replaceChildren(fragment);
 
-    /* Polje za tipkanje živi u istom sloju, pa bi ga `replaceChildren` maknuo
-       pri svakom osvježenju — na primjer kad se promijeni zoom. Vraća se
-       nazad i preračunava, umjesto da se uređivanje prekine. */
+    /* The typing field lives in the same layer, so `replaceChildren` would remove
+       it on every refresh — for instance when the zoom changes. It is put back
+       and recomputed rather than having the edit interrupted. */
     const editor = this.#editor;
     if (editor && editor.view === view) {
       Object.assign(editor.input.style, this.#textStyle(editor.draft, editor.metrics));
@@ -1197,7 +1198,7 @@ class PdfEditor implements EditorInstance {
   }
 
   #restore(snapshot: Snapshot): void {
-    // Poništavanje spajanja vraća i sam dokument, ne samo plan.
+    // Undoing a merge restores the document itself, not just the plan.
     if (snapshot.source !== this.source) {
       this.#annotations = snapshot.annotations;
       this.#redactions = snapshot.redactions;
@@ -1316,9 +1317,9 @@ class PdfEditor implements EditorInstance {
   }
 
   #onPointerDown(event: PointerEvent, view: PageView): void {
-    // Prozorčić bilješke i postojeće anotacije žive unutar sloja koji sluša
-    // ovaj event. Bez ove provjere klik na „Spremi" u prozorčiću stvara novu
-    // bilješku ispod njega.
+    // The note popup and the existing annotations live inside the layer that
+    // listens for this event. Without this check, clicking "Save" in the popup
+    // creates a new note underneath it.
     const target = event.target as HTMLElement | null;
     if (target?.closest('.ul-pdf-note-popup, .ul-pdf-ann')) return;
 
@@ -1344,7 +1345,7 @@ class PdfEditor implements EditorInstance {
 
     if (this.#tool === 'text') {
       event.preventDefault();
-      // Klik pokraj otvorenog okvira prvo dovršava njega; drugi klik otvara novi.
+      // A click beside an open box finishes that one first; a second click opens a new one.
       if (this.#editor) {
         this.#finishTextEdit();
         return;
@@ -1435,7 +1436,7 @@ class PdfEditor implements EditorInstance {
 
   /* ── brisanje teksta ───────────────────────────────────────────────── */
 
-  /** Dokument otvoren za čitanje sadržaja; jednom po verziji izvornika. */
+  /** The document opened to read its content; once per version of the source. */
   #openContent(): Promise<PDFDocument> {
     if (!this.#contentDoc || this.#contentDoc.source !== this.source) {
       this.#contentDoc = {
@@ -1506,12 +1507,12 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Bilježi područje za brisanje, ali tek nakon što se provjeri da se dade.
+   * Records an area for redaction, but only after checking it can be done.
    *
-   * Provjera se radi odmah, a ne pri spremanju: da čitanje sadržaja stranice
-   * ne uspije ili da tekst bude izvan dosega, korisnik to mora saznati dok
-   * još gleda u to mjesto — a ne kroz upozorenje uz spremanje, kad je već
-   * prešao na drugi posao.
+   * The check happens straight away rather than at save time: if reading the page
+   * content fails, or the text is out of reach, the user has to learn that while
+   * still looking at the spot — not through a warning at save time, once they
+   * have moved on to something else.
    */
   async #addRedaction(view: PageView, rect: Rect): Promise<void> {
     try {
@@ -1578,12 +1579,13 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Klik alatom za tekst: na prazno mjesto otvara nov okvir, na postojeći
-   * tekst otvara **taj tekst** na prepisivanje.
+   * A click with the text tool: on empty space it opens a new box, on existing
+   * text it opens **that text** for rewriting.
    *
-   * Dva različita posla iza istog poteza, jer je to isti poriv — „ovdje želim
-   * drukčija slova”. Zaseban alat bi tražio da korisnik unaprijed zna je li
-   * ono pod prstom tekst dokumenta ili prazan papir, a to se ne vidi.
+   * Two different jobs behind the same gesture, because the urge is the same — "I
+   * want different letters here". A separate tool would require the user to know
+   * in advance whether what is under their finger is document text or blank
+   * paper, and that cannot be seen.
    */
   async #startTextBox(view: PageView, clientX: number, clientY: number): Promise<void> {
     const bounds = view.el.getBoundingClientRect();
@@ -1593,7 +1595,7 @@ class PdfEditor implements EditorInstance {
     );
 
     const existing = await this.#lineAt(view, { x, y: top });
-    // Dok se sadržaj čitao korisnik je mogao promijeniti alat ili stranicu.
+    // While the content was being read, the user may have changed tool or page.
     if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
 
     if (existing && 'refusal' in existing) {
@@ -1652,7 +1654,7 @@ class PdfEditor implements EditorInstance {
     });
   }
 
-  /** Redak dokumenta pod zadanom točkom, ako ga ima i ako se da prepisati. */
+  /** The document line under a given point, if there is one and it can be rewritten. */
   async #lineAt(
     view: PageView,
     point: { x: number; y: number },
@@ -1663,18 +1665,18 @@ class PdfEditor implements EditorInstance {
       if (!page) return null;
       return findEditableLine(page, point, await this.#standardWidths());
     } catch {
-      // Nečitljiv sadržaj ne smije spriječiti pisanje novog teksta.
+      // Unreadable content must not prevent writing new text.
       return null;
     }
   }
 
-  /** CSS koji tekstu daje isti izgled kao što će imati u datoteci. */
+  /** The CSS that gives the text the same look it will have in the file. */
   #textStyle(box: TextBoxAnnotation, metrics: FaceMetrics | undefined): Partial<CSSStyleDeclaration> {
     const spec = TEXT_FACES.find((f) => f.id === box.face);
     const lineHeight = metrics
       ? metrics.lineHeight(box.size)
-      : // Bez mjera se visina retka izvodi iz okvira; vrijedi za uvezene okvire
-        // koje korisnik nije dirao, pa font nije ni trebao.
+      : // Without metrics the line height is derived from the box; this holds for
+        // imported boxes the user has not touched, where no font was needed.
         (box.rect.height - TEXT_PADDING * 2) / Math.max(1, linesOf(box.text).length);
 
     return {
@@ -1699,15 +1701,15 @@ class PdfEditor implements EditorInstance {
   /**
    * Tipkanje okvira na mjestu.
    *
-   * `<textarea>` stoji točno preko okvira i nosi isti font, veličinu i visinu
-   * retka, pa je ono što se vidi tijekom tipkanja već ono što će biti u
-   * datoteci. Statični prikaz je za to vrijeme sakriven.
+   * The `<textarea>` sits exactly over the box and carries the same font, size
+   * and line height, so what is seen while typing is already what will be in the
+   * file. The static rendering is hidden for the duration.
    */
   #openTextEditor(
     view: PageView,
     metrics: FaceMetrics,
     draft: TextBoxAnnotation,
-    /** Kad se prepisuje postojeći redak: što odlazi i što o tome treba reći. */
+    /** When rewriting an existing line: what goes away and what has to be said about it. */
     replaces?: { rect: Rect; note: string | null },
   ): void {
     this.#finishTextEdit();
@@ -1736,7 +1738,7 @@ class PdfEditor implements EditorInstance {
       ) ?? null,
     };
 
-    // Render sam postavlja polje u sloj i preračunava mu mjesto.
+    // The render puts the field into the layer itself and recomputes its position.
     this.#renderAnnotations(view);
 
     input.addEventListener('input', () => this.#onTextInput());
@@ -1753,7 +1755,7 @@ class PdfEditor implements EditorInstance {
     this.#onTextInput();
   }
 
-  /** Okvir prati tekst dok se tipka — širi se udesno i prema dolje. */
+  /** The box follows the text while typing — it grows to the right and downwards. */
   #onTextInput(): void {
     const editor = this.#editor;
     if (!editor) return;
@@ -1770,8 +1772,9 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Znak koji font ne poznaje se prijavljuje **dok se tipka**, ne pri
-   * spremanju: tada se još da promijeniti, a poslije je dokument već otišao.
+   * A character the font does not know is reported **while typing**, not on save:
+   * at that point it can still be changed, whereas afterwards the document has
+   * already gone.
    */
   #warnAboutGlyphs(): void {
     const editor = this.#editor;
@@ -1802,7 +1805,7 @@ class PdfEditor implements EditorInstance {
     editor.warning.style.top = `${geometry.top + geometry.height + 4}px`;
   }
 
-  /** Mijenja rez, veličinu ili boju okvira koji se upravo tipka. */
+  /** Changes the face, size or colour of the box currently being typed. */
   #applyToEditedBox(patch: Partial<Pick<TextBoxAnnotation, 'size' | 'face' | 'color'>>): void {
     const editor = this.#editor;
     if (!editor) return;
@@ -1818,10 +1821,10 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Zatvara uređivanje i tek tada dira povijest.
+   * Closes the edit, and only then touches the history.
    *
-   * Prazan okvir se ne sprema: kliknuti pa se predomisliti ne smije ostaviti
-   * nevidljivu anotaciju u dokumentu.
+   * An empty box is not saved: clicking and then changing your mind must not
+   * leave an invisible annotation in the document.
    */
   #finishTextEdit(): void {
     const editor = this.#editor;
@@ -1835,9 +1838,9 @@ class PdfEditor implements EditorInstance {
     const empty = draft.text.trim().length === 0;
 
     /*
-     * Prepisivanje postojećeg retka: stari odlazi iz sadržaja, novi dolazi na
-     * njegovu osnovnu liniju. Oboje je jedan korak povijesti — poništavanje
-     * mora vratiti i tekst i njegovo mjesto, a ne pola posla.
+     * Rewriting an existing line: the old one leaves the content stream, the new
+     * one arrives on its baseline. Both are one step in the history — undo has to
+     * restore both the text and its place, not half the job.
      */
     if (replaces) {
       this.#snapshot();
@@ -1878,7 +1881,7 @@ class PdfEditor implements EditorInstance {
 
     this.#snapshot();
     this.#annotations = this.#annotations.map((a) =>
-      // Uređen uvezeni okvir postaje naš, inače se izmjena ne bi zapisala.
+      // An edited imported box becomes ours, otherwise the change would not be written.
       a.id === draft.id ? { ...draft, imported: false } : a,
     );
     this.#markDirty();
@@ -1887,10 +1890,10 @@ class PdfEditor implements EditorInstance {
   }
 
   /**
-   * Povlačenje pomiče okvir, klik ga otvara za tipkanje.
+   * Dragging moves the box, a click opens it for typing.
    *
-   * Pomak se računa u PDF prostoru, preko dviju pretvorbi umjesto dijeljenjem
-   * sa zoomom — tako radi i na zarotiranoj stranici.
+   * The offset is computed in PDF space, through two conversions rather than by
+   * dividing by the zoom — that way it works on a rotated page too.
    */
   #beginTextDrag(event: PointerEvent, view: PageView, id: string): void {
     if (this.#tool === 'ink' || this.#tool === 'note') return;
@@ -1941,8 +1944,8 @@ class PdfEditor implements EditorInstance {
         return;
       }
 
-      // Pomak se sprema kao jedan korak; `box` je već izmijenjen na mjestu, pa
-      // se snimka radi nad prethodnim položajem.
+      // The move is stored as one step; `box` has already been changed in place,
+      // so the snapshot is taken against the previous position.
       const moveTo = box.rect;
       box.rect = origin;
       this.#snapshot();
@@ -1959,7 +1962,7 @@ class PdfEditor implements EditorInstance {
     el.addEventListener('pointercancel', onUp);
   }
 
-  /* ── prozorčić bilješke ────────────────────────────────────────────── */
+  /* ── the note popup ────────────────────────────────────────────────── */
 
   #closePopup(): void {
     this.#popup?.remove();
@@ -2001,7 +2004,7 @@ class PdfEditor implements EditorInstance {
       if (text !== annotation.text) {
         this.#snapshot();
         this.#annotations = this.#annotations.map((a) =>
-          // Uređena uvezena bilješka postaje naša — inače se izmjena ne bi zapisala.
+          // An edited imported note becomes ours — otherwise the change would not be written.
           a.id === id && a.kind === 'note' ? { ...a, text, imported: false } : a,
         );
         this.#markDirty();
@@ -2104,7 +2107,7 @@ class PdfEditor implements EditorInstance {
 
   async save(target?: SaveTarget): Promise<SaveResult> {
     const uri = target?.uri ?? this.docHandle.uri;
-    // Nedovršeno tipkanje se sprema zajedno s ostatkom, ne gubi se.
+    // Unfinished typing is saved along with the rest, not lost.
     this.#finishTextEdit();
 
     const { bytes, lost } = await saveDocument(
@@ -2117,12 +2120,13 @@ class PdfEditor implements EditorInstance {
     );
     await this.host.fs.writeBytes(uri, bytes);
 
-    // Spremljene anotacije su sada dio datoteke; označavamo ih kao uvezene
-    // da ih sljedeće spremanje ne doda drugi put.
+    // The saved annotations are now part of the file; we mark them as imported so
+    // the next save does not add them a second time.
     this.#annotations = this.#annotations.map((a) => ({ ...a, imported: true }));
-    /* Oznake ostaju: svako spremanje kreće od netaknutog izvornika, pa se
-       brisanje ponavlja s istim ishodom — a micanje oznake i dalje vraća
-       tekst, što je jedini način da se predomišljanje uopće može ponuditi. */
+    /* The marks stay: every save starts from the untouched source, so the
+       redaction is repeated with the same outcome — and removing a mark still
+       brings the text back, which is the only way changing your mind can be
+       offered at all. */
     this.#redactions = this.#redactions.map((r) => ({ ...r, applied: true }));
     this.#markDirty();
     this.#syncToolbar();
@@ -2173,7 +2177,7 @@ class PdfEditor implements EditorInstance {
         if (index === -1) break;
         const end = index + query.query.length;
         results.push({
-          // Korisnik vidi mjesto u trenutnom prikazu, ne izvorni broj stranice.
+          // The user sees the position in the current view, not the source page number.
           label: `Stranica ${view.position}`,
           preview: text
             .slice(Math.max(0, index - 40), index + needle.length + 40)
@@ -2220,14 +2224,14 @@ class PdfEditor implements EditorInstance {
     });
   }
 
-  /* ── način čitanja ─────────────────────────────────────────────────── */
+  /* ── reading mode ──────────────────────────────────────────────────── */
 
   /**
-   * PDF je fiksni prijelom, pa se čitaonica ovdje ponaša drukčije nego kod
-   * teksta: tipografija se ne može mijenjati (stranica je slika), ali sve
-   * ostalo vrijedi — okvir nestaje, stranica se uklapa u ekran, listanje ide
-   * po stvarnim stranicama, a "noć" i "sepija" se primjenjuju kao filtar nad
-   * prikazom, kao u čitačima koje ljudi već koriste.
+   * A PDF is a fixed layout, so the reading room behaves differently here than it
+   * does for text: the typography cannot be changed (the page is an image), but
+   * everything else holds — the frame disappears, the page fits the screen,
+   * turning follows real pages, and "night" and "sepia" are applied as a filter
+   * over the rendering, as in the readers people already use.
    */
   beginReading(options: ReadingOptions): ReadingSession {
     const previousZoom = this.#zoomMode;
@@ -2269,7 +2273,7 @@ class PdfEditor implements EditorInstance {
     this.setZoomMode(options.flow === 'paged' ? 'fit-page' : 'fit-width');
   }
 
-  /** Oznake iz dokumenta; kad ih nema, popis stranica je bolji od praznog sadržaja. */
+  /** The document outline; where there is none, a page list beats an empty table of contents. */
   async #loadOutline(): Promise<void> {
     const targets = new Map<string, number>();
     const items: ReadingOutlineItem[] = [];
@@ -2305,7 +2309,7 @@ class PdfEditor implements EditorInstance {
       const raw = (await this.pdf.getOutline()) as RawItem[] | null;
       if (raw?.length) await walk(raw, 0);
     } catch {
-      // Oštećeno stablo oznaka ne smije spriječiti čitanje.
+      // A damaged outline tree must not prevent reading.
     }
 
     if (items.length === 0) {
@@ -2359,11 +2363,11 @@ export const pdfEditorProvider: EditorProvider = {
 };
 
 /**
- * Tekst PDF-a, stranicu po stranicu, bez montiranja editora.
+ * The text of a PDF, page by page, without mounting an editor.
  *
- * Postoji zbog pretrage po projektu: ondje se otvara desetak dokumenata za
- * koje nitko ne gleda prikaz, pa bi puni editor bio čista cijena. Dokument se
- * uredno zatvara — inače svaka pretraga ostavi pdf.js worker za sobom.
+ * It exists for project-wide search: there a dozen documents are opened whose
+ * rendering nobody looks at, so a full editor would be pure cost. The document is
+ * closed properly — otherwise every search would leave a pdf.js worker behind.
  */
 export async function extractPdfText(
   bytes: Uint8Array,

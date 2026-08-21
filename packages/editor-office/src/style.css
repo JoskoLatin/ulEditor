@@ -1,8 +1,8 @@
 /*
- * Pregled Office dokumenata.
+ * Viewing Office documents.
  *
- * Word pregled dijeli čitaonicu s ostalim dugim tekstom (`ul-read`), pa ovdje
- * stoji samo ono što je specifično za dokument i za mrežu tablice.
+ * The Word view shares the reading room with other long text (`ul-read`), so
+ * only what is specific to the document and to the spreadsheet grid lives here.
  */
 
 .ul-office {
@@ -16,12 +16,12 @@
   outline: none;
 }
 
-/* ── prepisivi tekst ─────────────────────────────────────────────────── */
+/* ── rewritable text ─────────────────────────────────────────────────── */
 
 /*
- * Omotač oko jednog `w:r`. U mirovanju ne smije promijeniti ni piksel
- * prikaza — dokument se prije svega čita, pa natuknica da se tekst da
- * prepisati ne vrijedi da se zbog nje čitanje pogorša.
+ * The wrapper around one `w:r`. At rest it must not change a single pixel of the
+ * rendering — a document is read first and foremost, so a hint that the text can
+ * be rewritten is not worth degrading the reading for.
  */
 .ul-office-run {
   border-radius: 2px;
@@ -37,7 +37,7 @@
   background: rgba(120, 160, 200, 0.1);
 }
 
-/* ── traka o tome što pregled ne pokazuje ────────────────────────────── */
+/* ── the bar about what the view does not show ───────────────────────── */
 
 .ul-office-notes {
   display: flex;
@@ -86,7 +86,7 @@
   color: var(--ink);
 }
 
-/* Kad se dokument čita, traka bi razbila mir stranice. */
+/* While the document is being read, the bar would break the calm of the page. */
 .ul-office[data-reading='true'] .ul-office-notes {
   display: none;
 }
@@ -198,7 +198,7 @@
   margin-bottom: 0;
 }
 
-/* ── Excel mreža ─────────────────────────────────────────────────────── */
+/* ── the Excel grid ──────────────────────────────────────────────────── */
 
 .ul-sheet-book {
   background: var(--surface);
@@ -232,7 +232,7 @@
   font-weight: 400;
 }
 
-/* Zaglavlja ostaju vidljiva — bez toga se u stotom retku ne zna koji je stupac. */
+/* The headers stay visible — without them, at row one hundred you cannot tell which column you are in. */
 .ul-sheet thead th {
   position: sticky;
   top: 0;
@@ -278,7 +278,7 @@
   color: var(--danger);
 }
 
-/* Ćelija koja ima formulu — točkica dolje desno, kao u tablicama koje ljudi znaju. */
+/* A cell holding a formula — a dot at the bottom right, as in the spreadsheets people know. */
 .ul-sheet td[title] {
   background-image: linear-gradient(
     to bottom left,

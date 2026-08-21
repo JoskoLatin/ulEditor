@@ -1,13 +1,13 @@
 /**
- * Dohvat fonta u pregledniku.
+ * Fetching the font in the browser.
  *
- * Odvojeno od [`text.ts`](./text.ts) jer je ovo jedini dio koji ovisi o Viteu i
- * o `fetch`-u — provjere pod Nodeom uvoze račun bez ovoga i čitaju font s
- * diska.
+ * Kept apart from [`text.ts`](./text.ts) because this is the only part that
+ * depends on Vite and on `fetch` — the checks under Node import the maths
+ * without it and read the font off disk.
  *
- * Font stiže s pdf.js-om, koji ga ionako nosi za zamjenu standardnih PDF
- * fontova. Zato u repou nema priloženog fonta, a licenca (SIL OFL 1.1) ostaje
- * uz paket iz kojeg dolazi.
+ * The font arrives with pdf.js, which carries it anyway to substitute the
+ * standard PDF fonts. So no font is committed to the repository, and its licence
+ * (SIL OFL 1.1) stays with the package it comes from.
  */
 
 import regularUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url';
@@ -22,22 +22,23 @@ const URLS: Record<TextFace, string> = {
   'sans-italic': italicUrl,
 };
 
-/** Isti izvor kao aplikacija — CSP dopušta `'self'`, a rad bez mreže ostaje. */
+/** The same origin as the application — the CSP allows `'self'`, and offline use survives. */
 export const loadFontBytes: FontLoader = async (face) => {
   const response = await fetch(URLS[face]);
-  if (!response.ok) throw new Error(`Font ${face} se ne da učitati (${response.status}).`);
+  if (!response.ok) throw new Error(`Font ${face} could not be loaded (${response.status}).`);
   return new Uint8Array(await response.arrayBuffer());
 };
 
 const registered = new Map<TextFace, Promise<void>>();
 
 /**
- * Registrira isti font u pregledniku.
+ * Registers the same font in the browser.
  *
- * Bez toga bi se okvir na ekranu crtao nekim sistemskim fontom, a u datoteku
- * bi otišao Liberation — pa bi se širina teksta razlikovala od onoga što je
- * korisnik vidio dok je tipkao. Na Windowsu bi razlika bila mala (Arial je
- * metrički jednak), na Androidu ne bi: ondje je zadani Roboto.
+ * Without it the box on screen would be drawn in some system font while
+ * Liberation went into the file — so the text width would differ from what the
+ * user saw while typing. On Windows the difference would be small (Arial is
+ * metrically identical); on Android it would not, since the default there is
+ * Roboto.
  */
 export function ensureWebFont(face: TextFace): Promise<void> {
   const existing = registered.get(face);

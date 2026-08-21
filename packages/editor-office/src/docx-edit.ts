@@ -1,20 +1,22 @@
 /**
- * Izmjena teksta u Word dokumentu — kirurški, po jednom runu.
+ * Editing text in a Word document — surgically, one run at a time.
  *
- * **Zašto run, a ne odlomak.** U OOXML-u je `w:r` komad teksta s jednim
- * formatiranjem. Odlomak ih zna imati desetak: podebljano ime, obična
- * rečenica, kurzivna napomena. Da se prepisuje odlomak, program bi morao
- * pogađati koje formatiranje ide na koje novo slovo — a to je upravo ono tiho
- * gubljenje tuđeg formatiranja koje projekt zabranjuje. Run se prepisuje bez
- * ijedne odluke: formatiranje mu ostaje, mijenja se samo tekst.
+ * **Why a run and not a paragraph.** In OOXML a `w:r` is a piece of text with a
+ * single formatting. A paragraph often holds a dozen of them: a bold name, a
+ * plain sentence, an italic aside. To rewrite a paragraph, the program would
+ * have to guess which formatting applies to which new letter — and that is
+ * precisely the silent loss of somebody else's formatting this project forbids.
+ * A run is rewritten without a single such decision: its formatting stays, only
+ * the text changes.
  *
- * **Zašto se XML ne serijalizira nanovo.** `XMLSerializer` bi prošao kroz
- * cijeli dokument i usput promijenio navodnike, prostore imena, redoslijed
- * atributa i prazan prostor. Razlika bi bila neusporediva s onim što je
- * korisnik tražio. Zato se radi zamjena **po rasponu bajtova**: sve osim
- * prepisanog teksta ostaje slovo za slovo isto.
+ * **Why the XML is not re-serialised.** `XMLSerializer` would walk the whole
+ * document and change quotation marks, namespaces, attribute order and
+ * whitespace along the way. The diff would bear no resemblance to what the user
+ * asked for. So the replacement is done **by byte range**: everything but the
+ * rewritten text stays character for character identical.
  *
- * Ovdje nema DOM-a ni zipa, pa se isto vrti u pregledniku i u provjerama.
+ * There is no DOM and no zip here, so the same code runs in the browser and in
+ * the checks.
  */
 
 import { strToU8, zipSync } from 'fflate';
@@ -33,11 +35,11 @@ interface Tag {
 }
 
 /**
- * Redom vraća sve XML oznake s njihovim rasponima.
+ * Yields every XML tag in order, with its range.
  *
- * Navodnici se poštuju jer vrijednost atributa smije sadržavati `>`, a
- * komentari i CDATA se preskaču u cijelosti — inače bi `<` unutar njih
- * izgledao kao početak oznake.
+ * Quotes are respected because an attribute value may contain `>`, and comments
+ * and CDATA are skipped whole — otherwise a `<` inside them would look like the
+ * start of a tag.
  */
 function* scanTags(xml: string): Generator<Tag> {
   let i = 0;
@@ -99,29 +101,29 @@ function localName(name: string): string {
 /* ── runovi ──────────────────────────────────────────────────────────── */
 
 export interface RunSpan {
-  /** Redni broj u dokumentu; isti redoslijed kao obilazak DOM stabla. */
+  /** The ordinal in the document; the same order as a DOM tree walk. */
   index: number;
   start: number;
   end: number;
-  /** Raspon jedinog `w:t` elementa i njegova sadržaja. */
+  /** The range of the single `w:t` element and of its content. */
   text: { start: number; end: number; contentStart: number; contentEnd: number } | null;
-  /** Zašto se ovaj run ne da prepisati; `null` kad se da. */
+  /** Why this run cannot be rewritten; `null` when it can. */
   refusal: string | null;
 }
 
 /**
- * Sadržaj koji run čini neprepisivim.
+ * Content that makes a run un-rewritable.
  *
- * Prijelom retka i tabulator nose položaj, a crtež, polje ili ugniježđeni run
- * nose vlastiti sadržaj — zamjena samog teksta bi ih pomaknula ili izgubila.
- * Takav run se i dalje čita, samo se ne nudi na izmjenu.
+ * A line break and a tab carry position, while a drawing, a field or a nested
+ * run carries content of its own — replacing the text alone would shift or lose
+ * them. Such a run is still readable, it is simply not offered for editing.
  */
 const BLOCKING = new Set(['br', 'tab', 'drawing', 'pict', 'object', 'fldChar', 'instrText', 'ruby']);
 
 /** Nalazi sve `w:r` elemente u dokumentu, redom. */
 export function findRuns(xml: string): RunSpan[] {
   const runs: RunSpan[] = [];
-  /** Otvoreni runovi; unutarnji je zadnji. Crteži znaju sadržavati runove. */
+  /** The open runs; the innermost is last. Drawings can contain runs. */
   const open: { span: RunSpan; texts: RunSpan['text'][]; blocked: Set<string> }[] = [];
   let pendingText: { start: number; contentStart: number } | null = null;
 
@@ -144,18 +146,18 @@ export function findRuns(xml: string): RunSpan[] {
 
       finished.span.end = tag.end;
       if (finished.blocked.size > 0) {
-        finished.span.refusal = `sadrži ${[...finished.blocked].join(', ')}`;
+        finished.span.refusal = `contains ${[...finished.blocked].join(', ')}`;
       } else if (finished.texts.length === 0) {
-        finished.span.refusal = 'run nema teksta';
+        finished.span.refusal = 'the run has no text';
       } else if (finished.texts.length > 1) {
-        // Word zna razbiti riječ na više `w:t` nakon provjere pravopisa.
-        finished.span.refusal = 'tekst je razbijen na više dijelova';
+        // Word tends to split a word across several `w:t` after a spell check.
+        finished.span.refusal = 'the text is split across several parts';
       } else {
         finished.span.text = finished.texts[0] ?? null;
       }
 
-      // Run unutar runa čini vanjski neprepisivim, jer nosi tuđi sadržaj.
-      open[open.length - 1]?.blocked.add('ugniježđeni run');
+      // A run inside a run makes the outer one un-rewritable, as it carries foreign content.
+      open[open.length - 1]?.blocked.add('a nested run');
       continue;
     }
 
@@ -175,7 +177,7 @@ export function findRuns(xml: string): RunSpan[] {
         continue;
       }
       if (tag.selfClosing) {
-        // `<w:t/>` je prazan tekst; sadržaj se ubacuje između oznaka.
+        // `<w:t/>` is empty text; content is inserted between the tags.
         current.texts.push({
           start: tag.start,
           end: tag.end,
@@ -231,11 +233,11 @@ export interface RunEdit {
 }
 
 /**
- * Upisuje nove tekstove u dokument, mijenjajući samo njihove raspone.
+ * Writes the new texts into the document, changing only their ranges.
  *
- * Ide od kraja prema početku da se odmaci ne pomaknu ispod nogu. Novi element
- * uvijek dobiva `xml:space="preserve"`: bez toga Word odbacuje vodeći i
- * završni razmak, pa bi „ime ” tiho postalo „ime”.
+ * It works from the end backwards so the offsets do not shift underfoot. The new
+ * element always gets `xml:space="preserve"`: without it Word discards leading
+ * and trailing spaces, so "name " would quietly become "name".
  */
 export function applyRunEdits(xml: string, runs: RunSpan[], edits: RunEdit[]): string {
   const byIndex = new Map(runs.map((run) => [run.index, run]));
@@ -257,11 +259,11 @@ export function applyRunEdits(xml: string, runs: RunSpan[], edits: RunEdit[]): s
 }
 
 /**
- * Sastavlja novi `.docx` s izmijenjenim tekstom.
+ * Assembles a new `.docx` with the edited text.
  *
- * Svi ostali dijelovi arhive prolaze **nedirnuti**: stilovi, numeriranje,
- * slike, zaglavlja, metapodaci. Mijenja se točno jedan dio, i unutar njega
- * točno oni rasponi koje je korisnik prepisao.
+ * Every other part of the archive passes through **untouched**: styles,
+ * numbering, images, headers, metadata. Exactly one part changes, and inside it
+ * exactly the ranges the user rewrote.
  */
 export function writeDocx(archive: Archive, runs: RunSpan[], xml: string, edits: RunEdit[]): Uint8Array {
   const next: Record<string, Uint8Array> = {};
