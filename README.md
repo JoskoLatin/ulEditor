@@ -195,7 +195,7 @@ Adding a format means writing a provider and registering it in [main.tsx](packag
 | [crates/ul-core/](crates/ul-core/) | Sandboxed VFS and workspace search |
 | [apps/desktop/](apps/desktop/) | The Tauri v2 shell |
 | [packages/reader-core/](packages/reader-core/) | Shared pagination engine and reading typography |
-| [packages/i18n/](packages/i18n/) | Interface translations; the key is the English source — see [TRANSLATING.md](docs/TRANSLATING.md) |
+| [packages/i18n/](packages/i18n/) | Interface translations — flat JSON keyed by the English source, see [TRANSLATING.md](docs/TRANSLATING.md) |
 | [packages/text-export/](packages/text-export/) | Text → txt / md / docx / pdf, with no external tool |
 | [tools/verify-i18n.mjs](tools/verify-i18n.mjs) | The translation catalogue against the source |
 | [tools/verify-ui.mjs](tools/verify-ui.mjs) | Runtime check of the shell through Chromium |
@@ -211,6 +211,6 @@ Copyleft engines (MuPDF, ONLYOFFICE, HyperFormula) — should they ever be neede
 
 - [Analysis and plan](docs/ANALYSIS-AND-PLAN.md) — architecture, library choices, roadmap, risks
 - [ADR 0001: choosing the runtime](docs/adr/0001-runtime.md) — phase 0 results and the go/no-go decision
-- [Translating](docs/TRANSLATING.md) — adding a language; no TypeScript needed, and a partial translation is welcome
+- [Translating](docs/TRANSLATING.md) — adding a language: one JSON file, no programming needed, and a partial translation is welcome
 - [Releases](docs/RELEASE.md) — how one tag produces desktop installers and a phone APK
 - [Phase 0 prompt](docs/PROMPT-PHASE-0.md)

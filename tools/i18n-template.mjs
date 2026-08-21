@@ -4,17 +4,21 @@
  *   node tools/i18n-template.mjs es          # start Spanish
  *   node tools/i18n-template.mjs es --update # add what is new, keep what is done
  *
- * Why a generator rather than "copy hr.ts and edit it": copying loses the
- * section comments the moment they move, silently keeps the Croatian text as a
- * plausible-looking translation, and gives no way to tell later which strings
- * have been done. Here an untranslated entry is an empty string and stands out,
- * `--update` never touches a line somebody has already written, and both the
- * ordering and the grouping come from the English source, so two catalogues can
- * be read side by side.
+ * A catalogue is `packages/i18n/locales/<code>.json`: English on the left, your
+ * language on the right, nothing else in the file. That is the shape Weblate,
+ * Crowdin, Lokalise and Poedit read, and it is editable by someone who has
+ * never opened a TypeScript file.
  *
- * The list of strings comes from the Croatian catalogue, because it is the only
- * complete inventory: format labels and fidelity notes reach `t()` through a
- * variable, so scanning for `t('…')` alone would miss about fifty of them.
+ * Why a generator rather than "copy hr.json and edit it": copying keeps the
+ * Croatian text as a plausible-looking translation, gives no way to tell later
+ * which strings are done, and drifts the moment a string is added. Here an
+ * untranslated entry is an empty string and stands out, `--update` never
+ * touches a line somebody has already written, and the order and grouping come
+ * from the English source, so two catalogues read side by side.
+ *
+ * The inventory comes from the Croatian catalogue, because it is the only
+ * complete one: format labels and fidelity notes reach `t()` through a
+ * variable, so scanning the source for `t('…')` alone would miss about fifty.
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -22,7 +26,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const I18N = resolve(ROOT, 'packages/i18n/src');
+const LOCALES = resolve(ROOT, 'packages/i18n/locales');
+const REFERENCE = resolve(LOCALES, 'hr.json');
 
 const args = process.argv.slice(2);
 const code = args.find((a) => !a.startsWith('-'));
@@ -41,118 +46,96 @@ if (code === 'en') {
 /* ── the inventory, in the order and grouping of the source ──────────── */
 
 /*
- * Matched over the whole file rather than line by line: Prettier wraps a long
- * entry onto two lines, and reading line by line drops every one of those — 59
- * of the 322 in the Croatian catalogue.
+ * The reference is read as text, not with JSON.parse: the blank lines between
+ * groups are what carries the grouping now that there are no comments, and
+ * parsing would throw them away.
  */
-const ROW = new RegExp(
-  [
-    '^ {2}(?<divider>\\/\\* .*? \\*\\/)$',
-    '|',
-    '^ {2}(?:(?<q>[\'"])(?<quoted>(?:\\\\.|(?!\\k<q>).)*)\\k<q>|(?<bare>[A-Za-z_$][\\w$]*))',
-    '\\s*:\\s*(?<vq>[\'"])(?<value>(?:\\\\.|(?!\\k<vq>).)*)\\k<vq>,?[ \\t]*$',
-  ].join(''),
-  'gm',
-);
+const reference = await readFile(REFERENCE, 'utf8');
+const ENTRY = /^ {2}("(?:\\.|[^"])*")\s*:\s*("(?:\\.|[^"])*")/;
 
-const unquote = (text) => text.replace(/\\(['"`\\])/g, '$1');
-
-/** The dividers and keys of a catalogue, in file order, with their values. */
-async function rowsOf(file) {
-  let text;
-  try {
-    text = await readFile(file, 'utf8');
-  } catch {
-    return [];
+const rows = [];
+for (const line of reference.split('\n')) {
+  if (!line.trim()) {
+    rows.push({ kind: 'gap' });
+    continue;
   }
-  const rows = [];
-  for (const m of text.matchAll(ROW)) {
-    const g = m.groups;
-    if (g.divider) rows.push({ kind: 'divider', text: g.divider });
-    else {
-      rows.push({
-        kind: 'entry',
-        key: g.quoted !== undefined ? unquote(g.quoted) : g.bare,
-        value: unquote(g.value),
-      });
-    }
-  }
-  return rows;
+  const m = ENTRY.exec(line);
+  if (m) rows.push({ kind: 'entry', key: JSON.parse(m[1]) });
 }
 
-const layout = await rowsOf(resolve(I18N, 'hr.ts'));
-const target = resolve(I18N, `${code}.ts`);
-
-/** What has already been written, so `--update` never overwrites somebody's work. */
-const done = new Map(
-  (await rowsOf(target))
-    .filter((r) => r.kind === 'entry' && r.value.trim())
-    .map((r) => [r.key, r.value]),
-);
-
-const keys = layout.filter((r) => r.kind === 'entry').map((r) => r.key);
+const keys = rows.filter((r) => r.kind === 'entry').map((r) => r.key);
 if (!keys.length) {
-  console.error('No entries found in hr.ts — has its formatting changed?');
+  console.error(`No entries found in ${REFERENCE} — has its formatting changed?`);
   process.exit(1);
+}
+
+/* ── what is already translated ──────────────────────────────────────── */
+
+const target = resolve(LOCALES, `${code}.json`);
+let done = new Map();
+try {
+  const existing = JSON.parse(await readFile(target, 'utf8'));
+  done = new Map(Object.entries(existing).filter(([, v]) => String(v).trim()));
+} catch (err) {
+  if (err.code !== 'ENOENT') {
+    console.error(`${target} is not valid JSON: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+if (done.size && !update) {
+  console.error(`packages/i18n/locales/${code}.json already exists.`);
+  console.error('Pass --update to add the new strings and keep the finished ones.');
+  process.exit(2);
 }
 
 const kept = keys.filter((k) => done.has(k)).length;
 const stale = [...done.keys()].filter((k) => !keys.includes(k));
 
-if (done.size && !update) {
-  console.error(`packages/i18n/src/${code}.ts already exists.`);
-  console.error('Pass --update to add the new strings and keep the finished ones.');
-  process.exit(2);
-}
-
 /* ── writing it out ──────────────────────────────────────────────────── */
 
-/* A key that is a plain identifier may go unquoted, as hr.ts does. */
-const BARE = /^[A-Za-z_$][\w$]*$/;
-const quote = (text) => `'${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-const asKey = (key) => (BARE.test(key) ? key : quote(key));
-
-const body = layout
-  .map((row) => {
-    if (row.kind === 'divider') return `\n  ${row.text}`;
-    return `  ${asKey(row.key)}: ${quote(done.get(row.key) ?? '')},`;
-  })
-  .join('\n')
-  .replace(/^\n/, '');
-
-const header = `/**
- * The ${code} interface translation.
- *
- * The key is the English source text. A string left empty here is shown in
- * English — deliberately, so that a missing translation never ends up as a
- * blank button. That is also why this catalogue is allowed to lag behind.
- *
- * Fill in the empty strings and leave the rest alone. \`{n}\`, \`{name}\` and the
- * like are placeholders: they must appear in your translation too, spelled
- * exactly as they are on the left, though they may move within the sentence.
- *
- * Check your work with \`node tools/verify-i18n.mjs\`.
- * The whole procedure is in docs/TRANSLATING.md.
+/*
+ * Written line by line rather than with JSON.stringify, to keep the blank line
+ * between groups. It is legal JSON whitespace and every tool ignores it, but a
+ * translator reading 322 strings gets to see where the toolbar ends and the PDF
+ * begins.
  */
+const lines = ['{'];
+let written = 0;
+for (const row of rows) {
+  if (row.kind === 'gap') {
+    if (written) lines.push('');
+    continue;
+  }
+  if (written) lines[lines.length - 1] += ',';
+  lines.push(`  ${JSON.stringify(row.key)}: ${JSON.stringify(done.get(row.key) ?? '')}`);
+  written++;
+}
+lines.push('}');
 
-import type { Catalog } from './index.js';
-
-export const ${code.replace('-', '')}: Catalog = {
-`;
-
-await writeFile(target, `${header}${body}\n};\n`, 'utf8');
+const text = lines.join('\n') + '\n';
+JSON.parse(text); // never write a file that will not parse
+await writeFile(target, text, 'utf8');
 
 const empty = keys.length - kept;
-console.log(`packages/i18n/src/${code}.ts — ${keys.length} strings, ${empty} still to translate`);
+console.log(
+  `packages/i18n/locales/${code}.json — ${keys.length} strings, ${empty} still to translate`,
+);
 if (kept) console.log(`  ${kept} existing translations kept`);
 if (stale.length) {
-  console.log(`  ${stale.length} no longer used, dropped: ${stale.slice(0, 5).map(quote).join(', ')}`);
+  console.log(
+    `  ${stale.length} no longer used, dropped: ${stale.slice(0, 5).map((s) => JSON.stringify(s)).join(', ')}`,
+  );
 }
+
+const ident = code.replace('-', '');
 console.log(`
 Three lines in packages/i18n/src/index.ts register it:
 
-  import { ${code.replace('-', '')} } from './${code}.js';
+  import ${ident} from '../locales/${code}.json' with { type: 'json' };
   export type Locale = 'en' | 'hr' | '${code}';
   export const LOCALES = [ …, { id: '${code}', label: '<English name>', native: '<own name>' } ];
-  export const CATALOGS = { en: {}, hr, ${code.replace('-', '')} };
+  export const CATALOGS = { en: {}, hr, ${ident} };
+
+Then check it:  node tools/verify-i18n.mjs
 `);

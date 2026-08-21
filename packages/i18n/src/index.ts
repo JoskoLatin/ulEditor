@@ -12,9 +12,14 @@
  *
  * The package deliberately has no dependencies: editors are plugins and must be
  * able to import it without dragging the shell along.
+ *
+ * The catalogues are **JSON, not TypeScript**, and that is for the translators:
+ * a `.json` file of `"English": "translation"` pairs is what Weblate, Crowdin
+ * and Lokalise read directly, and someone who does not write code can edit one
+ * without meeting a build error. See docs/TRANSLATING.md.
  */
 
-import { hr } from './hr.js';
+import hr from '../locales/hr.json' with { type: 'json' };
 
 export type Locale = 'en' | 'hr';
 

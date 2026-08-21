@@ -28,17 +28,47 @@ import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const I18N = resolve(ROOT, 'packages/i18n/src');
-
-/* The catalogues are imported rather than parsed: what ships is what is checked. */
-const { CATALOGS, LOCALES, t, setLocale } = await import(
-  pathToFileURL(resolve(I18N, 'index.ts')).href
-);
+const CATALOGUES = resolve(ROOT, 'packages/i18n/locales');
 
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
+
+/* ── the catalogues parse at all ─────────────────────────────────────── */
+
+/*
+ * Checked before anything is imported. A missing comma is the likeliest mistake
+ * for someone editing a catalogue by hand, and importing it first would abort
+ * the whole run with a Node stack trace pointing at the module loader — no line
+ * number, no file, nothing a translator can act on.
+ */
+for (const name of (await readdir(CATALOGUES)).filter((f) => f.endsWith('.json')).sort()) {
+  const file = resolve(CATALOGUES, name);
+  const raw = await readFile(file, 'utf8');
+  try {
+    JSON.parse(raw);
+    check(`locales/${name} is valid JSON`, true);
+  } catch (err) {
+    const at = /position (\d+)/.exec(err.message);
+    const where = at
+      ? (() => {
+          const upto = raw.slice(0, Number(at[1]));
+          const line = upto.split('\n').length;
+          return `line ${line}: ${raw.split('\n')[line - 1]?.trim().slice(0, 60)}`;
+        })()
+      : err.message;
+    check(`locales/${name} is valid JSON`, false, where);
+    console.log(`\n${checks.length - 1}/${checks.length} checks passed`);
+    process.exit(1);
+  }
+}
+
+/* The catalogues are imported rather than parsed: what ships is what is checked. */
+const { CATALOGS, LOCALES, t, setLocale } = await import(
+  pathToFileURL(resolve(I18N, 'index.ts')).href
+);
 
 /* ── collecting the t() calls ────────────────────────────────────────── */
 
@@ -87,13 +117,17 @@ check('the source was scanned', used.size > 0, `${used.size} keys in ${files.len
 
 const placeholdersOf = (text) => new Set([...String(text).matchAll(PLACEHOLDER)].map((m) => m[1]));
 
-/** A key written twice is no syntax error: the object keeps the last one. */
+/**
+ * A key written twice is not a JSON error either: `JSON.parse` keeps the last
+ * one and the earlier translation disappears without a word. So the file is
+ * scanned as text, not through the parser that would hide the problem.
+ */
 async function duplicatesIn(file) {
   const raw = await readFile(file, 'utf8');
   const seen = new Map();
   const found = [];
-  for (const m of raw.matchAll(/^ {2}(?:(['"])((?:\\.|(?!\1).)*)\1|([A-Za-z_$][\w$]*))\s*:/gm)) {
-    const key = m[2] !== undefined ? m[2].replace(/\\(['"`\\])/g, '$1') : m[3];
+  for (const m of raw.matchAll(/^ {2}("(?:\\.|[^"])*")\s*:/gm)) {
+    const key = JSON.parse(m[1]);
     const line = raw.slice(0, m.index).split('\n').length;
     if (seen.has(key)) found.push(`${JSON.stringify(key)} (lines ${seen.get(key)} and ${line})`);
     else seen.set(key, line);
@@ -114,15 +148,13 @@ const summary = [];
 
 for (const locale of translated) {
   const catalogue = CATALOGS[locale.id];
-  const file = resolve(I18N, `${locale.id}.ts`);
+  const file = resolve(CATALOGUES, `${locale.id}.json`);
   const name = `${locale.native} (${locale.id})`;
 
   /*
-   * An empty value counts as untranslated, exactly like an absent key. That is
-   * the state `tools/i18n-template.mjs` leaves a fresh catalogue in, and `t()`
-   * treats it the same way at run time — `'' ?? source` keeps the empty string,
-   * so an empty entry would render as a blank button. Which is why the check
-   * below refuses to call one of those a translation.
+   * An empty value counts as untranslated, exactly like an absent key — the
+   * state a fresh catalogue from `tools/i18n-template.mjs` is in, and the same
+   * reading `t()` takes at run time.
    */
   const filled = (key) => Boolean(String(catalogue[key] ?? '').trim());
 
