@@ -66,10 +66,30 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release is created as a **draft** — artefacts collect into it while the four
-builders run, and you publish it once you have downloaded and tried them. If one
-builder fails, re-running attaches to the same draft instead of opening a new
-one.
+The release is created as a **draft** — artefacts collect into it while the five
+builders run, and you publish it once you have downloaded and tried them.
+
+## When one builder fails
+
+Re-running the failed job from the Actions page is right when the failure was the
+runner's fault and nothing needs changing: it attaches to the same draft rather
+than opening a second one.
+
+It is the wrong move once the fix is a change to the workflow file itself. A
+re-run takes the workflow from the tag, which is the version that just failed, so
+the fix is not in it. Push the fix to `main` and start **Actions → Release → Run
+workflow** instead:
+
+| Field | Value |
+| --- | --- |
+| Use workflow from | `main` — this is the workflow file that will run |
+| `tag` | `v0.1.0` — the existing tag, and the source that will be built |
+| `platforms` | `android`, or `desktop`, or `all` |
+
+The two are separate on purpose: the workflow comes from `main`, the source code
+from the tag. So a rebuilt installer is built from the same commit as the ones
+already in the release, with a workflow that works. The finished platforms are
+left alone, and what is rebuilt overwrites its own files in the draft.
 
 ## Building for Android locally
 

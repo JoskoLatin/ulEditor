@@ -16,7 +16,21 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A single builder can fail on something the code has nothing to do with — a
+  # broken NDK download, a runner that loses the network. Rebuilding all five
+  # for it costs half an hour and republishes installers that were already
+  # correct, so one platform can be built into the release that already exists.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, and it must already exist (v0.1.0)'
+        required: true
+      platforms:
+        description: 'Which builders to run'
+        required: true
+        default: all
+        type: choice
+        options: [all, desktop, android]
 
 permissions:
   contents: write
@@ -34,12 +48,26 @@ jobs:
       # A release without a tag makes no sense: name, version and links all hang off it.
       - name: Determine the tag
         id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="$INPUT_TAG"
+          fi
+          if [[ -z "$tag" ]]; then
             echo "::error::Releases are built from a tag only. Run: git tag v0.1.0 && git push origin v0.1.0"
             exit 1
           fi
-          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          # Checked here rather than left to the builders: a typo in the input
+          # would otherwise surface twenty minutes later, as a checkout failure
+          # in four jobs at once.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::There is no tag $tag in this repository."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Draft
@@ -49,30 +77,33 @@ jobs:
           result-encoding: string
           script: |
             const tag = '${{ steps.tag.outputs.tag }}';
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            try {
-              const { data } = await github.rest.repos.createRelease({
-                owner, repo,
-                tag_name: tag,
-                name: `ulEditor ${tag}`,
-                draft: true,
-                generate_release_notes: true,
-              });
-              return String(data.id);
-            } catch (err) {
-              // A 422 means a release for this tag already exists — typically on
-              // a re-run after one builder failed. In that case we attach to the
-              // existing draft instead of tearing the job down.
-              if (err.status !== 422) throw err;
-              const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              core.info(`Attaching to existing release ${data.id}`);
-              return String(data.id);
+            const { owner, repo } = context.repo;
+            // Looked for before it is created, because a release for this tag
+            // may already be open — a rebuild of one platform is the ordinary
+            // case. `getReleaseByTag` is no use here: it returns published
+            // releases only, and ours stays a draft until the installers are
+            // in it, so the list is searched instead.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            });
+            const existing = releases.find((r) => r.tag_name === tag);
+            if (existing) {
+              core.info(`Attaching to the release already open for ${tag} (${existing.id})`);
+              return String(existing.id);
             }
+            const { data } = await github.rest.repos.createRelease({
+              owner, repo,
+              tag_name: tag,
+              name: `ulEditor ${tag}`,
+              draft: true,
+              generate_release_notes: true,
+            });
+            return String(data.id);
 
   desktop:
     name: ${{ matrix.label }}
     needs: create-release
+    if: inputs.platforms != 'android'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -92,7 +123,12 @@ jobs:
             args: ''
 
     steps:
+      # The tag, not the branch the run was started from: a rebuild has to
+      # produce the same binary as the release it is joining. On a tag push
+      # these are the same commit anyway.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - name: System dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -127,9 +163,12 @@ jobs:
   android:
     name: Android (APK + AAB)
     needs: create-release
+    if: inputs.platforms != 'desktop'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - uses: actions/setup-java@v4
         with:
