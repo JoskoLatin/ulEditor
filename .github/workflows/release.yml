@@ -188,7 +188,7 @@ jobs:
       - name: Sastavi APK i AAB
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: pnpm --filter @uleditor/desktop exec tauri android build --apk --aab --target aarch64 --target armv7
+        run: pnpm --filter @uleditor/desktop exec tauri android build --apk --aab --target aarch64 armv7
 
       # Gradle imenuje izlaz po modulu (`app-universal-release.apk`), što na
       # stranici izdanja pored `ulEditor_0.1.0_x64.msi` izgleda kao tuđa
