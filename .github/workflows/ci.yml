@@ -31,6 +31,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
+
+      # A missing translation renders as English and fails nothing — the key is
+      # the English source text. So without this step the Croatian catalogue
+      # falls behind silently, and a renamed placeholder reaches the user as
+      # literal braces.
+      - run: pnpm verify:i18n
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed

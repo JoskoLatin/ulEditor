@@ -33,7 +33,13 @@ export const LOCALES: LocaleDescriptor[] = [
 
 export type Catalog = Record<string, string>;
 
-const CATALOGS: Record<Locale, Catalog> = { en: {}, hr };
+/**
+ * Every catalogue, exported so the tooling can check them all.
+ *
+ * `en` is empty on purpose: the key is the English source text, so there is
+ * nothing for it to hold and nothing for it to fall out of step with.
+ */
+export const CATALOGS: Record<Locale, Catalog> = { en: {}, hr };
 
 let current: Locale = 'en';
 
@@ -41,8 +47,14 @@ export function getLocale(): Locale {
   return current;
 }
 
+/*
+ * Derived from `LOCALES` rather than listing the codes again: a new language is
+ * then registered in one place. The old form was a second list that had to be
+ * kept in step, and forgetting it made the language selectable in settings and
+ * silently rejected when restored from storage.
+ */
 export function isLocale(value: unknown): value is Locale {
-  return value === 'en' || value === 'hr';
+  return LOCALES.some((locale) => locale.id === value);
 }
 
 /**
@@ -63,7 +75,14 @@ export function setLocale(locale: Locale): void {
  * string computed while the module loads would remember the wrong language.
  */
 export function t(source: string, params?: Record<string, string | number>): string {
-  const translated = CATALOGS[current][source] ?? source;
+  /*
+   * An empty entry counts as untranslated, not as a translation to nothing.
+   * That is the state `tools/i18n-template.mjs` leaves a new catalogue in, so
+   * without this a half-finished language would reach the user as blank buttons
+   * — and a contributor could not ship one until it was complete.
+   */
+  const entry = CATALOGS[current][source];
+  const translated = entry && entry.trim() ? entry : source;
   if (!params) return translated;
 
   return translated.replace(/\{(\w+)\}/g, (match, key: string) =>
