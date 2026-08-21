@@ -1,19 +1,19 @@
 /**
- * Knjižnica dokumenata — mobilni način dolaska do datoteke.
+ * The document library — the mobile way of reaching a file.
  *
- * Explorer sa stablom mapa pretpostavlja da korisnik zna gdje mu nešto stoji.
- * Na telefonu ne zna i nema razloga znati: zna da ima nekakav ugovor u PDF-u.
- * Zato se ovdje ne otvara mapa, nego se uređaj pregleda i ponudi što je nađeno,
- * najnovije prvo.
+ * An explorer with a folder tree assumes the user knows where something of theirs
+ * sits. On a phone they do not, and have no reason to: they know they have some
+ * contract in a PDF. So no folder is opened here; the device is surveyed and
+ * what was found is offered, newest first.
  *
- * Skeniranje radi Rust (`scan_library`) — isti razlog kao kod pretrage: preko
- * IPC-a ide samo popis, ne sadržaj.
+ * The scan is done by Rust (`scan_library`) — the same reason as with search:
+ * only the listing crosses the IPC boundary, not the content.
  *
- * **Uskraćen pristup se prijavljuje, ne prešućuje.** Android bez dozvole za
- * pohranu vrati mape bez ijedne datoteke i ne javi grešku. Aplikacija bi tako
- * tvrdila da na telefonu nema dokumenata iako ih ima stotine. Jezgra tu razliku
- * prepozna i ovdje postaje `blocked`, na temelju čega prikaz nudi uputu umjesto
- * prazne liste.
+ * **Denied access is reported, not passed over.** Android without the storage
+ * permission returns folders with not one file and reports no error. The app
+ * would then claim the phone holds no documents while it holds hundreds. The core
+ * recognises that difference and it becomes `blocked` here, on which basis the
+ * view offers instructions instead of an empty list.
  */
 
 import { create } from 'zustand';
@@ -28,7 +28,7 @@ export interface LibraryItem {
   size: number;
   /** Unix ms; nedostaje kad ga platforma ne daje. */
   modified?: number;
-  /** Mapa u kojoj je nađena, npr. `Download/Foxit`. */
+  /** The folder it was found in, e.g. `Download/Foxit`. */
   folder: string;
 }
 
@@ -37,11 +37,11 @@ export type LibraryPhase = 'idle' | 'scanning' | 'done';
 interface LibraryState {
   phase: LibraryPhase;
   items: LibraryItem[];
-  /** Filtar po imenu; prazan znači sve. */
+  /** A filter by name; empty means everything. */
   filter: string;
   /** Odabrani format ili `null` za sve. */
   format: FormatId | null;
-  /** Sustav skriva datoteke — treba dozvola, nije prazan uređaj. */
+  /** The system is hiding files — a permission is needed, the device is not empty. */
   blocked: boolean;
   scannedDirs: number;
   truncated: boolean;
@@ -80,8 +80,9 @@ interface RawScan {
 }
 
 /**
- * Pregledava uređaj. Ponovni poziv uvijek kreće ispočetka — knjižnica namjerno
- * nema predmemoriju, jer bi zastarjeli popis bio gori od kratkog čekanja.
+ * Surveys the device. A repeat call always starts afresh — the library
+ * deliberately has no cache, because a stale list would be worse than a short
+ * wait.
  */
 export async function scanLibrary(): Promise<void> {
   if (!isTauri()) {
@@ -100,9 +101,10 @@ export async function scanLibrary(): Promise<void> {
     const scan = await invoke<RawScan>('scan_library', { limit: 2000 });
 
     /*
-     * Prazan popis uz pregledane mape a nijednu viđenu datoteku znači da sustav
-     * skriva sadržaj. Ista se provjera radi i u jezgri; ovdje se ponavlja jer
-     * prikaz o njoj ovisi, a jezgra šalje brojke, ne zaključak.
+     * An empty list alongside scanned folders but not one file seen means the
+     * system is hiding content. The same check happens in the core; it is
+     * repeated here because the view depends on it, and the core sends numbers
+     * rather than a conclusion.
      */
     const blocked = scan.seenFiles === 0 && scan.scannedDirs > 1;
 
@@ -116,9 +118,9 @@ export async function scanLibrary(): Promise<void> {
     }));
 
     /*
-     * Uz zapreku popis ostaje kakav je bio. Prazan rezultat tada nije podatak o
-     * uređaju nego o dozvoli, pa brisanje već prikazanih dokumenata značilo bi
-     * tvrditi da su nestali.
+     * When blocked, the list stays as it was. An empty result then says something
+     * about the permission rather than about the device, so clearing already
+     * displayed documents would amount to claiming they had vanished.
      */
     const previous = useLibrary.getState().items;
 
@@ -139,18 +141,20 @@ export async function scanLibrary(): Promise<void> {
 }
 
 /**
- * Spaja novi pregled s onim što se već prikazuje.
+ * Merges a new scan with what is already on display.
  *
- * Ponovni pregled ne ruši popis i ne gradi ga ispočetka: stavka koja se nije
- * promijenila zadržava **isti objekt**, pa React ne prerenderira redak koji
- * stoji pred korisnikom. Novo se dodaje, promijenjeno se osvježava.
+ * A rescan neither tears the list down nor rebuilds it from scratch: an entry
+ * that has not changed keeps **the same object**, so React does not re-render a
+ * row sitting in front of the user. New entries are added, changed ones are
+ * refreshed.
  *
- * Ono što se više ne nađe **ispada**. Popis koji samo raste ubrzo počne nuditi
- * obrisane datoteke, a dokument koji se ne otvori gori je od dokumenta kojeg
- * nema — knjižnica bi izgubila povjerenje na istom mjestu na kojem ga gradi.
+ * What is no longer found **drops out**. A list that only grows soon starts
+ * offering deleted files, and a document that will not open is worse than a
+ * document that is not there — the library would lose trust at exactly the point
+ * where it builds it.
  *
- * Iznimka je zapreka: kad Android sakrije datoteke, jezgra vrati prazno, a
- * pozivatelj tada uopće ne dira popis (vidi `blocked`).
+ * The exception is being blocked: when Android hides the files, the core returns
+ * nothing and the caller then does not touch the list at all (see `blocked`).
  */
 function merge(previous: LibraryItem[], fresh: LibraryItem[]): LibraryItem[] {
   if (previous.length === 0) return fresh;
@@ -165,7 +169,7 @@ function merge(previous: LibraryItem[], fresh: LibraryItem[]): LibraryItem[] {
   });
 }
 
-/** Formati koji se stvarno pojavljuju, po učestalosti — za trake filtra. */
+/** The formats that actually turn up, by frequency — for the filter chips. */
 export function formatCounts(items: LibraryItem[]): { format: FormatId; count: number }[] {
   const counts = new Map<FormatId, number>();
   for (const item of items) counts.set(item.format, (counts.get(item.format) ?? 0) + 1);

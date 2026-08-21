@@ -1,6 +1,6 @@
 /**
- * Ikone. Jedan set, jedna debljina poteza, jedan grid — miješanje setova je
- * prvo što odaje nepromišljen UI.
+ * Icons. One set, one stroke weight, one grid — mixing sets is the first thing
+ * that gives away a careless UI.
  */
 
 import type { SVGProps } from 'react';
@@ -159,8 +159,9 @@ export function familyColor(family: FormatFamily): string {
 }
 
 /**
- * Ikona formata: silueta datoteke plus obiteljska boja. Oblik razlikuje
- * kategoriju čak i kad boja nije dostupna (daltonizam, visok kontrast).
+ * The format icon: a file silhouette plus the family colour. The shape
+ * distinguishes the category even where colour is unavailable (colour blindness,
+ * high contrast).
  */
 export function FormatIcon({ family, size = 16 }: { family: FormatFamily; size?: number }) {
   const color = FAMILY_COLOR[family];

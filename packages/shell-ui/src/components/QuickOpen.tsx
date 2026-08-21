@@ -1,9 +1,9 @@
 /**
- * Brzo otvaranje datoteke po imenu (`Ctrl+P`).
+ * Quick open by file name (`Ctrl+P`).
  *
- * Popis dolazi iz Rusta jednom po otvaranju, ne iz stabla: stablo se učitava
- * lijeno, pa bi datoteka u mapi koju korisnik nikad nije razgranao bila
- * nevidljiva — a upravo nju najčešće traži.
+ * The list comes from Rust once per open, not from the tree: the tree loads
+ * lazily, so a file in a folder the user has never expanded would be invisible —
+ * and that is exactly the one they look for most.
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -27,7 +27,7 @@ interface Entry {
   hint: string;
 }
 
-/** Podniz-podudaranje: "shui" pronalazi "shell-ui". Vraća pozicije za isticanje. */
+/** Subsequence matching: "shui" finds "shell-ui". It returns the positions to highlight. */
 function fuzzy(text: string, query: string): number[] | null {
   if (!query) return [];
   const lower = text.toLowerCase();
@@ -44,7 +44,7 @@ function fuzzy(text: string, query: string): number[] | null {
   return positions;
 }
 
-/** Pogodak u imenu vrijedi više od pogotka u putanji, a uzastopni znakovi najviše. */
+/** A hit in the name counts for more than a hit in the path, and consecutive characters most of all. */
 function score(entry: Entry, positions: number[], nameLength: number): number {
   if (positions.length === 0) return 0;
   let value = -(positions[0] ?? 0);
@@ -227,8 +227,8 @@ function relativeDir(uri: string, name: string, prefixes: string[]): string {
   if (matched) {
     path = path.slice(matched.length);
   } else {
-    // Korijen još nije poznat (stablo se učitava lijeno). Puna putanja u
-    // popisu je šum kroz koji se ne vidi ime, pa ostaju zadnje dvije mape.
+    // The root is not known yet (the tree loads lazily). A full path in the list
+    // is noise the name cannot be seen through, so the last two folders remain.
     const parts = path.split(/[\\/]+/).filter(Boolean);
     path = parts.slice(-2).join('/');
     if (path) path += '/';

@@ -1,11 +1,11 @@
 /**
- * VirtualFileSystem preko Tauri komandi na Rust `ul-core`.
+ * VirtualFileSystem over Tauri commands to the Rust `ul-core`.
  *
- * Ista sučelja kao `BrowserFileSystem` — editori razliku ne vide. Razlike su
- * u onome što web ne može: pravi sistemski dijalozi, atomarno spremanje,
- * sandbox koji provodi Rust, i čitanje bajtova bez JSON serijalizacije.
+ * The same interfaces as `BrowserFileSystem` — the editors see no difference. The
+ * differences are in what the web cannot do: real system dialogs, atomic saving,
+ * a sandbox enforced by Rust, and reading bytes without JSON serialisation.
  *
- * URI je ovdje apsolutna putanja na disku.
+ * A URI here is an absolute path on disk.
  */
 
 import type {
@@ -24,7 +24,7 @@ type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
 let invokeFn: Invoke | null = null;
 
-/** Dinamički uvoz: web build ne smije povući Tauri API u bundle. */
+/** A dynamic import: the web build must not pull the Tauri API into the bundle. */
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!invokeFn) {
     const core = await import('@tauri-apps/api/core');
@@ -37,7 +37,7 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-/** Oblik koji vraća `ul_core::vfs::Stat`. */
+/** The shape `ul_core::vfs::Stat` returns. */
 interface RawStat {
   uri: string;
   name: string;
@@ -84,7 +84,7 @@ export class TauriFileSystem implements VirtualFileSystem {
   }
 
   async readBytes(uri: Uri): Promise<Uint8Array> {
-    // Rust vraća sirove bajtove kroz `tauri::ipc::Response`.
+    // Rust returns raw bytes through `tauri::ipc::Response`.
     const buffer = await invoke<ArrayBuffer | number[]>('read_file', { path: uri });
     return buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
   }
@@ -118,7 +118,7 @@ export class TauriFileSystem implements VirtualFileSystem {
         return new TextDecoder(encoding).decode(await this.bytes());
       },
       async slice(start: number, end: number) {
-        // Rust još nema range-read; do faze 1 režemo u memoriji.
+        // Rust has no range read yet; until phase 1 we slice in memory.
         return (await this.bytes()).slice(start, end);
       },
     };
@@ -140,11 +140,12 @@ export class TauriFileSystem implements VirtualFileSystem {
   }
 
   /**
-   * Preuzima putanje ispuštene u prozor. Na desktopu Tauri daje putanje, ne
-   * `File` objekte, pa web put kroz `adoptFiles` ovdje ne postoji.
+   * Takes in paths dropped onto the window. On desktop Tauri gives paths rather
+   * than `File` objects, so the web route through `adoptFiles` does not exist
+   * here.
    *
-   * Ispuštene mape ne postaju kartice nego novi korijeni stabla — zato jedan
-   * poziv vraća oboje razdvojeno.
+   * Dropped folders do not become tabs but new tree roots — which is why one call
+   * returns both, kept apart.
    */
   async adoptPaths(paths: string[]): Promise<{
     documents: DocumentHandle[];
@@ -178,7 +179,7 @@ export class TauriFileSystem implements VirtualFileSystem {
     }
   }
 
-  /** Detekcija po imenu za stablo, gdje sadržaj još nije pročitan. */
+  /** Detection by name for the tree, where the content has not been read yet. */
   detectionForName(name: string): FormatDetection {
     return detectByName(name);
   }

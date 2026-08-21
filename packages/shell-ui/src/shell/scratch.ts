@@ -1,13 +1,13 @@
 /**
- * Radna ploča ispod — split u koji program ispisuje ono što je sam proizveo.
+ * The scratch panel below — the split the program writes its own output into.
  *
- * Prvi korisnik je OCR: tekst pročitan sa slike nema datoteku na disku, pa se
- * ne može otvoriti kao kartica. Otvara se ovdje, uz izbor formata u koji će
- * biti spremljen. Isti put kasnije koriste konverzije i izvoz.
+ * The first user is OCR: text read off an image has no file on disk, so it cannot
+ * be opened as a tab. It opens here, with a choice of the format it will be saved
+ * into. Conversions and exports take the same route later on.
  *
- * Ploča drži **jedan** dokument. To je namjerno: ovo nije drugi radni prostor
- * nego izlaz, pa bi vlastita traka kartica bila okvir bez sadržaja. Puni
- * split s dvije grupe kartica ostaje otvorena stavka.
+ * The panel holds **one** document. That is deliberate: this is an output, not a
+ * second workspace, so a tab bar of its own would be a frame with no content. A
+ * full split with two tab groups remains an open item.
  */
 
 import { create } from 'zustand';
@@ -21,12 +21,12 @@ export type ScratchFormat = 'txt' | 'md' | 'docx' | 'pdf';
 
 interface ScratchState {
   open: boolean;
-  /** Visina ploče u pikselima; pamti se kroz sesiju. */
+  /** The panel height in pixels; remembered across the session. */
   height: number;
-  /** Ime bez ekstenzije — ekstenziju određuje odabrani format. */
+  /** The name without an extension — the chosen format decides the extension. */
   name: string;
   format: ScratchFormat;
-  /** Editor je stvoren i čeka montažu. */
+  /** The editor has been created and is waiting to be mounted. */
   ready: boolean;
   dirty: boolean;
   status: string;
@@ -58,11 +58,11 @@ export function scratchInstance(): EditorInstance | null {
 }
 
 /**
- * Dokument koji živi samo u memoriji.
+ * A document that lives only in memory.
  *
- * Ugovor `DocumentHandle` ne pretpostavlja disk — traži bajtove, tekst i
- * `stat`. Zato editor koda ovo otvara bez ijedne izmjene, što je upravo ono
- * što se od plugin ugovora očekivalo.
+ * The `DocumentHandle` contract assumes no disk — it asks for bytes, text and a
+ * `stat`. That is why the code editor opens this without a single change, which
+ * is exactly what was expected of the plugin contract.
  */
 function memoryDocument(name: string, text: string): DocumentHandle {
   const bytes = new TextEncoder().encode(text);
@@ -75,7 +75,7 @@ function memoryDocument(name: string, text: string): DocumentHandle {
     kind: 'file',
     size: bytes.byteLength,
     modified: Date.now(),
-    // Nije `readonly`: sadržaj se smije mijenjati, samo odredište još ne postoji.
+    // Not `readonly`: the content may be changed, only the destination does not exist yet.
     readonly: false,
   };
 
@@ -158,11 +158,11 @@ function confirmDiscard(shell: Shell): Promise<boolean> {
 }
 
 /**
- * Spremanje uz izbor formata.
+ * Saving with a choice of format.
  *
- * Sadržaj se uzima iz editora kroz međuspremnik ugovora, ne iz privatnog
- * stanja — tako radi za svaki editor koji ploča može ugostiti, ne samo za
- * onaj kojim je danas popunjena.
+ * The content is taken from the editor through the contract, not out of private
+ * state — so it works for every editor the panel can host, not only the one that
+ * fills it today.
  */
 export async function saveScratch(shell: Shell): Promise<void> {
   const state = useScratch.getState();
@@ -202,9 +202,9 @@ export async function saveScratch(shell: Shell): Promise<void> {
 }
 
 /**
- * Tekst iz editora u ploči — kroz `plainText()` iz ugovora, ne kroz privatno
- * stanje. Tako ploča može ugostiti svaki editor koji zna dati svoj tekst, ne
- * samo onaj kojim je danas popunjena.
+ * The text out of the editor in the panel — through `plainText()` from the
+ * contract, not through private state. That way the panel can host any editor
+ * that knows how to give up its text, not only the one that fills it today.
  */
 async function scratchText(): Promise<string | null> {
   if (!instance?.plainText) return null;

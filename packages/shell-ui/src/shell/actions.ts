@@ -1,9 +1,10 @@
 /**
- * Radnje koje spajaju datotečni sustav, registar editora i stanje UI-a.
+ * The actions that tie the file system, the editor registry and the UI state
+ * together.
  *
- * Sve što korisnik može pokrenuti — iz izbornika, palete ili tipkovnicom —
- * prolazi kroz ove funkcije, pa postoji točno jedno mjesto gdje se npr.
- * odlučuje smije li se spremiti.
+ * Everything the user can trigger — from a menu, the palette or the keyboard —
+ * passes through these functions, so there is exactly one place where, say,
+ * whether a save is allowed gets decided.
  */
 
 import { hasCapability, type DocumentHandle, type Uri } from '@uleditor/plugin-sdk';
@@ -23,13 +24,14 @@ import {
 let counter = 0;
 const nextId = () => `tab-${++counter}`;
 
-/* ── otvaranje ───────────────────────────────────────────────────────── */
+/* ── opening ─────────────────────────────────────────────────────────── */
 
 /**
- * Na uskom ekranu ploča prekriva dokument, pa se mora maknuti čim je odabir
- * napravljen — inače korisnik otvori datoteku i gleda u popis iz kojeg ju je
- * upravo otvorio. Na desktopu ploča ostaje: ondje stoji uz sadržaj, ne preko
- * njega, i sljedeći se dokument bira iz istog popisa.
+ * On a narrow screen the panel covers the document, so it has to go the moment a
+ * selection is made — otherwise the user opens a file and finds themselves
+ * looking at the list they opened it from. On desktop the panel stays: there it
+ * sits beside the content rather than over it, and the next document is chosen
+ * from the same list.
  */
 function dismissPanelOnNarrow(): void {
   if (isNarrow()) useWorkspace.getState().setSidebarVisible(false);
@@ -73,7 +75,7 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
     instance.onDirtyChange((dirty) => useWorkspace.getState().patchTab(id, { dirty }));
     instance.onStatusChange((status) => useWorkspace.getState().patchTab(id, { status }));
 
-    // Tek sada površina zna da ima što montirati.
+    // Only now does the surface know it has something to mount.
     useWorkspace.getState().patchTab(id, { ready: true });
   } catch (err) {
     useWorkspace.getState().patchTab(id, {
@@ -90,8 +92,8 @@ export async function openUri(
   try {
     await openDocument(shell, await shell.fs.open(uri));
   } catch (err) {
-    // Obnova sesije otvara datoteke koje korisnik nije upravo tražio; ako
-    // koja više ne postoji, to nije greška vrijedna prekidanja pokretanja.
+    // Restoring a session opens files the user did not just ask for; if one no
+    // longer exists, that is not an error worth interrupting startup for.
     if (opts?.quiet) return;
     shell.notify.show('error', t('Could not open the document: {reason}', { reason: describe(err) }));
   }
@@ -117,7 +119,7 @@ export async function openFolder(shell: Shell): Promise<void> {
   }
 }
 
-/** Dodaje mapu kao korijen stabla i odmah čita prvu razinu. */
+/** Adds a folder as a tree root and reads the first level straight away. */
 export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
   const children = await shell.fs.readDirectory(root.uri);
   const node: TreeNode = {
@@ -135,10 +137,10 @@ export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): P
 }
 
 /**
- * Ispuštanje u prozor. Web daje `File` objekte, desktop putanje — razlika je
- * ovdje, a ne u komponenti koja hvata event.
+ * A drop onto the window. The web gives `File` objects, desktop gives paths — the
+ * difference lives here, not in the component that catches the event.
  *
- * Ispuštena mapa postaje korijen stabla, datoteka postaje kartica.
+ * A dropped folder becomes a tree root, a dropped file becomes a tab.
  */
 export async function adoptDropped(
   shell: Shell,
@@ -177,8 +179,8 @@ function toNode(entry: { uri: Uri; name: string; kind: 'file' | 'directory' }, d
   };
 }
 
-/** Direktoriji se čitaju tek pri prvom otvaranju — repo s tisućama datoteka
- *  inače blokira UI na sekunde. */
+/** Directories are read only when first expanded — a repository with thousands
+ *  of files would otherwise block the UI for seconds. */
 export async function toggleDirectory(shell: Shell, node: TreeNode): Promise<void> {
   const { updateNode } = useWorkspace.getState();
 
@@ -254,8 +256,8 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
   try {
     const result = await instance.save();
 
-    // Editor je prijavio da ne može reproducirati sve iz originala. Pitamo
-    // korisnika PRIJE nego promjena postane trajna — nikad tiho.
+    // The editor reported it cannot reproduce everything from the original. We
+    // ask the user BEFORE the change becomes permanent — never silently.
     if (result.lostFidelity.length > 0) {
       const answer = await shell.notify.fidelityWarning(tab.uri, result.lostFidelity);
       if (answer === 'cancel') return false;
@@ -274,7 +276,7 @@ export async function saveActive(shell: Shell): Promise<void> {
   if (id) await saveTab(shell, id);
 }
 
-/* ── pomoćno ─────────────────────────────────────────────────────────── */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
 function isAbort(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';

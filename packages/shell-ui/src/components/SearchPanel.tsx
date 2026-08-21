@@ -1,9 +1,9 @@
 /**
- * Pretraga po projektu — treća ploča u bočnoj traci.
+ * Project-wide search — the third panel in the side bar.
  *
- * Odvojena od `FindPanel`, koji traži u otvorenom dokumentu. Razlika nije samo
- * u opsegu nego u tome što se vraća: ovdje su rezultati grupirani po datoteci
- * i vode u datoteku koja još nije otvorena.
+ * Kept apart from `FindPanel`, which searches the open document. The difference
+ * is not only in scope but in what comes back: here the results are grouped by
+ * file and lead into a file that is not open yet.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -82,7 +82,7 @@ export function SearchPanel() {
         </div>
 
         {/*
-          Drugi prolaz je ono po čemu se ovaj program razlikuje od editora
+          The second pass is what sets this program apart from a code editor
           koda — i skuplji je, pa se bira, ne pretpostavlja.
         */}
         <label className="search-docs">
@@ -202,10 +202,11 @@ function FileGroup({ group }: { group: Group }) {
 }
 
 /**
- * Otvara datoteku i, kad je riječ o tekstu, skače na redak.
+ * Opens a file and, where it is text, jumps to the line.
  *
- * Skok ide kroz `find()` iz ugovora umjesto kroz zaseban API: editor koji zna
- * naći niz zna i doći do njega, pa isti put radi za kod, Markdown i PDF.
+ * The jump goes through `find()` from the contract rather than a separate API: an
+ * editor that can find a string can also reach it, so the same route works for
+ * code, Markdown and PDF.
  */
 async function reveal(shell: ReturnType<typeof useShell>, hit: ProjectHit): Promise<void> {
   await openUri(shell, hit.uri);
@@ -214,7 +215,7 @@ async function reveal(shell: ReturnType<typeof useShell>, hit: ProjectHit): Prom
   const tab = store.tabs.find((entry) => entry.uri === hit.uri);
   if (tab) store.activateTab(tab.id);
 
-  // Instanca se stvara asinkrono; bez čekanja bi skok stigao prije montaže.
+  // The instance is created asynchronously; without waiting, the jump would arrive before the mount.
   await new Promise((resolve) => setTimeout(resolve, 120));
 
   const instance = activeInstance();

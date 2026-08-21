@@ -7,10 +7,11 @@ import { formatLabel } from '../shell/formats.js';
 import { FormatIcon } from './Icons.js';
 
 /**
- * Popis formata i njihovog stvarnog stanja.
+ * The list of formats and their real state.
  *
- * Namjerno pokazuje i ono što još ne radi: korisnik koji otvori .docx mora
- * unaprijed znati na čemu je, umjesto da to otkrije preko prazne kartice.
+ * It deliberately shows what does not work yet too: a user opening a .docx has to
+ * know where they stand in advance, rather than discovering it through a blank
+ * tab.
  */
 
 interface Row {

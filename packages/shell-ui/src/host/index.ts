@@ -1,9 +1,9 @@
 /**
- * Sastavljanje hosta.
+ * Assembling the host.
  *
- * Jedino mjesto koje zna na kojoj platformi radimo. Desktop dobiva Rust VFS
- * sa sandboxom i atomarnim spremanjem, web dobiva File System Access API —
- * a editori iznad toga ne primjećuju razliku.
+ * The only place that knows which platform we are on. Desktop gets the Rust VFS
+ * with its sandbox and atomic saving, the web gets the File System Access API —
+ * and the editors above notice no difference.
  */
 
 import type { DirectoryEntry, DocumentHandle, EditorHost, VirtualFileSystem } from '@uleditor/plugin-sdk';
@@ -15,9 +15,9 @@ import { EditorRegistry } from './registry.js';
 import { Commands, NoConversion, Notifications, Settings, Themes, type ThemePreference } from './services.js';
 
 /**
- * VFS uz preuzimanje ispuštenog sadržaja. Web dobiva `File` objekte,
- * desktop putanje — obje mogućnosti su neobavezne, pa pozivatelj provjerava
- * koja postoji umjesto da grana po platformi.
+ * The VFS plus taking in dropped content. The web gets `File` objects, desktop
+ * gets paths — both are optional, so the caller checks which exists instead of
+ * branching on the platform.
  */
 export type ShellFileSystem = VirtualFileSystem & {
   adoptFiles?(files: FileList | File[]): Promise<DocumentHandle[]>;
@@ -37,9 +37,9 @@ export interface Shell extends EditorHost {
   readonly notify: Notifications;
   readonly registry: EditorRegistry;
   readonly platform: Platform;
-  /** Može li se spremati natrag na disk. */
+  /** Whether saving back to disk is possible. */
   readonly canPersist: boolean;
-  /** Jezik sučelja iz postavki; engleski kad nije odabran. */
+  /** The interface language from settings; English when none is chosen. */
   readonly locale: Locale;
 }
 

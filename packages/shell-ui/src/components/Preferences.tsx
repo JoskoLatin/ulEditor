@@ -1,13 +1,13 @@
 /**
- * Postavke.
+ * Settings.
  *
- * Jedan modal, ne stablo s dvjesto prekidača. Ovdje je samo ono što korisnik
- * stvarno mijenja, a nema mu drugog mjesta: jezik, tema i zadana tipografija
- * čitanja.
+ * One modal, not a tree of two hundred switches. Only what a user genuinely
+ * changes and has nowhere else to change lives here: the language, the theme and
+ * the default reading typography.
  *
- * Promjena jezika ponovno učita prozor. Imperativni editori (PDF, knjiga,
- * Office) grade DOM izravno, pa bi zamjena nizova u letu tražila demontažu
- * svakog otvorenog dokumenta — a sesija se ionako vraća pri pokretanju.
+ * Changing the language reloads the window. Imperative editors (PDF, book,
+ * Office) build DOM directly, so swapping strings on the fly would require
+ * unmounting every open document — and the session is restored on start anyway.
  */
 
 import { LOCALES, t, type Locale } from '@uleditor/i18n';
@@ -34,7 +34,7 @@ export function Preferences() {
   const chooseLocale = (next: Locale) => {
     if (next === locale) return;
     shell.settings.set('locale', next);
-    // Sesija se sprema prije osvježavanja da se kartice vrate takve kakve jesu.
+    // The session is saved before the reload so the tabs come back exactly as they were.
     saveSession(shell);
     window.location.reload();
   };

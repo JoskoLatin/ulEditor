@@ -6,15 +6,16 @@ import { activeInstance, useWorkspace } from '../state/workspace.js';
 import { IconClose, IconSearch } from './Icons.js';
 
 /**
- * Pretraga unutar dokumenta — ista ploča bez obzira na format.
+ * In-document search — the same panel whatever the format.
  *
- * Vozi `EditorInstance.find()` iz plugin ugovora, pa radi jednako nad kodom,
- * Markdownom i PDF-om. To je konkretna korist od jedinstvenog ugovora: PDF
- * inače nema nikakvo sučelje za pretragu, a ovdje ga dobiva besplatno.
+ * It drives `EditorInstance.find()` from the plugin contract, so it behaves
+ * identically over code, Markdown and PDF. That is a concrete benefit of one
+ * contract: a PDF otherwise has no search interface at all, and here it gets one
+ * for free.
  *
- * CodeMirror zadržava vlastiti Ctrl+F jer nudi i zamjenu, koju ugovor još
- * nema. Objedinjavanje to dvoje je zadatak faze 1 — traži `replace` u
- * `EditorInstance`.
+ * CodeMirror keeps its own Ctrl+F because it also offers replace, which the
+ * contract does not have yet. Unifying the two is a phase 1 task — it needs
+ * `replace` in `EditorInstance`.
  */
 export function FindPanel() {
   const open = useWorkspace((s) => s.findOpen);
@@ -37,12 +38,13 @@ export function FindPanel() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  // Upit se namjerno zadržava pri prebacivanju kartice — tražiti isti pojam
-  // kroz nekoliko dokumenata je česta radnja. Rezultati se ponovno računaju
-  // nad novim dokumentom (vidi ovisnosti u efektu s odgodom ispod).
+  // The query is deliberately kept when switching tabs — looking for the same
+  // term across several documents is a common thing to do. The results are
+  // recomputed against the new document (see the dependencies of the debounced
+  // effect below).
   //
-  // Ali stari rezultati moraju nestati ODMAH: pripadaju prethodnom dokumentu,
-  // pa bi im `reveal()` skočio u editor koji više nije u prvom planu.
+  // But the old results have to disappear AT ONCE: they belong to the previous
+  // document, so their `reveal()` would jump into an editor no longer in front.
   useEffect(() => {
     runId.current++;
     setResults([]);
@@ -71,8 +73,8 @@ export function FindPanel() {
           caseSensitive: opts.caseSensitive,
           regex: opts.regex,
         });
-        // PDF čita tekst svake stranice, pa spora pretraga može stići poslije
-        // novije. Zadržava se samo najnovija.
+        // A PDF reads the text of every page, so a slow search can arrive after a
+        // newer one. Only the newest is kept.
         if (id !== runId.current) return;
         setResults(found);
         setSelected(0);
@@ -85,9 +87,9 @@ export function FindPanel() {
     [],
   );
 
-  // Odgoda: bez nje svaka tipka pokreće pretragu po cijelom PDF-u.
-  // `activeTabId` je među ovisnostima da prebacivanje kartice ponovno pokrene
-  // isti upit nad novim dokumentom.
+  // The debounce: without it every keystroke launches a search of the whole PDF.
+  // `activeTabId` is among the dependencies so switching tabs re-runs the same
+  // query against the new document.
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => void run(query, { caseSensitive, regex }), 160);

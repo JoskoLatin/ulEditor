@@ -1,12 +1,12 @@
 /**
- * Lijena registracija editora.
+ * Lazy editor registration.
  *
- * Registar mora znati KOJE formate editor pokriva prije nego se ijedan
- * dokument otvori — inače ne može odlučiti tko što otvara. Ali kod editora
- * ne treba do prvog otvaranja: pdf.js je sam 1,3 MB, što bi svaki korisnik
- * plaćao pri pokretanju i kad nikad ne otvori PDF.
+ * The registry has to know WHICH formats an editor covers before any document is
+ * opened — otherwise it cannot decide who opens what. But the editor's code is
+ * not needed until the first open: pdf.js alone is 1.3 MB, which every user would
+ * pay for at startup even if they never opened a PDF.
  *
- * Zato se metapodaci registriraju odmah, a modul se dohvaća tek u
+ * So the metadata is registered immediately, while the module is fetched only in
  * `createInstance`.
  */
 
@@ -14,7 +14,7 @@ import type { DocumentHandle, EditorHost, EditorInstance, EditorProvider } from 
 
 type ProviderMeta = Omit<EditorProvider, 'createInstance'>;
 
-/** Modul s jednim editorom nudi ga kao `default`; paket s više njih (Office) imenovano. */
+/** A module with one editor offers it as `default`; a package with several (Office) uses named exports. */
 type LoadedProvider = EditorProvider | { default: EditorProvider };
 
 export function lazyProvider(
@@ -26,7 +26,7 @@ export function lazyProvider(
   return {
     ...meta,
     async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-      // Jedan dohvat po editoru, čak i kad se otvori više dokumenata odjednom.
+      // One fetch per editor, even when several documents open at once.
       pending ??= load().then((module) => ('default' in module ? module.default : module));
       const provider = await pending;
       return provider.createInstance(host, doc);

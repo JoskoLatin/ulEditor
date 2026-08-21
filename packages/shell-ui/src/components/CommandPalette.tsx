@@ -56,7 +56,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Naredbe se čitaju pri svakom otvaranju — `when` uvjeti ovise o stanju.
+  // The commands are read on every open — the `when` conditions depend on state.
   const commands = useMemo(() => (open ? shell.commands.all() : []), [open, shell]);
 
   const matches = useMemo(() => {
@@ -71,10 +71,10 @@ export function CommandPalette() {
     return rows;
   }, [commands, query]);
 
-  // Layout effect, ne obični: fokus mora biti postavljen prije nego preglednik
-  // iscrta okvir. S requestAnimationFrame prvi otipkani znak zna pobjeći na
-  // <body> — dovoljno rijetko da se u ručnom testiranju previdi, dovoljno
-  // često da smeta.
+  // A layout effect, not an ordinary one: the focus has to be set before the
+  // browser paints the dialog. With requestAnimationFrame the first typed
+  // character sometimes escapes to <body> — rarely enough to be missed in manual
+  // testing, often enough to annoy.
   useLayoutEffect(() => {
     if (!open) return;
     setQuery('');

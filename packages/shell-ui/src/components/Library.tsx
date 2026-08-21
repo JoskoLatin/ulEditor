@@ -10,11 +10,11 @@ import { filterItems, formatCounts, scanLibrary, useLibrary } from '../shell/lib
 import { FormatIcon, IconRefresh } from './Icons.js';
 
 /**
- * Popis dokumenata nađenih na uređaju.
+ * The list of documents found on the device.
  *
- * Namjerno nema stabla mapa: mapa je ovdje podatak uz datoteku, ne način
- * kretanja. Redoslijed je po vremenu izmjene jer je na telefonu „ono što sam
- * jučer skinuo” korisnija os od abecede.
+ * Deliberately no folder tree: a folder is a fact about a file here, not a way of
+ * moving around. The order is by modification time, because on a phone "the thing
+ * I downloaded yesterday" is a more useful axis than the alphabet.
  */
 export function Library() {
   const shell = useShell();
@@ -131,8 +131,8 @@ function size(bytes: number): string {
 }
 
 /**
- * Datum bez sata: u popisu dokumenata minuta ne znači ništa, a skraćuje redak
- * koji na telefonu i tako jedva stane.
+ * A date without a time: in a document list the minute means nothing, and it
+ * shortens a row that barely fits on a phone as it is.
  */
 function when(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, {

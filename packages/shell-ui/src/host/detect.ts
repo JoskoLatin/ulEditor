@@ -1,11 +1,12 @@
 /**
- * Detekcija formata.
+ * Format detection.
  *
- * Mjerodavan je sadržaj, ne ime datoteke. Ekstenzija se koristi samo kad
- * potpis ništa ne kaže — inače bi preimenovani `.txt` PDF otvorio krivi editor.
+ * The content decides, not the file name. The extension is used only when the
+ * signature says nothing — otherwise a renamed `.txt` PDF would open the wrong
+ * editor.
  *
- * Ova logika se u fazi 1 seli u `crates/ul-formats` (Rust) da web i desktop
- * dijele isti kod; `FormatId` vrijednosti moraju ostati identične.
+ * In phase 1 this logic moves into `crates/ul-formats` (Rust) so web and desktop
+ * share the same code; the `FormatId` values must stay identical.
  */
 
 import type { FormatDetection, FormatId } from '@uleditor/plugin-sdk';
@@ -61,7 +62,7 @@ const PLAIN_TEXT = new Set(['txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'e
 const MARKDOWN = new Set(['md', 'markdown', 'mdx']);
 const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 
-/** Datoteke bez ekstenzije koje su ipak tekst. */
+/** Extensionless files that are text nonetheless. */
 const KNOWN_NAMES: Record<string, { format: FormatId; language?: string }> = {
   dockerfile: { format: 'code', language: 'shell' },
   makefile: { format: 'code', language: 'shell' },
@@ -86,7 +87,7 @@ function startsWith(bytes: Uint8Array, sig: number[], offset = 0): boolean {
   return true;
 }
 
-/** Traži ASCII niz u prvih `limit` bajtova. Za razlikovanje ZIP kontejnera. */
+/** Looks for an ASCII string in the first `limit` bytes. For telling ZIP containers apart. */
 function containsAscii(bytes: Uint8Array, needle: string, limit = 4096): boolean {
   const end = Math.min(bytes.length, limit);
   const first = needle.charCodeAt(0);
@@ -101,13 +102,13 @@ function containsAscii(bytes: Uint8Array, needle: string, limit = 4096): boolean
 }
 
 /**
- * DOCX, XLSX, PPTX i ODF su svi ZIP arhive. Razlikuju se po unutarnjim
- * putanjama, koje se pojavljuju kao čist ASCII u ZIP zaglavljima — dovoljno
- * za detekciju bez raspakiravanja.
+ * DOCX, XLSX, PPTX and ODF are all ZIP archives. They differ by their internal
+ * paths, which appear as plain ASCII in ZIP headers — enough for detection
+ * without unpacking.
  */
 function classifyZip(bytes: Uint8Array): FormatId {
-  // EPUB i ODF drže `mimetype` kao prvi, nekomprimirani unos — potpis stoji
-  // odmah iza ZIP zaglavlja, pa je dovoljno pogledati prvih 128 bajtova.
+  // EPUB and ODF keep `mimetype` as the first, uncompressed entry — the
+  // signature sits right behind the ZIP header, so the first 128 bytes suffice.
   if (containsAscii(bytes, 'mimetypeapplication/epub+zip', 128)) return 'epub';
   if (containsAscii(bytes, 'mimetypeapplication/vnd.oasis.opendocument', 128)) return 'odf';
 
@@ -115,17 +116,17 @@ function classifyZip(bytes: Uint8Array): FormatId {
   if (containsAscii(head, 'word/document.xml', head.length)) return 'docx';
   if (containsAscii(head, 'xl/workbook.xml', head.length)) return 'xlsx';
   if (containsAscii(head, 'ppt/presentation.xml', head.length)) return 'pptx';
-  // EPUB bez nekomprimiranog `mimetype` unosa (nije po specifikaciji, ali
+  // EPUB without the uncompressed `mimetype` entry (off-spec, but
   // postoji u divljini) — prepoznaje se po obaveznom kontejneru.
   if (containsAscii(head, 'META-INF/container.xml', head.length)) return 'epub';
-  // Kraći oblici — kad je centralni direktorij izvan prozora koji smo pročitali.
+  // Shorter forms — for when the central directory lies outside the window we read.
   if (containsAscii(head, 'word/', head.length)) return 'docx';
   if (containsAscii(head, 'xl/', head.length)) return 'xlsx';
   if (containsAscii(head, 'ppt/', head.length)) return 'pptx';
   return 'archive';
 }
 
-/** Heuristika za tekst: NUL bajt gotovo uvijek znači binarni sadržaj. */
+/** The text heuristic: a NUL byte almost always means binary content. */
 function looksTextual(bytes: Uint8Array): boolean {
   const end = Math.min(bytes.length, 2048);
   if (end === 0) return true;
@@ -139,7 +140,7 @@ function looksTextual(bytes: Uint8Array): boolean {
   return suspicious / end < 0.05;
 }
 
-/** Detekcija samo po imenu — koristi se za stablo, gdje sadržaj još nije pročitan. */
+/** Detection by name only — used for the tree, where the content has not been read yet. */
 export function detectByName(name: string): FormatDetection {
   const lower = name.toLowerCase();
   const known = KNOWN_NAMES[lower];
@@ -172,8 +173,8 @@ export function detectByName(name: string): FormatDetection {
 }
 
 /**
- * Puna detekcija. `bytes` je početak datoteke — 64 KB je dovoljno za sve
- * potpise koje provjeravamo.
+ * Full detection. `bytes` is the start of the file — 64 KB is enough for every
+ * signature we check.
  */
 export function detect(name: string, bytes: Uint8Array): FormatDetection {
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46])) return { format: 'pdf', via: 'magic' }; // %PDF
@@ -198,7 +199,7 @@ export function detect(name: string, bytes: Uint8Array): FormatDetection {
     return byName.format === 'unknown' ? { format: 'binary', via: 'magic' } : { ...byName, via: 'magic' };
   }
 
-  // Potpis ništa ne kaže → ime odlučuje, ali samo ako sadržaj izgleda tekstualno.
+  // The signature says nothing → the name decides, but only if the content looks textual.
   const byName = detectByName(name);
   const textual = looksTextual(bytes);
 

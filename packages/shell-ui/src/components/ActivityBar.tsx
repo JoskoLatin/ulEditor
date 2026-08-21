@@ -6,10 +6,10 @@ import { useWorkspace } from '../state/workspace.js';
 import { IconMonitor, IconMoon, IconSun } from './Icons.js';
 
 /**
- * Okomita traka pogleda uz lijevi rub.
+ * The vertical view bar along the left edge.
  *
- * Postoji samo na širokom ekranu; na telefonu ju CSS skriva, a isti pogledi
- * stoje u naslovnoj traci gore — vidi [`ViewSwitch`](./TitleBar.tsx).
+ * It exists only on a wide screen; on a phone the CSS hides it and the same views
+ * sit in the title bar at the top — see [`ViewSwitch`](./TitleBar.tsx).
  */
 export function ActivityBar() {
   const shell = useShell();

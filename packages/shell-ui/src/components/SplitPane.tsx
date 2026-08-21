@@ -1,10 +1,11 @@
 /**
- * Vodoravni split ispod glavnog područja.
+ * The horizontal split below the main area.
  *
- * Traka ploče nosi ime dokumenta i **izbor formata u koji se sprema** — jer
- * dokument u ploči nije došao s diska, pa dok se ne odabere format nema ni
- * odredišta. To je razlika prema običnoj kartici, i zato ploča ima vlastitu
- * traku umjesto da se pravi da je kartica kao svaka druga.
+ * The panel's bar carries the document name and **the choice of format to save
+ * into** — because the document in the panel did not come off disk, so until a
+ * format is chosen it has no destination either. That is the difference from an
+ * ordinary tab, and why the panel has a bar of its own rather than pretending to
+ * be a tab like any other.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -20,8 +21,8 @@ import {
 } from '../shell/scratch.js';
 import { IconClose, IconSave } from './Icons.js';
 
-/** Isti popis kao u `@uleditor/text-export`, ali bez uvoza tog paketa —
- *  pdf-lib ne smije ući u početni bundle zbog jednog izbornika. */
+/** The same list as in `@uleditor/text-export`, but without importing that
+ *  package — pdf-lib must not enter the initial bundle for one dropdown. */
 const FORMATS: { id: ScratchFormat; label: string }[] = [
   { id: 'txt', label: 'Plain text' },
   { id: 'md', label: 'Markdown' },
@@ -43,7 +44,7 @@ export function SplitPane() {
   const mountRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
 
-  // Instanca se montira točno jednom, kao i kod kartica.
+  // The instance is mounted exactly once, as with tabs.
   useEffect(() => {
     if (!open) {
       mounted.current = false;
@@ -124,7 +125,7 @@ function SplitResizer() {
   useEffect(() => {
     if (!dragging) return;
 
-    // Prema gore znači više prostora ploči, pa je predznak obrnut.
+    // Upwards means more room for the panel, so the sign is inverted.
     const onMove = (event: PointerEvent) =>
       setHeight(origin.current.height - (event.clientY - origin.current.y));
     const onUp = () => setDragging(false);

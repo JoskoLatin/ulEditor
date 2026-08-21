@@ -7,12 +7,12 @@ import { Welcome } from './Welcome.js';
 import { IconWarning } from './Icons.js';
 
 /**
- * Površina na kojoj žive editori.
+ * The surface the editors live on.
  *
- * Svaka kartica dobiva trajni kontejner koji se pri prebacivanju samo skriva,
- * a instanca se montira točno jednom. Demontaža pri svakom prebacivanju
- * izgubila bi poziciju scrolla, kursor i undo povijest — a upravo se po tome
- * prepoznaje editor koji se ne isplati koristiti.
+ * Every tab gets a permanent container that is merely hidden when switching, and
+ * the instance is mounted exactly once. Unmounting on every switch would lose the
+ * scroll position, the cursor and the undo history — which is precisely how you
+ * recognise an editor not worth using.
  */
 export function EditorSurface() {
   const tabs = useWorkspace((s) => s.tabs);
@@ -44,7 +44,7 @@ function Pane({ tab, active }: { tab: TabState; active: boolean }) {
     });
   }, [tab.id, tab.ready, active]);
 
-  // Fokus prati aktivnu karticu, ali tek nakon što je editor montiran.
+  // The focus follows the active tab, but only once the editor is mounted.
   useEffect(() => {
     if (active && mounted.current) tabInstances.get(tab.id)?.focus();
   }, [active, tab.id]);

@@ -1,9 +1,10 @@
 /**
- * Registar editora.
+ * The editor registry.
  *
- * Shell ne zna ništa o pojedinim formatima — zna samo pitati registar tko
- * može otvoriti dani dokument. Dodavanje formata je registracija providera,
- * bez ijedne izmjene u shellu. To je cijela poanta plugin ugovora.
+ * The shell knows nothing about individual formats — it only knows how to ask
+ * the registry who can open a given document. Adding a format is registering a
+ * provider, with not one change in the shell. That is the whole point of the
+ * plugin contract.
  */
 
 import type { DocumentHandle, EditorProvider, FormatId } from '@uleditor/plugin-sdk';
@@ -11,7 +12,7 @@ import { t } from '@uleditor/i18n';
 
 import { extensionOf } from './detect.js';
 
-/** Formati koje ćemo podržavati, ali još nemaju providera. */
+/** Formats we will support, but which have no provider yet. */
 const PLANNED: Partial<Record<FormatId, string>> = {
   pptx: 'PowerPoint arrives in phase 5.',
   odf: 'OpenDocument arrives in phase 2, via LibreOffice conversion.',
@@ -23,10 +24,10 @@ export class EditorRegistry {
 
   register(provider: EditorProvider): void {
     if (this.#providers.some((p) => p.id === provider.id)) {
-      throw new Error(`Editor ${provider.id} je već registriran.`);
+      throw new Error(`Editor ${provider.id} is already registered.`);
     }
     this.#providers.push(provider);
-    // Veći priority prvi — `resolve` onda samo uzima prvi pogodak.
+    // Higher priority first — `resolve` then simply takes the first match.
     this.#providers.sort((a, b) => b.priority - a.priority);
   }
 
@@ -34,7 +35,7 @@ export class EditorRegistry {
     return this.#providers;
   }
 
-  /** Svi provideri koji mogu otvoriti dokument, najbolji prvi. */
+  /** Every provider that can open the document, best first. */
   candidates(doc: DocumentHandle): EditorProvider[] {
     const ext = extensionOf(doc.name);
     return this.#providers.filter((p) => this.#matches(p, doc, ext));
@@ -44,7 +45,7 @@ export class EditorRegistry {
     return this.candidates(doc)[0] ?? null;
   }
 
-  /** Objašnjenje zašto format nije podržan — bolje od praznog ekrana. */
+  /** An explanation of why a format is unsupported — better than a blank screen. */
   explainMissing(doc: DocumentHandle): string {
     const planned = PLANNED[doc.detection.format];
     if (planned) return t(planned);
@@ -56,13 +57,13 @@ export class EditorRegistry {
   #matches(provider: EditorProvider, doc: DocumentHandle, ext: string): boolean {
     const { extensions, magic } = provider.matches;
 
-    // `*` znači "uzmi sve što nitko drugi ne želi" — fallback tekstualni editor.
+    // `*` means "take everything nobody else wants" — the fallback text editor.
     if (extensions.includes('*')) return true;
     if (ext && extensions.includes(ext)) return true;
 
     if (magic?.length) {
-      // Potpisi se provjeravaju tek kad ekstenzija ne odluči; sadržaj je već
-      // pročitan pri otvaranju pa ovdje koristimo rezultat detekcije.
+      // Signatures are checked only when the extension does not decide; the
+      // content was read on opening, so we use the detection result here.
       if (magic.some((sig) => sig.length > 0) && doc.detection.via === 'magic') {
         return extensions.includes(doc.detection.format);
       }

@@ -1,10 +1,10 @@
 /**
- * Stanje radnog prostora: stablo, tabovi, ploče.
+ * The workspace state: the tree, the tabs, the panels.
  *
- * Imperativni objekti (DocumentHandle, EditorInstance) namjerno NISU u
- * storeu — drže se u zasebnim mapama. Store sadrži samo ono što UI
- * uspoređuje pri renderu, pa promjena kursora u editoru ne izaziva
- * ponovni render cijelog stabla.
+ * Imperative objects (DocumentHandle, EditorInstance) are deliberately NOT in the
+ * store — they are held in separate maps. The store contains only what the UI
+ * compares while rendering, so moving the cursor in an editor does not re-render
+ * the whole tree.
  */
 
 import { create } from 'zustand';
@@ -15,7 +15,7 @@ export interface TreeNode {
   name: string;
   kind: 'file' | 'directory';
   depth: number;
-  /** `null` dok direktorij nije pročitan — učitava se lijeno na prvo otvaranje. */
+  /** `null` until the directory has been read — it loads lazily on first expand. */
   children: TreeNode[] | null;
   expanded: boolean;
   format: FormatId;
@@ -30,22 +30,22 @@ export interface TabState {
   dirty: boolean;
   /** Tekst za statusnu traku koji editor sam objavljuje. */
   status: string;
-  /** Poruka kad dokument nije moguće otvoriti. */
+  /** The message for when a document cannot be opened. */
   error: string | null;
   readonly: boolean;
-  /** Instanca editora je stvorena i čeka montažu u DOM. */
+  /** The editor instance has been created and is waiting to be mounted into the DOM. */
   ready: boolean;
 }
 
 export type SidebarView = 'library' | 'explorer' | 'search' | 'formats';
 
 /**
- * Na uskom ekranu knjižnica je zadani pogled, na širokom explorer.
+ * On a narrow screen the library is the default view, on a wide one the explorer.
  *
- * Nije stvar veličine nego navike: na telefonu se do dokumenta dolazi tako da
- * ga program nađe, na računalu tako da korisnik otvori mapu koju već poznaje.
- * Isti prag kao u CSS-u; obnovljena sesija ovo nadjačava, jer je izričit izbor
- * jači od pretpostavke.
+ * This is a matter of habit rather than size: on a phone you reach a document by
+ * having the program find it, on a computer by opening a folder you already know.
+ * The same threshold as in the CSS; a restored session overrides this, because an
+ * explicit choice beats an assumption.
  */
 function defaultSidebarView(): SidebarView {
   if (typeof window === 'undefined') return 'explorer';
@@ -82,7 +82,7 @@ interface WorkspaceState {
   setQuickOpen(open: boolean): void;
 }
 
-/** Rekurzivno mapiranje stabla — čuva reference čvorova koji se nisu mijenjali. */
+/** A recursive tree map — it preserves the references of nodes that did not change. */
 function mapTree(nodes: TreeNode[], uri: Uri, patch: Partial<TreeNode>): TreeNode[] {
   let changed = false;
   const next = nodes.map((node) => {
@@ -133,7 +133,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
       const tabs = s.tabs.filter((t) => t.id !== id);
       let activeTabId = s.activeTabId;
       if (activeTabId === id) {
-        // Susjed desno, pa lijevo — isto ponašanje kao u uređivačima koje ljudi znaju.
+        // The neighbour to the right, then the left — the same behaviour as in the editors people know.
         activeTabId = tabs[index]?.id ?? tabs[index - 1]?.id ?? null;
       }
       return { tabs, activeTabId };

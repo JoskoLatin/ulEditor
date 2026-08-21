@@ -1,8 +1,9 @@
 /**
- * Ugrađene naredbe i globalne tipkovne kratice.
+ * The built-in commands and the global keyboard shortcuts.
  *
- * Svaka radnja postoji kao naredba prije nego dobije gumb — tako je sve
- * dostupno iz palete, a UI ostaje tanak sloj nad istim ulazom.
+ * Every action exists as a command before it gets a button — that way everything
+ * is reachable from the palette, and the UI stays a thin layer over the same
+ * entry point.
  */
 
 import { t } from '@uleditor/i18n';
@@ -131,9 +132,9 @@ export function registerCommands(shell: Shell): () => void {
     }),
 
     /*
-     * Seam kroz koji plugin objavljuje rezultat koji nije datoteka na disku —
-     * prvi korisnik je OCR nad slikom. Editor ne zna ništa o ploči ispod, zna
-     * samo ime naredbe.
+     * The seam through which a plugin publishes a result that is not a file on
+     * disk — the first user is OCR over an image. The editor knows nothing about
+     * the panel below, only the name of the command.
      */
     shell.commands.register({
       id: 'scratch.openText',
@@ -198,8 +199,8 @@ function cycleTab(direction: number): void {
 }
 
 /**
- * Globalne kratice. Namjerno kratak popis: sve što editor sam veže
- * (Ctrl+F u CodeMirroru, Ctrl+Z unutar teksta) ovdje se ne presreće.
+ * The global shortcuts. A deliberately short list: anything an editor binds itself
+ * (Ctrl+F in CodeMirror, Ctrl+Z inside text) is not intercepted here.
  */
 function handleKey(shell: Shell, event: KeyboardEvent): void {
   const store = useWorkspace.getState();
@@ -209,9 +210,9 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   const inTextField =
     target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
 
-  // Escape zatvara pretragu odakle god da je fokus — ploča, editor ili tab.
-  // Vezanje samo na ploču znači da Escape iz editora ne radi, što je upravo
-  // mjesto s kojeg ga se najčešće pritisne.
+  // Escape closes search wherever the focus is — the panel, the editor or a tab.
+  // Binding it to the panel alone means Escape from the editor does nothing,
+  // which is exactly where it is pressed from most often.
   if (event.key === 'Escape' && store.findOpen && !store.paletteOpen) {
     event.preventDefault();
     store.setFindOpen(false);
@@ -219,7 +220,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     return;
   }
 
-  // Iz čitanja se izlazi istom tipkom kojom se izlazi iz svega ostalog.
+  // Reading mode is left with the same key everything else is left with.
   if (event.key === 'Escape' && useReading.getState().active && !store.paletteOpen) {
     event.preventDefault();
     exitReading();
@@ -228,8 +229,9 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
 
   const mod = event.ctrlKey || event.metaKey;
 
-  // Listanje bez modifikatora radi i kad je fokus na traci čitaonice, ne samo
-  // na tekstu — inače nakon svakog klika na gumb treba vratiti fokus rukom.
+  // Turning pages without a modifier works when the focus is on the reading bar
+  // too, not only on the text — otherwise every button click would need the focus
+  // restored by hand.
   if (!mod && useReading.getState().active && !inTextField) {
     const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' '];
     const back = ['ArrowLeft', 'ArrowUp', 'PageUp'];
@@ -247,15 +249,15 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
 
   if (!mod) return;
 
-  // Ctrl+Shift+P — paleta. Radi i kad je fokus unutar editora.
+  // Ctrl+Shift+P — the palette. It works with the focus inside an editor too.
   if (event.shiftKey && key === 'p') {
     event.preventDefault();
     store.setPaletteOpen(!store.paletteOpen);
     return;
   }
 
-  // Unutar polja za unos (npr. tekst bilješke u PDF-u) Ctrl+Z mora ostati
-  // preglednikovo poništavanje teksta, ne poništavanje u editoru.
+  // Inside an input field (e.g. the text of a PDF note) Ctrl+Z must remain the
+  // browser's text undo, not the editor's undo.
   if (event.shiftKey) {
     if (key === 'r') {
       event.preventDefault();
@@ -277,7 +279,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       event.preventDefault();
       activeInstance()?.redo();
     }
-    // Ctrl+Shift+F — pretraga koja radi nad svim formatima, uključujući PDF.
+    // Ctrl+Shift+F — the search that works across all formats, PDF included.
     // Ctrl+F ostaje CodeMirroru, koji uz pretragu nudi i zamjenu.
     if (key === 'f' && activeInstance()) {
       event.preventDefault();
@@ -289,7 +291,7 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   switch (key) {
     case 's':
       event.preventDefault();
-      // Fokus unutar ploče ispod znači da se sprema ona, ne kartica iznad.
+      // Focus inside the panel below means it is what gets saved, not the tab above.
       if (target?.closest('.split')) void saveScratch(shell);
       else void saveActive(shell);
       break;
@@ -324,8 +326,9 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       store.setQuickOpen(!store.quickOpen);
       break;
     case 'z':
-      // Isti put za sve formate: editor sam odlučuje što je korak natrag.
-      // Za kod to završi u CodeMirrorovoj povijesti, za PDF u stogu anotacija.
+      // The same route for every format: the editor decides what a step back is.
+      // For code that lands in CodeMirror's history, for PDF in the annotation
+      // stack.
       if (!inTextField && activeInstance()) {
         event.preventDefault();
         activeInstance()?.undo();

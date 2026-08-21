@@ -71,7 +71,7 @@ export function t(source: string, params?: Record<string, string | number>): str
   );
 }
 
-/** Prijevod imena jezika — jedini niz koji se prikazuje na svom jeziku. */
+/** Translating a language name — the one string displayed in its own language. */
 export function localeName(locale: Locale): string {
   return LOCALES.find((l) => l.id === locale)?.native ?? locale;
 }

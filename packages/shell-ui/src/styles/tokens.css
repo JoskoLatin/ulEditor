@@ -1,17 +1,17 @@
 /*
- * Dizajn tokeni.
+ * Design tokens.
  *
- * Neutrali nose blagi cijan pomak prema akcentu — čisto siva izgleda
- * neodabrano. Boje formata su odvojene od akcenta i pojavljuju se samo
- * ondje gdje se format zaista imenuje (ikone, tabovi, statusna traka).
+ * The neutrals carry a slight cyan shift towards the accent — pure grey looks
+ * unchosen. The format colours are kept apart from the accent and appear only
+ * where a format is genuinely named (icons, tabs, status bar).
  *
- * Tema se razrješava na tri načina: eksplicitan izbor (data-theme),
- * sistemska preferencija, i zadana svijetla. Nijedna boja se ne smije
- * definirati SAMO unutar media queryja ili [data-theme] bloka.
+ * The theme resolves three ways: an explicit choice (data-theme), the system
+ * preference, and the default light. No colour may be defined ONLY inside a media
+ * query or a [data-theme] block.
  */
 
 :root {
-  /* ── površine ── */
+  /* ── surfaces ── */
   --ground: #eef2f4;
   --chrome: #e4eaed;
   --surface: #f7fafb;

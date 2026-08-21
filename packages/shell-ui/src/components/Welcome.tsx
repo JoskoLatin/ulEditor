@@ -9,7 +9,7 @@ import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon } from './Icons.js';
 
 const LIVE = ['code', 'markdown', 'pdf', 'epub', 'image'] as const;
-/** Formati koji se otvore, ali samo za čitanje — razlika je bitna prije otvaranja. */
+/** Formats that open, but read-only — the difference matters before opening. */
 const READ_ONLY: { format: keyof typeof FORMATS; note: string }[] = [
   { format: 'docx', note: 'preview' },
   { format: 'xlsx', note: 'preview' },

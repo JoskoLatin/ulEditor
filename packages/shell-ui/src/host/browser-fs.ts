@@ -1,13 +1,13 @@
 /**
- * VirtualFileSystem preko File System Access API.
+ * VirtualFileSystem over the File System Access API.
  *
- * Ovo je web implementacija; desktop verzija ide preko Tauri commanda na
- * Rust `ul-core`. Editori razliku ne vide — zato je cijeli API async i
- * bazira se na neprozirnim URI-jima umjesto na putanjama.
+ * This is the web implementation; the desktop one goes through Tauri commands to
+ * the Rust `ul-core`. The editors see no difference — which is why the whole API
+ * is async and built on opaque URIs rather than on paths.
  *
- * FSA API postoji u Chromiumu (dakle i u WebView2, koji Tauri koristi na
- * Windowsu). U Firefoxu i Safariju radi degradirani način: datoteke se
- * mogu otvoriti kroz <input type="file">, ali ne i spremiti natrag.
+ * The FSA API exists in Chromium (and therefore in WebView2, which Tauri uses on
+ * Windows). In Firefox and Safari a degraded mode applies: files can be opened
+ * through <input type="file">, but not saved back.
  */
 
 import type {
@@ -67,7 +67,7 @@ export function hasFileSystemAccess(): boolean {
   return typeof picker.showOpenFilePicker === 'function';
 }
 
-/* ── pomoćnici ───────────────────────────────────────────────────────── */
+/* ── helpers ─────────────────────────────────────────────────────────── */
 
 const MIME_BY_EXT: Record<string, string> = {
   pdf: 'application/pdf',
@@ -89,13 +89,13 @@ function acceptFor(extensions?: string[]) {
   return [{ description: t('Supported files'), accept }];
 }
 
-/** Direktoriji koji nikad ne zaslužuju mjesto u stablu. */
+/** Directories that never deserve a place in the tree. */
 const NOISE = new Set(['node_modules', '.git', 'target', 'dist', '.next', '.turbo', '.venv']);
 
 /* ── implementacija ──────────────────────────────────────────────────── */
 
 export class BrowserFileSystem implements VirtualFileSystem {
-  /** URI → handle. URI je stabilan i čitljiv: `ul:/projekt/src/main.ts`. */
+  /** URI → handle. The URI is stable and readable: `ul:/project/src/main.ts`. */
   #handles = new Map<Uri, FsHandle>();
   #parents = new Map<Uri, Uri | null>();
   #roots: Uri[] = [];
@@ -137,7 +137,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     };
   }
 
-  /* — čitanje — */
+  /* — reading — */
 
   async roots(): Promise<DirectoryEntry[]> {
     const out: DirectoryEntry[] = [];
@@ -174,7 +174,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
       });
     }
 
-    // Direktoriji prvi, zatim abecedno — bez ovoga je stablo nečitljivo.
+    // Directories first, then alphabetically — without this the tree is unreadable.
     entries.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
       return a.name.localeCompare(b.name, 'hr');
@@ -251,7 +251,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     const handle = this.#fileHandle(uri);
     await this.#ensureWritable(handle);
     const writable = await handle.createWritable();
-    // Kopija u svjež ArrayBuffer — writable ne prihvaća poglede na SharedArrayBuffer.
+    // A copy into a fresh ArrayBuffer — writable does not accept views onto a SharedArrayBuffer.
     await writable.write(new Uint8Array(data).buffer as ArrayBuffer);
     await writable.close();
   }
@@ -305,7 +305,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     return uri;
   }
 
-  /* — degradirani način: <input type="file"> — */
+  /* — degraded mode: <input type="file"> — */
 
   /** Otvara datoteke bez FSA API-ja. Rezultat je read-only. */
   async adoptFiles(files: FileList | File[]): Promise<DocumentHandle[]> {
@@ -337,7 +337,7 @@ export class BrowserFileSystem implements VirtualFileSystem {
     return docs;
   }
 
-  /** Detekcija po imenu za stablo, gdje sadržaj još nije pročitan. */
+  /** Detection by name for the tree, where the content has not been read yet. */
   detectionForName(name: string) {
     return detectByName(name);
   }

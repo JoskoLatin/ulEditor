@@ -1,14 +1,14 @@
 /**
- * Obnova sesije.
+ * Session restore.
  *
- * Program koji se otvori prazan nakon što si zatvorio prozor s dvanaest
- * kartica nije alat nego demo. Pamte se korijeni stabla, otvorene kartice i
- * koja je bila aktivna.
+ * A program that opens empty after you closed a window with twelve tabs is a demo,
+ * not a tool. The tree roots, the open tabs and which one was active are
+ * remembered.
  *
- * **Samo desktop.** Na webu je `Uri` ključ `FileSystemHandle`-a koji vrijedi
- * unutar jedne sesije; oživljavanje traži IndexedDB i novo pitanje korisniku
- * za dozvolu pri svakom pokretanju. Radije ne obnavljamo ništa nego da se
- * program otvori s dijalozima za dozvole.
+ * **Desktop only.** On the web a `Uri` is a key to a `FileSystemHandle` valid
+ * within one session; reviving it requires IndexedDB and a fresh permission
+ * prompt on every start. We would rather restore nothing than have the program
+ * open with permission dialogs.
  */
 
 import type { Uri } from '@uleditor/plugin-sdk';
@@ -18,7 +18,7 @@ import { useWorkspace } from '../state/workspace.js';
 import { addRoot, openUri } from './actions.js';
 
 const KEY = 'session.workspace';
-/** Iznad ovoga obnova traje dulje nego što itko želi čekati pokretanje. */
+/** Above this, restoring takes longer than anyone wants to wait for startup. */
 const MAX_TABS = 24;
 
 interface StoredSession {
@@ -40,9 +40,9 @@ export function saveSession(shell: Shell): void {
 }
 
 /**
- * Vraća prošlu sesiju. Datoteke koje su u međuvremenu obrisane ili premještene
- * se preskaču bez buke — obnova sesije ne smije zasuti korisnika greškama za
- * nešto što nije tražio.
+ * Restores the previous session. Files deleted or moved in the meantime are
+ * skipped without a fuss — a session restore must not bury the user in errors for
+ * something they did not ask for.
  */
 export async function restoreSession(shell: Shell): Promise<void> {
   if (shell.platform !== 'desktop') return;
@@ -54,7 +54,7 @@ export async function restoreSession(shell: Shell): Promise<void> {
     try {
       await addRoot(shell, { uri, name: baseName(uri) });
     } catch {
-      // Mapa više ne postoji.
+      // The folder no longer exists.
     }
   }
 
@@ -62,7 +62,7 @@ export async function restoreSession(shell: Shell): Promise<void> {
     try {
       await openUri(shell, uri, { quiet: true });
     } catch {
-      // Datoteka više ne postoji.
+      // The file no longer exists.
     }
   }
 
@@ -72,7 +72,7 @@ export async function restoreSession(shell: Shell): Promise<void> {
   }
 }
 
-/** Prati promjene i sprema ih odgođeno — svaki klik po stablu ne treba zapis. */
+/** Watches for changes and saves them with a delay — not every click in the tree needs a write. */
 export function watchSession(shell: Shell): () => void {
   if (shell.platform !== 'desktop') return () => {};
 

@@ -34,8 +34,8 @@ export function App({ shell }: { shell: Shell }) {
 
   useEffect(() => registerCommands(shell), [shell]);
 
-  // Obnova sesije ide prije praćenja, da sam čin obnove ne prepiše zapis
-  // djelomično obnovljenim stanjem.
+  // The session restore runs before the watcher, so the act of restoring does not
+  // overwrite the record with a half-restored state.
   useEffect(() => {
     let stop: (() => void) | undefined;
     void restoreSession(shell).then(() => {
@@ -44,15 +44,15 @@ export function App({ shell }: { shell: Shell }) {
     return () => stop?.();
   }, [shell]);
 
-  // Čitaonica pripada jednom dokumentu. Prebacivanje kartice je izlazak, a ne
-  // tiho nastavljanje čitanja nečeg drugog s tuđim postavkama.
+  // The reading room belongs to one document. Switching tabs means leaving it,
+  // not quietly carrying on reading something else with somebody else's settings.
   useEffect(() => {
     if (reading && readingTabId !== activeTabId) exitReading();
   }, [reading, readingTabId, activeTabId]);
 
-  // Ispuštanje datoteka u prozor — web put preko `File` objekata.
-  // Radi i bez File System Access API-ja, pa je u Firefoxu i Safariju
-  // jedini način da se dokument uopće otvori.
+  // Dropping files onto the window — the web route through `File` objects.
+  // It works without the File System Access API too, so in Firefox and Safari it
+  // is the only way to open a document at all.
   useEffect(() => {
     if (shell.platform !== 'web') return;
 
@@ -83,8 +83,9 @@ export function App({ shell }: { shell: Shell }) {
     };
   }, [shell]);
 
-  // Ispuštanje na desktopu. WebView2 ne izlaže `File` objekte za sadržaj
-  // izvan preglednika — Tauri hvata gestu na razini prozora i daje putanje.
+  // Dropping on desktop. WebView2 does not expose `File` objects for content from
+  // outside the browser — Tauri catches the gesture at the window level and hands
+  // over paths.
   useEffect(() => {
     if (shell.platform !== 'desktop') return;
 
@@ -124,26 +125,28 @@ export function App({ shell }: { shell: Shell }) {
 
   return (
     <ShellContext.Provider value={shell}>
-      {/* Čitaonica ne prerađuje stablo komponenti — samo skriva okvir. Drukčije
-          stablo bi demontiralo editor i izgubilo mjesto na kojem se čita. */}
+      {/* The reading room does not rework the component tree — it only hides the
+          frame. A different tree would unmount the editor and lose the reading
+          position. */}
       <div className="shell" data-reading={reading ? 'true' : 'false'}>
         <TitleBar />
 
         <div className="shell-body" data-sidebar={sidebarVisible ? 'visible' : 'hidden'}>
           <ActivityBar />
-          {/* Oba mjesta u gridu postoje uvijek — skrivanje je stvar širine
-              stupca, pa se prijelaz ne vidi kao preslagivanje layouta. */}
+          {/* Both grid slots always exist — hiding is a matter of column width, so
+              the transition does not read as the layout being rearranged. */}
           {sidebarVisible ? <Sidebar /> : <div />}
           {sidebarVisible ? <SidebarResizer /> : <div />}
-          {/* Zatamnjenje ide izvan toka i vidi se samo na uskom ekranu, gdje
-              ploča prekriva sadržaj i mora se dati zatvoriti dodirom pokraj. */}
+          {/* The scrim sits outside the flow and shows only on a narrow screen,
+              where the panel covers the content and has to be dismissible with a
+              tap beside it. */}
           {sidebarVisible ? <SidebarScrim /> : null}
           <main className="main">
             {reading ? <ReaderBar /> : null}
             <TabBar />
             <FindPanel />
             <EditorSurface />
-            {/* Ploča ispod: vlastiti izlaz programa, ne druga grupa kartica. */}
+            {/* The panel below: the program's own output, not a second tab group. */}
             <SplitPane />
           </main>
         </div>

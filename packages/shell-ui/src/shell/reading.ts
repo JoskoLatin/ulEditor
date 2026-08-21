@@ -1,8 +1,9 @@
 /**
- * Čitaonica — način čitanja na razini shella.
+ * The reading room — reading mode at the shell level.
  *
- * Stanje je namjerno u zasebnom storeu: napredak se javlja pri svakom
- * listanju, a to ne smije ponovno renderirati stablo, tabove i statusnu traku.
+ * The state deliberately lives in a store of its own: progress is reported on
+ * every page turn, and that must not re-render the tree, the tabs and the status
+ * bar.
  *
  * Sama sesija (`ReadingSession`) je imperativni objekt editora i ne ide u
  * store — kao ni `EditorInstance`, iz istog razloga.
@@ -26,7 +27,7 @@ export type ReaderPanel = 'none' | 'outline' | 'type';
 
 interface ReadingState {
   active: boolean;
-  /** Kartica u kojoj čitaonica radi — prebacivanje kartice je zatvara. */
+  /** The tab the reading room runs in — switching tabs closes it. */
   tabId: string | null;
   title: string;
   options: ReadingOptions;
@@ -57,12 +58,12 @@ export const useReading = create<ReadingState>((set) => ({
     }),
 }));
 
-/* ── živa sesija ─────────────────────────────────────────────────────── */
+/* ── the live session ────────────────────────────────────────────────── */
 
 let session: ReadingSession | null = null;
 let unsubscribe: (() => void) | null = null;
 
-/** Može li se ono što je otvoreno uopće čitati na ovaj način. */
+/** Whether what is open can be read this way at all. */
 export function canRead(): boolean {
   return typeof activeInstance()?.beginReading === 'function';
 }
@@ -98,8 +99,8 @@ export function enterReading(shell: Shell): void {
     panel: 'none',
   });
 
-  // Pretraga i čitanje se ne isključuju, ali ploča pretrage zauzima prostor
-  // koji je u čitaonici upravo ono što se htjelo maknuti.
+  // Search and reading are not mutually exclusive, but the search panel takes up
+  // the very space the reading room set out to clear.
   useWorkspace.getState().setFindOpen(false);
 }
 
@@ -120,7 +121,7 @@ export function toggleReading(shell: Shell): void {
   else enterReading(shell);
 }
 
-/* ── kretanje kroz sadržaj ───────────────────────────────────────────── */
+/* ── navigating the contents ─────────────────────────────────────────── */
 
 export function readerPage(delta: number): void {
   session?.page(delta);
@@ -131,8 +132,9 @@ export function readerSeek(fraction: number): void {
 }
 
 /**
- * Sadržaj se dohvaća pri svakom otvaranju ploče, ne jednom pri ulasku:
- * PDF svoje oznake učitava asinkrono, pa bi snimka iz prve sekunde bila prazna.
+ * The table of contents is fetched every time the panel opens, not once on entry:
+ * a PDF loads its outline asynchronously, so a snapshot from the first second
+ * would be empty.
  */
 export function readerOutline(): ReadingOutlineItem[] {
   return session?.outline() ?? [];
@@ -143,7 +145,7 @@ export function readerGoTo(id: string): void {
   useReading.setState({ panel: 'none' });
 }
 
-/** Postavke se pamte globalno — čitatelj ih namjesti jednom, ne po knjizi. */
+/** The settings are remembered globally — a reader sets them once, not per book. */
 export function persistReadingOptions(shell: Shell): void {
   shell.settings.set('reading.options', useReading.getState().options);
 }

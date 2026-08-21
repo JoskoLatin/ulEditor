@@ -1,17 +1,18 @@
 /**
- * Pretraga po cijelom radnom prostoru.
+ * Search across the whole workspace.
  *
- * Dva prolaza, i drugi je razlog zbog kojeg ovo postoji:
+ * Two passes, and the second is why this exists at all:
  *
- * 1. **Tekstualne datoteke** — skenira Rust (`Workspace::search`). Sadržaj ne
- *    prelazi preko IPC-a; gore ide upit, natrag samo pogoci.
- * 2. **Dokumenti** — PDF, Word, Excel, e-knjige. Rust ih ne čita, ali ih
- *    prijavljuje kao kandidate, pa ih ovdje otvaraju isti parseri koje editori
- *    koriste za prikaz. To je razlika prema grepu i prema svakom editoru koda:
- *    rečenica iz ugovora u PDF-u nađe se zajedno s rezultatima iz koda.
+ * 1. **Text files** — scanned by Rust (`Workspace::search`). The content does not
+ *    cross the IPC boundary; the query goes up, only the hits come back.
+ * 2. **Documents** — PDF, Word, Excel, e-books. Rust does not read them, but it
+ *    reports them as candidates, so here they are opened with the same parsers
+ *    the editors use for display. That is the difference from grep and from every
+ *    code editor: a sentence from a contract in a PDF turns up alongside the
+ *    results from code.
  *
- * Drugi prolaz je **opcionalan i sporiji**, pa se pokreće na zahtjev i
- * prijavljuje napredak umjesto da tiho stoji.
+ * The second pass is **optional and slower**, so it runs on request and reports
+ * progress rather than standing silent.
  */
 
 import { create } from 'zustand';
@@ -21,9 +22,9 @@ import { t } from '@uleditor/i18n';
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
 
-/** Iznad ovoga drugi prolaz traje dulje nego što itko čeka. */
+/** Above this the second pass takes longer than anyone waits. */
 const MAX_DOCUMENTS = 60;
-/** Dokument veći od ovoga se preskače — parsiranje bi blokiralo prozor. */
+/** A document larger than this is skipped — parsing would block the window. */
 const MAX_DOCUMENT_BYTES = 24 * 1024 * 1024;
 
 export interface ProjectHit {
@@ -43,7 +44,7 @@ interface ProjectSearchState {
   query: string;
   caseSensitive: boolean;
   wholeWord: boolean;
-  /** Uključuje drugi prolaz kroz PDF, Word, Excel i e-knjige. */
+  /** Enables the second pass through PDF, Word, Excel and e-books. */
   searchDocuments: boolean;
 
   phase: SearchPhase;
@@ -78,7 +79,7 @@ export const useProjectSearch = create<ProjectSearchState>((set) => ({
     set({ phase: 'idle', hits: [], scanned: 0, truncated: false, pending: 0, error: null }),
 }));
 
-/* ── izvođenje ───────────────────────────────────────────────────────── */
+/* ── execution ───────────────────────────────────────────────────────── */
 
 /** Raste sa svakim pokretanjem; stariji prolaz prestaje objavljivati rezultate. */
 let runId = 0;
@@ -151,7 +152,7 @@ export async function runProjectSearch(shell: Shell): Promise<void> {
 
   if (documents.length === 0) return;
 
-  /* Drugi prolaz: dokumenti, jedan po jedan, s objavom nakon svakog. */
+  /* The second pass: documents, one at a time, publishing after each. */
   for (const candidate of documents) {
     if (run !== runId) return;
 
@@ -162,7 +163,7 @@ export async function runProjectSearch(shell: Shell): Promise<void> {
         useProjectSearch.setState((s) => ({ hits: [...s.hits, ...found] }));
       }
     } catch {
-      // Oštećen ili zaštićen dokument ne smije prekinuti pretragu.
+      // A damaged or protected document must not abort the search.
     } finally {
       if (run === runId) {
         useProjectSearch.setState((s) => ({ pending: Math.max(0, s.pending - 1) }));
@@ -174,10 +175,10 @@ export async function runProjectSearch(shell: Shell): Promise<void> {
 }
 
 /**
- * Pretraga jednog dokumenta njegovim parserom.
+ * Searching one document with its own parser.
  *
- * Parseri se učitavaju lijeno i tek za format koji se stvarno pojavio — mapa
- * bez ijednog PDF-a ne povlači pdf.js.
+ * Parsers load lazily and only for a format that actually turned up — a folder
+ * with no PDF in it never pulls in pdf.js.
  */
 async function searchDocument(
   shell: Shell,
@@ -273,7 +274,7 @@ async function searchDocument(
   return out;
 }
 
-/** Desktop: skeniranje se odvija u Rustu, sadržaj ne prelazi preko IPC-a. */
+/** Desktop: the scan happens in Rust, the content does not cross the IPC boundary. */
 async function searchViaCore(
   state: { caseSensitive: boolean; wholeWord: boolean },
   query: string,
@@ -291,11 +292,11 @@ async function searchViaCore(
 }
 
 /**
- * Web: isti posao preko `VirtualFileSystem`.
+ * Web: the same job through `VirtualFileSystem`.
  *
- * Sporije je jer svaka datoteka prolazi kroz File System Access API, pa su
- * granice uže. Postoji da pretraga ne bi bila značajka koja "radi samo na
- * desktopu" — ista ploča, isti rezultati, druga brzina.
+ * It is slower because every file goes through the File System Access API, so the
+ * limits are tighter. It exists so search is not a feature that "only works on
+ * desktop" — the same panel, the same results, a different speed.
  */
 async function searchViaVfs(
   shell: Shell,

@@ -1,8 +1,9 @@
 /**
- * Prikaz imena formata.
+ * Displaying format names.
  *
- * `plugin-sdk` nosi engleski izvornik jer ugovor ne smije ovisiti o jeziku
- * sučelja. Prijevod se dogodi točno ovdje, na granici prema UI-u.
+ * `plugin-sdk` carries the English source because the contract must not depend on
+ * the interface language. The translation happens exactly here, at the boundary
+ * towards the UI.
  */
 
 import { FORMATS, type FormatId } from '@uleditor/plugin-sdk';

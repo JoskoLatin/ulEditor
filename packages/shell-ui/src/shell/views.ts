@@ -1,13 +1,13 @@
 /**
- * Pogledi bočne ploče — jedan popis za obje trake.
+ * The side panel views — one list for both bars.
  *
- * Na širokom ekranu pogledi stoje u aktivnosnoj traci lijevo, na uskom u
- * naslovnoj traci gore. Ako bi svaka od njih držala vlastiti popis, prije ili
- * kasnije bi se razišle.
+ * On a wide screen the views sit in the activity bar on the left, on a narrow one
+ * in the title bar at the top. If each held a list of its own, sooner or later
+ * they would drift apart.
  *
- * **Mape se na telefonu ne nude.** Stablo direktorija je desktop metafora i
- * knjižnica ga zamjenjuje u cijelosti; ostavljeno, bilo bi to drugi način da se
- * radi isto, samo lošiji.
+ * **Folders are not offered on a phone.** The directory tree is a desktop
+ * metaphor and the library replaces it entirely; left in, it would be a second
+ * way of doing the same thing, only worse.
  */
 
 import { t } from '@uleditor/i18n';
@@ -31,7 +31,7 @@ export const views = (): ViewEntry[] => [
   { id: 'formats', label: t('Supported formats'), icon: IconLayers, desktopOnly: true },
 ];
 
-/** Prag je isti kao u CSS-u — jedno mjesto odlučuje što je „usko”. */
+/** The threshold matches the CSS — one place decides what "narrow" means. */
 export const NARROW = '(max-width: 720px)';
 
 export function isNarrow(): boolean {

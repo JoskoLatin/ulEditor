@@ -18,21 +18,22 @@ import { lazyProvider } from './shell/lazy.js';
 const shell = createShell();
 
 /*
- * Jezik se postavlja prije prvog rendera i prije registracije naredbi — nazivi
- * naredbi se prevode jednom, pri registraciji. Promjena jezika u postavkama
- * ponovno učita prozor umjesto da pokušava zamijeniti nizove u živom DOM-u
- * koji su imperativni editori sami izgradili.
+ * The language is set before the first render and before commands are registered —
+ * command titles are translated once, at registration. Changing the language in
+ * settings reloads the window rather than trying to swap strings in live DOM that
+ * imperative editors built themselves.
  */
 setLocale(shell.locale);
 
-/* Dokument mora prijaviti stvarni jezik, ne onaj upisan u `index.html`:
-   o njemu ovise čitači ekrana i pravila za rastavljanje riječi. */
+/* The document has to report its real language, not the one written into
+   `index.html`: screen readers and hyphenation rules depend on it. */
 document.documentElement.lang = shell.locale;
 
 /*
- * Registracija editora — jedino mjesto u shellu koje uopće spominje pojedine
- * formate. Metapodaci su statični (registar mora odmah znati tko što otvara),
- * a kod se dohvaća pri prvom otvaranju dokumenta tog tipa.
+ * Editor registration — the only place in the shell that mentions individual
+ * formats at all. The metadata is static (the registry has to know at once who
+ * opens what), while the code is fetched when a document of that type is first
+ * opened.
  */
 
 const CODE_EXTENSIONS = [
@@ -110,8 +111,8 @@ shell.registry.register(
         extensions: ['docx'],
         mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
       },
-      /* Mora se poklapati s onim što editor prijavljuje: shell odlučuje je li
-         kartica samo za čitanje prije nego se editor uopće učita. */
+      /* This has to match what the editor reports: the shell decides whether a tab
+         is read-only before the editor is even loaded. */
       capabilities: ['view', 'search', 'read', 'edit'],
       priority: 30,
     },

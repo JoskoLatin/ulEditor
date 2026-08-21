@@ -9,11 +9,12 @@ import { useWorkspace } from '../state/workspace.js';
 import { IconCommand, IconFolderOpen, IconSave } from './Icons.js';
 
 /**
- * Prekidač pogleda u naslovnoj traci.
+ * The view switch in the title bar.
  *
- * Postoji samo na uskom ekranu, gdje okomite trake uz rub nema — CSS ga na
- * desktopu skriva. Ploča se otvara **prema dolje ispod trake**, jer je na
- * telefonu vrh jedino mjesto koje palac dosegne bez preslagivanja hvata.
+ * It exists only on a narrow screen, where there is no vertical bar along the
+ * edge — the CSS hides it on desktop. The panel opens **downwards, below the
+ * bar**, because on a phone the top is the only place a thumb reaches without
+ * regripping.
  */
 function ViewSwitch() {
   const view = useWorkspace((s) => s.sidebarView);
@@ -60,9 +61,9 @@ export function TitleBar() {
         <ViewSwitch />
 
         {/*
-          Otvaranje mape i biranje datoteka su desktop radnje: na telefonu ih
-          knjižnica pokriva u cijelosti, pa bi bile drugi put do istog. CSS ih
-          ondje skriva.
+          Opening a folder and picking files are desktop actions: on a phone the
+          library covers them entirely, so they would be a second route to the
+          same place. The CSS hides them there.
         */}
         <button
           className="chrome-btn desktop-only"

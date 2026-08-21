@@ -1,9 +1,9 @@
 /*
- * Zajednička čitaonica.
+ * The shared reading room.
  *
- * Podloga je vezana na `data-tint`, a ne na temu aplikacije: knjiga se čita
- * satima, pa "sepija" i "noć" moraju vrijediti bez obzira na to je li ostatak
- * programa svijetao ili taman.
+ * The background hangs off `data-tint` rather than the application theme: a book
+ * is read for hours, so "sepia" and "night" must hold regardless of whether the
+ * rest of the program is light or dark.
  */
 
 .ul-read {
@@ -30,7 +30,7 @@
   --book-link: #0c5e79;
 }
 
-/* Dok se ne čita, prikaz nosi boje aplikacije. */
+/* Outside reading mode, the view carries the application colours. */
 .ul-read:not([data-reading='true']) {
   --book-bg: var(--surface);
   --book-ink: var(--ink);
@@ -70,15 +70,16 @@
   margin: 0 auto;
 }
 
-/* Razmak je na toku, ne na prozoru: visina toka se postavlja iz
-   `clientHeight`, koji već uključuje padding prozora — pa bi ga isti razmak
-   dvaput ušao u račun i odsjekao zadnji redak svakog stupca. */
+/* The padding sits on the flow, not the window: the flow height is set from
+   `clientHeight`, which already includes the window padding — so the same
+   padding would enter the sum twice and cut off the last line of every
+   column. */
 .ul-read[data-flow='paged'] .ul-read-flow {
   column-fill: auto;
   padding: 28px 0;
 }
 
-/* Zone za listanje klikom uz rub — prozirne, vidi se samo pokazivač. */
+/* The click zones along the edges for turning pages — transparent, only the cursor shows. */
 .ul-read-edge {
   position: absolute;
   top: 0;
@@ -102,17 +103,18 @@
   display: none;
 }
 
-/* Pogodak pretrage. Bez umetanja elemenata, pa se tekstualni čvorovi ne razbijaju. */
+/* A search hit. No elements are inserted, so the text nodes are not split. */
 ::highlight(ul-read-hit) {
   background: #f2c14a;
   color: #1a1d20;
 }
 
-/* ── tipografija dugog teksta ────────────────────────────────────────── */
+/* ── typography for long text ────────────────────────────────────────── */
 
 /*
- * Zajednička proza za čitaonicu. Koristi je Markdown u načinu čitanja;
- * Word pregled ima vlastitu jer mora poštovati poravnanja iz dokumenta.
+ * The shared prose styling for the reading room. Markdown uses it in reading
+ * mode; the Word view has its own because it must honour the alignments from the
+ * document.
  */
 
 .ul-read-doc {

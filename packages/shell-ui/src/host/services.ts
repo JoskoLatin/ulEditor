@@ -1,7 +1,7 @@
 /**
- * Implementacije host usluga. Namjerno bez React ovisnosti — UI se na njih
- * pretplaćuje kroz `Emitter`, pa iste usluge rade i u testovima i kasnije
- * u Tauri kontekstu.
+ * Implementations of the host services. Deliberately free of React dependencies —
+ * the UI subscribes to them through `Emitter`, so the same services work in tests
+ * and later in a Tauri context.
  */
 
 import {
@@ -128,7 +128,7 @@ export class Themes implements ThemeService {
     this.#emitter.fire(this.current);
   }
 
-  /** Kruži svijetlo → tamno → sistemsko. */
+  /** Cycles light → dark → system. */
   cycle(): ThemePreference {
     const next: ThemePreference =
       this.#preference === 'light' ? 'dark' : this.#preference === 'dark' ? 'system' : 'light';
@@ -152,7 +152,7 @@ export class Settings implements SettingsService {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) parsed = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      // Oštećene postavke ne smiju spriječiti pokretanje.
+      // Corrupted settings must not prevent startup.
     }
     this.#values = parsed;
   }
@@ -166,7 +166,7 @@ export class Settings implements SettingsService {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.#values));
     } catch {
-      // Privatni način / puna kvota — postavke jednostavno ne preživljavaju sesiju.
+      // Private mode / quota full — the settings simply do not survive the session.
     }
     this.#emitter.fire({ key });
   }
@@ -179,7 +179,7 @@ export interface ToastRecord {
   level: NotificationLevel;
   message: string;
   actions: NotificationAction[];
-  /** Popis nepodržanih značajki kod upozorenja o vjernosti. */
+  /** The list of unsupported features in a fidelity warning. */
   details?: string[];
   /** Modalna upozorenja se ne gase sama. */
   sticky: boolean;
@@ -216,8 +216,8 @@ export class Notifications implements NotificationService {
   }
 
   /**
-   * Najvažnije pravilo projekta: dokument se nikad ne sprema tiho ako
-   * spremanje gubi značajke koje editor ne razumije.
+   * The project's most important rule: a document is never saved silently when
+   * saving loses features the editor does not understand.
    */
   fidelityWarning(uri: Uri, unsupported: string[]): Promise<'save' | 'cancel'> {
     return new Promise((resolve) => {
@@ -250,12 +250,12 @@ export class Notifications implements NotificationService {
   }
 }
 
-/* ── konverzija ──────────────────────────────────────────────────────── */
+/* ── conversion ──────────────────────────────────────────────────────── */
 
 /**
- * Konverzija traži LibreOffice headless, koji stiže u fazi 2 preko
- * `crates/ul-convert`. Do tada usluga postoji, ali se pošteno izjašnjava
- * kao nedostupna umjesto da editori pogađaju.
+ * Conversion needs LibreOffice headless, which arrives in phase 2 through
+ * `crates/ul-convert`. Until then the service exists but honestly declares
+ * itself unavailable rather than leaving editors to guess.
  */
 export class NoConversion implements ConversionService {
   async available(): Promise<boolean> {

@@ -1,10 +1,10 @@
 /**
- * Traka čitaonice.
+ * The reading room bar.
  *
- * Jedina kontrola koja se u načinu čitanja vidi. Sve što nudi vodi natrag u
- * tekst: sadržaj, tipografija, napredak. Namjerno nema ništa o datoteci —
- * spremanje, kartice i stablo su u ovom načinu rada nevidljivi jer ne
- * sudjeluju u čitanju.
+ * The only control visible in reading mode. Everything it offers leads back into
+ * the text: the contents, the typography, the progress. It deliberately carries
+ * nothing about the file — saving, tabs and the tree are invisible in this mode
+ * because they play no part in reading.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -99,8 +99,8 @@ export function ReaderBar() {
 }
 
 /**
- * Traka napretka koja se može vući. Dok se vuče, prikazuje se lokalna
- * vrijednost — inače bi pokazivač poskakivao na svaki `onProgress` iz editora.
+ * A draggable progress rail. While dragging, a local value is displayed —
+ * otherwise the handle would jump on every `onProgress` from the editor.
  */
 function ProgressRail() {
   const fraction = useReading((s) => s.progress.fraction);
@@ -128,8 +128,8 @@ function ProgressRail() {
 }
 
 function OutlinePanel() {
-  // Dohvat pri otvaranju, ne pri ulasku u čitanje: PDF svoje oznake učitava
-  // asinkrono, pa bi popis snimljen prve sekunde bio prazan.
+  // Fetched when it opens, not when reading starts: a PDF loads its outline
+  // asynchronously, so a list captured in the first second would be empty.
   const [outline] = useState(readerOutline);
   const ref = useRef<HTMLDivElement>(null);
 

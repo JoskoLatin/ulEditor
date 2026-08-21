@@ -45,7 +45,7 @@ button {
   background: var(--accent-glow);
 }
 
-/* Diskretni scrollbari — sistemski su previše glasni u gustom chromeu. */
+/* Discreet scrollbars — the system ones are too loud in dense chrome. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--rule-strong) transparent;
@@ -77,31 +77,31 @@ button {
   }
 }
 
-/* ── okvir ──────────────────────────────────────────────────────────── */
+/* ── the frame ──────────────────────────────────────────────────────── */
 
 /*
- * Umetci sigurnog područja: na telefonu webview dobiva cijeli ekran, pa
- * sistemska statusna traka i navigacijska traka crtaju **preko** aplikacije.
- * Bez ovoga sat sjedne na naslovnu traku, a u pejzažu navigacijska traka
- * pojede desni rub.
+ * Safe area insets: on a phone the webview gets the whole screen, so the system
+ * status bar and navigation bar draw **over** the application. Without this the
+ * clock lands on the title bar, and in landscape the navigation bar eats the
+ * right edge.
  *
- * Trake nose umetak kao vlastiti padding umjesto da se okvir odmakne, da
- * njihova boja i dalje ide do samog ruba ekrana — inače se ispod sata vidi
- * pruga pozadine.
+ * The bars carry the inset as their own padding rather than the frame being
+ * shifted, so their colour still runs to the very edge of the screen — otherwise
+ * a strip of background shows beneath the clock.
  *
- * Na desktopu su sve četiri vrijednosti nula i pravilo ne radi ništa.
+ * On desktop all four values are zero and the rule does nothing.
  */
 /*
- * `width` i `overflow` nisu ukras nego ograda.
+ * `width` and `overflow` are not decoration but a fence.
  *
- * Bez njih sadržaj koji se ne da stisnuti — alatna traka editora s previše
- * kontrola — razvuče grid preko širine ekrana. Na desktopu se to vidi kao
- * vodoravni scrollbar, na Androidu je gore: WebView odzumira **cijelu**
- * stranicu, pa `innerWidth` naraste s 392 na 591 px, sve se pomakne i dodiri
- * padaju pokraj gumba. Izmjereno upravo tako s otvorenim PDF-om.
+ * Without them, content that cannot be squeezed — an editor toolbar with too many
+ * controls — stretches the grid past the screen width. On desktop that shows as a
+ * horizontal scrollbar; on Android it is worse: the WebView zooms out the
+ * **entire** page, so `innerWidth` grows from 392 to 591 px, everything shifts
+ * and taps land beside the buttons. Measured exactly that way with a PDF open.
  *
- * Ovdje se lomi lanac: shell je uvijek točno širok koliko i ekran, a što se
- * unutra ne da stisnuti neka se lista samo.
+ * This is where the chain breaks: the shell is always exactly as wide as the
+ * screen, and whatever cannot be squeezed inside may scroll on its own.
  */
 .shell {
   height: 100%;
@@ -117,13 +117,13 @@ button {
   background: var(--ground);
 }
 
-/* Stupci: aktivnosna traka · bočna ploča · hvatište za širinu · glavno područje. */
+/* Columns: activity bar · side panel · width handle · main area. */
 .shell-body {
   display: grid;
   grid-template-columns: var(--activitybar-w) auto auto minmax(0, 1fr);
   min-height: 0;
-  /* Automatska najmanja veličina grid stavke je min-content; bez ovoga tijelo
-     naraste na širinu najšire alatne trake i povuče shell za sobom. */
+  /* The automatic minimum size of a grid item is min-content; without this the
+     body grows to the width of the widest toolbar and drags the shell with it. */
   min-width: 0;
 }
 
@@ -264,11 +264,11 @@ button {
   background: var(--accent);
 }
 
-/* ── bočna ploča ────────────────────────────────────────────────────── */
+/* ── the side panel ─────────────────────────────────────────────────── */
 
 .sidebar {
-  /* Vrijednost postavlja komponenta; zamjenska je tu da ploča ima širinu i
-     ako se stil učita prije prvog rendera. */
+  /* The component sets the value; the fallback is there so the panel has a width
+     even if the stylesheet loads before the first render. */
   width: var(--sidebar-w, 264px);
   background: var(--surface);
   border-right: 1px solid var(--rule);
@@ -322,7 +322,7 @@ button {
   min-height: 0;
 }
 
-/* Na širokom ekranu ploča nikoga ne prekriva, pa zatamnjenja nema. */
+/* On a wide screen the panel covers nobody, so there is no scrim. */
 .sidebar-scrim {
   display: none;
   border: none;
@@ -330,8 +330,8 @@ button {
 }
 
 /*
- * Prekidač pogleda u naslovnoj traci postoji samo na uskom ekranu; na desktopu
- * isti pogledi stoje u okomitoj traci uz lijevi rub.
+ * The view switch in the title bar exists only on a narrow screen; on desktop the
+ * same views sit in the vertical bar along the left edge.
  */
 .view-switch {
   display: none;
@@ -451,7 +451,7 @@ button {
   background: var(--accent-wash);
 }
 
-/* ── glavno područje ────────────────────────────────────────────────── */
+/* ── the main area ──────────────────────────────────────────────────── */
 
 .main {
   display: flex;
@@ -555,7 +555,7 @@ button {
   display: none;
 }
 
-/* ── uređivačka površina ────────────────────────────────────────────── */
+/* ── the editing surface ────────────────────────────────────────────── */
 
 .surface {
   flex: 1;
@@ -608,7 +608,7 @@ button {
   word-break: break-all;
 }
 
-/* ── dobrodošlica ───────────────────────────────────────────────────── */
+/* ── the welcome screen ─────────────────────────────────────────────── */
 
 .welcome {
   margin: auto;
@@ -633,7 +633,7 @@ button {
   font-weight: 600;
 }
 
-/* Potpis pod logotipom — poravnat s riječju, ne s rubom. */
+/* The signature under the logotype — aligned to the word, not to the edge. */
 .welcome-origin {
   margin: 7px 0 0;
   font-family: var(--mono);
@@ -735,9 +735,9 @@ button {
 }
 
 /*
- * Potpis je centriran u odnosu na traku, ne u odnosu na sadržaj oko sebe —
- * inače bi šetao lijevo-desno kako se mijenja status editora. Ne prima
- * klikove, pa ne otima gumbe ispod sebe.
+ * The signature is centred against the bar rather than against the content around
+ * it — otherwise it would wander left and right as the editor status changes. It
+ * takes no clicks, so it does not steal the buttons underneath.
  */
 .status-origin {
   position: absolute;
@@ -1109,12 +1109,12 @@ button.status-item:hover {
   color: var(--ink-inverse);
 }
 
-/* ── čitaonica ───────────────────────────────────────────────────────── */
+/* ── the reading room ────────────────────────────────────────────────── */
 
 /*
- * U načinu čitanja okvir programa nestaje. Ne mijenja se stablo komponenti,
- * samo se skriva sve što ne sudjeluje u čitanju — pa editor ostaje montiran
- * i zadržava mjesto na kojem se stalo.
+ * In reading mode the program frame disappears. The component tree does not
+ * change; everything that plays no part in reading is merely hidden — so the
+ * editor stays mounted and keeps the place where reading stopped.
  */
 .shell[data-reading="true"] .titlebar,
 .shell[data-reading="true"] .activitybar,
@@ -1125,12 +1125,12 @@ button.status-item:hover {
   display: none;
 }
 
-/* Skriveni redovi ne nestaju iz grida sami: bez ovoga bi tijelo palo u red
-   naslovne trake i dobilo njezinih 36 px visine. */
+/* Hidden rows do not leave the grid by themselves: without this the body would
+   fall into the title bar's row and take its 36 px of height. */
 .shell[data-reading="true"] {
   grid-template-rows: minmax(0, 1fr);
-  /* Trake su skrivene, pa umetke sigurnog područja mora nositi sam okvir —
-     inače bi u čitaonici tekst išao pod sistemsku traku. */
+  /* The bars are hidden, so the frame itself has to carry the safe area insets —
+     otherwise the text in the reading room would run under the system bar. */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -1207,7 +1207,7 @@ button.status-item:hover {
   color: var(--accent-ink);
 }
 
-/* Traka napretka. Izgleda kao crta, ponaša se kao klizač. */
+/* The progress rail. It looks like a line and behaves like a slider. */
 .reader-rail {
   display: block;
   width: 100%;
@@ -1255,7 +1255,7 @@ button.status-item:hover {
   margin-left: auto;
 }
 
-/* ── ploče čitaonice ─────────────────────────────────────────────────── */
+/* ── the reading room panels ─────────────────────────────────────────── */
 
 .reader-panel {
   position: absolute;
@@ -1366,7 +1366,7 @@ button.status-item:hover {
   color: var(--ink-inverse);
 }
 
-/* Podsjetnik na kraticu, ne gumb — nema radnje bez otvorenog dokumenta. */
+/* A reminder of the shortcut, not a button — there is no action without an open document. */
 .welcome-action[data-static="true"] {
   cursor: default;
   color: var(--ink-faint);
@@ -1741,38 +1741,41 @@ button.status-item:hover {
   color: var(--ink);
 }
 
-/* ── uski ekran ─────────────────────────────────────────────────────── */
+/* ── narrow screens ─────────────────────────────────────────────────── */
 
 /*
- * Shell je građen za desktop: aktivnosna traka 48 px, bočna ploča 264 px, pa
- * glavno područje. Na telefonu je CSS širina oko 390 px, pa glavnom području
- * ostane sedamdesetak piksela i opis se lomi na jednu riječ po retku.
+ * The shell is built for desktop: a 48 px activity bar, a 264 px side panel, then
+ * the main area. On a phone the CSS width is around 390 px, so the main area is
+ * left with some seventy pixels and the description breaks onto one word per
+ * line.
  *
- * Ovo **nije** touch redizajn iz faze 4 — nema gesta, ni kontekstnog toolbara,
- * ni upravljanja tipkovnicom. Cilj je uži: da se sadržaj vidi i da ga se može
- * dohvatiti. Bočna ploča prelazi preko sadržaja umjesto da ga stišće, a s
- * naslovne trake se miču stvari koje na telefonu ionako ništa ne znače.
+ * This is **not** the touch redesign from phase 4 — there are no gestures, no
+ * contextual toolbar and no keyboard handling. The aim is narrower: that the
+ * content is visible and reachable. The side panel goes over the content instead
+ * of squeezing it, and the title bar sheds things that mean nothing on a phone
+ * anyway.
  *
- * Prag je 720 px, a ne širina konkretnog uređaja: isto vrijedi za usku ploču
- * na desktopu, gdje je problem identičan.
+ * The threshold is 720 px rather than the width of a particular device: the same
+ * holds for a narrow window on desktop, where the problem is identical.
  */
 @media (max-width: 720px) {
   /*
-   * Ploča više nije stupac nego sloj preko sadržaja, a hvatište za širinu
-   * nestaje s njom.
+   * The panel is no longer a column but a layer over the content, and the width
+   * handle disappears with it.
    *
-   * Oboje ispada iz toka — `position: absolute` i `display: none` — pa se
-   * mjesta u gridu **moraju** dodijeliti izrijekom. Bez toga auto-raspoređivanje
-   * pomakne glavno područje u stupac koji je ostao prazan i ono dobije nula
-   * piksela širine. Ista zamka vrijedi i za prazne divove koje shell renderira
-   * umjesto skrivene ploče: oni ostaju u toku i odlaze u implicitne stupce.
+   * Both drop out of the flow — `position: absolute` and `display: none` — so the
+   * grid positions **must** be assigned explicitly. Without that, auto-placement
+   * moves the main area into the column left empty and it ends up zero pixels
+   * wide. The same trap applies to the empty divs the shell renders in place of
+   * the hidden panel: they stay in the flow and go into implicit columns.
    */
   /*
-   * Navigacija ide gore, uz rub ostaju alati otvorenog dokumenta.
+   * The navigation moves to the top; the edge is left to the open document's
+   * tools.
    *
-   * Okomita traka pogleda nestaje: na telefonu troši 48 px širine na nešto što
-   * u naslovnoj traci ionako stoji, a lijevi rub je vredniji kao mjesto za
-   * alate formata koji je upravo otvoren.
+   * The vertical view bar disappears: on a phone it spends 48 px of width on
+   * something the title bar already carries, and the left edge is worth more as a
+   * place for the tools of whatever format is open.
    */
   .activitybar {
     display: none;
@@ -1784,18 +1787,19 @@ button.status-item:hover {
     position: relative;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
-    /* Prazni divovi nemaju eksplicitan položaj pa ih auto-raspoređivanje šalje
-       u implicitni red. Bez nulte visine taj red gurne raspored prema dolje. */
+    /* The empty divs have no explicit position, so auto-placement sends them into
+       an implicit row. Without a zero height that row pushes the layout down. */
     grid-auto-rows: 0;
   }
 
-  /* Red **i** stupac, ne samo stupac: uz zadan samo stupac ostaje slobodan
-     redak, pa prazni divovi zauzmu prvi red i glavno područje padne u drugi. */
+  /* The row **and** the column, not just the column: with only a column given,
+     the row stays free, so the empty divs take the first row and the main area
+     falls into the second. */
   .main {
     grid-area: 1 / 1;
   }
 
-  /* Prekidač pogleda živi u naslovnoj traci, a mape se na telefonu ne nude. */
+  /* The view switch lives in the title bar, and folders are not offered on a phone. */
   .view-switch {
     display: flex;
   }
@@ -1805,12 +1809,12 @@ button.status-item:hover {
   }
 
   /*
-   * Ploča pada odozgo, punom širinom, i staje prije dna.
+   * The panel drops from the top, full width, and stops short of the bottom.
    *
-   * Prije je izlazila sa strane i ostavljala uski pojas sadržaja po kojem se
-   * zatvarala — 38 px, manje nego što palac pouzdano pogodi. Odozgo je i bliže
-   * gumbu koji ju je otvorio, pa je put oko-ruka kraći, a ispod nje ostaje
-   * široka ploha za zatvaranje.
+   * It used to come in from the side, leaving a narrow strip of content to close
+   * it by — 38 px, less than a thumb reliably hits. From the top it is also
+   * nearer the button that opened it, so the eye-to-hand path is shorter, and a
+   * wide surface for closing is left beneath it.
    */
   .shell-body[data-sidebar="visible"] .sidebar {
     position: absolute;
@@ -1826,7 +1830,7 @@ button.status-item:hover {
     box-shadow: 0 10px 24px rgb(0 0 0 / 0.22);
   }
 
-  /* Ispod ploče, iznad sadržaja — i prima dodir, za razliku od sjene. */
+  /* Below the panel, above the content — and it takes touch, unlike a shadow. */
   .sidebar-scrim {
     display: block;
     position: absolute;
@@ -1840,9 +1844,9 @@ button.status-item:hover {
   }
 
   /*
-   * Ciljevi za prst. Chrome je građen za miš i pokazivač od jednog piksela;
-   * na dodir su 24 px visoki redovi promašaj koji korisnik doživi kao „ne
-   * reagira”, a ne kao „promašio sam”.
+   * Targets for a finger. The chrome is built for a mouse and a one-pixel
+   * pointer; under touch, 24 px rows are a miss the user experiences as "it does
+   * not respond" rather than "I missed".
    */
   .chrome-btn {
     height: 34px;
@@ -1867,7 +1871,7 @@ button.status-item:hover {
     padding: 0 9px;
   }
 
-  /* Naziv dokumenta već stoji u kartici; ovdje bi se samo sudarao s gumbima. */
+  /* The document name already sits in the tab; here it would merely collide with the buttons. */
   .titlebar {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px;
@@ -1885,9 +1889,10 @@ button.status-item:hover {
   }
 
   /*
-   * Pozdravni ekran je centriran s `margin: auto`. Kad naraste preko visine
-   * spremnika, taj centrirani višak se u flexboxu odreže s vrha i ne da se
-   * doskrolati. Na uskom ekranu zato pada na vrh i spremnik dobiva skrol.
+   * The welcome screen is centred with `margin: auto`. Once it grows past the
+   * container height, that centred overflow is cut off at the top in flexbox and
+   * cannot be scrolled to. On a narrow screen it therefore drops to the top and
+   * the container gets a scrollbar.
    */
   .surface {
     overflow-y: auto;
@@ -1905,11 +1910,11 @@ button.status-item:hover {
   }
 }
 
-/* ── knjižnica ──────────────────────────────────────────────────────── */
+/* ── the library ────────────────────────────────────────────────────── */
 
 /*
- * Popis, ne stablo. Mapa je podatak uz datoteku, a ne način kretanja — zato
- * nema uvlaka ni strelica za razgranavanje.
+ * A list, not a tree. A folder is a fact about a file rather than a way of moving
+ * around — hence no indentation and no expand arrows.
  */
 .library {
   display: flex;
@@ -2022,8 +2027,8 @@ button.status-item:hover {
 }
 
 /*
- * Uskraćen pristup nije prazna lista. Android tu ne javlja grešku, pa bi bez
- * ovoga aplikacija tvrdila da dokumenata nema — a ima ih stotine.
+ * Denied access is not an empty list. Android reports no error here, so without
+ * this the app would claim there are no documents — while there are hundreds.
  */
 .library-blocked {
   display: flex;

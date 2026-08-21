@@ -27,9 +27,9 @@ export function Sidebar() {
   const width = useWorkspace((s) => s.sidebarWidth);
 
   /*
-   * Širina ide kao CSS varijabla, ne kao `width`. Inline `width` bi imao veću
-   * specifičnost od svakog pravila u tablici stilova, pa se na uskom ekranu
-   * ploča ne bi mogla pretvoriti u preklopnu bez `!important`.
+   * The width goes through a CSS variable rather than `width`. An inline `width`
+   * would outrank every rule in the stylesheet, so on a narrow screen the panel
+   * could not become an overlay without `!important`.
    */
   return (
     <aside className="sidebar" style={{ '--sidebar-w': `${width}px` } as React.CSSProperties}>
@@ -52,14 +52,14 @@ export function Sidebar() {
 }
 
 /**
- * Zatamnjenje iza preklopne ploče.
+ * The scrim behind the overlay panel.
  *
- * Na uskom ekranu ploča prekriva sadržaj, pa mora imati i način da se zatvori
- * ondje gdje ju korisnik pokušava zatvoriti — dodirom pokraj nje. Prije je
- * zatamnjenje bilo `box-shadow` same ploče, što izgleda isto ali ne prima
- * dodir, pa je ploča djelovala kao da se ne da maknuti.
+ * On a narrow screen the panel covers the content, so it needs a way to be closed
+ * where the user tries to close it — with a tap beside it. The scrim used to be a
+ * `box-shadow` on the panel itself, which looks the same but takes no touch, so
+ * the panel felt immovable.
  *
- * Na širokom ekranu ga CSS sakriva: ondje ploča nikoga ne prekriva.
+ * On a wide screen the CSS hides it: there the panel covers nobody.
  */
 export function SidebarScrim() {
   const setVisible = useWorkspace((s) => s.setSidebarVisible);
@@ -96,7 +96,7 @@ export function SidebarResizer() {
     };
     const onUp = () => setDragging(false);
 
-    // Tijekom povlačenja tekst se ne smije selektirati, inače kursor "zapne".
+    // While dragging, text must not be selectable, otherwise the cursor "sticks".
     const previous = document.body.style.userSelect;
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
