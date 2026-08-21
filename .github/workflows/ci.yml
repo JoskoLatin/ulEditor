@@ -169,6 +169,13 @@ jobs:
       - name: Does the core build for a phone
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          # `--target` tells rustc what to compile for and nothing more: the
+          # linker stays the host's `cc`, which reads the ARM64 objects and says
+          # "file in wrong format". `tauri android build` configures this
+          # itself, which is why the release never needed the line and a bare
+          # cargo build does. 24 is the minSdk in build.gradle.kts — the NDK
+          # ships one wrapper per API level and they are not interchangeable.
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
         run: cargo build -p uleditor-desktop --target aarch64-linux-android --lib
 
   wasm:
