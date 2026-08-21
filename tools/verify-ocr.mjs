@@ -1,10 +1,10 @@
 /**
- * Runtime provjera OCR-a i ploče ispod.
+ * Runtime check of OCR and the panel below.
  *
- * OCR se ne može lažirati: skripta nacrta sliku s poznatim tekstom, pusti
- * prepoznavanje i traži taj tekst natrag. Jezični model se preuzima pri prvoj
- * upotrebi, pa je za ovu provjeru **potrebna mreža**; bez nje se prijavljuje
- * kao preskočeno, ne kao prolaz.
+ * OCR cannot be faked: the script draws an image with known text in it, runs
+ * recognition and looks for that text coming back. The language model is fetched
+ * on first use, so this check **needs the network**; without it the result is
+ * reported as skipped, not as a pass.
  *
  *   node tools/verify-ocr.mjs [--url http://localhost:5273] [--headed]
  */
@@ -21,7 +21,7 @@ const args = process.argv.slice(2);
 const url = args.includes('--url') ? args[args.indexOf('--url') + 1] : 'http://localhost:5273';
 const headed = args.includes('--headed');
 
-/** Tekst koji crtamo na sliku i očekujemo natrag iz OCR-a. */
+/** The text drawn onto the image and expected back out of OCR. */
 const PHRASE = 'ULEDITOR OCR TEST';
 
 const checks = [];
@@ -44,10 +44,10 @@ try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.shell', { timeout: 15000 });
 
-  /* ── slika s poznatim tekstom ──────────────────────────────────────── */
+  /* ── an image with known text ──────────────────────────────────────── */
 
-  // Crta se u pregledniku pa ispušta kao datoteka — tako nema binarnog asseta
-  // u repozitoriju, a OCR dobiva pravi PNG.
+  // It is drawn in the browser and then dropped as a file — that way there is no
+  // binary asset in the repository, and OCR gets a real PNG.
   const bytes = await page.evaluate(async (phrase) => {
     const canvas = document.createElement('canvas');
     canvas.width = 900;
@@ -60,14 +60,14 @@ try {
     ctx.textBaseline = 'middle';
     ctx.fillText(phrase, 40, 90);
     ctx.font = '400 44px Georgia, serif';
-    ctx.fillText('drugi redak teksta', 40, 190);
+    ctx.fillText('a second line of text', 40, 190);
 
     const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
     return [...new Uint8Array(await blob.arrayBuffer())];
   }, PHRASE);
 
   await page.evaluate((data) => {
-    const file = new File([new Uint8Array(data)], 'natpis.png', { type: 'image/png' });
+    const file = new File([new Uint8Array(data)], 'sign.png', { type: 'image/png' });
     const transfer = new DataTransfer();
     transfer.items.add(file);
     window.dispatchEvent(
@@ -76,17 +76,17 @@ try {
   }, bytes);
 
   await page.waitForSelector('.ul-img img', { timeout: 20000 });
-  check('slika otvorena', true);
+  check('the image is open', true);
 
   const ocrButton = page.locator('.ul-img-ocr');
-  check('preglednik slika nudi OCR', await ocrButton.isVisible());
+  check('the image viewer offers OCR', await ocrButton.isVisible());
 
   const languages = await page.locator('.ul-img-select option').allInnerTexts();
-  check('jezik prepoznavanja se bira', languages.length === 2, languages.join(', '));
+  check('the recognition language can be chosen', languages.length === 2, languages.join(', '));
 
-  /* ── prepoznavanje ─────────────────────────────────────────────────── */
+  /* ── recognition ───────────────────────────────────────────────────── */
 
-  // Engleski model je manji i dovoljan za latinicu bez dijakritika.
+  // The English model is smaller and enough for Latin script without diacritics.
   await page.locator('.ul-img-select').selectOption('eng');
   await ocrButton.click();
 
@@ -100,59 +100,59 @@ try {
   if (!recognised) {
     const toast = await page.locator('.toast p').first().innerText().catch(() => '');
     check(
-      'OCR preskočen (nema mreže za jezični model)',
+      'OCR skipped (no network for the language model)',
       true,
-      toast.slice(0, 90) || 'bez poruke',
+      toast.slice(0, 90) || 'no message',
     );
   } else {
-    check('ploča ispod se otvorila s rezultatom', true);
+    check('the panel below opened with the result', true);
 
     const text = await page.locator('.split .cm-content').innerText();
     const normalised = text.replace(/\s+/g, ' ').toUpperCase();
     check(
-      'prepoznat je tekst sa slike',
+      'the text was recognised off the image',
       normalised.includes(PHRASE),
       normalised.slice(0, 60),
     );
 
     const name = await page.locator('.split-name').innerText();
-    check('ploča nosi ime izvedeno iz slike', name.includes('natpis'), name);
+    check('the panel carries a name derived from the image', name.includes('sign'), name);
 
     const formats = await page.locator('.split-format option').allInnerTexts();
     check(
-      'ponuđeni su formati za spremanje',
+      'the save formats are offered',
       formats.length === 4,
       formats.join(' · '),
     );
 
-    // Glavna kartica ostaje montirana ispod ploče — to je bila poanta splita.
-    check('slika je i dalje otvorena iznad', await page.locator('.ul-img img').isVisible());
+    // The main tab stays mounted under the panel — that was the point of the split.
+    check('the image is still open above', await page.locator('.ul-img img').isVisible());
 
     await page.screenshot({ path: resolve(SHOTS, 'ocr.png') });
 
-    /* — visina ploče se mijenja — */
+    /* — the panel height changes — */
     const before = await page.locator('.split').evaluate((el) => el.clientHeight);
     await page.locator('.split-resizer').hover();
     await page.mouse.down();
     await page.mouse.move(750, 400);
     await page.mouse.up();
     const after = await page.locator('.split').evaluate((el) => el.clientHeight);
-    check('visina ploče se povlači', after !== before, `${before} → ${after}`);
+    check('the panel height can be dragged', after !== before, `${before} → ${after}`);
 
-    /* — zatvaranje — */
+    /* — closing — */
     await page.locator('.split-bar .icon-btn').click();
     await page.waitForTimeout(300);
-    check('ploča se zatvara', (await page.locator('.split').count()) === 0);
+    check('the panel closes', (await page.locator('.split').count()) === 0);
   }
 
-  /* ── jezik sučelja ─────────────────────────────────────────────────── */
+  /* ── the interface language ────────────────────────────────────────── */
 
   await page.keyboard.press('Control+Comma');
   await page.waitForSelector('.prefs', { timeout: 5000 });
-  check('postavke se otvaraju', true);
+  check('the preferences open', true);
 
   const langButtons = await page.locator('.prefs-seg button').allInnerTexts();
-  check('nudi se hrvatski i engleski', langButtons.includes('Hrvatski'), langButtons.slice(0, 3).join(', '));
+  check('Croatian and English are both offered', langButtons.includes('Hrvatski'), langButtons.slice(0, 3).join(', '));
 
   await page.screenshot({ path: resolve(SHOTS, 'preferences.png') });
 
@@ -161,15 +161,15 @@ try {
   await page.waitForTimeout(600);
 
   const folderButton = await page.locator('.titlebar .chrome-btn').first().innerText();
-  check('sučelje je prešlo na hrvatski', folderButton === 'Mapa', folderButton);
-  await page.screenshot({ path: resolve(SHOTS, 'hrvatski.png') });
+  check('the interface switched to Croatian', folderButton === 'Mapa', folderButton);
+  await page.screenshot({ path: resolve(SHOTS, 'croatian.png') });
 
-  // Natrag na engleski, da provjera ne ostavi promijenjenu postavku.
+  // Back to English, so the check does not leave a changed setting behind.
   await page.keyboard.press('Control+Comma');
   await page.waitForSelector('.prefs', { timeout: 5000 });
   await page.locator('.prefs-seg button', { hasText: 'English' }).click();
   await page.waitForTimeout(600);
-  check('vraćanje na engleski radi', (await page.locator('.titlebar .chrome-btn').first().innerText()) === 'Folder');
+  check('switching back to English works', (await page.locator('.titlebar .chrome-btn').first().innerText()) === 'Folder');
 
   const ignorable = (text) =>
     text.includes('Download the React DevTools') || text.includes('[vite]');

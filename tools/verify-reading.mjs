@@ -1,9 +1,9 @@
 /**
- * Runtime provjera čitaonice i Office pregleda.
+ * Runtime check of the reading room and the Office view.
  *
- * Odvojena od `verify-ui.mjs` jer testira drugu tvrdnju: ne "shell radi", nego
- * "dokument se stvarno može pročitati". Datoteke ulaze kroz pravi `drop`
- * event, istim putem kao iz sistemskog dijaloga.
+ * Kept apart from `verify-ui.mjs` because it tests a different claim: not "the
+ * shell works" but "the document can really be read". Files come in through a
+ * real `drop` event, by the same route as from the system dialog.
  *
  *   node tools/verify-reading.mjs [--url http://localhost:5273] [--headed]
  */
@@ -44,7 +44,7 @@ async function dropFile(page, name, content) {
   );
 }
 
-/** Pretraga preko ploče — ista za sve formate, u tome je i poanta. */
+/** Search through the panel — the same for every format, which is the point. */
 async function search(page, term) {
   await page.keyboard.press('Control+Shift+F');
   await page.locator('.findpanel-bar input').fill(term);
@@ -68,93 +68,93 @@ try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.shell', { timeout: 15000 });
 
-  /* ── e-knjiga ──────────────────────────────────────────────────────── */
+  /* ── the e-book ────────────────────────────────────────────────────── */
 
-  await dropFile(page, 'knjiga.epub', makeEpub({ chapters: 4, title: 'Testna knjiga' }));
+  await dropFile(page, 'book.epub', makeEpub({ chapters: 4, title: 'A test book' }));
   await page.waitForSelector('.ul-book', { timeout: 20000 });
-  check('EPUB otvoren', true);
+  check('the EPUB is open', true);
 
   check(
-    'naslov i autor iz metapodataka',
-    (await page.locator('.ul-book-toc h2').innerText()) === 'Testna knjiga' &&
+    'the title and author come from the metadata',
+    (await page.locator('.ul-book-toc h2').innerText()) === 'A test book' &&
       (await page.locator('.ul-book-toc header p').innerText()) === 'Josko',
   );
 
   const tocCount = await page.locator('.ul-book-toc-list button').count();
-  check('sadržaj iz EPUB 3 navigacije', tocCount === 4, `${tocCount} poglavlja`);
+  check('the contents come from the EPUB 3 navigation', tocCount === 4, `${tocCount} chapters`);
 
   const chapterVisible = await page.locator('.ul-book-chapter h1').first().isVisible();
-  check('tekst poglavlja prikazan', chapterVisible);
+  check('the chapter text is displayed', chapterVisible);
 
   const formatTag = await page.locator('.tab[data-active="true"] .name').innerText();
-  check('kartica nosi ime knjige', formatTag === 'knjiga.epub');
+  check('the tab carries the book file name', formatTag === 'book.epub');
 
-  /* ── čitaonica ─────────────────────────────────────────────────────── */
+  /* ── the reading room ──────────────────────────────────────────────── */
 
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.reader', { timeout: 10000 });
-  check('način čitanja se otvara tipkom', true);
+  check('reading mode opens from the keyboard', true);
 
   for (const [label, selector] of [
-    ['naslovna traka', '.titlebar'],
-    ['aktivnosna traka', '.activitybar'],
-    ['traka kartica', '.tabbar'],
-    ['statusna traka', '.statusbar'],
+    ['the title bar', '.titlebar'],
+    ['the activity bar', '.activitybar'],
+    ['the tab bar', '.tabbar'],
+    ['the status bar', '.statusbar'],
   ]) {
-    check(`${label} skrivena u čitanju`, !(await page.locator(selector).isVisible()));
+    check(`${label} is hidden while reading`, !(await page.locator(selector).isVisible()));
   }
 
-  check('bočni sadržaj knjige skriven u čitanju', !(await page.locator('.ul-book-toc').isVisible()));
+  check('the book contents sidebar is hidden while reading', !(await page.locator('.ul-book-toc').isVisible()));
 
   const flow = await page.locator('.ul-book').getAttribute('data-flow');
-  check('zadani tok su stranice', flow === 'paged', `data-flow=${flow}`);
+  check('the default flow is pages', flow === 'paged', `data-flow=${flow}`);
 
   const columns = await page.evaluate(
     () => getComputedStyle(document.querySelector('.ul-book-flow')).columnCount,
   );
-  check('tekst prelomljen u stupce', columns !== 'auto' && Number(columns) >= 1, `column-count=${columns}`);
+  check('the text is broken into columns', columns !== 'auto' && Number(columns) >= 1, `column-count=${columns}`);
 
   const firstLabel = await page.locator('.reader-status span').first().innerText();
   await page.locator('.reader-nav button').nth(1).click();
   await page.waitForTimeout(350);
   const secondLabel = await page.locator('.reader-status span').first().innerText();
-  check('listanje mijenja stranicu', firstLabel !== secondLabel, `${firstLabel} → ${secondLabel}`);
+  check('turning pages changes the page', firstLabel !== secondLabel, `${firstLabel} → ${secondLabel}`);
 
   const scrolled = await page.evaluate(() => document.querySelector('.ul-book-view').scrollLeft);
-  check('prijelom se stvarno pomiče', scrolled > 0, `scrollLeft=${scrolled}`);
+  check('the flow really moves', scrolled > 0, `scrollLeft=${scrolled}`);
 
   await page.keyboard.press('ArrowLeft');
   await page.waitForTimeout(350);
   const backLabel = await page.locator('.reader-status span').first().innerText();
-  check('strelica lijevo vraća stranicu', backLabel === firstLabel, backLabel);
+  check('the left arrow brings the page back', backLabel === firstLabel, backLabel);
 
   check(
-    'procjena preostalog vremena',
+    'an estimate of the time left',
     /~\d+ min left/.test(await page.locator('.reader-left').innerText()),
     await page.locator('.reader-left').innerText(),
   );
 
-  /* — sadržaj iz čitaonice — */
+  /* — the contents from the reading room — */
   await page.locator('.reader-btn', { hasText: 'Contents' }).click();
   await page.waitForSelector('.reader-outline', { timeout: 5000 });
   const outlineCount = await page.locator('.reader-outline button').count();
-  check('sadržaj u čitaonici', outlineCount === 4, `${outlineCount} stavki`);
+  check('the contents in the reading room', outlineCount === 4, `${outlineCount} entries`);
 
   await page.locator('.reader-outline button').nth(2).click();
   await page.waitForTimeout(400);
   const jumped = await page.locator('.reader-status span').first().innerText();
-  // Naslov poglavlja dolazi iz same knjige, ne iz sučelja — ostaje kakav jest.
+  // The chapter title comes from the book itself, not the interface — it stays as it is.
   check('a jump to a chapter from the contents', jumped.includes('Chapter 3'), jumped);
 
-  /* — tipografija — */
+  /* — typography — */
   await page.locator('.reader-btn', { hasText: 'Layout' }).click();
   await page.waitForSelector('.reader-type', { timeout: 5000 });
 
   await page.locator('.reader-seg button', { hasText: 'Night' }).click();
   await page.waitForTimeout(250);
   const tint = await page.locator('.ul-book').getAttribute('data-tint');
-  check('podloga "noć" primijenjena', tint === 'night', `data-tint=${tint}`);
-  await page.screenshot({ path: resolve(SHOTS, 'citanje-noc.png') });
+  check('the "night" tint was applied', tint === 'night', `data-tint=${tint}`);
+  await page.screenshot({ path: resolve(SHOTS, 'reading-night.png') });
 
   const sizeBefore = await page.evaluate(
     () => getComputedStyle(document.querySelector('.ul-book-view')).fontSize,
@@ -164,69 +164,69 @@ try {
   const sizeAfter = await page.evaluate(
     () => getComputedStyle(document.querySelector('.ul-book-view')).fontSize,
   );
-  check('veličina slova se mijenja', sizeBefore !== sizeAfter, `${sizeBefore} → ${sizeAfter}`);
+  check('the type size changes', sizeBefore !== sizeAfter, `${sizeBefore} → ${sizeAfter}`);
 
   await page.locator('.reader-seg button', { hasText: 'Scroll' }).click();
   await page.waitForTimeout(300);
   const scrollFlow = await page.locator('.ul-book').getAttribute('data-flow');
   const allChapters = await page.locator('.ul-book-chapter').count();
-  check('prebacivanje u svitak', scrollFlow === 'scroll', `data-flow=${scrollFlow}`);
-  check('svitak montira sva poglavlja', allChapters === 4, `${allChapters} poglavlja`);
+  check('switching to scroll', scrollFlow === 'scroll', `data-flow=${scrollFlow}`);
+  check('scroll mounts every chapter', allChapters === 4, `${allChapters} chapters`);
 
   await page.locator('.reader-seg button', { hasText: 'Pages' }).click();
   await page.locator('.reader-seg button', { hasText: 'Day' }).click();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: resolve(SHOTS, 'citanje.png') });
+  await page.screenshot({ path: resolve(SHOTS, 'reading.png') });
 
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
-  check('Escape izlazi iz čitanja', await page.locator('.tabbar').isVisible());
-  check('sadržaj knjige se vraća', await page.locator('.ul-book-toc').isVisible());
+  check('Escape leaves reading mode', await page.locator('.tabbar').isVisible());
+  check('the book contents come back', await page.locator('.ul-book-toc').isVisible());
 
-  /* — pretraga po cijeloj knjizi — */
+  /* — search across the whole book — */
   const bookHits = await search(page, 'uniquechapter3');
-  check('pretraga nalazi tekst u dubljem poglavlju', bookHits === 1, `${bookHits} pogodaka`);
+  check('the search finds text in a deeper chapter', bookHits === 1, `${bookHits} hits`);
 
   /* ── Word ──────────────────────────────────────────────────────────── */
 
-  await dropFile(page, 'izvjestaj.docx', makeDocx());
+  await dropFile(page, 'report.docx', makeDocx());
   await page.waitForSelector('.ul-office-doc', { timeout: 20000 });
-  check('DOCX otvoren', true);
+  check('the DOCX is open', true);
 
   const heading = await page.locator('.ul-office-doc h1').innerText();
   check('the heading is mapped to an h1', heading === 'Fidelity report', heading);
 
-  check('podnaslovi mapirani', (await page.locator('.ul-office-doc h2').count()) === 2);
-  check('podebljano zadržano', (await page.locator('.ul-office-doc strong').count()) === 1);
+  check('the subheadings are mapped', (await page.locator('.ul-office-doc h2').count()) === 2);
+  check('the bold was kept', (await page.locator('.ul-office-doc strong').count()) === 1);
   check('the italic was kept', (await page.locator('.ul-office-doc em').count()) === 1);
 
   const bullets = await page.locator('.ul-office-doc ul li').count();
-  check('lista prepoznata kao lista', bullets === 2, `${bullets} stavki`);
+  check('the list was recognised as a list', bullets === 2, `${bullets} items`);
 
   const rows = await page.locator('.ul-office-doc table tr').count();
-  check('tablica prepoznata', rows === 3, `${rows} redaka`);
+  check('the table was recognised', rows === 3, `${rows} rows`);
 
   check(
-    'dijakritici čitljivi',
+    'the diacritics are legible',
     (await page.locator('.ul-office-doc p').first().innerText()).includes('čćšžđ'),
   );
 
-  check('pregled se izjašnjava kao samo za čitanje', await page.locator('.ul-office-notes').isVisible());
+  check('the view declares itself read-only', await page.locator('.ul-office-notes').isVisible());
   check(
-    'kartica označena kao samo za čitanje',
+    'the tab is marked read-only',
     await page.locator('.statusbar').innerText().then((t) => t.length > 0),
   );
 
   const docxHits = await search(page, 'uniqueword');
-  check('pretraga radi nad Word pregledom', docxHits === 1, `${docxHits} pogodaka`);
+  check('the search works over the Word view', docxHits === 1, `${docxHits} hits`);
 
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.reader', { timeout: 10000 });
   const docxReading = await page.locator('.ul-office').getAttribute('data-reading');
-  check('Word se može čitati kao knjiga', docxReading === 'true');
+  check('Word can be read like a book', docxReading === 'true');
   await page.locator('.reader-btn', { hasText: 'Contents' }).click();
   const docxOutline = await page.locator('.reader-outline button').count();
-  check('sadržaj iz naslova dokumenta', docxOutline === 3, `${docxOutline} naslova`);
+  check('the contents come from the document headings', docxOutline === 3, `${docxOutline} headings`);
   await page.screenshot({ path: resolve(SHOTS, 'word.png') });
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
@@ -234,12 +234,12 @@ try {
 
   /* ── Excel ─────────────────────────────────────────────────────────── */
 
-  await dropFile(page, 'promet.xlsx', makeXlsx());
+  await dropFile(page, 'sales.xlsx', makeXlsx());
   await page.waitForSelector('.ul-sheet', { timeout: 20000 });
-  check('XLSX otvoren', true);
+  check('the XLSX is open', true);
 
   const sheetTabs = await page.locator('.ul-sheet-tabs button').count();
-  check('listovi radne knjige', sheetTabs === 2, `${sheetTabs} lista`);
+  check('the workbook sheets', sheetTabs === 2, `${sheetTabs} sheets`);
 
   const cell = (row, col) => page.locator(`.ul-sheet td[data-ref="${row},${col}"]`);
 
@@ -247,45 +247,45 @@ try {
   check('the shared strings were resolved', cellA2 === 'January', cellA2);
 
   const cellB2 = await cell(1, 1).innerText();
-  check('broj formatiran po formatu ćelije', cellB2.includes('1.234,50'), cellB2);
+  check('the number follows the cell format', cellB2.includes('1.234,50'), cellB2);
 
   const cellC2 = await cell(1, 2).innerText();
-  check('serijski broj prikazan kao datum', /^\d{2}\.\d{2}\.\d{4}\.$/.test(cellC2), cellC2);
+  check('the serial number is shown as a date', /^\d{2}\.\d{2}\.\d{4}\.$/.test(cellC2), cellC2);
 
   const formulaTitle = await cell(3, 1).getAttribute('title');
-  check('formula vidljiva u opisu ćelije', formulaTitle === '=SUM(B2:B3)', String(formulaTitle));
+  check('the formula is visible in the cell tooltip', formulaTitle === '=SUM(B2:B3)', String(formulaTitle));
 
   const boolCell = await cell(4, 0).innerText();
-  check('logička vrijednost prevedena', boolCell === 'TRUE', boolCell);
+  check('the boolean was rendered', boolCell === 'TRUE', boolCell);
 
   const merged = await cell(4, 0).getAttribute('colspan');
-  check('spojene ćelije zadržane', merged === '2', `colspan=${merged}`);
+  check('the merged cells were kept', merged === '2', `colspan=${merged}`);
 
   const headers = await page.locator('.ul-sheet thead th').count();
-  check('oznake stupaca prikazane', headers >= 3, `${headers} zaglavlja`);
+  check('the column labels are shown', headers >= 3, `${headers} headers`);
 
   await page.screenshot({ path: resolve(SHOTS, 'excel.png') });
 
   const xlsxHits = await search(page, 'uniqueexcel');
-  check('pretraga prelazi preko listova', xlsxHits === 1, `${xlsxHits} pogodaka`);
+  check('the search crosses the sheets', xlsxHits === 1, `${xlsxHits} hits`);
 
-  /* ── PDF u čitaonici ───────────────────────────────────────────────── */
+  /* ── a PDF in the reading room ─────────────────────────────────────── */
 
-  await dropFile(page, 'knjizica.pdf', new TextEncoder().encode(makeMultiPagePdf(5)));
+  await dropFile(page, 'booklet.pdf', new TextEncoder().encode(makeMultiPagePdf(5)));
   await page.waitForSelector('.mount:visible .ul-pdf', { timeout: 20000 });
 
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.reader', { timeout: 10000 });
-  check('PDF se otvara u čitaonici', await page.locator('.ul-pdf[data-reading="true"]').isVisible());
+  check('the PDF opens in the reading room', await page.locator('.ul-pdf[data-reading="true"]').isVisible());
   check(
-    'alatna traka PDF-a skrivena u čitanju',
+    'the PDF toolbar is hidden while reading',
     !(await page.locator('.mount:visible .ul-pdf-toolbar').isVisible()),
   );
 
   await page.locator('.reader-nav button').nth(1).click();
   await page.waitForTimeout(600);
   const pdfLabel = await page.locator('.reader-status span').first().innerText();
-  check('listanje po stranicama PDF-a', pdfLabel.includes('2/5'), pdfLabel);
+  check('turning the PDF pages', pdfLabel.includes('2/5'), pdfLabel);
 
   await page.locator('.reader-btn', { hasText: 'Layout' }).click();
   await page.locator('.reader-seg button', { hasText: 'Night' }).click();
@@ -294,29 +294,29 @@ try {
     const canvas = document.querySelector('.mount:not([style*="none"]) .ul-pdf-page canvas');
     return canvas ? getComputedStyle(canvas).filter : '';
   });
-  check('noćni prikaz invertira stranicu', pdfFilter.includes('invert'), pdfFilter.slice(0, 40));
-  await page.screenshot({ path: resolve(SHOTS, 'pdf-citanje.png') });
+  check('the night view inverts the page', pdfFilter.includes('invert'), pdfFilter.slice(0, 40));
+  await page.screenshot({ path: resolve(SHOTS, 'pdf-reading.png') });
 
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   check(
-    'izlazak vraća alatnu traku PDF-a',
+    'leaving brings the PDF toolbar back',
     await page.locator('.mount:visible .ul-pdf-toolbar').isVisible(),
   );
 
-  /* — spajanje i izdvajanje su u traci sa stranicama — */
+  /* — merging and extracting live in the page rail — */
   await page.locator('.mount:visible .ul-pdf-toolbar .ul-pdf-btn').first().click();
   await page.waitForTimeout(400);
   check(
-    'traka sa stranicama nudi umetanje PDF-a',
+    'the page rail offers inserting a PDF',
     await page.locator('.ul-pdf-rail-actions button', { hasText: 'Insert PDF' }).isVisible(),
   );
   check(
-    'traka sa stranicama nudi izdvajanje',
+    'the page rail offers extracting',
     await page.locator('.ul-pdf-rail-actions button', { hasText: 'Extract' }).isVisible(),
   );
 
-  /* ── konzola ───────────────────────────────────────────────────────── */
+  /* ── the console ───────────────────────────────────────────────────── */
 
   const ignorable = (text) =>
     text.includes('Download the React DevTools') || text.includes('[vite]');
