@@ -1,15 +1,15 @@
 /**
- * Vožnja aplikacije na **fizičkom Android uređaju** iz provjera.
+ * Driving the application on **a physical Android device** from the checks.
  *
- * Isti razlog kao kod `desktop-session.mjs`: dio ponašanja postoji samo na
- * uređaju i u pregledniku se ne može provjeriti. Ovdje su to umetci sigurnog
- * područja i raspored na stvarnoj širini ekrana — jedno i drugo ovisi o tome
- * kako se sistemske trake ponašaju, a to nijedan desktop webview ne oponaša.
+ * The same reason as with `desktop-session.mjs`: some behaviour exists only on
+ * the device and cannot be checked in a browser. Here that means the safe area
+ * insets and the layout at a real screen width — both depend on how the system
+ * bars behave, and no desktop webview imitates that.
  *
- * WebView u debug buildu otvara devtools socket, pa se Playwright spaja na isti
- * proces koji korisnik gleda na telefonu.
+ * The WebView in a debug build opens a devtools socket, so Playwright attaches to
+ * the same process the user is looking at on the phone.
  *
- * Traži uređaj spojen preko `adb` s odobrenim otklanjanjem pogrešaka.
+ * It needs a device connected over `adb` with debugging authorised.
  */
 
 import { chromium } from 'playwright';
@@ -34,19 +34,19 @@ export async function adb(...args) {
 }
 
 /**
- * Instalira APK na uređaj.
+ * Installs the APK onto the device.
  *
- * Traži da je na telefonu uključeno „Instaliranje putem USB-a”. Na MIUI-ju taj
- * prekidač uvjetuje umetnuta SIM kartica; bez nje instalacija pada s
- * `INSTALL_FAILED_USER_RESTRICTED` i APK se mora instalirati ručno.
+ * It requires "Install via USB" to be enabled on the phone. On MIUI that switch
+ * is gated behind an inserted SIM card; without one the install fails with
+ * `INSTALL_FAILED_USER_RESTRICTED` and the APK has to be installed by hand.
  */
 export async function installApk(apk) {
   const out = await adb('install', '-r', apk);
-  if (!/Success/.test(out)) throw new Error(`Instalacija nije uspjela: ${out}`);
+  if (!/Success/.test(out)) throw new Error(`Install failed: ${out}`);
 }
 
 /**
- * Diže aplikaciju na uređaju i vraća spojenu stranicu.
+ * Brings the application up on the device and returns the attached page.
  *
  * @param {{ port?: number, timeoutMs?: number }} [opts]
  */
@@ -54,7 +54,7 @@ export async function startDevice(opts = {}) {
   const port = opts.port ?? 9400;
   const timeoutMs = opts.timeoutMs ?? 90000;
 
-  // Čist start: inače se spojimo na prethodnu instancu i mjerimo stari raspored.
+  // A clean start: otherwise we attach to the previous instance and measure the old layout.
   await adb('shell', 'am', 'force-stop', PACKAGE);
   await adb('shell', 'monkey', '-p', PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
 
@@ -85,9 +85,10 @@ export async function startDevice(opts = {}) {
 }
 
 /**
- * Ime devtools socketa nosi PID procesa u sebi, pa se ne da pogoditi unaprijed.
- * Čita se iz popisa otvorenih unix socketa i uspoređuje s PID-om aplikacije —
- * na uređaju je u pravilu otvoreno više webviewa (druge aplikacije).
+ * The devtools socket name carries the process PID inside it, so it cannot be
+ * guessed in advance. It is read from the list of open unix sockets and matched
+ * against the application's PID — a device usually has several webviews open
+ * (other applications).
  */
 async function devtoolsSocket() {
   const pid = (await adb('shell', 'pidof', PACKAGE).catch(() => '')).split(/\s+/)[0];
@@ -98,14 +99,14 @@ async function devtoolsSocket() {
   return sockets.includes(name) ? name : null;
 }
 
-/** Zatvara vezu i miče preusmjerenje porta. */
+/** Closes the connection and removes the port forward. */
 export async function stopDevice(session) {
   await session?.browser?.close().catch(() => {});
   if (session?.port) await adb('forward', '--remove', `tcp:${session.port}`).catch(() => {});
   await adb('shell', 'am', 'force-stop', PACKAGE).catch(() => {});
 }
 
-/** Snimka ekrana samog uređaja — hvata i sistemske trake, koje CDP ne vidi. */
+/** A screenshot from the device itself — it captures the system bars too, which CDP cannot see. */
 export async function deviceScreenshot(target) {
   await adb('shell', 'screencap', '-p', '/sdcard/ul-shot.png');
   await adb('pull', '/sdcard/ul-shot.png', target);

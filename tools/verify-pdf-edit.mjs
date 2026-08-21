@@ -44,7 +44,7 @@ const loadFont = async (face) =>
 
 const standard = await standardWidths(loadFont);
 
-/* ── građa ───────────────────────────────────────────────────────────── */
+/* ── fixtures ────────────────────────────────────────────────────────── */
 
 function buildPdf(stream, fonts = ['<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>']) {
   const fontRefs = fonts.map((_, i) => `/F${i + 1} ${5 + i} 0 R`).join('');
@@ -196,5 +196,5 @@ check(
 /* ── ishod ───────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

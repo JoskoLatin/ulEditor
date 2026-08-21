@@ -195,5 +195,5 @@ check(
 /* ── ishod ───────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

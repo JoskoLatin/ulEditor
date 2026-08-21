@@ -1,8 +1,9 @@
 /**
- * Testni dokumenti koje dijele provjere.
+ * The test documents the checks share.
  *
- * PDF se sastavlja ručno umjesto da stoji kao binarni asset u repozitoriju —
- * tako je vidljivo što točno testiramo i lako se mijenja.
+ * The PDF is assembled by hand rather than sitting as a binary asset in the
+ * repository — that way what exactly is being tested is visible, and easy to
+ * change.
  */
 
 import { zipSync, strToU8 } from 'fflate';
@@ -45,8 +46,8 @@ const x: number = 42;
 `;
 
 /**
- * Minimalni ispravan PDF s točnom xref tablicom.
- * @param {string} text tekst koji se ispisuje na stranici
+ * A minimal valid PDF with a correct xref table.
+ * @param {string} text the text printed on the page
  * @returns {string}
  */
 export function makePdf(text = 'ulEditor PDF') {
@@ -75,9 +76,9 @@ export function makePdf(text = 'ulEditor PDF') {
 }
 
 /**
- * Višestranični PDF u kojem svaka stranica nosi svoju oznaku, pa se nakon
- * preslagivanja može provjeriti da je stvarno došla na pravo mjesto.
- * @param {number} count broj stranica
+ * A multi-page PDF where each page carries its own label, so after a reorder it
+ * can be verified that it really landed in the right place.
+ * @param {number} count the number of pages
  */
 export function makeMultiPagePdf(count = 3) {
   const objects = [];
@@ -114,7 +115,7 @@ export function makeMultiPagePdf(count = 3) {
   return pdf;
 }
 
-/** ZIP koji izgleda kao .docx, ali nema sadržaj — za provjeru poruke o grešci. */
+/** A ZIP that looks like a .docx but has no content — for checking the error message. */
 export function makeFakeDocx() {
   return 'PK' + ' '.repeat(26) + 'word/document.xml' + ' '.repeat(40);
 }
@@ -124,11 +125,12 @@ export function makeFakeDocx() {
 const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 
 /**
- * EPUB se, kao i ostalo ovdje, sastavlja u kodu — tako je vidljivo što točno
- * provjeravamo i nema binarnog asseta u repozitoriju.
+ * Like everything else here, the EPUB is assembled in code — that way what
+ * exactly is being checked is visible and there is no binary asset in the
+ * repository.
  *
- * `mimetype` mora biti prvi i nekomprimiran; po tome ga detekcija prepoznaje
- * bez raspakiravanja.
+ * `mimetype` has to come first and uncompressed; that is how detection recognises
+ * it without unpacking.
  *
  * @param {{ chapters?: number, title?: string }} [opts]
  */
@@ -141,8 +143,8 @@ export function makeEpub(opts = {}) {
     `<?xml version="1.0" encoding="utf-8"?>\n` +
     `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Poglavlje ${n}</title></head><body>\n` +
     `<h1 id="p${n}">Poglavlje ${n}</h1>\n` +
-    // Poglavlje mora biti dulje od jednog dvostupčanog ekrana, inače
-    // paginacija nema što prelomiti i provjera listanja ništa ne dokazuje.
+    // A chapter has to be longer than one two-column screen, otherwise pagination
+    // has nothing to break and the page-turn check proves nothing.
     Array.from(
       { length: 40 },
       (_, i) =>
@@ -240,7 +242,7 @@ export function makeDocx() {
   });
 }
 
-/** XLSX s dva lista, dijeljenim nizovima, formulom, datumom i spojenim ćelijama. */
+/** An XLSX with two sheets, shared strings, a formula, a date and merged cells. */
 export function makeXlsx() {
   const strings = ['Mjesec', 'Iznos', 'Siječanj', 'Veljača', 'Ukupno', 'jedinstvenoexcel'];
 
@@ -260,7 +262,7 @@ export function makeXlsx() {
     `<?xml version="1.0"?>\n<sst xmlns="${SHEET_NS}" count="${strings.length}" ` +
     `uniqueCount="${strings.length}">${strings.map((s) => `<si><t>${s}</t></si>`).join('')}</sst>`;
 
-  // s="1" nosi ugrađeni format datuma (14), s="2" iznos s dvije decimale.
+  // s="1" carries the built-in date format (14), s="2" an amount with two decimals.
   const styles =
     `<?xml version="1.0"?>\n<styleSheet xmlns="${SHEET_NS}">` +
     `<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00"/></numFmts>` +

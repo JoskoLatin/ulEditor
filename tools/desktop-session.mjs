@@ -1,12 +1,13 @@
 /**
- * Vožnja **prave desktop aplikacije** iz provjera.
+ * Driving **the real desktop application** from the checks.
  *
- * Dio ponašanja postoji samo u Tauri okruženju i ne može se provjeriti u
- * pregledniku: naredbe u Rustu, i CSP koji vrijedi za aplikaciju a ne za Vite
- * dev server. Provjera u pregledniku bi ondje testirala ljepilo umjesto posla.
+ * Some behaviour exists only in the Tauri environment and cannot be checked in a
+ * browser: the commands in Rust, and the CSP that applies to the application
+ * rather than to the Vite dev server. A check in a browser would be testing the
+ * glue instead of the work.
  *
- * WebView2 na zahtjev otvara CDP endpoint, pa se Playwright spaja na isti
- * binary koji korisnik pokreće.
+ * WebView2 opens a CDP endpoint on request, so Playwright attaches to the same
+ * binary the user runs.
  */
 
 import { chromium } from 'playwright';
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * Diže aplikaciju i vraća spojenu stranicu.
+ * Brings the application up and returns the attached page.
  *
  * @param {{ port?: number, timeoutMs?: number }} [opts]
  */
@@ -55,7 +56,7 @@ export async function startDesktop(opts = {}) {
   throw lastError ?? new Error('WebView2 nije otvorio CDP endpoint');
 }
 
-/** Zatvara aplikaciju i oslobađa portove za sljedeće pokretanje. */
+/** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});
   session?.app?.kill();

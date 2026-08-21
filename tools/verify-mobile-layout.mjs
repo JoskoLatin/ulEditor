@@ -218,12 +218,12 @@ try {
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-welcome.png'));
 } catch (err) {
-  check('izvođenje bez iznimke', false, err instanceof Error ? err.message : String(err));
+  check('ran without an exception', false, err instanceof Error ? err.message : String(err));
   await deviceScreenshot(resolve(SHOTS, 'failure-mobile.png')).catch(() => {});
 } finally {
   await stopDevice(session);
 }
 
 const failed = checks.filter((c) => !c.passed);
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

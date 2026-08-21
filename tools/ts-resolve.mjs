@@ -1,15 +1,15 @@
 /**
- * Omogućuje da Node uveze TypeScript izvor izravno, bez build koraka.
+ * Lets Node import TypeScript source directly, with no build step.
  *
- * Node 26 sam skida tipove, ali ne preslikava specifikatore: TypeScript kod
- * po konvenciji piše `./annotations.js`, a na disku postoji samo
- * `./annotations.ts`. Ovaj hook popunjava tu rupu.
+ * Node 26 strips types itself but does not remap specifiers: TypeScript code
+ * writes `./annotations.js` by convention, while only `./annotations.ts` exists
+ * on disk. This hook fills that gap.
  *
- * Zašto uopće: provjere tako voze ISTI izvor koji se isporučuje. Da testiramo
- * bundlani izlaz, testirali bismo i bundler — a onda pad ne bi govorio je li
- * greška u kodu ili u lancu izgradnje.
+ * Why at all: the checks then drive the SAME source that ships. Were we to test
+ * bundled output, we would be testing the bundler too — and then a failure would
+ * not say whether the bug is in the code or in the build chain.
  *
- * Uvezi ovaj modul PRIJE nego dinamički uvezeš bilo koji `.ts`.
+ * Import this module BEFORE dynamically importing any `.ts`.
  */
 
 import { registerHooks } from 'node:module';

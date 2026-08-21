@@ -1,16 +1,17 @@
 /**
- * Priprema OCR resursa za posluživanje iz same aplikacije.
+ * Preparing the OCR assets to be served from the application itself.
  *
- * Tesseract po zadanom skida worker, wasm jezgru i jezične modele s CDN-a.
- * To pada na dvije stvari koje ovaj projekt namjerno ima:
+ * By default Tesseract downloads its worker, wasm core and language models from a
+ * CDN. That breaks two things this project has on purpose:
  *
- * 1. **CSP desktop verzije** dopušta `connect-src 'self'`. Vanjski dohvat je
- *    blokiran, i to s pravom — labavljenje CSP-a zbog jedne značajke plaćaju
- *    svi korisnici, zauvijek.
- * 2. **Rad bez mreže.** Editor koji traži internet da bi pročitao tekst sa
- *    slike na tuđem laptopu u zrakoplovu nije alat nego demo.
+ * 1. **The desktop CSP** allows `connect-src 'self'`. External fetching is
+ *    blocked, and rightly so — loosening the CSP for one feature is paid for by
+ *    every user, forever.
+ * 2. **Working offline.** An editor that needs the internet to read text off an
+ *    image on somebody else's laptop on a plane is a demo, not a tool.
  *
- * Zato sve ide u `public/ocr/`, odakle se poslužuje s istog izvora.
+ * So everything goes into `public/ocr/`, from where it is served on the same
+ * origin.
  *
  *   node tools/ocr-assets.mjs
  */
@@ -29,7 +30,7 @@ const SEARCH = [
   resolve(ROOT, 'node_modules'),
 ];
 
-/** Model `fast` je ~4× manji od punog, uz zanemarivu razliku na čistom tekstu. */
+/** The `fast` model is about 4× smaller than the full one, with a negligible difference on clean text. */
 const LANGUAGE_VARIANT = '4.0.0_best_int';
 
 async function packageDir(name) {
@@ -39,10 +40,10 @@ async function packageDir(name) {
       await access(join(candidate, 'package.json'));
       return candidate;
     } catch {
-      // Sljedeće mjesto.
+      // The next location.
     }
   }
-  throw new Error(`Paket ${name} nije pronađen. Pokreni pnpm install.`);
+  throw new Error(`Package ${name} was not found. Run pnpm install.`);
 }
 
 async function copyInto(from, to, files) {
@@ -54,36 +55,37 @@ async function copyInto(from, to, files) {
 async function main() {
   await mkdir(OUT, { recursive: true });
 
-  /* Worker: skripta koju tesseract.js pokreće u web workeru. */
+  /* The worker: the script tesseract.js runs inside a web worker. */
   const worker = await packageDir('tesseract.js');
   await copyInto(join(worker, 'dist'), OUT, ['worker.min.js']);
 
   /*
-   * Jezgra.
+   * The core.
    *
-   * Motor radi s `oem: 1` (LSTM), pa idu samo LSTM varijante — sve tri, jer
-   * izbor između obične, SIMD i relaxed-SIMD ovisi o tome što preglednik
-   * podržava, a to se ne zna unaprijed.
+   * The engine runs with `oem: 1` (LSTM), so only the LSTM variants go in — all
+   * three, because the choice between plain, SIMD and relaxed-SIMD depends on
+   * what the browser supports, and that is not known in advance.
    *
-   * Uzima se `.wasm.js` oblik: to je ono što worker doslovno traži kroz
-   * `importScripts`, i nosi wasm u sebi, pa zaseban `.wasm` nije potreban.
+   * The `.wasm.js` form is taken: that is what the worker literally asks for
+   * through `importScripts`, and it carries the wasm inside, so a separate
+   * `.wasm` is not needed.
    */
   /*
-   * Jezgra se traži uz sam `tesseract.js`, ne zasebno: worker i wasm moraju
-   * biti iz istog izdanja. Zasebna instalacija zna povući drugu verziju, a
-   * neslaganje se vidi tek u runtimeu kao `importScripts` koji ne nalazi
-   * datoteku.
+   * The core is looked for beside `tesseract.js` itself, not separately: the
+   * worker and the wasm have to come from the same release. A separate install
+   * tends to pull a different version, and the mismatch shows up only at runtime
+   * as an `importScripts` that cannot find its file.
    */
   const core = join(dirname(await realpath(worker)), 'tesseract.js-core');
   const coreFiles = (await readdir(core)).filter((name) =>
     /^tesseract-core(-simd|-relaxedsimd)?-lstm\.wasm\.js$/.test(name),
   );
   if (coreFiles.length !== 3) {
-    throw new Error(`Očekujem tri LSTM jezgre, našao ${coreFiles.length}: ${coreFiles.join(', ')}`);
+    throw new Error(`Expected three LSTM cores, found ${coreFiles.length}: ${coreFiles.join(', ')}`);
   }
   await copyInto(core, OUT, coreFiles);
 
-  /* Jezični modeli. Tesseract ih traži kao `<lang>.traineddata.gz`. */
+  /* The language models. Tesseract asks for them as `<lang>.traineddata.gz`. */
   const languages = ['eng', 'hrv'];
   for (const lang of languages) {
     const dir = await packageDir(`@tesseract.js-data/${lang}`);
@@ -93,8 +95,8 @@ async function main() {
     );
   }
 
-  /* Popis onoga što je stvarno kopirano — provjere ga čitaju umjesto da
-     pogađaju imena datoteka koja ovise o verziji tesseract.js-core. */
+  /* A listing of what was actually copied — the checks read it instead of
+     guessing file names that depend on the tesseract.js-core version. */
   const entries = await readdir(OUT);
   await writeFile(
     join(OUT, 'manifest.json'),

@@ -172,7 +172,7 @@ try {
   await page.waitForSelector('.ul-sheet', { timeout: 30000 });
   check('brzo otvaranje stvarno otvara dokument', true);
 } catch (err) {
-  check('izvođenje bez iznimke', false, err instanceof Error ? err.message : String(err));
+  check('ran without an exception', false, err instanceof Error ? err.message : String(err));
   await page?.screenshot({ path: resolve(ROOT, 'tools/screenshots/failure-project-search.png') }).catch(() => {});
 } finally {
   await browser?.close().catch(() => {});
@@ -183,5 +183,5 @@ try {
 }
 
 const failed = checks.filter((c) => !c.passed);
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

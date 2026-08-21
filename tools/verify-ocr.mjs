@@ -174,9 +174,9 @@ try {
   const ignorable = (text) =>
     text.includes('Download the React DevTools') || text.includes('[vite]');
   const real = consoleErrors.filter((t) => !ignorable(t));
-  check('bez grešaka u konzoli', real.length === 0, real.slice(0, 3).join(' | '));
+  check('no console errors', real.length === 0, real.slice(0, 3).join(' | '));
 } catch (err) {
-  check('izvođenje bez iznimke', false, err instanceof Error ? err.message : String(err));
+  check('ran without an exception', false, err instanceof Error ? err.message : String(err));
   await page.screenshot({ path: resolve(SHOTS, 'failure-ocr.png') }).catch(() => {});
 } finally {
   await browser.close();
@@ -185,5 +185,5 @@ try {
 const failed = checks.filter((c) => !c.passed);
 await writeFile(resolve(SHOTS, 'report-ocr.json'), JSON.stringify({ checks, consoleErrors }, null, 2));
 
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

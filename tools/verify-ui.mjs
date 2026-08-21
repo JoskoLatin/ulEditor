@@ -47,7 +47,7 @@ async function dropFile(page, name, content) {
   );
 }
 
-/* ── izvođenje ───────────────────────────────────────────────────────── */
+/* ── execution ───────────────────────────────────────────────────────── */
 
 const browser = await chromium.launch({ headless: !headed });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -263,7 +263,7 @@ try {
   await page.waitForSelector('.findpanel-hit', { timeout: 15000 });
   const pdfHits = await page.locator('.findpanel-hit').count();
   const pdfLabel = await page.locator('.findpanel-hit .where').first().innerText();
-  check('ista pretraga radi nad PDF-om', pdfHits > 0 && pdfLabel.includes('Stranica'), `${pdfHits} · ${pdfLabel}`);
+  check('ista pretraga radi nad PDF-om', pdfHits > 0 && pdfLabel.includes('Page'), `${pdfHits} · ${pdfLabel}`);
 
   // Prebacivanje natrag na kod mora odmah maknuti rezultate iz PDF-a —
   // `reveal()` na tuđem rezultatu skočio bi u editor koji nije u prvom planu.
@@ -272,7 +272,7 @@ try {
   const staleWhere = await page.locator('.findpanel-hit .where').allInnerTexts();
   check(
     'rezultati iz druge kartice se ne zadržavaju',
-    !staleWhere.some((t) => t.includes('Stranica')),
+    !staleWhere.some((t) => t.includes('Page')),
     staleWhere.slice(0, 2).join(', ') || 'prazno',
   );
 
@@ -388,9 +388,9 @@ try {
   /* — konzola — */
   const ignorable = (text) => text.includes('Download the React DevTools') || text.includes('[vite]');
   const real = consoleErrors.filter((t) => !ignorable(t));
-  check('bez grešaka u konzoli', real.length === 0, real.slice(0, 3).join(' | '));
+  check('no console errors', real.length === 0, real.slice(0, 3).join(' | '));
 } catch (err) {
-  check('izvođenje bez iznimke', false, err instanceof Error ? err.message : String(err));
+  check('ran without an exception', false, err instanceof Error ? err.message : String(err));
   await page.screenshot({ path: resolve(SHOTS, 'failure.png') }).catch(() => {});
 } finally {
   await browser.close();
@@ -399,5 +399,5 @@ try {
 const failed = checks.filter((c) => !c.passed);
 await writeFile(resolve(SHOTS, 'report.json'), JSON.stringify({ checks, consoleErrors }, null, 2));
 
-console.log(`\n${checks.length - failed.length}/${checks.length} provjera prošlo`);
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

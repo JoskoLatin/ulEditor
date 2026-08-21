@@ -2079,7 +2079,7 @@ class PdfEditor implements EditorInstance {
       const total = this.#plan.length;
       this.#progressEmitter.fire({
         fraction: total > 1 ? (this.#current - 1) / (total - 1) : 0,
-        label: `str. ${this.#current}/${total}`,
+        label: t('p. {n}/{total}', { n: this.#current, total }),
       });
     }
   }
@@ -2178,7 +2178,7 @@ class PdfEditor implements EditorInstance {
         const end = index + query.query.length;
         results.push({
           // The user sees the position in the current view, not the source page number.
-          label: `Stranica ${view.position}`,
+          label: t('Page {n}', { n: view.position }),
           preview: text
             .slice(Math.max(0, index - 40), index + needle.length + 40)
             .replace(/\s+/g, ' ')

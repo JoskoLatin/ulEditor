@@ -1,9 +1,9 @@
 /**
- * Generator ikona aplikacije.
+ * The application icon generator.
  *
- * PNG i ICO se zapisuju ručno umjesto kroz `tauri icon` da build ne ovisi o
- * dodatnom alatu ni o binarnom assetu u repozitoriju — ikona je izvedena iz
- * istih tokena kao i ostatak sučelja.
+ * PNG and ICO are written by hand rather than through `tauri icon`, so the build
+ * depends on no extra tool and no binary asset in the repository — the icon is
+ * derived from the same tokens as the rest of the interface.
  *
  *   node tools/make-icons.mjs
  */
@@ -54,7 +54,7 @@ function encodePng(rgba, size) {
   ihdr[11] = 0;
   ihdr[12] = 0;
 
-  // Svaki redak dobiva filter bajt 0 — bez predikcije, ali ikone su male.
+  // Every row gets filter byte 0 — no prediction, but the icons are small.
   const raw = Buffer.alloc(size * (size * 4 + 1));
   for (let y = 0; y < size; y++) {
     const offset = y * (size * 4 + 1);
@@ -85,13 +85,14 @@ function blend(dst, index, color, alpha) {
 }
 
 /**
- * Znak: tri složena lista papira — tri sloja arhitekture i "više formata,
- * jedan prozor" odjednom. Rubovi se izglađuju nadsempliranjem 3×3.
+ * The mark: three stacked sheets of paper — the three architectural layers and
+ * "many formats, one window" at once. The edges are smoothed by 3×3
+ * supersampling.
  */
 function draw(size) {
   const px = new Uint8Array(size * size * 4);
   const S = size;
-  const u = S / 32; // jedinica mreže, ikona je dizajnirana na 32×32
+  const u = S / 32; // the grid unit; the icon is designed on a 32×32
 
   const roundedRect = (x, y, w, h, r) => (fx, fy) => {
     if (fx < x || fy < y || fx > x + w || fy > y + h) return false;
@@ -160,7 +161,7 @@ function encodeIco(pngs) {
 
   for (const { size, data } of pngs) {
     const entry = Buffer.alloc(16);
-    entry[0] = size >= 256 ? 0 : size; // 0 znači 256
+    entry[0] = size >= 256 ? 0 : size; // 0 means 256
     entry[1] = size >= 256 ? 0 : size;
     entry[2] = 0;
     entry[3] = 0;
@@ -175,7 +176,7 @@ function encodeIco(pngs) {
   return Buffer.concat([header, ...entries, ...pngs.map((p) => p.data)]);
 }
 
-/* ── izvođenje ───────────────────────────────────────────────────────── */
+/* ── execution ───────────────────────────────────────────────────────── */
 
 await mkdir(OUT, { recursive: true });
 
