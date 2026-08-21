@@ -10,6 +10,8 @@ targets = [
   { triple = "x86_64-pc-windows-msvc" },
   { triple = "x86_64-unknown-linux-gnu" },
   { triple = "aarch64-apple-darwin" },
+  { triple = "aarch64-linux-android" },
+  { triple = "armv7-linux-androideabi" },
   { triple = "wasm32-unknown-unknown" },
 ]
 

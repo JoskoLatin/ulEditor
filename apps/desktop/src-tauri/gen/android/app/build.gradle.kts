@@ -13,6 +13,23 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Potpisni ključ za release APK/AAB.
+//
+// Nepotpisan release APK Android odbija instalirati, pa bez ovoga izdanje za
+// telefon ne postoji. Ključ se NE drži u repozitoriju: `keystore.properties` i
+// sam `.jks` su ignorirani, a CI ih ispiše iz GitHub Secrets prije builda
+// (vidi .github/workflows/release.yml).
+//
+// Lokalno se release APK gradi tek kad te dvije datoteke postoje. Dok ih nema,
+// blok se preskače i `tauri android build --debug` radi kao i dosad.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+val hasKeystore = keystoreProperties.containsKey("storeFile")
+
 android {
     compileSdk = 36
     namespace = "org.uleditor.app"
@@ -23,6 +40,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +64,9 @@ android {
             }
         }
         getByName("release") {
+            if (hasKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

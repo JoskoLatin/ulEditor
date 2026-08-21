@@ -198,4 +198,5 @@ Copyleft engine-i (MuPDF, ONLYOFFICE, HyperFormula) — ako ikad zatrebaju — i
 
 - [Analiza i plan](docs/ANALIZA-I-PLAN.md) — arhitektura, izbor biblioteka, roadmap, rizici
 - [ADR 0001: izbor runtimea](docs/adr/0001-runtime.md) — rezultati faze 0 i go/no-go odluka
+- [Izdanja](docs/RELEASE.md) — kako jedan tag daje instalere za računalo i APK za telefon
 - [Prompt za fazu 0](docs/PROMPT-FAZA-0.md)

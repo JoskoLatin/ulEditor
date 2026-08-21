@@ -7,15 +7,72 @@ name: Release
 # `tauri build` na stroju sa SAC-om u enforcement načinu pada s
 # „An Application Control policy has blocked this file (os error 4551)".
 # GitHub runneri nemaju SAC, a usput dobivamo i sve tri platforme odjednom.
+#
+# Jedan tag daje jedno izdanje sa svime unutra — instaleri za računalo i APK
+# za telefon. Zato `create-release` ide prvi i sam otvara draft: kad bi ga
+# otvarao build, četiri paralelna posla bi se utrkivala tko će ga stvoriti i
+# dobili bismo četiri polovična izdanja.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  bundle:
+  create-release:
+    name: Otvori draft izdanja
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.result }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Izdanje bez taga nema smisla: ime, verzija i poveznice — sve ovisi o njemu.
+      - name: Odredi tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::Release se gradi samo iz taga. Pokreni: git tag v0.1.0 && git push origin v0.1.0"
+            exit 1
+          fi
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Draft
+        id: draft
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const tag = '${{ steps.tag.outputs.tag }}';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            try {
+              const { data } = await github.rest.repos.createRelease({
+                owner, repo,
+                tag_name: tag,
+                name: `ulEditor ${tag}`,
+                draft: true,
+                generate_release_notes: true,
+              });
+              return String(data.id);
+            } catch (err) {
+              // 422 znači da izdanje za ovaj tag već postoji — tipično kod
+              // ponovnog pokretanja nakon pada jednog buildera. Tada se
+              // nadovezujemo na postojeći draft umjesto da rušimo posao.
+              if (err.status !== 422) throw err;
+              const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              core.info(`Nadovezujem se na postojeće izdanje ${data.id}`);
+              return String(data.id);
+            }
+
+  desktop:
     name: ${{ matrix.label }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,7 +121,99 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: 'ulEditor ${{ github.ref_name }}'
-          releaseDraft: true
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  android:
+    name: Android (APK + AAB)
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          local-cache: true
+
+      # Dvije arhitekture pokrivaju praktički sve žive Android uređaje. i686 i
+      # x86_64 postoje samo na emulatorima, a svaka dodatna udvostručuje
+      # trajanje Rust builda.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './ -> target'
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Ključ nikad ne dodiruje repozitorij. Ovdje se iz Secreta ispiše na disk
+      # runnera, koji se briše čim posao završi.
+      - name: Potpisni ključ
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Nedostaje ANDROID_KEYSTORE_BASE64. Vidi docs/RELEASE.md."
+            exit 1
+          fi
+          cd apps/desktop/src-tauri/gen/android
+          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+          cat > keystore.properties <<EOF
+          storeFile=$(pwd)/keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+        shell: bash
+
+      - name: Sastavi APK i AAB
+        env:
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: pnpm --filter @uleditor/desktop exec tauri android build --apk --aab --target aarch64 --target armv7
+
+      # Gradle imenuje izlaz po modulu (`app-universal-release.apk`), što na
+      # stranici izdanja pored `ulEditor_0.1.0_x64.msi` izgleda kao tuđa
+      # datoteka. Preimenuje se u isti obrazac kao instaleri za računalo.
+      - name: Preimenuj i objavi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          out=apps/desktop/src-tauri/gen/android/app/build/outputs
+          mkdir -p dist-android
+
+          apk=$(find "$out/apk" -name '*-release.apk' 2>/dev/null | head -1)
+          aab=$(find "$out/bundle" -name '*-release.aab' 2>/dev/null | head -1)
+
+          if [ -z "$apk" ]; then
+            echo "::error::APK nije nastao — provjeri ispis gornjeg koraka."
+            exit 1
+          fi
+
+          cp "$apk" "dist-android/ulEditor_${version}_android.apk"
+          if [ -n "$aab" ]; then
+            cp "$aab" "dist-android/ulEditor_${version}_android.aab"
+          fi
+
+          gh release upload "$TAG" dist-android/* --clobber
+        shell: bash

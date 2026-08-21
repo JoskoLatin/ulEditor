@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "org.uleditor.app",
   "build": {
-    "beforeDevCommand": "pnpm --filter @uleditor/shell-ui dev",
+    "beforeDevCommand": "pnpm -w run ocr:assets && pnpm --filter @uleditor/shell-ui dev",
     "devUrl": "http://localhost:5273",
-    "beforeBuildCommand": "pnpm --filter @uleditor/shell-ui build",
+    "beforeBuildCommand": "pnpm -w run ocr:assets && pnpm --filter @uleditor/shell-ui build",
     "frontendDist": "../../../packages/shell-ui/dist"
   },
   "app": {

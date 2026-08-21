@@ -29,3 +29,12 @@ packages/shell-ui/public/ocr/
 
 # Ispis eleviranog Android builda (tools/android-dev.ps1).
 tools/android-dev.log
+
+# Potpisni ključ za Android.
+#
+# Nikad u repozitorij: tko ga ima, može objaviti aplikaciju pod identitetom
+# `org.uleditor.app`. `keystore.properties` već hvata Tauri-jev vlastiti
+# .gitignore unutar `gen/android`, ovdje je radi sigurnosti još jednom.
+*.jks
+*.keystore
+keystore.properties
