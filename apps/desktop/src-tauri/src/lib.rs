@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use tauri::ipc::Response;
-use tauri::{Emitter, Manager, State};
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use ul_core::{
@@ -319,6 +319,10 @@ pub fn run() {
      */
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        /* Imported here rather than at the top of the file: on Android neither
+           this block nor the macOS one below is compiled, and an import nothing
+           uses is an error under `-D warnings`. */
+        use tauri::Emitter;
         let paths = paths_from(argv.into_iter());
         if !paths.is_empty() {
             let _ = app.emit("uleditor://open-paths", paths);
@@ -365,6 +369,7 @@ pub fn run() {
              */
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = _event {
+                use tauri::Emitter;
                 let paths: Vec<String> = urls
                     .iter()
                     .filter_map(|url| url.to_file_path().ok())
