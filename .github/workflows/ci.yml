@@ -38,6 +38,12 @@ jobs:
       # literal braces.
       - run: pnpm verify:i18n
 
+      # The version lives in tauri.conf.json and is mirrored into three
+      # manifests that npm and cargo each insist on having their own copy of. A
+      # mirror that has drifted breaks nothing at the time and produces an
+      # installer named one version that reports another.
+      - run: pnpm verify:version
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed

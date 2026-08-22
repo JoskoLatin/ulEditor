@@ -15,11 +15,11 @@ All of it is built by [.github/workflows/release.yml](../.github/workflows/relea
 
 | File | For whom |
 | --- | --- |
-| `ulEditor_0.1.0_x64_en-US.msi`, `ulEditor_0.1.0_x64-setup.exe` | Windows |
-| `ulEditor_0.1.0_aarch64.dmg`, `ulEditor_0.1.0_x64.dmg` | macOS |
-| `ulEditor_0.1.0_amd64.deb`, `ulEditor_0.1.0_amd64.AppImage`, `ulEditor-0.1.0-1.x86_64.rpm` | Linux |
-| `ulEditor_0.1.0_android.apk` | A phone, installed directly |
-| `ulEditor_0.1.0_android.aab` | Google Play, should it ever be needed |
+| `ulEditor_0.2.0_x64_en-US.msi`, `ulEditor_0.2.0_x64-setup.exe` | Windows |
+| `ulEditor_0.2.0_aarch64.dmg`, `ulEditor_0.2.0_x64.dmg` | macOS |
+| `ulEditor_0.2.0_amd64.deb`, `ulEditor_0.2.0_amd64.AppImage`, `ulEditor-0.2.0-1.x86_64.rpm` | Linux |
+| `ulEditor_0.2.0_android.apk` | A phone, installed directly |
+| `ulEditor_0.2.0_android.aab` | Google Play, should it ever be needed |
 
 Tauri also produces `ulEditor_x64.app.tar.gz` and `ulEditor_aarch64.app.tar.gz`.
 Those are the macOS bundles for the built-in updater, not something a person
@@ -60,14 +60,19 @@ phone.
 
 ## Publishing
 
-The version lives in one place,
-[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json). Both the installers
-and the APK `versionCode` read it from there, so desktop and Android cannot drift
-apart.
+The version is decided in
+[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) — the installers,
+the APK `versionCode` and the number beside the name in the window all read it
+from there, so desktop and Android cannot drift apart.
+
+It is also mirrored into `package.json`, `apps/desktop/package.json` and
+`Cargo.toml`, because npm and cargo each insist on their own copy. Change all
+four together; `pnpm verify:version` compares them and CI runs it, after one
+release shipped with the root manifest a version behind.
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release is created as a **draft** — artefacts collect into it while the five
@@ -87,7 +92,7 @@ workflow** instead:
 | Field | Value |
 | --- | --- |
 | Use workflow from | `main` — this is the workflow file that will run |
-| `tag` | `v0.1.0` — the existing tag, and the source that will be built |
+| `tag` | `v0.2.0` — the existing tag, and the source that will be built |
 | `platforms` | `android`, or `desktop`, or `all` |
 
 The two are separate on purpose: the workflow comes from `main`, the source code

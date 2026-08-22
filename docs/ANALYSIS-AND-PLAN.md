@@ -236,7 +236,14 @@ of a few thousand files it answers in tenths of a second. The index stays in the
 plan for the moment that stops being true, and by then it will have a defined job
 instead of being the first assumption.
 
-Output: **v0.1** — signed installers for Windows, macOS, Linux. A public release to attract contributors.
+Output: **v0.2** — installers for Windows, macOS and Linux, plus a signed
+Android APK, built by one tag in CI.
+
+The plan said *signed* installers, and the desktop ones are not. That is an
+Apple Developer ID at 99 USD a year and a Windows certificate at a few hundred
+— a purchase, not a piece of work — so it is written down here as unfinished
+rather than quietly dropped. Everything downstream of it waits with it:
+auto-update has no meaning without a signature to check.
 
 ### Phase 2 — Office (months 4–10)
 

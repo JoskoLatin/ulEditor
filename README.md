@@ -14,7 +14,9 @@
   <a href="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-**Status:** phase 0 complete, phase 1 together. The desktop app runs, seven editors work, e-books and Office documents open. The interface is in English; Croatian can be selected in settings.
+**Status:** phases 0 and 1 complete. The desktop app runs, nine editors work, e-books and Office documents open, and the window splits in two. The interface is in English; Croatian can be selected in settings.
+
+What phase 1 asked for and did not get: **the installers are not code-signed**, so Windows and macOS both warn on first launch — see [below](#the-warning-you-will-see-and-why). That is a certificate to buy, not code to write, and the Android build is signed.
 
 ## Download
 
