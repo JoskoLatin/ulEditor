@@ -707,6 +707,8 @@ function editsFor(
       run.push(code);
       continue;
     }
+    /* `unwritable` has already been past this text: the only character left
+       without a code of its own is a space in a document that draws none. */
     flushRun();
     written.push({ kind: 'advance', by: (writer.spaceAdvance ?? 0) / scaleOf(first.operation) });
   }
