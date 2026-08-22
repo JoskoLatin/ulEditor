@@ -47,12 +47,15 @@
  *
  * Only what actually changed is written. The unchanged head and tail keep the
  * bytes they had — their kerning, their offsets, their exact places — and the
- * changed span is written where it stood. Nothing is compensated for: a line
- * whose text grows takes the room it needs and the rest of that line moves
- * along, the way a line of type does. Holding the tail in place instead would
- * write the new text straight over it, which is worse than moving it. Only the
- * line moves — `Td` places the next one relative to the start of this one rather
- * than to where the pen stopped, so nothing cascades down the page.
+ * changed span is written where it stood.
+ *
+ * **The line reflows inside itself and nothing else moves at all.** What follows
+ * the change on that line shifts by exactly what the change gained or lost, and
+ * every instruction still advances the pen by exactly as much as it did before
+ * — so the column beside it, the next line, anything placed by where the pen
+ * stopped, stays where it was. Holding the rest of the line still instead would
+ * write the new words straight over the old ones, which is what a screenshot of
+ * a corrected invoice showed.
  *
  * What it does not do is reflow. A retyped line stays one line at one place; if
  * the new text is much longer it will run towards whatever comes next, the way
@@ -280,6 +283,20 @@ export function codeFor(
 }
 
 /**
+ * The part of a line that an edit actually touches.
+ *
+ * Only this has to be written, and therefore only this has to be writable. A
+ * line that already contains a character we could not produce ourselves — a
+ * ligature, a symbol drawn by one glyph we cannot take apart — can still be
+ * edited everywhere else, because the rest of it keeps its own bytes.
+ */
+export function changedSpan(before: string, after: string): string {
+  const head = commonHead(before, after);
+  const tail = commonTail(before, after, head);
+  return after.slice(head, after.length - tail);
+}
+
+/**
  * The characters that cannot be written into a line.
  *
  * Offered separately so the warning can appear **while typing**, when the text
@@ -308,7 +325,10 @@ export function unwritable(
  */
 type Piece =
   | { kind: 'bytes'; bytes: Uint8Array }
+  /** One of the operator's own `TJ` numbers, kept as it was written. */
   | { kind: 'adjust'; value: number }
+  /** A distance in the operator's text space, to be written as a `TJ` number. */
+  | { kind: 'advance'; by: number }
   | { kind: 'codes'; codes: number[] };
 
 function bytesOf(operation: TextOperation, codes: number[]): Uint8Array {
@@ -355,6 +375,12 @@ function operatorFor(operation: TextOperation, pieces: Piece[]): string {
       if (Math.abs(round(piece.value)) > 0) parts.push(String(round(piece.value)));
       continue;
     }
+    if (piece.kind === 'advance') {
+      flush();
+      const offset = round(adjustmentFor(piece.by, operation));
+      if (Math.abs(offset) > 0) parts.push(String(offset));
+      continue;
+    }
     const bytes = piece.kind === 'bytes' ? piece.bytes : bytesOf(operation, piece.codes);
     if (bytes.length > 0) run.push(bytes);
   }
@@ -397,38 +423,95 @@ function commonTail(before: string, after: string, head: number): number {
  * the `TJ` offsets between them. Cutting the change out of this list rather than
  * out of the text means every piece that did not change keeps the bytes it had,
  * and with them its kerning and its exact place.
+ *
+ * An offset before the first glyph belongs to no character; it is part of where
+ * the operator starts drawing and is handed back separately so it survives
+ * whatever happens to the text.
  */
-function tokensOf(operation: TextOperation): { at: number; piece: Piece }[] {
-  const out: { at: number; piece: Piece }[] = [];
+function tokensOf(operation: TextOperation): { lead: Piece[]; items: { at: number; piece: Piece }[] } {
+  const lead: Piece[] = [];
+  const items: { at: number; piece: Piece }[] = [];
   let at = 0;
+  let started = false;
 
   for (const part of operation.parts) {
     if (part.kind === 'adjust') {
-      out.push({ at, piece: { kind: 'adjust', value: part.value } });
+      if (started) items.push({ at, piece: { kind: 'adjust', value: part.value } });
+      else lead.push({ kind: 'adjust', value: part.value });
       continue;
     }
     for (const glyph of part.glyphs) {
-      out.push({ at, piece: { kind: 'bytes', bytes: glyph.bytes } });
+      started = true;
+      items.push({ at, piece: { kind: 'bytes', bytes: glyph.bytes } });
       at += (operation.font.decode(glyph.code) ?? '').length;
     }
   }
 
-  return out;
+  return { lead, items };
+}
+
+/** The advance of one code, in the operator's text space. */
+function advanceOf(operation: TextOperation, code: number): number {
+  const width = operation.font.widthOf(code) / 1000;
+  const isSpace = !operation.font.twoByte && code === 32;
+  return (
+    (width * operation.fontSize +
+      operation.charSpacing +
+      (isSpace ? operation.wordSpacing : 0)) *
+    operation.horizontalScale
+  );
+}
+
+/** What each character of an operator advances the pen by, in its text space. */
+function advancesOf(operation: TextOperation): number[] {
+  const perChar: number[] = [];
+
+  for (const part of operation.parts) {
+    if (part.kind === 'adjust') {
+      const by = -(part.value / 1000) * operation.fontSize * operation.horizontalScale;
+      if (perChar.length > 0) perChar[perChar.length - 1] = (perChar[perChar.length - 1] ?? 0) + by;
+      continue;
+    }
+    for (const glyph of part.glyphs) {
+      const text = operation.font.decode(glyph.code) ?? '';
+      perChar.push(glyph.advance);
+      // A ligature is one advance spread over several characters of text.
+      for (let i = 1; i < text.length; i++) perChar.push(0);
+    }
+  }
+
+  return perChar;
+}
+
+/**
+ * Points on the page per unit of an operator's text space.
+ *
+ * `Tf` gives a size, and the matrices on top of it give another; `effectiveSize`
+ * is what the two come to together. Advances are counted in the first and
+ * rectangles in the second, so anything measured off the page has to come back
+ * through here before it can be written into a `TJ` array.
+ */
+function scaleOf(operation: TextOperation): number {
+  if (!operation.fontSize) return 1;
+  return operation.effectiveSize / operation.fontSize;
 }
 
 /**
  * The edits that turn a line into what it should say.
  *
- * The head and the tail that did not change keep their own bytes. What changed
- * is written where it was, in the first operator it touches; any further
- * operator it reached loses that part of itself.
+ * Two rules, and everything follows from them:
  *
- * Nothing is compensated for. A line whose text grows takes the room it needs
- * and what follows it inside the same instruction moves along, the way a line of
- * type does — the alternative, holding the tail in place, writes the new text
- * straight over it. `Td` places the next line relative to the start of this one
- * rather than to where the pen stopped, so a longer line stays a longer line and
- * does not cascade down the page.
+ * - **A run that did not change keeps its own bytes.** Its kerning, its offsets
+ *   and its exact place survive the edit untouched.
+ * - **The line reflows inside itself; nothing else moves at all.** What follows
+ *   the change on that line shifts by exactly as much as the change gained or
+ *   lost, and every operator still advances the pen by exactly as much as it did
+ *   — so a column beside it, another line, anything positioned by where the pen
+ *   stopped, stays where it was.
+ *
+ * The alternative to reflowing — holding the rest of the line in place — writes
+ * the new text straight over it, which is what a screenshot of a corrected
+ * invoice showed: two words on top of one another.
  */
 function editsFor(
   line: Line,
@@ -464,26 +547,75 @@ function editsFor(
     (segment) => segment.at < to && segment.at + segment.text.length > from,
   );
   const affected = touched.length > 0 ? touched : [lastBefore(line, from)];
+  const first = affected[0]!;
+  const firstAt = line.segments.indexOf(first);
 
-  const edits: { start: number; end: number; text: string }[] = [];
+  /** What the change is worth on the page: what it gained, less what it cost. */
+  const gained =
+    codes.reduce((sum, code) => sum + advanceOf(first.operation, code), 0) * scaleOf(first.operation);
+
+  let lost = 0;
   affected.forEach((segment, index) => {
+    const perChar = advancesOf(segment.operation);
     const localFrom = Math.max(0, from - segment.at);
     const localTo = Math.max(localFrom, Math.min(segment.text.length, to - segment.at));
+    for (let i = localFrom; i < localTo; i++) lost += (perChar[i] ?? 0) * scaleOf(segment.operation);
 
-    const tokens = tokensOf(segment.operation);
-    const pieces: Piece[] = [];
-
-    /* Everything that begins before the change: its own bytes, its own offsets. */
-    for (const token of tokens) {
-      if (token.at < localFrom) pieces.push(token.piece);
+    /* The empty room between two operators the change ran across is part of what
+       it replaced, and it is only measurable on the page. */
+    if (index > 0) {
+      const left = boundsOfOperation(affected[index - 1]!.operation);
+      const right = boundsOfOperation(segment.operation);
+      if (left && right) lost += Math.max(0, right.x - (left.x + left.width));
     }
+  });
 
-    // The new text goes into the first operator the change reached.
-    if (index === 0) pieces.push({ kind: 'codes', codes });
+  const delta = gained - lost;
 
-    for (const token of tokens) {
-      if (token.at >= localTo) pieces.push(token.piece);
-    }
+  const edits: { start: number; end: number; text: string }[] = [];
+
+  line.segments.forEach((segment, index) => {
+    if (index < firstAt) return;
+
+    const scale = scaleOf(segment.operation);
+    const shift = delta / scale;
+    const { lead, items } = tokensOf(segment.operation);
+    const perChar = advancesOf(segment.operation);
+
+    /* A segment the change never reached loses nothing and keeps everything —
+       so all of it counts as tail, which is what the shift is applied to. */
+    const isAffected = affected.includes(segment);
+    const localFrom = isAffected ? Math.max(0, from - segment.at) : 0;
+    const localTo = isAffected
+      ? Math.max(localFrom, Math.min(segment.text.length, to - segment.at))
+      : 0;
+
+    let removed = 0;
+    for (let i = localFrom; i < localTo; i++) removed += perChar[i] ?? 0;
+    const writes = segment === first ? codes : [];
+    const writesBy = writes.reduce((sum, code) => sum + advanceOf(segment.operation, code), 0);
+
+    const keptTail = items.filter((item) => item.at >= localTo);
+    const keptHead = items.filter((item) => item.at < localFrom);
+
+    const pieces: Piece[] = [...lead];
+    for (const item of keptHead) pieces.push(item.piece);
+    if (writes.length > 0) pieces.push({ kind: 'codes', codes: writes });
+
+    /*
+     * Where the rest of this operator goes: exactly where it was, plus what the
+     * change was worth. For a segment the change never reached, that is the
+     * whole of it — which is how the line reflows without anything beside it
+     * moving.
+     */
+    const hasTail = keptTail.length > 0;
+    if (hasTail) pieces.push({ kind: 'advance', by: removed + shift - writesBy });
+    for (const item of keptTail) pieces.push(item.piece);
+
+    /* And the pen ends where it always did, so nothing positioned by it moves —
+       whether that means undoing the shift the tail was given, or making up for
+       a span that went with nothing left behind it. */
+    pieces.push({ kind: 'advance', by: hasTail ? -shift : removed - writesBy });
 
     edits.push({
       start: segment.operation.start,

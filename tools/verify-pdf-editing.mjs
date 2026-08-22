@@ -74,6 +74,17 @@ async function connect(timeoutMs) {
 let browser;
 let page;
 
+/**
+ * A point on a line of the page, near its start.
+ *
+ * Not its middle: a line at this zoom can be wider than the window, and a click
+ * outside the window lands nowhere. Near the left edge it is inside the text
+ * whatever the line says.
+ */
+function onLine(box) {
+  return { x: box.x + Math.min(box.width / 2, 24), y: box.y + box.height / 2 };
+}
+
 /** Opens a document from the workspace through quick open. */
 async function open(name) {
   await page.keyboard.press('Control+P');
@@ -213,7 +224,7 @@ try {
 
   const figure = await page.locator('.ul-pdf-text span').first().boundingBox();
   await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
-  await page.mouse.click(figure.x + figure.width / 2, figure.y + figure.height / 2);
+  await page.mouse.click(onLine(figure).x, onLine(figure).y);
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
 
   check(
@@ -295,7 +306,7 @@ try {
    */
   const corrected = await page.locator('.ul-pdf-text span').first().boundingBox();
   await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
-  await page.mouse.click(corrected.x + corrected.width / 2, corrected.y + corrected.height / 2);
+  await page.mouse.click(onLine(corrected).x, onLine(corrected).y);
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
   await page.locator('.ul-pdf-text-input').fill('Cijena 250 EUR');
   check(
@@ -331,7 +342,7 @@ try {
    * existing text at all, and no warning that the line had been taken over.
    */
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
-  await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
+  await page.mouse.click(onLine(original).x, onLine(original).y);
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
   check(
     'Add text over an existing line opens a new box, not that line',
@@ -347,7 +358,7 @@ try {
   /* Its own tool now. Rewriting used to hide inside "Add text", where clicking a
      line swallowed it and nothing said so. */
   await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
-  await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
+  await page.mouse.click(onLine(original).x, onLine(original).y);
 
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
 

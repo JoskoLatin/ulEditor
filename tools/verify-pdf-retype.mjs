@@ -227,6 +227,84 @@ async function operationsOf(bytes) {
   }
 }
 
+/* ── the line reflows, and only the line ─────────────────────────────── */
+
+{
+  /*
+   * The change is in the first piece of the line, so the piece after it has to
+   * move along by exactly what was gained — and the column beside it must not
+   * move by anything at all. Getting this wrong is what put two words on top of
+   * one another in a screenshot of a corrected invoice.
+   */
+  const source = bytesOf(makeSplitLinePdf());
+  const doc = await PDFDocument.load(source, { ignoreEncryption: true });
+  const found = findEditableLine(doc.getPages()[0], { x: 210, y: 114 }, standard);
+  const before = await operationsOf(source);
+
+  const STEP = 6; // every glyph in this fixture is 500 wide at 12 pt
+
+  const outcome = await applyRetype(
+    source,
+    /* Only letters this page already draws — the arithmetic is the point. */
+    { page: 1, rect: found.line.anchor, before: 'E93.89', after: 'Eto93.89' },
+    standard,
+  );
+  check('a longer piece is written', outcome.kind === 'done', outcome.kind);
+
+  if (outcome.kind === 'done') {
+    const after = await operationsOf(outcome.bytes);
+    check(
+      'the line reads as it should',
+      after.slice(1).map((operation) => operation.text).join('') === 'Eto93.89',
+      after.map((operation) => operation.text).join('|'),
+    );
+    /* Which instruction ends up holding the new letters is the file's business;
+       where the line ends is the page's. It has to have grown by exactly what
+       was added and not by a hair more. */
+    const right = (list) => Math.max(...list.slice(1).map((o) => o.bounds.x + o.bounds.width));
+    check(
+      'the line grew by exactly what was gained',
+      Math.abs(right(after) - right(before) - 2 * STEP) < 0.01,
+      `right edge ${right(before)} → ${right(after)}, expected +${2 * STEP}`,
+    );
+    check(
+      'and the column beside it did not move at all',
+      after[0].bounds.x === before[0].bounds.x && after[0].text === before[0].text,
+      `x ${before[0].bounds.x} → ${after[0].bounds.x}`,
+    );
+    check(
+      'nothing is drawn over anything',
+      after[1].bounds.x + after[1].bounds.width <= after[2].bounds.x + 0.01,
+      `${(after[1].bounds.x + after[1].bounds.width).toFixed(2)} then ${after[2].bounds.x}`,
+    );
+    check(
+      'and the pieces are still in reading order',
+      after[1].bounds.x < after[2].bounds.x,
+      `${after[1].bounds.x} then ${after[2].bounds.x}`,
+    );
+  }
+
+  const shorter = await applyRetype(
+    source,
+    { page: 1, rect: found.line.anchor, before: 'E93.89', after: '93.89' },
+    standard,
+  );
+  check('a piece can go entirely', shorter.kind === 'done', shorter.kind);
+  if (shorter.kind === 'done') {
+    const after = await operationsOf(shorter.bytes);
+    check(
+      'the line closes up by exactly what went',
+      Math.abs(after.at(-1).bounds.x - before.at(-1).bounds.x + STEP) < 0.01,
+      `x ${before.at(-1).bounds.x} → ${after.at(-1).bounds.x}, expected -${STEP}`,
+    );
+    check(
+      'and the column still did not move',
+      after[0].bounds.x === before[0].bounds.x,
+      `x ${before[0].bounds.x} → ${after[0].bounds.x}`,
+    );
+  }
+}
+
 /* ── the standard fourteen, where the widths are agreed rather than listed ── */
 
 {

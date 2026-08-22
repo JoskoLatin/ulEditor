@@ -48,7 +48,7 @@ import {
 } from './annotations.js';
 import { ensureWebFont, loadFontBytes } from './fonts.js';
 import { fallbackWarning, findEditableLine, type EditableLine } from './edit.js';
-import { applyRetype, unwritable } from './retype.js';
+import { applyRetype, changedSpan, unwritable } from './retype.js';
 import { previewRedaction, type Redaction } from './redact.js';
 import {
   DEFAULT_TEXT_SIZE,
@@ -1992,8 +1992,15 @@ class PdfEditor implements EditorInstance {
      * The warning appears only for the characters that font does not have, and
      * only then does our font, and its different letterforms, come into it.
      */
+    /* Only what the edit actually touches: the rest of the line keeps its own
+       bytes, so a character we could not have produced ourselves is no reason
+       to refuse an edit somewhere else in the same line. */
     const unavailable = editor.line
-      ? unwritable(editor.line.font, editor.line.inventory, text)
+      ? unwritable(
+          editor.line.font,
+          editor.line.inventory,
+          changedSpan(editor.line.text, text),
+        )
       : [];
     if (editor.line && unavailable.length > 0) {
       messages.push(fallbackWarning(editor.line, unavailable));
@@ -2071,7 +2078,7 @@ class PdfEditor implements EditorInstance {
       const inPlace =
         !empty &&
         !NEWLINE.test(draft.text) &&
-        unwritable(line.font, line.inventory, draft.text).length === 0;
+        unwritable(line.font, line.inventory, changedSpan(line.text, draft.text)).length === 0;
       if (inPlace) {
         const done = this.#retypeInPlace(line, draft, replaces);
         this.#committing = done;
