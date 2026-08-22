@@ -57,6 +57,11 @@ jobs:
             sleep 1
           done
           node tools/verify-ui.mjs --url http://localhost:5273
+          # The vector and 3D viewers, against the same server. Kept separate
+          # from the check above because they fail for their own reasons — a
+          # WebGL context that will not start on a runner is worth telling apart
+          # from an editor that will not mount.
+          node tools/verify-viewers.mjs --url http://localhost:5273
         shell: bash
 
       - uses: actions/upload-artifact@v7

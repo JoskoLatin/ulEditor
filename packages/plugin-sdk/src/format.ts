@@ -15,6 +15,8 @@ export type FormatId =
   | 'pptx'
   | 'odf'
   | 'image'
+  | 'vector'
+  | 'model'
   | 'archive'
   | 'binary'
   | 'unknown';
@@ -56,6 +58,11 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   pptx: { id: 'pptx', family: 'slides', label: 'PowerPoint presentation', textual: false },
   odf: { id: 'odf', family: 'document', label: 'OpenDocument', textual: false },
   image: { id: 'image', family: 'media', label: 'Image', textual: false },
+  /* Textual, because an SVG is markup — the viewer shows the source beside the
+     picture, and a text editor opening one is a reasonable thing rather than a
+     mistake to be prevented. */
+  vector: { id: 'vector', family: 'media', label: 'Vector graphics', textual: true },
+  model: { id: 'model', family: 'media', label: '3D model', textual: false },
   archive: { id: 'archive', family: 'other', label: 'Archive', textual: false },
   binary: { id: 'binary', family: 'other', label: 'Binary file', textual: false },
   unknown: { id: 'unknown', family: 'other', label: 'Unknown', textual: false },

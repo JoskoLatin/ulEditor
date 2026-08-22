@@ -10,6 +10,8 @@ import '@uleditor/editor-image/style.css';
 import '@uleditor/editor-markdown/style.css';
 import '@uleditor/editor-office/style.css';
 import '@uleditor/editor-pdf/style.css';
+import '@uleditor/editor-vector/style.css';
+import '@uleditor/editor-3d/style.css';
 
 import { App } from './App.js';
 import { createShell } from './host/index.js';
@@ -44,7 +46,7 @@ document.documentElement.lang = shell.locale;
 const CODE_EXTENSIONS = [
   'ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs',
   'json', 'jsonc', 'rs', 'py', 'pyi', 'html', 'htm', 'css', 'scss', 'less',
-  'toml', 'yaml', 'yml', 'xml', 'svg', 'sh', 'bash', 'zsh', 'ps1', 'sql',
+  'toml', 'yaml', 'yml', 'xml', 'sh', 'bash', 'zsh', 'ps1', 'sql',
   'go', 'java', 'kt', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'rb', 'php',
   'swift', 'lua', 'vue', 'svelte',
   'txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env',
@@ -88,6 +90,37 @@ shell.registry.register(
       priority: 30,
     },
     () => import('@uleditor/editor-image'),
+  ),
+);
+
+/*
+ * Vector drawings and 3D models. Both are viewers, both are lazy, and both are
+ * registered here beside the rest — the shell has no idea what three.js is, and
+ * `editor-vector` never loads for a session that opens no drawing.
+ */
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.vector',
+      displayName: 'Vector graphics viewer',
+      matches: { extensions: ['svg', 'svgz', 'ai', 'eps', 'ps', 'cdr', 'vector'] },
+      capabilities: ['view', 'search'],
+      priority: 30,
+    },
+    () => import('@uleditor/editor-vector'),
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.model',
+      displayName: '3D model viewer',
+      matches: { extensions: ['stl', 'obj', 'ply', 'gltf', 'glb', '3mf', 'model'] },
+      capabilities: ['view'],
+      priority: 30,
+    },
+    () => import('@uleditor/editor-3d'),
   ),
 );
 

@@ -55,20 +55,30 @@ export class EditorRegistry {
   }
 
   #matches(provider: EditorProvider, doc: DocumentHandle, ext: string): boolean {
-    const { extensions, magic } = provider.matches;
+    const { extensions } = provider.matches;
 
     // `*` means "take everything nobody else wants" — the fallback text editor.
     if (extensions.includes('*')) return true;
+
+    /*
+     * When the content decided, the content decides here too.
+     *
+     * The extension used to be tried first, which made this the one place in the
+     * program where the file name outranked the bytes — the opposite of what
+     * detection is for. It stayed invisible while no two providers disagreed
+     * about an extension, and Illustrator made it visible: an `.ai` file has a
+     * whole PDF inside it and is detected as one, and it still went to whichever
+     * provider happened to list `ai`. The same fault sent a PDF renamed to
+     * `.txt` to the code editor, under a detector with a test celebrating that
+     * it had recognised the PDF.
+     *
+     * A provider's `magic` is not read here. Signatures are checked once,
+     * centrally, in `detect` — the field stays in the contract as a declaration
+     * of what a provider expects, for a host that does its own detection.
+     */
+    if (doc.detection.via === 'magic') return extensions.includes(doc.detection.format);
+
     if (ext && extensions.includes(ext)) return true;
-
-    if (magic?.length) {
-      // Signatures are checked only when the extension does not decide; the
-      // content was read on opening, so we use the detection result here.
-      if (magic.some((sig) => sig.length > 0) && doc.detection.via === 'magic') {
-        return extensions.includes(doc.detection.format);
-      }
-    }
-
     return extensions.includes(doc.detection.format);
   }
 }

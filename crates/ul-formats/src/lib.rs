@@ -28,6 +28,8 @@ pub enum FormatId {
     Pptx,
     Odf,
     Image,
+    Vector,
+    Model,
     Archive,
     Binary,
     Unknown,
@@ -46,6 +48,8 @@ impl FormatId {
             Self::Pptx => "pptx",
             Self::Odf => "odf",
             Self::Image => "image",
+            Self::Vector => "vector",
+            Self::Model => "model",
             Self::Archive => "archive",
             Self::Binary => "binary",
             Self::Unknown => "unknown",
@@ -113,7 +117,6 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
     ("yaml", "yaml"),
     ("yml", "yaml"),
     ("xml", "xml"),
-    ("svg", "xml"),
     ("sh", "shell"),
     ("bash", "shell"),
     ("zsh", "shell"),
@@ -139,6 +142,19 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
 const PLAIN_TEXT: &[&str] = &["txt", "log", "csv", "tsv", "ini", "cfg", "conf", "env"];
 const MARKDOWN: &[&str] = &["md", "markdown", "mdx"];
 const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"];
+
+/// Vector drawings. `svg` is here rather than among the code languages: it is
+/// markup, but somebody opening one wants to see the picture, and the viewer
+/// shows the source one button away.
+///
+/// `ai` is in the list and almost never reaches it. Illustrator has written a
+/// complete PDF inside its files by default since version 9, and the `%PDF`
+/// signature is checked before any extension is, so those open in the PDF
+/// viewer. What arrives here is one saved with that compatibility switched off.
+const VECTORS: &[&str] = &["svg", "svgz", "ai", "eps", "ps", "cdr"];
+
+/// Interchange formats for 3D, not the native files of any one modeller.
+const MODELS: &[&str] = &["stl", "obj", "ply", "gltf", "glb", "3mf"];
 
 pub fn extension_of(name: &str) -> Option<&str> {
     let dot = name.rfind('.')?;
@@ -174,6 +190,12 @@ pub fn detect_by_name(name: &str) -> Detection {
     }
     if IMAGES.contains(&ext) {
         return Detection::new(FormatId::Image, DetectedVia::Extension);
+    }
+    if VECTORS.contains(&ext) {
+        return Detection::new(FormatId::Vector, DetectedVia::Extension);
+    }
+    if MODELS.contains(&ext) {
+        return Detection::new(FormatId::Model, DetectedVia::Extension);
     }
     if PLAIN_TEXT.contains(&ext) {
         return Detection::new(FormatId::Text, DetectedVia::Extension);
@@ -325,6 +347,26 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vector_and_model_extensions() {
+        assert_eq!(detect("logo.svg", b"<svg xmlns=").format, FormatId::Vector);
+        assert_eq!(
+            detect("logo.svgz", &[0x1f, 0x8b, 0x08]).format,
+            FormatId::Vector
+        );
+        assert_eq!(detect("part.stl", b"solid part").format, FormatId::Model);
+        assert_eq!(detect("scan.glb", b"glTF").format, FormatId::Model);
+    }
+
+    #[test]
+    fn illustrator_with_pdf_inside_is_a_pdf() {
+        // The reason `.ai` needs no reader of its own: the signature decides,
+        // and Illustrator writes a whole PDF into the file by default.
+        let d = detect("poster.ai", b"%PDF-1.5\n1 0 obj");
+        assert_eq!(d.format, FormatId::Pdf);
+        assert_eq!(d.via, DetectedVia::Magic);
+    }
 
     #[test]
     fn pdf_wins_over_extension() {

@@ -11,7 +11,7 @@
 
 import type { FormatDetection, FormatId } from '@uleditor/plugin-sdk';
 
-/** Ekstenzija → jezik za syntax highlighting. */
+/** Extension → the language for syntax highlighting. */
 const CODE_LANGUAGES: Record<string, string> = {
   ts: 'typescript',
   tsx: 'typescript',
@@ -35,7 +35,6 @@ const CODE_LANGUAGES: Record<string, string> = {
   yaml: 'yaml',
   yml: 'yaml',
   xml: 'xml',
-  svg: 'xml',
   sh: 'shell',
   bash: 'shell',
   zsh: 'shell',
@@ -61,6 +60,20 @@ const CODE_LANGUAGES: Record<string, string> = {
 const PLAIN_TEXT = new Set(['txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env', 'gitignore']);
 const MARKDOWN = new Set(['md', 'markdown', 'mdx']);
 const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+
+/**
+ * Vector drawings. `svg` sits here rather than among the code languages: it is
+ * markup, but somebody opening one wants to see the picture, and the viewer puts
+ * the source one button away.
+ *
+ * `ai` is in the list and almost never reaches it — Illustrator has written a
+ * complete PDF inside its files by default since version 9, and the `%PDF`
+ * signature is read before any extension, so those go to the PDF viewer.
+ */
+const VECTORS = new Set(['svg', 'svgz', 'ai', 'eps', 'ps', 'cdr']);
+
+/** Interchange formats for 3D, not the native files of any one modeller. */
+const MODELS = new Set(['stl', 'obj', 'ply', 'gltf', 'glb', '3mf']);
 
 /** Extensionless files that are text nonetheless. */
 const KNOWN_NAMES: Record<string, { format: FormatId; language?: string }> = {
@@ -161,6 +174,8 @@ export function detectByName(name: string): FormatDetection {
   if (ext === 'pptx' || ext === 'ppt') return { format: 'pptx', via: 'extension' };
   if (ext === 'odt' || ext === 'ods' || ext === 'odp') return { format: 'odf', via: 'extension' };
   if (IMAGES.has(ext)) return { format: 'image', via: 'extension' };
+  if (VECTORS.has(ext)) return { format: 'vector', via: 'extension' };
+  if (MODELS.has(ext)) return { format: 'model', via: 'extension' };
   if (ext === 'zip' || ext === '7z' || ext === 'tar' || ext === 'gz') {
     return { format: 'archive', via: 'extension' };
   }

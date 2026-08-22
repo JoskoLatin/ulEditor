@@ -203,6 +203,7 @@ State as of 15 August 2026.
 | **EPUB reader + reading mode** (not in the original plan) | **done** |
 | **OCR over an image + the panel below** (not in the original plan) | **done** |
 | **Text export to txt / md / docx / pdf** (not in the original plan) | **done** |
+| **SVG and 3D model viewing** (not in the original plan) | **done** — SVG with a source view, STL/OBJ/PLY/glTF/GLB/3MF through three.js; `.ai` opens as the PDF it contains |
 | **English as the default interface language, Croatian in settings** | **done** |
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
 | `editor-code`: tree-sitter, LSP client | deferred to phase 1.1 |

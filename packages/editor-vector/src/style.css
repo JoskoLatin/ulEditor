@@ -1,0 +1,158 @@
+/*
+ * The vector viewer.
+ *
+ * The drawing sits on white rather than on the theme's ground even in the dark
+ * theme. Vector art is drawn against paper: black strokes on a dark background
+ * disappear, and the first thing a person would conclude is that the file is
+ * broken. The frame around it carries the theme instead.
+ */
+
+.ul-vec {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ground);
+}
+
+.ul-vec-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 34px;
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  /* The bar scrolls instead of pushing — the same reason as everywhere else:
+     its minimum size would otherwise stretch the whole shell. */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+.ul-vec-toolbar .sep {
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+  margin: 0 6px;
+}
+
+.ul-vec-toolbar .spacer {
+  flex: 1;
+}
+
+.ul-vec-toolbar .zoom {
+  min-width: 48px;
+  text-align: center;
+}
+
+.ul-vec-toolbar .readout {
+  white-space: nowrap;
+}
+
+.ul-vec-btn {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ul-vec-btn:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.ul-vec-btn[data-active='true'] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.ul-vec-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ul-vec-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.ul-vec-frame {
+  background: #ffffff;
+  box-shadow: var(--shadow-md);
+  display: flex;
+}
+
+/*
+ * `hidden` is only a UA rule of `display: none`, and any author `display`
+ * declaration outranks it — so the two rules above were quietly cancelling the
+ * attribute and the picture stayed on screen underneath the source. Anything
+ * given a display here has to say this as well.
+ */
+.ul-vec-frame[hidden],
+.ul-vec-source[hidden] {
+  display: none;
+}
+
+.ul-vec-frame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ul-vec-source {
+  margin: 0;
+  align-self: stretch;
+  justify-self: stretch;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.ul-vec-error {
+  margin: auto;
+  max-width: 52ch;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+}
+
+.ul-vec-error strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ul-vec-error p {
+  margin: 0;
+}
