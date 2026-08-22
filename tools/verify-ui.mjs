@@ -29,6 +29,7 @@ import {
   makeFakeDocx,
   makeMultiPagePdf,
   makePdf,
+  makeSplitLinePdf,
 } from './fixtures.mjs';
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -376,6 +377,58 @@ try {
   check('the redo button brings it back', redoneByButton);
 
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
+
+  /* — a line the file keeps in pieces — */
+
+  /*
+   * What a click has to offer is the line as it reads, not the one instruction
+   * it landed on. `E93.89` is the sign in one and the figure in another, and
+   * `E 9` — which is what taking a single instruction gave — is not the amount.
+   */
+  await dropFile(page, 'row.pdf', new TextEncoder().encode(makeSplitLinePdf()));
+  const row = page.locator('.ul-pdf:visible');
+  await until(async () => (await page.locator('.tab').count()) === 6, 20000);
+  await until(async () => (await row.locator('.ul-pdf-page[data-rendered="true"]').count()) > 0, 20000);
+  await until(
+    async () =>
+      (await row.locator('.ul-pdf-text').innerText().catch(() => '')).includes('93.89'),
+    20000,
+  );
+
+  const figure = await row.locator('.ul-pdf-text span', { hasText: '93.89' }).first().boundingBox();
+  await row.locator('.ul-pdf-tool[title*="Edit text"]').click();
+  await page.mouse.click(figure.x + Math.min(figure.width / 2, 20), figure.y + figure.height / 2);
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+  check(
+    'clicking the figure offers the whole amount',
+    (await page.locator('.ul-pdf-text-input').inputValue()) === 'E93.89',
+    JSON.stringify(await page.locator('.ul-pdf-text-input').inputValue()),
+  );
+
+  /* The cover has to hide all of it, not only the piece that was clicked. */
+  const cover = await page.locator('.ul-pdf-rewrite-cover').boundingBox();
+  const sign = await row.locator('.ul-pdf-text span', { hasText: 'E' }).first().boundingBox();
+  check(
+    'and the whole of it is covered while typing',
+    !!cover && cover.x <= sign.x + 1 && cover.x + cover.width >= figure.x + figure.width - 1,
+    `cover ${Math.round(cover?.x ?? 0)}–${Math.round((cover?.x ?? 0) + (cover?.width ?? 0))}, line ${Math.round(sign.x)}–${Math.round(figure.x + figure.width)}`,
+  );
+
+  await page.locator('.ul-pdf-text-input').fill('E93.99');
+  await page.keyboard.press('Escape');
+  await until(
+    async () => (await row.locator('.ul-pdf-text').innerText().catch(() => '')).includes('93.99'),
+    20000,
+  );
+  const rowText = await row.locator('.ul-pdf-text').innerText();
+  check('the amount is corrected on the page itself', rowText.includes('93.99'), JSON.stringify(rowText.replace(/\s+/g, ' ')));
+  check('the label beside it is still there', rowText.includes('Total'));
+  check('and no box was glued on top', (await row.locator('.ul-pdf-ann-text').count()) === 0);
+
+  await page.keyboard.press('Control+Z');
+  await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) === 0);
+  await page.locator('.tab').last().locator('.close').click();
+  await until(async () => (await page.locator('.tab').count()) === 5);
 
   /* — a box that came out of the file — */
 
