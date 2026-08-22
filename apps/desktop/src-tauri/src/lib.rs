@@ -242,6 +242,34 @@ fn write_file(state: State<'_, AppState>, path: String, contents: Vec<u8>) -> Re
     with_workspace(&state, |workspace| workspace.write(&path, &contents))
 }
 
+/* ── developer tools ─────────────────────────────────────────────────── */
+
+/// Opens the webview's inspector.
+///
+/// It opens in a **window of its own**, and that is not a choice we are making:
+/// WebView2 owns its devtools and offers no way to dock them beside the page.
+/// Docking is a feature of the Chrome browser, not of an embedded webview.
+///
+/// Debug builds only. In release the call does nothing, deliberately: shipping
+/// the inspector would put "Inspect" in the right-click menu of a document
+/// editor for every user, which is a strange thing to hand somebody who opened
+/// a PDF. Building with `--features devtools` turns it on for a release binary
+/// when that is actually wanted.
+#[tauri::command]
+fn open_devtools(window: tauri::WebviewWindow) {
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    window.open_devtools();
+    #[cfg(not(any(debug_assertions, feature = "devtools")))]
+    let _ = window;
+}
+
+/// Whether the command above will do anything, so the interface can leave the
+/// entry out of the palette rather than offer one that silently does nothing.
+#[tauri::command]
+fn devtools_available() -> bool {
+    cfg!(any(debug_assertions, feature = "devtools"))
+}
+
 /* ── startup ─────────────────────────────────────────────────────────── */
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -268,6 +296,8 @@ pub fn run() {
             search_workspace,
             list_files,
             scan_library,
+            open_devtools,
+            devtools_available,
         ])
         .run(tauri::generate_context!())
         .expect("starting ulEditor failed");

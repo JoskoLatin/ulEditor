@@ -15,6 +15,7 @@ import { canRead, exitReading, readerPage, toggleReading, useReading } from './r
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
 import { clearRecent, hasRecent } from './recent.js';
+import { devtoolsAvailable, openDevtools, watchDevtools } from './devtools.js';
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -231,6 +232,20 @@ export function registerCommands(shell: Shell): () => void {
       },
     }),
 
+    /*
+     * The inspector. It opens in a window of its own — WebView2 owns its
+     * devtools and offers no way to dock them beside the page; docking is a
+     * Chrome feature, not a webview one.
+     */
+    shell.commands.register({
+      id: 'view.devtools',
+      title: t('Developer tools'),
+      category: t('View'),
+      keybinding: ['F12'],
+      when: () => devtoolsAvailable,
+      run: () => void openDevtools(),
+    }),
+
     shell.commands.register({
       id: 'view.preferences',
       title: t('Preferences…'),
@@ -260,6 +275,7 @@ export function registerCommands(shell: Shell): () => void {
   const onKeyDown = (event: KeyboardEvent) => handleKey(shell, event);
   window.addEventListener('keydown', onKeyDown, { capture: true });
   const stopZoomGesture = watchZoomGesture(shell);
+  watchDevtools(shell);
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
@@ -313,6 +329,14 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     return;
   }
 
+  /* F12 carries no modifier, so it is read before the guard below sends every
+     unmodified key away. */
+  if (event.key === 'F12' && devtoolsAvailable) {
+    event.preventDefault();
+    void openDevtools();
+    return;
+  }
+
   const mod = event.ctrlKey || event.metaKey;
 
   // Turning pages without a modifier works when the focus is on the reading bar
@@ -362,6 +386,11 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     if (key === 'r') {
       event.preventDefault();
       toggleReading(shell);
+      return;
+    }
+    if (key === 'i' && devtoolsAvailable) {
+      event.preventDefault();
+      void openDevtools();
       return;
     }
     // Ctrl+Shift+H — project-wide search. Ctrl+Shift+F stays with the document.

@@ -22,3 +22,9 @@ tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
+
+[features]
+# Ships the webview inspector in a release build. Off by default: "Inspect" in
+# the right-click menu of a document editor is a strange thing to hand somebody
+# who opened a PDF. Debug builds always have it.
+devtools = ["tauri/devtools"]
