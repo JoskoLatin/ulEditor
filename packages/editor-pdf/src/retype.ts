@@ -127,6 +127,20 @@ export interface Line {
    * then a space typed into it has to come from a glyph or not at all.
    */
   spaceAdvance: number | null;
+  /**
+   * The runs of letters that are drawn by a single glyph, as `{at, chars}`.
+   *
+   * `ﬁ`, `ﬀ`, `ﬄ` — everything TeX and InDesign produce, and Word with OpenType
+   * on. One code, several letters, and no way to take it apart: the glyph either
+   * stays whole or goes whole. See `widenToGlyphs` for what that costs an edit.
+   */
+  ligatures: LigatureSpan[];
+}
+
+/** Where a multi-letter glyph sits in a line, and how many letters it stands for. */
+export interface LigatureSpan {
+  at: number;
+  chars: number;
 }
 
 /** How the letters of a line are turned back into what draws them. */
@@ -367,6 +381,7 @@ export function gatherLine(content: PageContent, anchor: TextOperation): Line {
       anchor,
       text: own.text,
       spaceAdvance: own.spaceAdvance === null ? null : own.spaceAdvance * scaleOf(anchor),
+      ligatures: ligaturesIn(own.items, 0),
     };
   }
 
@@ -379,6 +394,7 @@ export function gatherLine(content: PageContent, anchor: TextOperation): Line {
   while (last < candidates.length - 1 && gapBetween(last, last + 1) <= JOIN_GAP * em) last++;
 
   const segments: Segment[] = [];
+  const ligatures: LigatureSpan[] = [];
   let text = '';
   let spaceAdvance: number | null = null;
 
@@ -397,10 +413,50 @@ export function gatherLine(content: PageContent, anchor: TextOperation): Line {
       if (spaceAdvance === null || onPage < spaceAdvance) spaceAdvance = onPage;
     }
     segments.push({ operation, text: own.text, at: text.length });
+    ligatures.push(...ligaturesIn(own.items, text.length));
     text += own.text;
   }
 
-  return { segments, anchor, text, spaceAdvance };
+  return { segments, anchor, text, spaceAdvance, ligatures };
+}
+
+/** The items of one operator that stand for more than one letter, placed in the line. */
+function ligaturesIn(items: Item[], base: number): LigatureSpan[] {
+  return items
+    .filter((item) => item.chars > 1)
+    .map((item) => ({ at: base + item.at, chars: item.chars }));
+}
+
+/**
+ * A change widened to the glyphs it actually lands on.
+ *
+ * A ligature is one code drawing several letters, and there is no way to take
+ * the `f` out of `ﬁ` and keep the `i`. So a change that reaches into one has to
+ * take the whole glyph — and, having taken it, write back every letter it stood
+ * for. Without this the page quietly loses the letters the user never touched:
+ * `file` edited to `Zile` came back as `Zle`.
+ *
+ * Widening is not a refusal. The letters now inside the change are put through
+ * the same test as everything else, so a page that has no standalone `f` to draw
+ * with says so, and the edit goes the other route rather than mangling the word.
+ */
+export function widenToGlyphs(
+  ligatures: LigatureSpan[],
+  from: number,
+  to: number,
+): { from: number; to: number } {
+  let start = from;
+  let end = to;
+
+  for (const span of ligatures) {
+    const after = span.at + span.chars;
+    /* Strictly inside on that side: a change that begins exactly where a glyph
+       begins already takes the whole of it. */
+    if (span.at < from && after > from) start = Math.min(start, span.at);
+    if (span.at < to && after > to) end = Math.max(end, after);
+  }
+
+  return { from: start, to: end };
 }
 
 /**
@@ -497,10 +553,11 @@ export function writerFor(
  * ligature, a symbol drawn by one glyph we cannot take apart — can still be
  * edited everywhere else, because the rest of it keeps its own bytes.
  */
-export function changedSpan(before: string, after: string): string {
+export function changedSpan(before: string, after: string, ligatures: LigatureSpan[] = []): string {
   const head = commonHead(before, after);
   const tail = commonTail(before, after, head);
-  return after.slice(head, after.length - tail);
+  const bounds = widenToGlyphs(ligatures, head, before.length - tail);
+  return after.slice(bounds.from, Math.max(bounds.from, after.length - (before.length - bounds.to)));
 }
 
 /**
@@ -671,9 +728,9 @@ function editsFor(
   const head = commonHead(before, after);
   const tail = commonTail(before, after, head);
 
-  const from = head;
-  const to = before.length - tail;
-  const span = after.slice(head, after.length - tail);
+  /* Whole glyphs, not whole characters — see `widenToGlyphs`. */
+  const { from, to } = widenToGlyphs(line.ligatures, head, before.length - tail);
+  const span = after.slice(from, Math.max(from, after.length - (before.length - to)));
 
   const missing = unwritable(writer, span);
   if (missing.length > 0) return { missing };

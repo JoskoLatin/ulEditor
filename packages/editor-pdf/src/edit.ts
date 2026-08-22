@@ -20,7 +20,14 @@ import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
 import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
-import { gatherLine, inventoryOf, spaceAdvanceOf, writerFor, type Writer } from './retype.js';
+import {
+  gatherLine,
+  inventoryOf,
+  spaceAdvanceOf,
+  writerFor,
+  type LigatureSpan,
+  type Writer,
+} from './retype.js';
 import type { StandardWidths } from './text.js';
 
 /** A line of the document offered for rewriting. */
@@ -61,6 +68,14 @@ export interface EditableLine {
    * authority on this than the font's own map.
    */
   writer: Writer;
+  /**
+   * Which of its letters share a glyph, as `{at, chars}`.
+   *
+   * Carried for the same reason as the writer: a change that reaches into a
+   * ligature has to take the whole of it, and whether the whole of it can be
+   * written back has to be known while the user is typing.
+   */
+  ligatures: LigatureSpan[];
   /**
    * Whether our font's metrics match the original's.
    *
@@ -166,6 +181,7 @@ export function findEditableLine(
           inventoryOf(content, operation.font),
           line.spaceAdvance ?? spaceAdvanceOf(content, operation.font),
         ),
+        ligatures: line.ligatures,
         metricsMatch: matchesOurMetrics(operation.font.baseFont),
       },
     };

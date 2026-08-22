@@ -117,6 +117,69 @@ export function makePdf(text = 'ulEditor PDF') {
  *   it moves if a rewrite fails to put the pen back.
  * @returns {string}
  */
+/**
+ * A page whose font draws two letters with one glyph.
+ *
+ * Code `0x02` is `fi`, twice as wide as anything else, exactly as TeX, InDesign
+ * and Word with OpenType on write it. The page reads `file`, in four letters
+ * drawn by three glyphs — so an edit to the `f` cannot keep the `i` unless it
+ * writes both back.
+ */
+export function makeLigaturePdf() {
+  const hex = (code, digits) => code.toString(16).toUpperCase().padStart(digits, '0');
+
+  /* The whole printable range, so an edit can bring in a letter the page does
+     not itself draw — the point here is the ligature, not the inventory. */
+  const printable = Array.from({ length: 95 }, (_, i) => 32 + i);
+  const entries = [
+    // The ligature itself: one code, the two letters it stands for.
+    '<02> <00660069>',
+    ...printable.map((code) => `<${hex(code, 2)}> <${hex(code, 4)}>`),
+  ];
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin 12 dict begin begincmap',
+    '/CMapName /A-B-0 def /CMapType 2 def',
+    '1 begincodespacerange <00> <FF> endcodespacerange',
+    `${entries.length} beginbfchar`,
+    ...entries,
+    'endbfchar',
+    'endcmap CMapName currentdict /CMap defineresource pop end end',
+  ].join('\n');
+
+  /* From code 1, so the ligature at 2 has a width of its own: 1000 for it, 500
+     for every ordinary letter. */
+  const widths = Array.from({ length: 126 }, (_, i) => (i + 1 === 2 ? 1000 : 500)).join(' ');
+
+  // <02> is the fi, then `l` and `e`. The page reads "file".
+  const stream = 'BT /F1 10 Tf 30 110 Td <026C65> Tj ET';
+
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/TrueType/BaseFont/ABCDEF+CMR10/FirstChar 1/LastChar 126' +
+      `/Widths[${widths}]/FontDescriptor 6 0 R/ToUnicode 7 0 R>>`,
+    '<</Type/FontDescriptor/FontName/ABCDEF+CMR10/Flags 32/ItalicAngle 0/Ascent 750' +
+      '/Descent -250/CapHeight 700/StemV 80/FontBBox[0 -250 1000 750]/FontFile2 8 0 R>>',
+    `<</Length ${cmap.length}>>\nstream\n${cmap}\nendstream`,
+    '<</Length 4/Length1 4>>\nstream\n0000\nendstream',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
 export function makeToUnicodePdf(text = 'Name and surname', opts = {}) {
   const codes = [...new Set([...text, ...(opts.trailer ?? '')])]
     .map((ch) => ch.codePointAt(0))

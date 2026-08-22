@@ -29,7 +29,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import './ts-resolve.mjs';
-import { makeGapSpacedPdf, makePdf, makeSplitLinePdf, makeToUnicodePdf } from './fixtures.mjs';
+import {
+  makeGapSpacedPdf,
+  makeLigaturePdf,
+  makePdf,
+  makeSplitLinePdf,
+  makeToUnicodePdf,
+} from './fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
@@ -501,6 +507,72 @@ async function operationsOf(bytes) {
       const [after] = await operationsOf(twice.bytes);
       check('and reads as it should', after.text === 'Name and username', String(after.text));
     }
+  }
+}
+
+/* ── a glyph that draws two letters ──────────────────────────────────── */
+
+/*
+ * A ligature is one code standing for `fi`, and there is no way to take the `f`
+ * out of it and keep the `i`. An edit that reaches into one therefore has to
+ * carry the whole glyph and write back everything it stood for — or the page
+ * quietly loses a letter the user never touched, with the arithmetic still
+ * perfect and nothing to show that anything went wrong.
+ */
+{
+  const source = bytesOf(makeLigaturePdf());
+  const [before] = await operationsOf(source);
+  check('the ligature reads as the letters it draws', before.text === 'file', String(before.text));
+
+  const outcome = await applyRetype(
+    source,
+    { page: 1, rect: before.bounds, before: 'file', after: 'Zile' },
+    standard,
+  );
+  check('a word beginning with a ligature is rewritten', outcome.kind === 'done', outcome.kind);
+
+  if (outcome.kind === 'done') {
+    const [after] = await operationsOf(outcome.bytes);
+    check(
+      'the letter inside the ligature survives the edit',
+      after.text === 'Zile',
+      `${String(after.text)} — "Zle" is the whole point of this check`,
+    );
+
+    /* And the line is still the width it was, so nothing beside it moved. */
+    check(
+      'the pen still ends where it did',
+      Math.abs(after.bounds.width - before.bounds.width) < 0.01,
+      `${before.bounds.width.toFixed(2)} → ${after.bounds.width.toFixed(2)}`,
+    );
+  }
+
+  /* Typing inside the ligature is the same problem seen from the other side: the
+     glyph is opened up, and both of its letters have to come back around what
+     was typed. */
+  const inside = await applyRetype(
+    source,
+    { page: 1, rect: before.bounds, before: 'file', after: 'fXile' },
+    standard,
+  );
+  if (inside.kind === 'done') {
+    const [after] = await operationsOf(inside.bytes);
+    check('text typed inside a ligature lands where it was typed', after.text === 'fXile', String(after.text));
+  } else {
+    check('text typed inside a ligature lands where it was typed', false, inside.kind);
+  }
+
+  /* An edit that never touches the glyph must not be widened into one. */
+  const elsewhere = await applyRetype(
+    source,
+    { page: 1, rect: before.bounds, before: 'file', after: 'fila' },
+    standard,
+  );
+  if (elsewhere.kind === 'done') {
+    const [after] = await operationsOf(elsewhere.bytes);
+    check('an edit beside the ligature leaves it alone', after.text === 'fila', String(after.text));
+  } else {
+    check('an edit beside the ligature leaves it alone', false, elsewhere.kind);
   }
 }
 
