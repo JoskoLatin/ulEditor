@@ -21,7 +21,15 @@ const args = process.argv.slice(2);
 const url = args.includes('--url') ? args[args.indexOf('--url') + 1] : 'http://localhost:5273';
 const headed = args.includes('--headed');
 
-import { BAT_SOURCE, MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from './fixtures.mjs';
+import {
+  BAT_SOURCE,
+  MD_SOURCE,
+  TS_SOURCE,
+  makeAnnotatedPdf,
+  makeFakeDocx,
+  makeMultiPagePdf,
+  makePdf,
+} from './fixtures.mjs';
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
@@ -49,6 +57,37 @@ function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
   const mark = passed ? '  ok  ' : ' FAIL ';
   console.log(`[${mark}] ${name}${detail ? `  — ${detail}` : ''}`);
+}
+
+/**
+ * How much ink is inside a rectangle of the page as it is composited.
+ *
+ * There are things on a PDF page that no selector can reach. The reader paints
+ * an annotation's appearance stream onto the canvas, and the editor draws its own
+ * editable copy on top; while the two agree they look like one thing, and the
+ * only way to tell them apart is to count the dark pixels where one of them used
+ * to be. The screenshot is decoded by handing it back to the page, which is what
+ * a person would be looking at.
+ */
+async function inkIn(page, clip) {
+  const shot = (await page.screenshot({ clip })).toString('base64');
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    if (!context) return -1;
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let dark = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < 128 && data[i + 1] < 128 && data[i + 2] < 128) dark++;
+    }
+    return dark / (data.length / 4);
+  }, shot);
 }
 
 /** `content` is a string, or an array of bytes for the binary formats. */
@@ -312,6 +351,64 @@ try {
   check('redo brings it back', textBack);
 
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
+
+  /* — a box that came out of the file — */
+
+  /*
+   * A document whose text box is already in it, with the appearance stream a
+   * reader draws it from. That makes two drawings of the same words: the one the
+   * reader painted onto the page, and ours on top of it. Identical, they look
+   * like one — move the box and the painted one stays behind, which is how it
+   * was reported: the same sentence twice, overlapping.
+   */
+  await dropFile(page, 'annotated.pdf', new TextEncoder().encode(makeAnnotatedPdf()));
+  /* Every locator here is scoped to the visible editor: the other PDFs are still
+     open in their tabs, and their pages and boxes are in the document too. */
+  const shown = page.locator('.ul-pdf:visible');
+  await until(async () => (await page.locator('.tab').count()) === 6, 20000);
+  await until(async () => (await shown.locator('.ul-pdf-page[data-rendered="true"]').count()) > 0, 20000);
+  /*
+   * By its text, not by there being one: the PDF this replaced also has a box,
+   * so "one box is showing" was true before this document had finished opening
+   * — and the check then measured the wrong tab.
+   */
+  await until(
+    async () =>
+      (await shown
+        .locator('.ul-pdf-ann-text')
+        .first()
+        .innerText()
+        .catch(() => '')) === 'Josko Latin',
+    20000,
+  );
+
+  const imported = await shown.locator('.ul-pdf-ann-text').first().boundingBox();
+  const inked = await inkIn(page, imported);
+  check('the box in the file is drawn on the page', inked > 0.02, inked.toFixed(4));
+
+  await page.mouse.move(imported.x + imported.width / 2, imported.y + imported.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(imported.x + imported.width / 2, imported.y + imported.height / 2 + 90, {
+    steps: 12,
+  });
+  await page.mouse.up();
+  const moved = await until(async () => {
+    const now = await shown.locator('.ul-pdf-ann-text').first().boundingBox();
+    return !!now && now.y - imported.y > 60;
+  });
+  check('it can be dragged somewhere else', moved);
+
+  const leftBehind = await inkIn(page, imported);
+  check(
+    'and leaves nothing of itself where it was',
+    leftBehind === 0,
+    `${inked.toFixed(4)} → ${leftBehind.toFixed(4)} of the rectangle inked`,
+  );
+
+  await page.keyboard.press('Control+Z');
+  await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) === 0);
+  await page.locator('.tab').last().locator('.close').click();
+  await until(async () => (await page.locator('.tab').count()) === 5);
 
   /* — an image — */
   const png = await readFile(resolve(ROOT, 'apps/desktop/src-tauri/icons/128x128.png'));

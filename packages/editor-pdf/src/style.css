@@ -794,3 +794,13 @@
 .ul-pdf-text-input[data-rewrite] {
   outline-color: var(--accent);
 }
+
+/*
+ * Over a text box the reader has already painted onto the page — see `#painted`
+ * in index.ts. It sits under everything else in the layer, so our own drawing of
+ * that box lands on top of it rather than beside it.
+ */
+.ul-pdf-painted-cover {
+  position: absolute;
+  pointer-events: none;
+}

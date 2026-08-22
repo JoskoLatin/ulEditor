@@ -259,6 +259,22 @@ class PdfEditor implements EditorInstance {
   /** The source differs from the file on disk — see `Snapshot.sourceEdited`. */
   #sourceEdited = false;
 
+  /**
+   * Text boxes the reader has already drawn onto the page.
+   *
+   * The canvas is a picture of the document, annotations included: pdf.js paints
+   * a `/FreeText` appearance stream onto it along with the page, and we then draw
+   * our own editable copy on top. While the two agree they look like one thing.
+   * Edit the text, move the box or delete it, and there are suddenly two — the
+   * new one where it belongs and the old one still painted underneath, which is
+   * exactly how it was reported: the same words twice, overlapping.
+   *
+   * So this remembers where the painted one is, and the layer covers it as soon
+   * as ours stops matching it. Only text boxes: a highlight or a stroke would
+   * have to be covered with opaque paint, which would take the page with it.
+   */
+  #painted: { id: string; page: number; rect: Rect }[] = [];
+
   #drawing: { view: PageView; points: Point[] } | null = null;
   #marquee: { view: PageView; origin: Point; el: HTMLElement } | null = null;
 
@@ -606,6 +622,15 @@ class PdfEditor implements EditorInstance {
       view.el.remove();
     }
     this.#pages = [];
+
+    /*
+     * The pages are read again, and with them the annotations that were in the
+     * file. What was imported before is therefore dropped first — otherwise every
+     * reload would leave a second copy of every note in the list, drawn twice and
+     * saved twice. What the user made in this session is not imported and stays.
+     */
+    this.#annotations = this.#annotations.filter((a) => !a.imported);
+    this.#painted = [];
 
     const previous = this.pdf;
     this.source = bytes;
@@ -1088,6 +1113,12 @@ class PdfEditor implements EditorInstance {
       const imported = importAnnotations(raw as unknown[], view.source);
       if (imported.length > 0) {
         this.#annotations = [...this.#annotations, ...imported];
+        this.#painted = [
+          ...this.#painted,
+          ...imported
+            .filter((a): a is TextBoxAnnotation => a.kind === 'text')
+            .map((a) => ({ id: a.id, page: a.page, rect: { ...a.rect } })),
+        ];
         this.#syncToolbar();
       }
     } catch (err) {
@@ -1126,6 +1157,27 @@ class PdfEditor implements EditorInstance {
         e.stopPropagation();
         this.#removeRedaction(redaction.id);
       });
+      fragment.appendChild(el);
+    }
+
+    /*
+     * What the reader painted, where we are about to draw something else. First
+     * into the fragment, so everything below is drawn over it.
+     */
+    for (const entry of this.#painted) {
+      if (entry.page !== view.source) continue;
+      const ours = this.#annotations.find((a) => a.id === entry.id);
+      const stale = !ours || !ours.imported || this.#editor?.draft.id === entry.id;
+      if (!stale) continue;
+
+      const box = rectToCss(viewport, entry.rect);
+      const el = document.createElement('div');
+      el.className = 'ul-pdf-painted-cover';
+      el.style.background = PdfEditor.#groundBehind(view, entry.rect);
+      el.style.left = `${box.left}px`;
+      el.style.top = `${box.top}px`;
+      el.style.width = `${box.width}px`;
+      el.style.height = `${box.height}px`;
       fragment.appendChild(el);
     }
 

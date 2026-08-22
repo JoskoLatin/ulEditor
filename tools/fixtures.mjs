@@ -175,6 +175,54 @@ export function makeToUnicodePdf(text = 'Name and surname', opts = {}) {
 }
 
 /**
+ * A PDF that already carries a text annotation, with the appearance stream a
+ * reader draws it from.
+ *
+ * Needed because that is a document with **two** drawings of the same words: the
+ * reader paints the appearance stream onto the page, and the editor draws its own
+ * editable copy over it. While they agree it looks like one thing — move the box
+ * and both become visible at once. Nothing else in these fixtures produces that.
+ *
+ * @param {string} note the text of the annotation
+ * @param {string} body the text drawn on the page itself
+ * @returns {string}
+ */
+export function makeAnnotatedPdf(note = 'Josko Latin', body = 'Name and surname') {
+  const appearance = `/Tx BMC q BT 0 0 0 rg /Helv 14 Tf 2 5 Td (${note}) Tj ET Q EMC`;
+  const stream = `BT /F1 22 Tf 30 150 Td (${body}) Tj ET`;
+  // Wide enough for the text at 14 pt; the exact width does not matter, only
+  // that the reader and the editor agree on the rectangle.
+  const width = Math.round(note.length * 8 + 8);
+
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R' +
+      '/Resources<</Font<</F1 5 0 R>>>>/Annots[6 0 R]>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+    `<</Type/Annot/Subtype/FreeText/Rect[40 60 ${40 + width} 82]/F 4` +
+      `/Contents (${note})/DA (0 0 0 rg /Helv 14 Tf)/AP<</N 7 0 R>>>>`,
+    `<</Type/XObject/Subtype/Form/BBox[0 0 ${width} 22]` +
+      `/Resources<</Font<</Helv 5 0 R>>>>/Length ${appearance.length}>>\n` +
+      `stream\n${appearance}\nendstream`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body_, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body_}\nendobj\n`;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
+/**
  * A multi-page PDF where each page carries its own label, so after a reorder it
  * can be verified that it really landed in the right place.
  * @param {number} count the number of pages
