@@ -320,8 +320,8 @@ pub fn run() {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
         /* Imported here rather than at the top of the file: on Android neither
-           this block nor the macOS one below is compiled, and an import nothing
-           uses is an error under `-D warnings`. */
+        this block nor the macOS one below is compiled, and an import nothing
+        uses is an error under `-D warnings`. */
         use tauri::Emitter;
         let paths = paths_from(argv.into_iter());
         if !paths.is_empty() {
