@@ -181,9 +181,13 @@ export function findEditableLine(
  * actionable; "there is no ć in this document's font" is — the person can decide
  * to write the word another way, or to accept the change.
  */
-/** A space has to be said in words; on its own it looks like a missing word. */
+/**
+ * A space has to be said in words; printed as itself it looks like a gap where
+ * a letter should be. Without an article, so it reads in the sentence it goes
+ * into: "the font of this document has no space".
+ */
 function nameOf(char: string): string {
-  return char === ' ' ? t('a space') : char;
+  return char === ' ' ? t('space') : char;
 }
 
 export function fallbackWarning(line: EditableLine, chars: string[]): string {
