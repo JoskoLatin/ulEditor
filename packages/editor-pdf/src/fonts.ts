@@ -13,6 +13,7 @@
 import regularUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url';
 import boldUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url';
 import italicUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Italic.ttf?url';
+import boldItalicUrl from 'pdfjs-dist/standard_fonts/LiberationSans-BoldItalic.ttf?url';
 
 import { FONT_FAMILY, TEXT_FACES, type FontLoader, type TextFace } from './text.js';
 
@@ -20,6 +21,7 @@ const URLS: Record<TextFace, string> = {
   sans: regularUrl,
   'sans-bold': boldUrl,
   'sans-italic': italicUrl,
+  'sans-bold-italic': boldItalicUrl,
 };
 
 /** The same origin as the application — the CSP allows `'self'`, and offline use survives. */

@@ -47,6 +47,7 @@ import {
   type TextBoxAnnotation,
 } from './annotations.js';
 import { ensureWebFont, loadFontBytes } from './fonts.js';
+import { icon } from './icons.js';
 import { fallbackWarning, findEditableLine, type EditableLine } from './edit.js';
 import { applyRetype, changedSpan, unwritable } from './retype.js';
 import { previewRedaction, type Redaction } from './redact.js';
@@ -56,10 +57,12 @@ import {
   TEXT_FACES,
   TEXT_PADDING,
   TEXT_SIZES,
+  faceFor,
   layoutTextBox,
   linesOf,
   loadFace,
   standardWidths,
+  switchesOf,
   topOf,
   type FaceMetrics,
   type StandardWidths,
@@ -92,6 +95,35 @@ const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
 type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'edit' | 'redact';
+
+/**
+ * Which font the text will be written in.
+ *
+ * Two entries and not a list of names, because there are only two answers a PDF
+ * can honestly give: the font the line is already drawn with, or the one we
+ * carry and embed. Anything else would need a font file we do not have.
+ */
+type TextFamily = 'sans' | 'document';
+
+/** Not translated: it is the name of the font, and a name is the same everywhere. */
+const OUR_FONT_LABEL = 'Liberation Sans';
+
+/**
+ * The name of a document font, as a person would write it.
+ *
+ * `/BaseFont` gives things like `ABCDEF+BookAntiqua-Bold`: a subset prefix that
+ * means nothing outside the file, the family run together, and the cut appended.
+ * The prefix and the cut go — the cut is already shown by the two switches — and
+ * the family is given its spaces back.
+ */
+function familyNameOf(baseFont: string): string {
+  const bare = baseFont.replace(/^[A-Z]{6}\+/, '').split(/[-,]/)[0] ?? baseFont;
+  const spaced = bare.replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+  return spaced.length > 0 ? spaced : baseFont;
+}
+
+/** Distinguishes the `<datalist>` of one open document from another's. */
+let instances = 0;
 
 /** Fewer pixels than this is not a drag but a missed click. */
 const REDACT_MIN_SIZE = 6;
@@ -209,8 +241,13 @@ class PdfEditor implements EditorInstance {
   #tool: Tool = 'select';
   #color: Rgb = PALETTE[0]!.color;
 
+  #instance = ++instances;
+
   #textSize = DEFAULT_TEXT_SIZE;
   #textFace: TextFace = 'sans';
+  #textUnderline = false;
+  /** Which of the two fonts the toolbar is offering; see `TextFamily`. */
+  #textFamily: TextFamily = 'sans';
   /** Text has a colour of its own: yellow works as a highlight, not as a letter. */
   #textColor: Rgb = [0, 0, 0];
   /** The metrics of loaded faces; empty until a font is needed. */
@@ -235,6 +272,16 @@ class PdfEditor implements EditorInstance {
     metrics: FaceMetrics;
     /** The area of the source line this edit replaces. */
     replaces: Rect | null;
+    /** The font the result will be written in — the document's own, or ours. */
+    family: TextFamily;
+    /**
+     * How the text looked when it was opened.
+     *
+     * Kept so two questions can be answered later: whether the style was changed
+     * at all — which decides whether the line can go back into the page as it
+     * was — and what to put back if the person returns to the original font.
+     */
+    style: { size: number; face: TextFace; underline: boolean; color: Rgb };
     /**
      * The line being rewritten, when there is one.
      *
@@ -350,30 +397,48 @@ class PdfEditor implements EditorInstance {
     this.#emitStatus();
   }
 
+  /**
+   * The bar over the page.
+   *
+   * Arranged the way every document program arranges one, and for the reason
+   * they all landed on it: the view first, then where you are in the document,
+   * then how large it is drawn, then what the pointer does, then how what you
+   * type looks. Groups are separated by a rule so a control can be found by its
+   * neighbourhood rather than by reading every icon in the row.
+   */
   #buildToolbar(): HTMLElement {
     const bar = document.createElement('div');
     bar.className = 'ul-pdf-toolbar';
 
-    const button = (label: string, title: string, onClick: () => void) => {
+    /* The title is the accessible name as well: an icon has no text of its own,
+       and a button a screen reader announces as "button" is a dead end. */
+    const iconButton = (name: string, title: string, onClick: () => void) => {
       const b = document.createElement('button');
       b.className = 'ul-pdf-btn';
-      b.textContent = label;
+      b.appendChild(icon(name));
       b.title = title;
+      b.setAttribute('aria-label', title);
       b.addEventListener('click', onClick);
       return b;
     };
     const sep = () => {
-      const s = document.createElement('span');
-      s.className = 'sep';
-      return s;
+      const el = document.createElement('span');
+      el.className = 'sep';
+      return el;
+    };
+    const group = (className: string, ...children: Node[]) => {
+      const el = document.createElement('span');
+      el.className = `ul-pdf-group ${className}`;
+      el.append(...children);
+      return el;
     };
 
-    const railToggle = button('▤', t('Pages — rotate, delete, reorder'), () =>
+    const railToggle = iconButton('pages', t('Pages — rotate, delete, reorder'), () =>
       this.toggleRail(),
     );
 
-    const prev = button('‹', t('Previous page'), () => this.goToPage(this.#current - 1));
-    const next = button('›', t('Next page'), () => this.goToPage(this.#current + 1));
+    const prev = iconButton('prev', t('Previous page'), () => this.goToPage(this.#current - 1));
+    const next = iconButton('next', t('Next page'), () => this.goToPage(this.#current + 1));
 
     const input = document.createElement('input');
     input.className = 'ul-pdf-page-input';
@@ -388,42 +453,34 @@ class PdfEditor implements EditorInstance {
 
     const total = document.createElement('span');
     total.className = 'ul-pdf-total';
-    total.style.padding = '0 4px';
 
-    const zoomOut = button('−', t('Zoom out (Ctrl + wheel)'), () => this.zoomBy(-1));
-    const zoomIn = button('+', t('Zoom in (Ctrl + wheel)'), () => this.zoomBy(1));
+    const zoomOut = iconButton('zoomOut', t('Zoom out (Ctrl + wheel)'), () => this.zoomBy(-1));
+    const zoomIn = iconButton('zoomIn', t('Zoom in (Ctrl + wheel)'), () => this.zoomBy(1));
     const zoomLabel = document.createElement('span');
-    zoomLabel.style.minWidth = '44px';
-    zoomLabel.style.textAlign = 'center';
+    zoomLabel.className = 'ul-pdf-zoom-label';
     this.#zoomLabel = zoomLabel;
 
-    const fitWidth = button(t('Width'), t('Fit width'), () => this.setZoomMode('fit-width'));
-    const fitPage = button(t('Page'), t('Fit page'), () => this.setZoomMode('fit-page'));
+    const fitWidth = iconButton('fitWidth', t('Fit width'), () => this.setZoomMode('fit-width'));
+    const fitPage = iconButton('fitPage', t('Fit page'), () => this.setZoomMode('fit-page'));
 
-    const tools: { tool: Tool; label: string; title: string }[] = [
-      { tool: 'select', label: '⌖', title: t('Select and highlight text') },
-      { tool: 'highlight', label: '▬', title: t('Highlight selected text') },
-      { tool: 'note', label: '✎', title: t('Note — click the page') },
-      { tool: 'ink', label: '〰', title: t('Freehand drawing') },
-      { tool: 'text', label: 'T', title: t('Add text — click where it should go') },
-      /*
-       * Two characters where the others have one, and deliberately: this is the
-       * tool people come looking for, and `T` with a pencil says what it does
-       * without a legend. A single glyph for "rewrite" does not exist that a
-       * person would read correctly on sight.
-       */
-      { tool: 'edit', label: 'T✎', title: t('Edit text — click a line of the document') },
-      { tool: 'redact', label: '⌫', title: t('Erase text — drag over what should go') },
+    const tools: { tool: Tool; icon: string; title: string }[] = [
+      { tool: 'select', icon: 'cursor', title: t('Select and highlight text') },
+      { tool: 'highlight', icon: 'highlight', title: t('Highlight selected text') },
+      { tool: 'note', icon: 'note', title: t('Note — click the page') },
+      { tool: 'ink', icon: 'ink', title: t('Freehand drawing') },
+      { tool: 'text', icon: 'textAdd', title: t('Add text — click where it should go') },
+      { tool: 'edit', icon: 'textEdit', title: t('Edit text — click a line of the document') },
+      { tool: 'redact', icon: 'erase', title: t('Erase text — drag over what should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
     /* A class, not an inline style: on a narrow screen the bar turns upright and
        the group has to wrap, which an inline style would override. */
     const toolGroup = document.createElement('span');
     toolGroup.className = 'ul-pdf-tools';
-    for (const { tool, label, title } of tools) {
-      const b = button(label, title, () => this.setTool(tool));
+    for (const entry of tools) {
+      const b = iconButton(entry.icon, entry.title, () => this.setTool(entry.tool));
       b.classList.add('ul-pdf-tool');
-      toolButtons.set(tool, b);
+      toolButtons.set(entry.tool, b);
       toolGroup.appendChild(b);
     }
 
@@ -433,43 +490,72 @@ class PdfEditor implements EditorInstance {
     for (const { name, color } of PALETTE) {
       const b = document.createElement('button');
       b.className = 'ul-pdf-swatch';
-      b.title = name;
-      b.setAttribute('aria-label', `Boja: ${name}`);
+      b.title = t(name);
+      b.setAttribute('aria-label', t('Colour: {name}', { name: t(name) }));
       b.style.background = cssRgb(color);
       b.addEventListener('click', () => this.setColor(color));
       swatches.appendChild(b);
       swatchButtons.push({ el: b, color });
     }
 
-    /* The face and the size concern writing text only, so CSS reveals them once
-       that tool is selected — otherwise the bar would carry two controls that do
-       nothing ninety per cent of the time. */
+    /* The font, the size and the three switches concern writing text only, so CSS
+       reveals them once that tool is selected — otherwise the bar would carry
+       five controls that do nothing most of the time. */
     const textOpts = document.createElement('span');
     textOpts.className = 'ul-pdf-text-opts';
 
-    const faceSelect = document.createElement('select');
-    faceSelect.className = 'ul-pdf-select';
-    faceSelect.setAttribute('aria-label', t('Font style'));
-    for (const { id, label } of TEXT_FACES) {
-      const option = document.createElement('option');
-      option.value = id;
-      option.textContent = t(label);
-      faceSelect.appendChild(option);
-    }
-    faceSelect.addEventListener('change', () => this.setTextFace(faceSelect.value as TextFace));
+    const familySelect = document.createElement('select');
+    familySelect.className = 'ul-pdf-select ul-pdf-family';
+    familySelect.title = t('Font');
+    familySelect.setAttribute('aria-label', t('Font'));
+    familySelect.addEventListener('change', () => this.setTextFamily(familySelect.value));
 
-    const sizeSelect = document.createElement('select');
-    sizeSelect.className = 'ul-pdf-select';
-    sizeSelect.setAttribute('aria-label', t('Font size'));
+    /*
+     * A field with suggestions rather than a list of sizes: a line of a real
+     * document is routinely set in 9.96 pt, and a list of round numbers can
+     * neither show that nor put it back unchanged.
+     */
+    const sizes = document.createElement('datalist');
+    sizes.id = `ul-pdf-sizes-${this.#instance}`;
     for (const size of TEXT_SIZES) {
       const option = document.createElement('option');
       option.value = String(size);
-      option.textContent = String(size);
-      sizeSelect.appendChild(option);
+      sizes.appendChild(option);
     }
-    sizeSelect.addEventListener('change', () => this.setTextSize(Number(sizeSelect.value)));
 
-    textOpts.append(faceSelect, sizeSelect);
+    const sizeInput = document.createElement('input');
+    sizeInput.className = 'ul-pdf-size';
+    sizeInput.setAttribute('list', sizes.id);
+    sizeInput.inputMode = 'decimal';
+    sizeInput.title = t('Font size');
+    sizeInput.setAttribute('aria-label', t('Font size'));
+    const commitSize = () => {
+      // A comma is what a Croatian keyboard produces for a decimal point.
+      const value = Number(sizeInput.value.replace(',', '.'));
+      if (Number.isFinite(value) && value > 0) this.setTextSize(value);
+      else this.#syncToolbar();
+    };
+    sizeInput.addEventListener('change', commitSize);
+    sizeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') commitSize();
+    });
+
+    const boldButton = iconButton('bold', t('Bold'), () =>
+      this.setTextBold(!switchesOf(this.#textFace).bold),
+    );
+    const italicButton = iconButton('italic', t('Italic'), () =>
+      this.setTextItalic(!switchesOf(this.#textFace).italic),
+    );
+    const underlineButton = iconButton('underline', t('Underline'), () =>
+      this.setTextUnderline(!this.#textUnderline),
+    );
+
+    textOpts.append(
+      familySelect,
+      sizeInput,
+      sizes,
+      group('ul-pdf-switches', boldButton, italicButton, underlineButton),
+    );
 
     const count = document.createElement('span');
     count.className = 'ul-pdf-count';
@@ -477,12 +563,18 @@ class PdfEditor implements EditorInstance {
     spacer.className = 'spacer';
 
     bar.append(
-      railToggle, sep(),
-      prev, input, total, next, sep(),
-      zoomOut, zoomLabel, zoomIn, sep(),
-      fitWidth, fitPage, sep(),
-      toolGroup, swatches, textOpts,
-      spacer, count,
+      group('ul-pdf-view', railToggle),
+      sep(),
+      group('ul-pdf-nav', prev, input, total, next),
+      sep(),
+      group('ul-pdf-zoom', zoomOut, zoomLabel, zoomIn, fitWidth, fitPage),
+      sep(),
+      toolGroup,
+      sep(),
+      swatches,
+      textOpts,
+      spacer,
+      count,
     );
 
     this.#syncToolbar = () => {
@@ -497,8 +589,32 @@ class PdfEditor implements EditorInstance {
       for (const { el, color } of swatchButtons) {
         el.dataset.active = String(color.every((c, i) => Math.abs(c - active[i]!) < 0.001));
       }
-      faceSelect.value = this.#textFace;
-      sizeSelect.value = String(this.#textSize);
+
+      /* The list changes only when a line of the document is opened or closed;
+         rebuilding it on every keystroke would shut it under the user's hand. */
+      const fonts = this.#fontChoices();
+      const signature = fonts.map((f) => `${f.value}=${f.label}`).join('|');
+      if (familySelect.dataset.signature !== signature) {
+        familySelect.dataset.signature = signature;
+        familySelect.replaceChildren(
+          ...fonts.map((f) => {
+            const option = document.createElement('option');
+            option.value = f.value;
+            option.textContent = f.label;
+            return option;
+          }),
+        );
+      }
+      familySelect.value = this.#textFamily;
+
+      /* Rounded, because a line set in 9.9626 pt is set in 9.96 pt as far as
+         anybody reading the bar is concerned. */
+      sizeInput.value = String(Math.round(this.#textSize * 100) / 100);
+
+      const cut = switchesOf(this.#textFace);
+      boldButton.dataset.active = String(cut.bold);
+      italicButton.dataset.active = String(cut.italic);
+      underlineButton.dataset.active = String(this.#textUnderline);
 
       const parts: string[] = [];
       if (this.#annotations.length) parts.push(`${this.#annotations.length} anot.`);
@@ -508,6 +624,22 @@ class PdfEditor implements EditorInstance {
     };
 
     return bar;
+  }
+
+  /**
+   * What the font list offers.
+   *
+   * Ours always, because it is what a new box is written in and the only one
+   * certain to have the Croatian letters. The document's own font as well while
+   * one of its lines is open — and first, because keeping it is what the person
+   * almost always wants: choosing it means the line goes back into the page in
+   * its original letterforms, with nothing changed about it but the words.
+   */
+  #fontChoices(): { value: TextFamily; label: string }[] {
+    const ours = { value: 'sans' as const, label: OUR_FONT_LABEL };
+    const line = this.#editor?.line;
+    if (!line) return [ours];
+    return [{ value: 'document' as const, label: familyNameOf(line.baseFont) }, ours];
   }
 
   #syncToolbar: () => void = () => {};
@@ -877,6 +1009,7 @@ class PdfEditor implements EditorInstance {
   setColor(color: Rgb): void {
     if (this.#tool === 'text' || this.#tool === 'edit' || this.#editor) {
       this.#textColor = color;
+      this.#leaveDocumentFont();
       this.#applyToEditedBox({ color });
     } else {
       this.#color = color;
@@ -893,6 +1026,7 @@ class PdfEditor implements EditorInstance {
 
   setTextFace(face: TextFace): void {
     this.#textFace = face;
+    this.#leaveDocumentFont();
     void this.#face(face).then(() => this.#applyToEditedBox({ face }));
     this.#syncToolbar();
   }
@@ -900,8 +1034,71 @@ class PdfEditor implements EditorInstance {
   setTextSize(size: number): void {
     if (!Number.isFinite(size) || size <= 0) return;
     this.#textSize = size;
+    this.#leaveDocumentFont();
     this.#applyToEditedBox({ size });
     this.#syncToolbar();
+  }
+
+  /** Bold and italic are switches, and a switch has to work on top of the other one. */
+  setTextBold(on: boolean): void {
+    this.setTextFace(faceFor(on, switchesOf(this.#textFace).italic));
+  }
+
+  setTextItalic(on: boolean): void {
+    this.setTextFace(faceFor(switchesOf(this.#textFace).bold, on));
+  }
+
+  setTextUnderline(on: boolean): void {
+    this.#textUnderline = on;
+    this.#leaveDocumentFont();
+    this.#applyToEditedBox({ underline: on });
+    this.#syncToolbar();
+  }
+
+  /**
+   * Which of the two fonts the text is written in.
+   *
+   * Going back to the document's own font takes the cut, the size and the colour
+   * back with it. Otherwise "the original font" would mean the original font at
+   * a weight and a size the line never had — and the line could not be put back
+   * into the page as it was, which is the whole point of choosing it.
+   */
+  setTextFamily(value: string): void {
+    const family: TextFamily = value === 'document' ? 'document' : 'sans';
+    this.#textFamily = family;
+
+    const editor = this.#editor;
+    if (editor) editor.family = family;
+
+    const style = editor?.style;
+    if (family === 'document' && style) {
+      this.#textSize = style.size;
+      this.#textFace = style.face;
+      this.#textUnderline = style.underline;
+      this.#textColor = style.color;
+      void this.#face(style.face).then(() =>
+        this.#applyToEditedBox({
+          size: style.size,
+          face: style.face,
+          underline: style.underline,
+          color: style.color,
+        }),
+      );
+    }
+
+    this.#syncToolbar();
+  }
+
+  /**
+   * A cut, a size or a colour the document's font cannot give moves the choice
+   * to ours — and the list says so at the moment it happens, rather than leaving
+   * the original font's name standing over text that will not be written in it.
+   */
+  #leaveDocumentFont(): void {
+    if (this.#textFamily !== 'document') return;
+    this.#textFamily = 'sans';
+    if (this.#editor) this.#editor.family = 'sans';
+    void this.#face(this.#textFace);
   }
 
   get tool(): Tool {
@@ -1723,6 +1920,7 @@ class PdfEditor implements EditorInstance {
       text: '',
       size: this.#textSize,
       face: this.#textFace,
+      underline: this.#textUnderline,
     });
   }
 
@@ -1793,6 +1991,7 @@ class PdfEditor implements EditorInstance {
         text: line.text,
         size: line.size,
         face,
+        underline: false,
       },
       { rect: line.bounds, line },
     );
@@ -1830,6 +2029,7 @@ class PdfEditor implements EditorInstance {
       fontStyle: spec?.style ?? 'normal',
       fontSize: `${box.size * this.#scale}px`,
       lineHeight: `${lineHeight * this.#scale}px`,
+      textDecoration: box.underline === true ? 'underline' : 'none',
       padding: `${TEXT_PADDING * this.#scale}px`,
     };
   }
@@ -1926,6 +2126,18 @@ class PdfEditor implements EditorInstance {
     warning.className = 'ul-pdf-text-warning';
     warning.hidden = true;
 
+    /*
+     * The bar shows the style of the text now under the caret, not the style of
+     * the last thing that was typed. Clicking a line of a document and reading
+     * some other font's name off the toolbar would be a lie about what is about
+     * to be written.
+     */
+    this.#textFamily = replaces ? 'document' : 'sans';
+    this.#textFace = draft.face;
+    this.#textSize = draft.size;
+    this.#textUnderline = draft.underline === true;
+    this.#textColor = draft.color;
+
     this.#editor = {
       view,
       metrics,
@@ -1933,6 +2145,13 @@ class PdfEditor implements EditorInstance {
       warning,
       cover,
       draft,
+      family: this.#textFamily,
+      style: {
+        size: draft.size,
+        face: draft.face,
+        underline: draft.underline === true,
+        color: draft.color,
+      },
       replaces: replaces?.rect ?? null,
       line: replaces?.line ?? null,
       notes: [],
@@ -1952,10 +2171,23 @@ class PdfEditor implements EditorInstance {
         this.#finishTextEdit();
       }
     });
-    input.addEventListener('blur', () => this.#finishTextEdit());
+    /*
+     * Reaching for the bar is not leaving the text.
+     *
+     * Every control up there — the font, the size, bold, the colour — is about
+     * the words under the caret, and a click on one used to end the edit before
+     * it could take effect. The change then applied to the next box instead of
+     * this one, which reads as a control that does nothing.
+     */
+    input.addEventListener('blur', (event) => {
+      const next = (event as FocusEvent).relatedTarget;
+      if (next instanceof HTMLElement && next.closest('.ul-pdf-toolbar')) return;
+      this.#finishTextEdit();
+    });
 
     input.focus();
     this.#onTextInput();
+    this.#syncToolbar();
   }
 
   /** The box follows the text while typing — it grows to the right and downwards. */
@@ -1996,7 +2228,10 @@ class PdfEditor implements EditorInstance {
        bytes, so a character we could not have produced ourselves is no reason
        to refuse an edit somewhere else in the same line. */
     const unavailable = editor.line
-      ? unwritable(editor.line.writer, changedSpan(editor.line.text, text))
+      ? unwritable(
+          editor.line.writer,
+          changedSpan(editor.line.text, text, editor.line.ligatures),
+        )
       : [];
     if (editor.line && unavailable.length > 0) {
       messages.push(fallbackWarning(editor.line, unavailable));
@@ -2025,8 +2260,10 @@ class PdfEditor implements EditorInstance {
     editor.warning.style.top = `${geometry.top + geometry.height + 4}px`;
   }
 
-  /** Changes the face, size or colour of the box currently being typed. */
-  #applyToEditedBox(patch: Partial<Pick<TextBoxAnnotation, 'size' | 'face' | 'color'>>): void {
+  /** Changes the face, size, rule or colour of the box currently being typed. */
+  #applyToEditedBox(
+    patch: Partial<Pick<TextBoxAnnotation, 'size' | 'face' | 'color' | 'underline'>>,
+  ): void {
     const editor = this.#editor;
     if (!editor) return;
 
@@ -2038,6 +2275,14 @@ class PdfEditor implements EditorInstance {
 
     Object.assign(editor.input.style, this.#textStyle(editor.draft, editor.metrics));
     this.#onTextInput();
+
+    /* And the caret goes back where it was, so the next thing typed lands in the
+       text rather than in the button that was just pressed. A field or a list
+       keeps it: those are still being used, and taking the focus off a list
+       mid-keystroke would make it unusable from the keyboard. */
+    const active = document.activeElement;
+    const stillInUse = active instanceof HTMLSelectElement || active instanceof HTMLInputElement;
+    if (!stillInUse && active !== editor.input) editor.input.focus();
   }
 
   /**
@@ -2055,6 +2300,10 @@ class PdfEditor implements EditorInstance {
     editor.warning.remove();
     editor.cover?.remove();
 
+    // With nothing open, the document's own font is not one of the choices.
+    this.#textFamily = 'sans';
+    this.#syncToolbar();
+
     const { draft, origin, replaces, line } = editor;
     const empty = draft.text.trim().length === 0;
 
@@ -2065,7 +2314,20 @@ class PdfEditor implements EditorInstance {
      * [`retype.ts`](./retype.ts) for why the other one exists.
      */
     if (replaces && line) {
-      if (draft.text === line.text) {
+      /*
+       * A change of style cannot be had in the document's own font: it draws one
+       * cut, at one size, in one colour, and asking it for another would put the
+       * old letterforms back over the new intent. So a restyled line takes the
+       * other route, where our font honours exactly what the toolbar shows.
+       */
+      const restyled =
+        editor.family !== 'document' ||
+        draft.size !== editor.style.size ||
+        draft.face !== editor.style.face ||
+        draft.underline === true ||
+        !draft.color.every((c, i) => c === editor.style.color[i]);
+
+      if (draft.text === line.text && !restyled) {
         // Opened and closed again. Not an edit, and not a step in the history.
         this.#renderAllAnnotations();
         return;
@@ -2073,8 +2335,9 @@ class PdfEditor implements EditorInstance {
 
       const inPlace =
         !empty &&
+        !restyled &&
         !NEWLINE.test(draft.text) &&
-        unwritable(line.writer, changedSpan(line.text, draft.text)).length === 0;
+        unwritable(line.writer, changedSpan(line.text, draft.text, line.ligatures)).length === 0;
       if (inPlace) {
         const done = this.#retypeInPlace(line, draft, replaces);
         this.#committing = done;
@@ -2103,6 +2366,7 @@ class PdfEditor implements EditorInstance {
       origin.text === draft.text &&
       origin.size === draft.size &&
       origin.face === draft.face &&
+      (origin.underline === true) === (draft.underline === true) &&
       origin.color.every((c, i) => c === draft.color[i]) &&
       origin.rect.x === draft.rect.x &&
       origin.rect.y === draft.rect.y;

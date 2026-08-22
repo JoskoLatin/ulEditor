@@ -425,6 +425,100 @@ try {
   check('the label beside it is still there', rowText.includes('Total'));
   check('and no box was glued on top', (await row.locator('.ul-pdf-ann-text').count()) === 0);
 
+  /* — the writing controls — */
+
+  /*
+   * The bar has to describe the text under the caret before it can change it.
+   * A font name that is not the line's own, or a size that is not the line's
+   * own, means every one of these controls is about to lie about its effect.
+   */
+  await row.locator('.ul-pdf-tool[title*="Edit text"]').click();
+  await page.mouse.click(figure.x + Math.min(figure.width / 2, 20), figure.y + figure.height / 2);
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+
+  const family = row.locator('.ul-pdf-family');
+  check(
+    'the font list offers the document\u2019s own font first',
+    (await family.inputValue()) === 'document' &&
+      (await family.locator('option').first().innerText()) === 'Inter',
+    `${await family.inputValue()} \u00b7 ${await family.locator('option').first().innerText()}`,
+  );
+  check(
+    'and ours as the other choice',
+    (await family.locator('option').nth(1).innerText()) === 'Liberation Sans',
+    await family.locator('option').nth(1).innerText(),
+  );
+  check(
+    'the size field shows the size the line is set in',
+    (await row.locator('.ul-pdf-size').inputValue()) === '12',
+    await row.locator('.ul-pdf-size').inputValue(),
+  );
+
+  const styleOf = async (prop) =>
+    page.locator('.ul-pdf-text-input').evaluate(
+      (el, name) => getComputedStyle(el).getPropertyValue(name),
+      prop,
+    );
+
+  await row.locator('.ul-pdf-btn[title*="Bold"]').click();
+  check('bold shows in the field while typing', (await styleOf('font-weight')) === '700', await styleOf('font-weight'));
+  check(
+    'and the font list says the cut cannot come from the document\u2019s font',
+    (await family.inputValue()) === 'sans',
+    await family.inputValue(),
+  );
+
+  await row.locator('.ul-pdf-btn[title*="Underline"]').click();
+  check(
+    'the rule shows in the field too',
+    (await styleOf('text-decoration-line')) === 'underline',
+    await styleOf('text-decoration-line'),
+  );
+
+  /* Against the field before the change, not against 20 px: the field is drawn at
+     the page's zoom, and the page here is magnified more than three times. */
+  const before = parseFloat(await styleOf('font-size'));
+  await row.locator('.ul-pdf-size').fill('20');
+  await row.locator('.ul-pdf-size').press('Enter');
+  const after = parseFloat(await styleOf('font-size'));
+  check(
+    'and a size typed into the field is the size on the page',
+    Math.abs(after / before - 20 / 12) < 0.02,
+    `${before.toFixed(1)} → ${after.toFixed(1)} px, expected × ${(20 / 12).toFixed(2)}`,
+  );
+
+  /* Choosing the document's font back has to undo all three, or the choice would
+     mean the original font at a weight and a size the line never had. */
+  await family.selectOption('document');
+  check(
+    'going back to the document\u2019s font puts the cut back',
+    (await styleOf('font-weight')) === '400',
+    await styleOf('font-weight'),
+  );
+  check(
+    'and the size with it',
+    (await row.locator('.ul-pdf-size').inputValue()) === '12',
+    await row.locator('.ul-pdf-size').inputValue(),
+  );
+  check(
+    'and the rule',
+    (await styleOf('text-decoration-line')) === 'none',
+    await styleOf('text-decoration-line'),
+  );
+
+  /* Restyled, the line cannot go back into the page in its own letterforms — so
+     it is replaced, and the box that replaces it carries the style. */
+  await row.locator('.ul-pdf-btn[title*="Bold"]').click();
+  await page.keyboard.press('Escape');
+  await until(async () => (await row.locator('.ul-pdf-ann-text').count()) === 1, 15000);
+  const restyled = row.locator('.ul-pdf-ann-text').first();
+  check(
+    'a restyled line comes back as bold text',
+    (await restyled.evaluate((el) => getComputedStyle(el).fontWeight)) === '700',
+    await restyled.evaluate((el) => getComputedStyle(el).fontWeight),
+  );
+
+  await page.keyboard.press('Control+Z');
   await page.keyboard.press('Control+Z');
   await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) === 0);
   await page.locator('.tab').last().locator('.close').click();
@@ -717,6 +811,24 @@ try {
   /* — konzola — */
   const ignorable = (text) => text.includes('Download the React DevTools') || text.includes('[vite]');
   const real = consoleErrors.filter((t) => !ignorable(t));
+  /*
+   * The bar used to carry `⌖`, `▬`, `〰` and `T✎` — typographic characters doing
+   * the work of pictures, at the mercy of whatever font the system happens to
+   * have. Every one of them is a drawing now, and this is what keeps it that way.
+   */
+  const bareButtons = await page.evaluate(() =>
+    [...document.querySelectorAll('.ul-pdf-toolbar .ul-pdf-btn')]
+      .filter((b) => !b.querySelector('svg'))
+      .map((b) => b.title || b.textContent)
+      .slice(0, 6),
+  );
+  const buttonCount = await page.locator('.ul-pdf-toolbar .ul-pdf-btn').count();
+  check(
+    'every button in the bar carries a drawn icon',
+    buttonCount > 10 && bareButtons.length === 0,
+    `${buttonCount} buttons${bareButtons.length ? ` — bare: ${bareButtons.join(', ')}` : ''}`,
+  );
+
   check('no console errors', real.length === 0, real.slice(0, 3).join(' | '));
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message : String(err));

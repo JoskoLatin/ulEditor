@@ -32,19 +32,51 @@ export const fontkit: Fontkit =
   (fontkitModule as unknown as { default?: Fontkit }).default ??
   (fontkitModule as unknown as Fontkit);
 
-/** The faces we offer. Liberation Sans has four; bold italic is not needed. */
-export type TextFace = 'sans' | 'sans-bold' | 'sans-italic';
+/** The four cuts of Liberation Sans, which is what "bold" and "italic" pick between. */
+export type TextFace = 'sans' | 'sans-bold' | 'sans-italic' | 'sans-bold-italic';
 
-export const TEXT_FACES: { id: TextFace; label: string; weight: number; style: string }[] = [
-  { id: 'sans', label: 'Regular', weight: 400, style: 'normal' },
-  { id: 'sans-bold', label: 'Bold', weight: 700, style: 'normal' },
-  { id: 'sans-italic', label: 'Italic', weight: 400, style: 'italic' },
+export const TEXT_FACES: {
+  id: TextFace;
+  label: string;
+  weight: number;
+  style: string;
+  bold: boolean;
+  italic: boolean;
+}[] = [
+  { id: 'sans', label: 'Regular', weight: 400, style: 'normal', bold: false, italic: false },
+  { id: 'sans-bold', label: 'Bold', weight: 700, style: 'normal', bold: true, italic: false },
+  { id: 'sans-italic', label: 'Italic', weight: 400, style: 'italic', bold: false, italic: true },
+  {
+    id: 'sans-bold-italic',
+    label: 'Bold Italic',
+    weight: 700,
+    style: 'italic',
+    bold: true,
+    italic: true,
+  },
 ];
+
+/**
+ * Bold and italic as two switches rather than one list of four names.
+ *
+ * That is how every editor since the first one has put it, and it is the only
+ * arrangement in which "make this bold" stays one click on text that is already
+ * italic.
+ */
+export function faceFor(bold: boolean, italic: boolean): TextFace {
+  return TEXT_FACES.find((f) => f.bold === bold && f.italic === italic)?.id ?? 'sans';
+}
+
+/** What the two switches read as for a given cut. */
+export function switchesOf(face: TextFace): { bold: boolean; italic: boolean } {
+  const spec = TEXT_FACES.find((f) => f.id === face);
+  return { bold: spec?.bold ?? false, italic: spec?.italic ?? false };
+}
 
 /** The family the same font is registered under in the browser, so the view matches the file. */
 export const FONT_FAMILY = 'ulEditor Sans';
 
-export const TEXT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 24, 32];
+export const TEXT_SIZES = [6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 export const DEFAULT_TEXT_SIZE = 11;
 
 /** The padding from the box edge to the text, in points. */
@@ -260,6 +292,7 @@ export function appearanceContent(
   metrics: FaceMetrics,
   height: number,
   resource: string,
+  underline = false,
 ): string {
   const leading = metrics.lineHeight(size);
   const firstBaseline = height - TEXT_PADDING - metrics.ascent(size);
@@ -280,6 +313,32 @@ export function appearanceContent(
     if (line.length > 0) out.push(`${encodeLine(line)} Tj`);
   });
 
-  out.push('ET', 'Q');
+  out.push('ET');
+
+  /*
+   * The rule is drawn, not typed: PDF has no underline of its own, and every
+   * program that offers one fills a thin rectangle under the baseline. After
+   * `ET` because a filled rectangle is a path, and a path cannot be built inside
+   * a text object.
+   */
+  if (underline) {
+    out.push(`${round(r)} ${round(g)} ${round(b)} rg`);
+    lines.forEach((line, index) => {
+      const width = metrics.measure(line, size);
+      if (width <= 0) return;
+      const baseline = firstBaseline - leading * index;
+      out.push(
+        `${round(TEXT_PADDING)} ${round(baseline - UNDERLINE_DROP * size)} ` +
+          `${round(width)} ${round(UNDERLINE_WEIGHT * size)} re`,
+        'f',
+      );
+    });
+  }
+
+  out.push('Q');
   return out.join('\n');
 }
+
+/** How far under the baseline the rule sits, and how thick it is — both in ems. */
+const UNDERLINE_DROP = 0.11;
+const UNDERLINE_WEIGHT = 0.055;

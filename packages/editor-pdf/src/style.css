@@ -17,9 +17,9 @@
 .ul-pdf-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  height: 34px;
+  gap: 2px;
+  padding: 0 8px;
+  height: 38px;
   flex: none;
   background: var(--surface);
   border-bottom: 1px solid var(--rule);
@@ -38,9 +38,28 @@
 
 .ul-pdf-toolbar .sep {
   width: 1px;
-  height: 16px;
+  height: 18px;
   background: var(--rule);
-  margin: 0 6px;
+  margin: 0 5px;
+}
+
+/* Related controls sit together with no gap between them, so the eye reads the
+   bar as five short groups rather than as twenty separate buttons. */
+.ul-pdf-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.ul-pdf-total {
+  padding: 0 6px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ul-pdf-zoom-label {
+  min-width: 42px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .ul-pdf-toolbar .spacer {
@@ -48,10 +67,10 @@
 }
 
 .ul-pdf-btn {
-  height: 22px;
-  min-width: 22px;
-  padding: 0 7px;
-  border-radius: 3px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 5px;
+  border-radius: 6px;
   border: none;
   background: none;
   color: var(--ink-faint);
@@ -61,11 +80,18 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  transition: background 130ms, color 130ms;
+  transition: background 120ms, color 120ms;
 }
 .ul-pdf-btn:hover:not(:disabled) {
   background: var(--rule-soft);
   color: var(--ink);
+}
+.ul-pdf-btn:active:not(:disabled) {
+  background: var(--rule);
+}
+.ul-pdf-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
 .ul-pdf-btn:disabled {
   opacity: 0.4;
@@ -76,9 +102,17 @@
   color: var(--accent-ink);
 }
 
+/* The drawing keeps its own size whatever the button does around it. */
+.ul-pdf-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: block;
+}
+
 .ul-pdf-page-input {
-  width: 44px;
-  height: 22px;
+  width: 42px;
+  height: 24px;
   text-align: right;
   background: var(--ground);
   border: 1px solid var(--rule);
@@ -268,18 +302,14 @@
 
 .ul-pdf-tools {
   display: inline-flex;
-}
-
-.ul-pdf-tool {
-  font-size: 13px;
-  line-height: 1;
+  gap: 1px;
 }
 
 .ul-pdf-swatches {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 6px;
+  gap: 5px;
+  margin-left: 4px;
 }
 
 .ul-pdf-swatch {
@@ -488,22 +518,64 @@
   display: none;
   align-items: center;
   gap: 4px;
-  margin-left: 6px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--rule);
 }
 .ul-pdf[data-tool='text'] .ul-pdf-text-opts,
 .ul-pdf[data-tool='edit'] .ul-pdf-text-opts {
   display: inline-flex;
 }
 
-.ul-pdf-select {
-  height: 24px;
+.ul-pdf-select,
+.ul-pdf-size {
+  height: 26px;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 3px;
+  border-radius: 6px;
   color: var(--ink);
   font-family: var(--sans);
   font-size: 12px;
-  padding: 0 3px;
+  padding: 0 6px;
+  transition: border-color 120ms;
+}
+.ul-pdf-select:hover,
+.ul-pdf-size:hover {
+  border-color: var(--rule-strong);
+}
+.ul-pdf-select:focus,
+.ul-pdf-size:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+
+/* Wide enough for "Times New Roman"; a longer name is cut rather than allowed to
+   push the rest of the bar off the screen. */
+.ul-pdf-family {
+  min-width: 118px;
+  max-width: 168px;
+}
+
+.ul-pdf-size {
+  width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One control in three parts, the way bold, italic and underline have been shown
+   since the first toolbar: joined, so they read as three states of one thing. */
+.ul-pdf-switches {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 1px;
+  gap: 1px;
+}
+.ul-pdf-switches .ul-pdf-btn {
+  height: 22px;
+  min-width: 24px;
+  border-radius: 4px;
+  padding: 0;
 }
 
 .ul-pdf-ann-ink,
@@ -722,10 +794,25 @@
     border-right: 1px solid var(--rule);
   }
 
-  /* Direct children of the bar only: nested buttons (the colour swatches) have
-     a size of their own, and an imposed height turns them into ellipses. */
-  .ul-pdf-toolbar > button {
-    height: 36px;
+  /* The buttons only: the colour swatches have a size of their own, and an
+     imposed height would turn them into ellipses. */
+  .ul-pdf-toolbar .ul-pdf-btn {
+    height: 34px;
+  }
+
+  /* Upright, the groups have to stack as well or a group of five would run off
+     the side of a 58 px bar. */
+  .ul-pdf-group {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .ul-pdf-switches {
+    flex-wrap: nowrap;
+  }
+  .ul-pdf-switches .ul-pdf-btn {
+    height: 26px;
   }
 
   .ul-pdf-toolbar .sep {
@@ -755,17 +842,23 @@
     margin-left: 0;
   }
 
-  /* The face and the size one below the other; they do not fit side by side in a 48 px row. */
+  /* The font, the size and the switches one below the other; they do not fit
+     side by side in a 48 px row. */
   .ul-pdf[data-tool='text'] .ul-pdf-text-opts,
   .ul-pdf[data-tool='edit'] .ul-pdf-text-opts {
     display: flex;
     flex-direction: column;
     gap: 4px;
     margin-left: 0;
+    padding-left: 0;
+    border-left: none;
   }
 
-  .ul-pdf-select {
+  .ul-pdf-select,
+  .ul-pdf-size {
     width: 100%;
+    min-width: 0;
+    max-width: none;
     height: 30px;
   }
 

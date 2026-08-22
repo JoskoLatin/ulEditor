@@ -46,6 +46,7 @@ const FILES = {
   sans: 'LiberationSans-Regular.ttf',
   'sans-bold': 'LiberationSans-Bold.ttf',
   'sans-italic': 'LiberationSans-Italic.ttf',
+  'sans-bold-italic': 'LiberationSans-BoldItalic.ttf',
 };
 
 const loadFont = async (face) =>
@@ -100,10 +101,22 @@ const boxes = [
     face: 'sans-bold',
     rect: layoutTextBox(metrics, 'Bold', 14, { x: 60, top: 120 }),
   },
+  {
+    id: 'test-text-underlined',
+    kind: 'text',
+    page: 1,
+    color: [0, 0, 0],
+    createdAt: Date.UTC(2026, 7, 15, 12, 0, 0),
+    text: 'Underlined',
+    size: 12,
+    face: 'sans-bold-italic',
+    underline: true,
+    rect: layoutTextBox(metrics, 'Underlined', 12, { x: 60, top: 90 }),
+  },
 ];
 
 const written = await writeAnnotations(source, boxes, undefined, loadFont);
-check('both boxes were written', written.written === 2, `${written.written}`);
+check('all three boxes were written', written.written === 3, `${written.written}`);
 check('nothing is reported as a missing character', written.missingGlyphs.length === 0);
 
 /* ── parsing it back ─────────────────────────────────────────────────── */
@@ -123,7 +136,7 @@ if (annots instanceof PDFArray) {
 const freeText = dicts.filter(
   (d) => d.lookup(PDFName.of('Subtype'))?.asString?.() === '/FreeText',
 );
-check('both are of type FreeText', freeText.length === 2, `${freeText.length}`);
+check('all three are of type FreeText', freeText.length === 3, `${freeText.length}`);
 
 const first = freeText[0];
 if (first) {
@@ -197,13 +210,64 @@ if (first) {
   );
 }
 
+/* ── podcrtavanje ────────────────────────────────────────────────────── */
+
+/*
+ * PDF has no underline: the rule is a filled rectangle, and it has to be drawn
+ * after `ET`, because a path cannot be built inside a text object. A reader that
+ * meets `re` between `BT` and `ET` gives up on the whole stream, so the box
+ * would go blank — which is why this is checked in the bytes rather than trusted.
+ */
+const underlined = freeText[2];
+if (underlined) {
+  const ap = underlined.lookup(PDFName.of('AP'));
+  const normal = ap instanceof PDFDict ? ap.lookup(PDFName.of('N')) : null;
+  const dict = normal ? (normal.dict ?? normal) : null;
+  const stream = dict
+    ? new TextDecoder('latin1').decode(
+        String(dict.lookup(PDFName.of('Filter')) ?? '').includes('FlateDecode')
+          ? inflateSync(Buffer.from(normal.getContents()))
+          : Buffer.from(normal.getContents()),
+      )
+    : '';
+
+  const rule = /([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re\s*\nf/.exec(stream);
+  check('an underlined box draws a rule', !!rule, rule ? rule[0].replace(/\n/, ' ') : '(no re/f)');
+  check(
+    'the rule is outside the text object',
+    stream.indexOf('re') > stream.indexOf('ET'),
+    `ET at ${stream.indexOf('ET')}, re at ${stream.indexOf('re')}`,
+  );
+
+  const boldItalic = metricsOf('sans-bold-italic', await loadFont('sans-bold-italic'));
+  const expected = boldItalic.measure('Underlined', 12);
+  check(
+    'the rule is as wide as the text it sits under',
+    !!rule && Math.abs(Number(rule[3]) - expected) < 0.5,
+    rule ? `${rule[3]} against ${expected.toFixed(2)}` : '',
+  );
+  check(
+    'the rule sits below the baseline, and is thin',
+    !!rule && Number(rule[4]) > 0 && Number(rule[4]) < 1.2,
+    rule ? `${rule[4]} pt at 12 pt` : '',
+  );
+
+  const plain = freeText[0];
+  const plainAp = plain?.lookup(PDFName.of('AP'));
+  const plainNormal = plainAp instanceof PDFDict ? plainAp.lookup(PDFName.of('N')) : null;
+  const plainStream = plainNormal
+    ? new TextDecoder('latin1').decode(inflateSync(Buffer.from(plainNormal.getContents())))
+    : '';
+  check('a box without the switch draws no rule', !/ re/.test(plainStream));
+}
+
 /* ── the embedded font ───────────────────────────────────────────────── */
 
 const raw = new TextDecoder('latin1').decode(written.bytes);
 check('the font is embedded as a subset', /\/FontFile2/.test(raw));
 check(
   'a subset is embedded, not the whole font',
-  written.bytes.length < 90_000,
+  written.bytes.length < 120_000,
   `${Math.round(written.bytes.length / 1024)} KB against the 136 KB of the font itself`,
 );
 
@@ -254,7 +318,7 @@ const twice = await PDFDocument.load(second.bytes);
 const annotsTwice = twice.getPages()[0].node.lookup(PDFName.of('Annots'));
 check(
   'saving again does not duplicate the boxes',
-  annotsTwice instanceof PDFArray && annotsTwice.size() === 2,
+  annotsTwice instanceof PDFArray && annotsTwice.size() === boxes.length,
   `${annotsTwice instanceof PDFArray ? annotsTwice.size() : '?'}`,
 );
 

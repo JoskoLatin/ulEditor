@@ -87,6 +87,8 @@ export interface TextBoxAnnotation extends Base {
   /** The font size in points. */
   size: number;
   face: TextFace;
+  /** A rule under every line — PDF has no underline, so one is drawn. */
+  underline?: boolean;
 }
 
 export type Annotation =
@@ -478,6 +480,7 @@ function textDict(
     embedded.metrics,
     rect.height,
     FONT_RESOURCE,
+    annotation.underline === true,
   );
 
   const appearance = context.flateStream(content, {
