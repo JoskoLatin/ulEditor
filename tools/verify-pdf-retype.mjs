@@ -29,7 +29,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import './ts-resolve.mjs';
-import { makePdf, makeSplitLinePdf, makeToUnicodePdf } from './fixtures.mjs';
+import { makeGapSpacedPdf, makePdf, makeSplitLinePdf, makeToUnicodePdf } from './fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
@@ -301,6 +301,64 @@ async function operationsOf(bytes) {
       'and the column still did not move',
       after[0].bounds.x === before[0].bounds.x,
       `x ${before[0].bounds.x} → ${after[0].bounds.x}`,
+    );
+  }
+}
+
+/* ── a document that writes its spaces as gaps ───────────────────────── */
+
+{
+  /*
+   * TeX, and plenty else, puts a number between two words instead of drawing a
+   * space. Read without allowing for that, the line says `Totalduenow`; written
+   * without allowing for it, a space typed into it has nowhere to come from.
+   */
+  const source = bytesOf(makeGapSpacedPdf());
+  const doc = await PDFDocument.load(source, { ignoreEncryption: true });
+  const found = findEditableLine(doc.getPages()[0], { x: 40, y: 114 }, standard);
+  check(
+    'a gap between two words is read as a space',
+    found?.line?.text === 'Total due now',
+    JSON.stringify(found?.line?.text),
+  );
+
+  const outcome = await applyRetype(
+    source,
+    { page: 1, rect: found.line.anchor, before: 'Total due now', after: 'Total due to date now' },
+    standard,
+  );
+  check('and a space can be typed into it', outcome.kind === 'done', outcome.kind);
+
+  if (outcome.kind === 'done') {
+    const [after] = await operationsOf(outcome.bytes);
+    /* Read as a line rather than as an operator: the spaces are gaps, and only
+       the line reading knows that. */
+    const written2 = await PDFDocument.load(outcome.bytes, { ignoreEncryption: true });
+    const content2 = readPageContent(written2.getPages()[0], standard);
+    const line2 = gatherLine(content2, content2.operations[0]);
+    check(
+      'the line reads with its new words',
+      line2.text === 'Total due to date now',
+      JSON.stringify(line2.text),
+    );
+    /* Written as gaps, like the ones already there — the font has no space to
+       draw, and inventing one would come out as a blank rectangle. */
+    const written = new TextDecoder('latin1').decode(outcome.bytes);
+    check(
+      'and the new spaces are gaps too, not letters',
+      !/\(Total due/.test(written),
+      'no space glyph was invented',
+    );
+    const before = await operationsOf(source);
+    check(
+      'the line grew by exactly what was added',
+      Math.abs(
+        after.bounds.x +
+          after.bounds.width -
+          (before[0].bounds.x + before[0].bounds.width) -
+          (2 * 6 + 4 * 6 + 2 * 3),
+      ) < 0.01,
+      `right edge ${(before[0].bounds.x + before[0].bounds.width).toFixed(2)} → ${(after.bounds.x + after.bounds.width).toFixed(2)}`,
     );
   }
 }

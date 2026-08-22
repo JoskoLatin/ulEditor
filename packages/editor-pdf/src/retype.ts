@@ -45,6 +45,14 @@
  * colour, and sit close enough together to read as one line, are gathered into
  * one — and the edit is then matched against **the whole line**.
  *
+ * **A space is often not a letter.** Everything TeX produces, and plenty else,
+ * writes a word space as a number in the `TJ` array rather than as a glyph —
+ * the font may not even contain one. A line read without allowing for that says
+ * `TestDiskDocumentation`; a space typed into such a line is therefore written
+ * the same way the document writes its own, as a gap of the same width. Where
+ * the page shows no gap either, the font's widths table still says what code 32
+ * advances by, and that is used as a distance and never as a glyph.
+ *
  * Only what actually changed is written. The unchanged head and tail keep the
  * bytes they had — their kerning, their offsets, their exact places — and the
  * changed span is written where it stood.
@@ -112,6 +120,27 @@ export interface Line {
   anchor: TextOperation;
   /** The segments joined, with a space wherever the page leaves a visible gap. */
   text: string;
+  /**
+   * What a space is worth on this line, in points, when the page draws none.
+   *
+   * Measured off the gaps the line itself leaves. `null` when it leaves none —
+   * then a space typed into it has to come from a glyph or not at all.
+   */
+  spaceAdvance: number | null;
+}
+
+/** How the letters of a line are turned back into what draws them. */
+export interface Writer {
+  /** The code that draws a character, or `null` if nothing here draws it. */
+  code(char: string): number | null;
+  /**
+   * What a space is worth when the font has no glyph for one, in points.
+   *
+   * Plenty of documents write a space as a gap in the `TJ` array rather than as
+   * a letter — everything TeX produces, among others. A line like that has no
+   * space to copy, so one typed into it has to become the same kind of gap.
+   */
+  spaceAdvance: number | null;
 }
 
 /** Character → the code that draws it, for the letters a page already carries. */
@@ -198,6 +227,115 @@ function sameStyle(a: TextOperation, b: TextOperation): boolean {
 }
 
 /**
+ * One operator read as characters, with what draws each of them.
+ *
+ * Text, tokens and advances come out of a single walk so they cannot disagree
+ * about where anything is. The one thing worth naming here: **a gap can be a
+ * space**. A `TJ` offset that moves the pen forward by more than a fraction of
+ * an em is a word break on the page whether or not a space was ever drawn, and
+ * a line read without it says `TestDiskDocumentation`.
+ */
+interface Item {
+  /** Where in the operator's text it begins. */
+  at: number;
+  /** How many characters of that text it stands for; an offset usually none. */
+  chars: number;
+  /** What it advances the pen by, in the operator's text space. */
+  advance: number;
+  piece: Piece;
+}
+
+function readOperation(operation: TextOperation): {
+  text: string;
+  lead: Piece[];
+  items: Item[];
+  spaceAdvance: number | null;
+} {
+  const lead: Piece[] = [];
+  const items: Item[] = [];
+  let text = '';
+  let spaceAdvance: number | null = null;
+
+  const em = operation.fontSize || 1;
+
+  for (const part of operation.parts) {
+    if (part.kind === 'adjust') {
+      const forward = -(part.value / 1000) * operation.fontSize * operation.horizontalScale;
+      const piece: Piece = { kind: 'adjust', value: part.value };
+
+      /* Nothing has been drawn yet, so this is part of where the operator starts
+         rather than part of what it says. */
+      if (text.length === 0) {
+        lead.push(piece);
+        continue;
+      }
+
+      if (forward > SPACE_GAP * em && !text.endsWith(' ')) {
+        items.push({ at: text.length, chars: 1, advance: forward, piece });
+        text += ' ';
+        // The narrowest gap on the line is the one that reads as a word space;
+        // the wide ones are a table's columns, not typography.
+        if (spaceAdvance === null || forward < spaceAdvance) spaceAdvance = forward;
+        continue;
+      }
+
+      items.push({ at: text.length, chars: 0, advance: forward, piece });
+      continue;
+    }
+
+    for (const glyph of part.glyphs) {
+      const decoded = operation.font.decode(glyph.code) ?? '';
+      items.push({
+        at: text.length,
+        chars: decoded.length,
+        advance: glyph.advance,
+        piece: { kind: 'bytes', bytes: glyph.bytes },
+      });
+      text += decoded;
+    }
+  }
+
+  return { text, lead, items, spaceAdvance };
+}
+
+/**
+ * Which of an operator's tokens the change keeps and which it takes.
+ *
+ * By position in the list rather than by character, because an offset stands for
+ * no character at all and would otherwise be counted twice — once as part of
+ * what went and once as part of what stayed. That was worth a fifth of a point
+ * on a table of contents, which is exactly the kind of drift that makes an
+ * editor untrustworthy.
+ */
+function partitionItems(
+  items: Item[],
+  localFrom: number,
+  localTo: number,
+): { head: Item[]; dropped: Item[]; tail: Item[] } {
+  if (localFrom === localTo) {
+    // Nothing goes; the new text is threaded in between what is already there.
+    const head = items.filter((item) => item.at + item.chars <= localFrom);
+    return { head, dropped: [], tail: items.slice(head.length) };
+  }
+
+  const covers = (item: Item) =>
+    item.chars > 0 && item.at < localTo && item.at + item.chars > localFrom;
+  const firstIndex = items.findIndex(covers);
+  if (firstIndex < 0) return { head: items, dropped: [], tail: [] };
+
+  let lastIndex = firstIndex;
+  items.forEach((item, index) => {
+    if (covers(item)) lastIndex = index;
+  });
+
+  return {
+    head: items.slice(0, firstIndex),
+    dropped: items.slice(firstIndex, lastIndex + 1),
+    tail: items.slice(lastIndex + 1),
+  };
+}
+
+/**
  * Everything on the page that reads as one line with the operator clicked.
  *
  * A visible line is rarely one instruction. The rule is deliberately about what
@@ -222,7 +360,15 @@ export function gatherLine(content: PageContent, anchor: TextOperation): Line {
     .sort((a, b) => a.bounds.x - b.bounds.x);
 
   const start = candidates.findIndex((entry) => entry.operation === anchor);
-  if (start < 0) return { segments: [{ operation: anchor, text: textOf(anchor) ?? '', at: 0 }], anchor, text: textOf(anchor) ?? '' };
+  if (start < 0) {
+    const own = readOperation(anchor);
+    return {
+      segments: [{ operation: anchor, text: own.text, at: 0 }],
+      anchor,
+      text: own.text,
+      spaceAdvance: own.spaceAdvance === null ? null : own.spaceAdvance * scaleOf(anchor),
+    };
+  }
 
   const gapBetween = (left: number, right: number) =>
     candidates[right]!.bounds.x - (candidates[left]!.bounds.x + candidates[left]!.bounds.width);
@@ -234,16 +380,27 @@ export function gatherLine(content: PageContent, anchor: TextOperation): Line {
 
   const segments: Segment[] = [];
   let text = '';
+  let spaceAdvance: number | null = null;
+
   for (let i = first; i <= last; i++) {
+    const gap = i > first ? gapBetween(i - 1, i) : 0;
     /* A space the page shows by leaving a gap rather than by drawing one. It is
        part of the line as read, so it is part of the line as edited. */
-    if (i > first && gapBetween(i - 1, i) > SPACE_GAP * em && !text.endsWith(' ')) text += ' ';
-    const own = textOf(candidates[i]!.operation) ?? '';
-    segments.push({ operation: candidates[i]!.operation, text: own, at: text.length });
-    text += own;
+    if (i > first && gap > SPACE_GAP * em && !text.endsWith(' ')) {
+      text += ' ';
+      if (spaceAdvance === null || gap < spaceAdvance) spaceAdvance = gap;
+    }
+    const operation = candidates[i]!.operation;
+    const own = readOperation(operation);
+    if (own.spaceAdvance !== null) {
+      const onPage = own.spaceAdvance * scaleOf(operation);
+      if (spaceAdvance === null || onPage < spaceAdvance) spaceAdvance = onPage;
+    }
+    segments.push({ operation, text: own.text, at: text.length });
+    text += own.text;
   }
 
-  return { segments, anchor, text };
+  return { segments, anchor, text, spaceAdvance };
 }
 
 /**
@@ -283,6 +440,56 @@ export function codeFor(
 }
 
 /**
+ * What a space is worth to a font, taken from the whole page.
+ *
+ * A line of one word offers no evidence of its own — and a document that draws
+ * no space anywhere, which is everything TeX produces, offers none through its
+ * glyphs either. The rest of the page does: the narrowest gap it leaves between
+ * words is what a space costs there.
+ */
+export function spaceAdvanceOf(content: PageContent, font: FontInfo): number | null {
+  let narrowest: number | null = null;
+  let sample: TextOperation | null = null;
+
+  for (const operation of content.operations) {
+    if (operation.font !== font) continue;
+    if (!sample) sample = operation;
+    const own = readOperation(operation);
+    if (own.spaceAdvance === null) continue;
+    const onPage = own.spaceAdvance * scaleOf(operation);
+    if (narrowest === null || onPage < narrowest) narrowest = onPage;
+  }
+  if (narrowest !== null) return narrowest;
+
+  /*
+   * A heading in a font used nowhere else leaves no evidence at all. The font
+   * itself still knows: its widths table says what code 32 advances by, whether
+   * or not the document ever drew one. That is a measurement, not a guess — and
+   * it is used only as a distance, never as a glyph, so a subset that left the
+   * space out is no obstacle.
+   *
+   * Only for a single-byte font: in an `Identity-H` encoding the number 32 is a
+   * glyph number and has nothing to do with a space.
+   */
+  if (!sample || font.twoByte) return null;
+  const width = font.widthOf(32) / 1000;
+  if (!(width > 0)) return null;
+  return width * sample.fontSize * sample.horizontalScale * scaleOf(sample);
+}
+
+/** Everything needed to write into a line: its glyphs, and what a space is worth. */
+export function writerFor(
+  font: Pick<FontInfo, 'encode'>,
+  inventory: Inventory,
+  spaceAdvance: number | null,
+): Writer {
+  return {
+    code: (char) => codeFor(font, inventory, char),
+    spaceAdvance,
+  };
+}
+
+/**
  * The part of a line that an edit actually touches.
  *
  * Only this has to be written, and therefore only this has to be writable. A
@@ -302,15 +509,12 @@ export function changedSpan(before: string, after: string): string {
  * Offered separately so the warning can appear **while typing**, when the text
  * can still be changed, rather than after the document has been saved.
  */
-export function unwritable(
-  font: Pick<FontInfo, 'encode'>,
-  inventory: Inventory,
-  text: string,
-): string[] {
+export function unwritable(writer: Writer, text: string): string[] {
   const out: string[] = [];
   for (const char of text) {
     if (char === '\n' || char === '\r') continue;
-    if (codeFor(font, inventory, char) === null && !out.includes(char)) out.push(char);
+    if (char === ' ' && writer.spaceAdvance !== null) continue;
+    if (writer.code(char) === null && !out.includes(char)) out.push(char);
   }
   return out;
 }
@@ -416,40 +620,6 @@ function commonTail(before: string, after: string, head: number): number {
   return i;
 }
 
-/**
- * The tokens of an operator, with where each one starts in its text.
- *
- * The unit is what the file already holds: a glyph with its own bytes, or one of
- * the `TJ` offsets between them. Cutting the change out of this list rather than
- * out of the text means every piece that did not change keeps the bytes it had,
- * and with them its kerning and its exact place.
- *
- * An offset before the first glyph belongs to no character; it is part of where
- * the operator starts drawing and is handed back separately so it survives
- * whatever happens to the text.
- */
-function tokensOf(operation: TextOperation): { lead: Piece[]; items: { at: number; piece: Piece }[] } {
-  const lead: Piece[] = [];
-  const items: { at: number; piece: Piece }[] = [];
-  let at = 0;
-  let started = false;
-
-  for (const part of operation.parts) {
-    if (part.kind === 'adjust') {
-      if (started) items.push({ at, piece: { kind: 'adjust', value: part.value } });
-      else lead.push({ kind: 'adjust', value: part.value });
-      continue;
-    }
-    for (const glyph of part.glyphs) {
-      started = true;
-      items.push({ at, piece: { kind: 'bytes', bytes: glyph.bytes } });
-      at += (operation.font.decode(glyph.code) ?? '').length;
-    }
-  }
-
-  return { lead, items };
-}
-
 /** The advance of one code, in the operator's text space. */
 function advanceOf(operation: TextOperation, code: number): number {
   const width = operation.font.widthOf(code) / 1000;
@@ -460,27 +630,6 @@ function advanceOf(operation: TextOperation, code: number): number {
       (isSpace ? operation.wordSpacing : 0)) *
     operation.horizontalScale
   );
-}
-
-/** What each character of an operator advances the pen by, in its text space. */
-function advancesOf(operation: TextOperation): number[] {
-  const perChar: number[] = [];
-
-  for (const part of operation.parts) {
-    if (part.kind === 'adjust') {
-      const by = -(part.value / 1000) * operation.fontSize * operation.horizontalScale;
-      if (perChar.length > 0) perChar[perChar.length - 1] = (perChar[perChar.length - 1] ?? 0) + by;
-      continue;
-    }
-    for (const glyph of part.glyphs) {
-      const text = operation.font.decode(glyph.code) ?? '';
-      perChar.push(glyph.advance);
-      // A ligature is one advance spread over several characters of text.
-      for (let i = 1; i < text.length; i++) perChar.push(0);
-    }
-  }
-
-  return perChar;
 }
 
 /**
@@ -516,7 +665,7 @@ function scaleOf(operation: TextOperation): number {
 function editsFor(
   line: Line,
   after: string,
-  codeOf: (char: string) => number | null,
+  writer: Writer,
 ): { edits: { start: number; end: number; text: string }[] } | { missing: string[] } {
   const before = line.text;
   const head = commonHead(before, after);
@@ -524,18 +673,9 @@ function editsFor(
 
   const from = head;
   const to = before.length - tail;
-  const written = after.slice(head, after.length - tail);
+  const span = after.slice(head, after.length - tail);
 
-  const missing: string[] = [];
-  const codes: number[] = [];
-  for (const char of written) {
-    const code = codeOf(char);
-    if (code === null) {
-      if (!missing.includes(char)) missing.push(char);
-      continue;
-    }
-    codes.push(code);
-  }
+  const missing = unwritable(writer, span);
   if (missing.length > 0) return { missing };
 
   /*
@@ -550,16 +690,48 @@ function editsFor(
   const first = affected[0]!;
   const firstAt = line.segments.indexOf(first);
 
+  /*
+   * What is written, in the pieces the file will hold: runs of codes, and — for
+   * a space in a document that draws none — a gap of the same width the rest of
+   * the line uses.
+   */
+  const written: Piece[] = [];
+  let run: number[] = [];
+  const flushRun = () => {
+    if (run.length > 0) written.push({ kind: 'codes', codes: run });
+    run = [];
+  };
+  for (const char of span) {
+    const code = writer.code(char);
+    if (code !== null) {
+      run.push(code);
+      continue;
+    }
+    flushRun();
+    written.push({ kind: 'advance', by: (writer.spaceAdvance ?? 0) / scaleOf(first.operation) });
+  }
+  flushRun();
+
   /** What the change is worth on the page: what it gained, less what it cost. */
   const gained =
-    codes.reduce((sum, code) => sum + advanceOf(first.operation, code), 0) * scaleOf(first.operation);
+    written.reduce(
+      (sum, piece) =>
+        sum +
+        (piece.kind === 'codes'
+          ? piece.codes.reduce((inner, code) => inner + advanceOf(first.operation, code), 0)
+          : piece.kind === 'advance'
+            ? piece.by
+            : 0),
+      0,
+    ) * scaleOf(first.operation);
 
   let lost = 0;
   affected.forEach((segment, index) => {
-    const perChar = advancesOf(segment.operation);
+    const { items } = readOperation(segment.operation);
     const localFrom = Math.max(0, from - segment.at);
     const localTo = Math.max(localFrom, Math.min(segment.text.length, to - segment.at));
-    for (let i = localFrom; i < localTo; i++) lost += (perChar[i] ?? 0) * scaleOf(segment.operation);
+    const { dropped } = partitionItems(items, localFrom, localTo);
+    for (const item of dropped) lost += item.advance * scaleOf(segment.operation);
 
     /* The empty room between two operators the change ran across is part of what
        it replaced, and it is only measurable on the page. */
@@ -579,8 +751,7 @@ function editsFor(
 
     const scale = scaleOf(segment.operation);
     const shift = delta / scale;
-    const { lead, items } = tokensOf(segment.operation);
-    const perChar = advancesOf(segment.operation);
+    const { lead, items } = readOperation(segment.operation);
 
     /* A segment the change never reached loses nothing and keeps everything —
        so all of it counts as tail, which is what the shift is applied to. */
@@ -590,17 +761,23 @@ function editsFor(
       ? Math.max(localFrom, Math.min(segment.text.length, to - segment.at))
       : 0;
 
-    let removed = 0;
-    for (let i = localFrom; i < localTo; i++) removed += perChar[i] ?? 0;
-    const writes = segment === first ? codes : [];
-    const writesBy = writes.reduce((sum, code) => sum + advanceOf(segment.operation, code), 0);
-
-    const keptTail = items.filter((item) => item.at >= localTo);
-    const keptHead = items.filter((item) => item.at < localFrom);
+    const { head: keptHead, dropped, tail: keptTail } = partitionItems(items, localFrom, localTo);
+    const removed = dropped.reduce((sum, item) => sum + item.advance, 0);
+    const writes = segment === first ? written : [];
+    const writesBy = writes.reduce(
+      (sum, piece) =>
+        sum +
+        (piece.kind === 'codes'
+          ? piece.codes.reduce((inner, code) => inner + advanceOf(segment.operation, code), 0)
+          : piece.kind === 'advance'
+            ? piece.by
+            : 0),
+      0,
+    );
 
     const pieces: Piece[] = [...lead];
     for (const item of keptHead) pieces.push(item.piece);
-    if (writes.length > 0) pieces.push({ kind: 'codes', codes: writes });
+    pieces.push(...writes);
 
     /*
      * Where the rest of this operator goes: exactly where it was, plus what the
@@ -682,7 +859,8 @@ export async function applyRetype(
   }
 
   const inventory = inventoryOf(content, operation.font);
-  const result = editsFor(line, spec.after, (char) => codeFor(operation.font, inventory, char));
+  const space = line.spaceAdvance ?? spaceAdvanceOf(content, operation.font);
+  const result = editsFor(line, spec.after, writerFor(operation.font, inventory, space));
   if ('missing' in result) return { kind: 'missing', chars: result.missing };
 
   replaceContents(doc, page, splice(content.bytes, result.edits));

@@ -20,7 +20,7 @@ import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
 import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
-import { gatherLine, inventoryOf, type Inventory } from './retype.js';
+import { gatherLine, inventoryOf, spaceAdvanceOf, writerFor, type Writer } from './retype.js';
 import type { StandardWidths } from './text.js';
 
 /** A line of the document offered for rewriting. */
@@ -52,14 +52,15 @@ export interface EditableLine {
    */
   font: FontInfo;
   /**
-   * The letters that page already draws with that font.
+   * What this line can be written with.
    *
-   * Carried along because it is what decides the route, and it has to be known
-   * while the user types rather than after they have finished — see
-   * [`retype.ts`](./retype.ts) for why the page is a better authority on this
-   * than the font's own map.
+   * The letters that page already draws with that font, and what a space is
+   * worth where it draws none. Carried along because it is what decides the
+   * route, and it has to be known while the user types rather than after they
+   * have finished — see [`retype.ts`](./retype.ts) for why the page is a better
+   * authority on this than the font's own map.
    */
-  inventory: Inventory;
+  writer: Writer;
   /**
    * Whether our font's metrics match the original's.
    *
@@ -160,7 +161,11 @@ export function findEditableLine(
         baseFont: operation.font.baseFont,
         glyphs,
         font: operation.font,
-        inventory: inventoryOf(content, operation.font),
+        writer: writerFor(
+          operation.font,
+          inventoryOf(content, operation.font),
+          line.spaceAdvance ?? spaceAdvanceOf(content, operation.font),
+        ),
         metricsMatch: matchesOurMetrics(operation.font.baseFont),
       },
     };
@@ -176,16 +181,21 @@ export function findEditableLine(
  * actionable; "there is no ć in this document's font" is — the person can decide
  * to write the word another way, or to accept the change.
  */
+/** A space has to be said in words; on its own it looks like a missing word. */
+function nameOf(char: string): string {
+  return char === ' ' ? t('a space') : char;
+}
+
 export function fallbackWarning(line: EditableLine, chars: string[]): string {
   if (line.metricsMatch) {
     // Liberation Sans matches Helvetica and Arial width for width, so the line
     // will not move; only the missing characters are worth mentioning.
     return t('The font of this document has no {chars}, so the line is written with ours instead.', {
-      chars: chars.join(' '),
+      chars: chars.map(nameOf).join(' '),
     });
   }
   return t(
     'The font of this document has no {chars}. The line will be written in {font} instead — same size and place, different letterforms.',
-    { chars: chars.join(' '), font: 'Liberation Sans' },
+    { chars: chars.map(nameOf).join(' '), font: 'Liberation Sans' },
   );
 }

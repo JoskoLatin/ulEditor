@@ -294,6 +294,64 @@ export function makeSplitLinePdf() {
 }
 
 /**
+ * A PDF that writes its word spaces as gaps rather than as letters.
+ *
+ * Everything TeX produces looks like this, and so do plenty of other tools: the
+ * words sit in one `TJ` array with a number between them, and the font never
+ * draws a space at all. A line read without allowing for that says
+ * `TestDiskDocumentation`, and a space typed into it has nowhere to come from.
+ *
+ * The gap here is 250 thousandths — a quarter of an em, an ordinary word space.
+ * Every glyph is 500 wide, so at 12 pt each is 6 pt and a space is 3 pt.
+ *
+ * @returns {string}
+ */
+export function makeGapSpacedPdf() {
+  const stream = 'BT /F1 12 Tf 30 110 Td [(Total)-250(due)-250(now)]TJ ET';
+
+  const codes = [...new Set('Totaldueno')]
+    .map((ch) => ch.codePointAt(0))
+    .sort((a, b) => a - b);
+  const hex = (code, digits) => code.toString(16).toUpperCase().padStart(digits, '0');
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin 12 dict begin begincmap',
+    '/CMapName /A-B-0 def /CMapType 2 def',
+    '1 begincodespacerange <00> <FF> endcodespacerange',
+    `${codes.length} beginbfchar`,
+    ...codes.map((code) => `<${hex(code, 2)}> <${hex(code, 4)}>`),
+    'endbfchar',
+    'endcmap CMapName currentdict /CMap defineresource pop end end',
+  ].join('\n');
+  const widths = Array.from({ length: 95 }, () => 500).join(' ');
+
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/TrueType/BaseFont/ABCDEF+TeXGyre/FirstChar 32/LastChar 126' +
+      `/Widths[${widths}]/FontDescriptor 6 0 R/ToUnicode 7 0 R>>`,
+    '<</Type/FontDescriptor/FontName/ABCDEF+TeXGyre/Flags 32/ItalicAngle 0/Ascent 750' +
+      '/Descent -250/CapHeight 700/StemV 80/FontBBox[0 -250 1000 750]/FontFile2 8 0 R>>',
+    `<</Length ${cmap.length}>>\nstream\n${cmap}\nendstream`,
+    '<</Length 4/Length1 4>>\nstream\n0000\nendstream',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
+/**
  * A multi-page PDF where each page carries its own label, so after a reorder it
  * can be verified that it really landed in the right place.
  * @param {number} count the number of pages

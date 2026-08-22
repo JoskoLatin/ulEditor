@@ -1996,11 +1996,7 @@ class PdfEditor implements EditorInstance {
        bytes, so a character we could not have produced ourselves is no reason
        to refuse an edit somewhere else in the same line. */
     const unavailable = editor.line
-      ? unwritable(
-          editor.line.font,
-          editor.line.inventory,
-          changedSpan(editor.line.text, text),
-        )
+      ? unwritable(editor.line.writer, changedSpan(editor.line.text, text))
       : [];
     if (editor.line && unavailable.length > 0) {
       messages.push(fallbackWarning(editor.line, unavailable));
@@ -2078,7 +2074,7 @@ class PdfEditor implements EditorInstance {
       const inPlace =
         !empty &&
         !NEWLINE.test(draft.text) &&
-        unwritable(line.font, line.inventory, changedSpan(line.text, draft.text)).length === 0;
+        unwritable(line.writer, changedSpan(line.text, draft.text)).length === 0;
       if (inPlace) {
         const done = this.#retypeInPlace(line, draft, replaces);
         this.#committing = done;
