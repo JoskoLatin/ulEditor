@@ -23,6 +23,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
 
+# Windows and Linux start a second copy of the program for every file
+# double-clicked. macOS does not: it hands the file to the running application
+# itself, and the plugin's own documentation says not to use it there.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [features]
 # Ships the webview inspector in a release build. Off by default: "Inspect" in
 # the right-click menu of a document editor is a strange thing to hand somebody

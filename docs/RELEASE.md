@@ -100,6 +100,25 @@ from the tag. So a rebuilt installer is built from the same commit as the ones
 already in the release, with a workflow that works. The finished platforms are
 left alone, and what is rebuilt overwrites its own files in the draft.
 
+## What the installer registers
+
+The installers register ulEditor for about sixty extensions — Markdown, plain
+text, source files, PDF, EPUB, Word, Excel, SVG, 3D models and images — which is
+what puts it in **Open with** and in the "choose an app for this file type"
+dialog. It does not become the default for anything: Windows 10 and 11 do not
+let an installer take a file type over, and that is the right behaviour. The
+person picks, once, and Windows remembers.
+
+The registration alone would be worse than useless. A program that is offered
+for `.pdf` and then opens an empty window has claimed something it cannot do,
+so the desktop shell takes the path it is started with — from the command line
+on Windows and Linux, from the `Opened` event on macOS, which never puts it on
+the command line. A second double-click while the program is running reaches
+the window that is already open rather than starting another copy of it.
+
+None of this is exercised by CI: it lives in the installer, and the only honest
+check is to install a build and double-click something.
+
 ## Building for Android locally
 
 Nothing has changed for development —

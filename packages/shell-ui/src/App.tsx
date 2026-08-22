@@ -10,6 +10,7 @@ import { selectActiveTabId, selectSplit, useWorkspace } from './state/workspace.
 
 import { exitReading, useReading } from './shell/reading.js';
 import { restoreSession, watchSession } from './shell/session.js';
+import { watchLaunchPaths } from './shell/launch.js';
 
 import { ActivityBar } from './components/ActivityBar.js';
 import { EditorGroup, GroupResizer } from './components/EditorGroup.js';
@@ -38,10 +39,18 @@ export function App({ shell }: { shell: Shell }) {
   // overwrite the record with a half-restored state.
   useEffect(() => {
     let stop: (() => void) | undefined;
+    let stopLaunch: (() => void) | undefined;
     void restoreSession(shell).then(() => {
       stop = watchSession(shell);
+      /* After the restore, not beside it. Both bring documents in, and whichever
+         finishes last decides which tab is in front — the file somebody
+         double-clicked should not end up behind three restored ones. */
+      stopLaunch = watchLaunchPaths(shell);
     });
-    return () => stop?.();
+    return () => {
+      stop?.();
+      stopLaunch?.();
+    };
   }, [shell]);
 
   // The reading room belongs to one document. Switching tabs means leaving it,

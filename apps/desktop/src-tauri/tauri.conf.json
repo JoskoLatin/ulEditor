@@ -30,9 +30,158 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "copyright": "Apache-2.0",
     "shortDescription": "An editor for code, Markdown, PDF and Office documents",
-    "longDescription": "One open-source editor for code, Markdown, PDF, Word and Excel — without switching between five applications."
+    "longDescription": "One open-source editor for code, Markdown, PDF, Word and Excel — without switching between five applications.",
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "mdx"
+        ],
+        "name": "Markdown",
+        "description": "Markdown document",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "txt",
+          "log",
+          "csv",
+          "tsv",
+          "ini",
+          "cfg",
+          "conf",
+          "properties",
+          "env"
+        ],
+        "name": "Plain text",
+        "description": "Text document",
+        "mimeType": "text/plain",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "ts",
+          "tsx",
+          "js",
+          "jsx",
+          "mjs",
+          "cjs",
+          "json",
+          "rs",
+          "py",
+          "html",
+          "css",
+          "xml",
+          "yaml",
+          "yml",
+          "toml",
+          "sh",
+          "bat",
+          "cmd",
+          "ps1",
+          "sql",
+          "go",
+          "java",
+          "c",
+          "cpp",
+          "h",
+          "rb",
+          "php",
+          "swift",
+          "lua",
+          "diff",
+          "patch"
+        ],
+        "name": "Source code",
+        "description": "Source file",
+        "mimeType": "text/plain",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF",
+        "description": "PDF document",
+        "mimeType": "application/pdf",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "epub"
+        ],
+        "name": "E-book",
+        "description": "EPUB book",
+        "mimeType": "application/epub+zip",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "docx"
+        ],
+        "name": "Word document",
+        "description": "Word document",
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "xlsx"
+        ],
+        "name": "Excel spreadsheet",
+        "description": "Excel spreadsheet",
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "svg",
+          "svgz"
+        ],
+        "name": "Vector graphics",
+        "description": "SVG drawing",
+        "mimeType": "image/svg+xml",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "stl",
+          "obj",
+          "ply",
+          "gltf",
+          "glb",
+          "3mf"
+        ],
+        "name": "3D model",
+        "description": "3D model",
+        "mimeType": "model/gltf+json",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "png",
+          "jpg",
+          "jpeg",
+          "gif",
+          "webp",
+          "bmp",
+          "avif"
+        ],
+        "name": "Image",
+        "description": "Image",
+        "mimeType": "image/png",
+        "role": "Viewer"
+      }
+    ]
   }
 }

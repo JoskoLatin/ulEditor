@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use tauri::ipc::Response;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use ul_core::{
@@ -17,6 +17,14 @@ use ul_core::{
 struct AppState {
     workspace: Mutex<Workspace>,
 }
+
+/// Files the program was asked to open when it started.
+///
+/// Held rather than opened here: the window exists before the interface inside
+/// it does, and something opened before the shell is listening is opened into
+/// nothing. The frontend collects these once it is ready.
+#[derive(Default)]
+struct LaunchPaths(Mutex<Vec<String>>);
 
 /// The lock is never held across an `.await` — dialogs are asynchronous, so the
 /// first open dialog would otherwise block every other command.
@@ -242,6 +250,33 @@ fn write_file(state: State<'_, AppState>, path: String, contents: Vec<u8>) -> Re
     with_workspace(&state, |workspace| workspace.write(&path, &contents))
 }
 
+/* ── files the program was started with ──────────────────────────────── */
+
+/// The paths out of a command line.
+///
+/// The first argument is the program itself and anything starting with `-` is a
+/// switch — neither is a document. Everything else is taken as a path without
+/// being checked for existence: a file that has been deleted between the
+/// double-click and the start of the program is a case the opening path already
+/// reports properly, and duplicating that judgement here would mean two places
+/// deciding what a readable file is.
+fn paths_from(args: impl Iterator<Item = String>) -> Vec<String> {
+    args.skip(1)
+        .filter(|arg| !arg.starts_with('-') && !arg.is_empty())
+        .collect()
+}
+
+/// Hands over the files the program was started with, and forgets them.
+///
+/// Draining rather than reading: the frontend reloads on a language change, and
+/// a list that survived would reopen the same documents every time somebody
+/// switched between English and Croatian.
+#[tauri::command]
+fn take_launch_paths(state: State<'_, LaunchPaths>) -> Vec<String> {
+    let mut guard = state.0.lock().expect("the launch path lock is poisoned");
+    std::mem::take(&mut *guard)
+}
+
 /* ── developer tools ─────────────────────────────────────────────────── */
 
 /// Opens the webview's inspector.
@@ -274,12 +309,31 @@ fn devtools_available() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+
+    /*
+     * A second double-click has to reach the window that is already open. Without
+     * this, every file opened from Explorer starts another copy of the program,
+     * each with its own tabs and its own idea of what is unsaved — and the second
+     * one would fight the first over the same file.
+     */
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        let paths = paths_from(argv.into_iter());
+        if !paths.is_empty() {
+            let _ = app.emit("uleditor://open-paths", paths);
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .setup(|app| {
             app.manage(AppState {
                 workspace: Mutex::new(Workspace::new()),
             });
+            app.manage(LaunchPaths(Mutex::new(paths_from(std::env::args()))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -298,7 +352,59 @@ pub fn run() {
             scan_library,
             open_devtools,
             devtools_available,
+            take_launch_paths,
         ])
-        .run(tauri::generate_context!())
-        .expect("starting ulEditor failed");
+        .build(tauri::generate_context!())
+        .expect("starting ulEditor failed")
+        .run(|_app, _event| {
+            /*
+             * macOS does not put the file on the command line. It sends the
+             * running application an event, which only exists on this path —
+             * `.run()` on the builder never sees it, which is why the program is
+             * built and then run rather than the shorter form.
+             */
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                let paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect();
+                if !paths.is_empty() {
+                    let _ = _app.emit("uleditor://open-paths", paths);
+                }
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paths_from;
+
+    #[test]
+    fn the_program_itself_is_not_a_document() {
+        let args = [
+            "C:/Program Files/ulEditor/ulEditor.exe",
+            "C:/w/contract.pdf",
+        ];
+        assert_eq!(
+            paths_from(args.iter().map(|s| s.to_string())),
+            vec!["C:/w/contract.pdf".to_string()]
+        );
+    }
+
+    #[test]
+    fn switches_are_not_documents() {
+        let args = ["ulEditor.exe", "--flag", "C:/w/a.md", "-x", "C:/w/b.md"];
+        assert_eq!(
+            paths_from(args.iter().map(|s| s.to_string())),
+            vec!["C:/w/a.md".to_string(), "C:/w/b.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn starting_with_nothing_opens_nothing() {
+        let args = ["ulEditor.exe"];
+        assert!(paths_from(args.iter().map(|s| s.to_string())).is_empty());
+    }
 }
