@@ -201,7 +201,29 @@ try {
   await open('contract.pdf');
 
   const original = await page.locator('.ul-pdf-text span').first().boundingBox();
+  /*
+   * First the other half of that split. "Add text" over an existing line has to
+   * open an **empty** box — a new one, on top. It used to open the line for
+   * rewriting instead, which meant there was no way to write a note over
+   * existing text at all, and no warning that the line had been taken over.
+   */
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
+  await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+  check(
+    'Add text over an existing line opens a new box, not that line',
+    (await page.locator('.ul-pdf-text-input').inputValue()) === '',
+    JSON.stringify(await page.locator('.ul-pdf-text-input').inputValue()),
+  );
+  await page.keyboard.press('Escape');
+  check(
+    'and it left the line alone',
+    (await page.locator('.ul-pdf-redaction[data-replaced="true"]').count()) === 0,
+  );
+
+  /* Its own tool now. Rewriting used to hide inside "Add text", where clicking a
+     line swallowed it and nothing said so. */
+  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
   await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
 
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });

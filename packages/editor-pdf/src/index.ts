@@ -90,7 +90,7 @@ const NOTE_ICON_PX = 20;
 const THUMB_WIDTH = 108;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
-type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'redact';
+type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'edit' | 'redact';
 
 /** Fewer pixels than this is not a drag but a missed click. */
 const REDACT_MIN_SIZE = 6;
@@ -356,6 +356,13 @@ class PdfEditor implements EditorInstance {
       { tool: 'note', label: '✎', title: t('Note — click the page') },
       { tool: 'ink', label: '〰', title: t('Freehand drawing') },
       { tool: 'text', label: 'T', title: t('Add text — click where it should go') },
+      /*
+       * Two characters where the others have one, and deliberately: this is the
+       * tool people come looking for, and `T` with a pencil says what it does
+       * without a legend. A single glyph for "rewrite" does not exist that a
+       * person would read correctly on sight.
+       */
+      { tool: 'edit', label: 'T✎', title: t('Rewrite text — click a line of the document') },
       { tool: 'redact', label: '⌫', title: t('Erase text — drag over what should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
@@ -794,12 +801,12 @@ class PdfEditor implements EditorInstance {
     this.#finishTextEdit();
     // The font is fetched the moment the user reaches for the tool, not on the
     // first click — otherwise the first box appears after a visible wait.
-    if (tool === 'text') void this.#face(this.#textFace);
+    if (tool === 'text' || tool === 'edit') void this.#face(this.#textFace);
     this.#syncToolbar();
   }
 
   setColor(color: Rgb): void {
-    if (this.#tool === 'text' || this.#editor) {
+    if (this.#tool === 'text' || this.#tool === 'edit' || this.#editor) {
       this.#textColor = color;
       this.#applyToEditedBox({ color });
     } else {
@@ -810,7 +817,9 @@ class PdfEditor implements EditorInstance {
 
   /** The colour the swatches refer to — it depends on what is being done. */
   #activeColor(): Rgb {
-    return this.#tool === 'text' || this.#editor ? this.#textColor : this.#color;
+    return this.#tool === 'text' || this.#tool === 'edit' || this.#editor
+      ? this.#textColor
+      : this.#color;
   }
 
   setTextFace(face: TextFace): void {
@@ -1343,14 +1352,15 @@ class PdfEditor implements EditorInstance {
       return;
     }
 
-    if (this.#tool === 'text') {
+    if (this.#tool === 'text' || this.#tool === 'edit') {
       event.preventDefault();
       // A click beside an open box finishes that one first; a second click opens a new one.
       if (this.#editor) {
         this.#finishTextEdit();
         return;
       }
-      void this.#startTextBox(view, event.clientX, event.clientY);
+      if (this.#tool === 'edit') void this.#rewriteLine(view, event.clientX, event.clientY);
+      else void this.#startTextBox(view, event.clientX, event.clientY);
       return;
     }
 
@@ -1594,52 +1604,8 @@ class PdfEditor implements EditorInstance {
       clientY - bounds.top,
     );
 
-    const existing = await this.#lineAt(view, { x, y: top });
-    // While the content was being read, the user may have changed tool or page.
-    if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
-
-    if (existing && 'refusal' in existing) {
-      this.host.notify.show('warning', existing.refusal);
-      return;
-    }
-
-    if (existing) {
-      const { line } = existing;
-      const face = PdfEditor.#faceFor(line.baseFont);
-      const metrics = await this.#face(face);
-      if (this.#tool !== 'text' || this.#editor) return;
-
-      /*
-       * The replacement is aligned on the **baseline** of the source line, not
-       * on its box: the box depends on which letters the line holds, while the
-       * baseline is the same regardless.
-       */
-      const anchor = {
-        x: line.origin.x - TEXT_PADDING,
-        top: line.origin.y + metrics.ascent(line.size) + TEXT_PADDING,
-      };
-
-      this.#openTextEditor(
-        view,
-        metrics,
-        {
-          id: newId(),
-          kind: 'text',
-          page: view.source,
-          color: line.color,
-          createdAt: Date.now(),
-          rect: layoutTextBox(metrics, line.text, line.size, anchor),
-          text: line.text,
-          size: line.size,
-          face,
-        },
-        { rect: line.bounds, note: metricsWarning(line) },
-      );
-      return;
-    }
-
     const metrics = await this.#face(this.#textFace);
-    if (this.#tool !== 'text' || this.#editor) return;
+    if (this.#tool !== 'text' || this.#editor || !this.#pages.includes(view)) return;
 
     this.#openTextEditor(view, metrics, {
       id: newId(),
@@ -1652,6 +1618,78 @@ class PdfEditor implements EditorInstance {
       size: this.#textSize,
       face: this.#textFace,
     });
+  }
+
+  /**
+   * Rewriting a line that is already in the document.
+   *
+   * Its own tool since the toolbar grew one. It used to hide inside "Add text":
+   * clicking existing text with `T` rewrote it, clicking anywhere else made a
+   * new box. That was two jobs under one button, and both of them surprising —
+   * nothing said the line would be swallowed, and there was no way to put a new
+   * box on top of existing text at all, which is what somebody annotating a
+   * contract wants. `T` only adds now, and this only rewrites.
+   */
+  async #rewriteLine(view: PageView, clientX: number, clientY: number): Promise<void> {
+    const bounds = view.el.getBoundingClientRect();
+    const [x, top] = this.#viewportFor(view).convertToPdfPoint(
+      clientX - bounds.left,
+      clientY - bounds.top,
+    );
+
+    const existing = await this.#lineAt(view, { x, y: top });
+    // While the content was being read, the user may have changed tool or page.
+    if (this.#tool !== 'edit' || this.#editor || !this.#pages.includes(view)) return;
+
+    if (existing && 'refusal' in existing) {
+      this.host.notify.show('warning', existing.refusal);
+      return;
+    }
+
+    /*
+     * Nothing found, and that has to be said. Silence here reads as a broken
+     * tool: the click landed on a picture of text, or on the margin, and the
+     * person has no way to tell those apart from a program that ignored them.
+     */
+    if (!existing) {
+      this.host.notify.show(
+        'info',
+        t('There is no rewritable line there. Text inside a picture is part of the picture.'),
+      );
+      return;
+    }
+
+    const { line } = existing;
+    const face = PdfEditor.#faceFor(line.baseFont);
+    const metrics = await this.#face(face);
+    if (this.#tool !== 'edit' || this.#editor) return;
+
+    /*
+     * The replacement is aligned on the **baseline** of the source line, not on
+     * its box: the box depends on which letters the line holds, while the
+     * baseline is the same regardless.
+     */
+    const anchor = {
+      x: line.origin.x - TEXT_PADDING,
+      top: line.origin.y + metrics.ascent(line.size) + TEXT_PADDING,
+    };
+
+    this.#openTextEditor(
+      view,
+      metrics,
+      {
+        id: newId(),
+        kind: 'text',
+        page: view.source,
+        color: line.color,
+        createdAt: Date.now(),
+        rect: layoutTextBox(metrics, line.text, line.size, anchor),
+        text: line.text,
+        size: line.size,
+        face,
+      },
+      { rect: line.bounds, note: metricsWarning(line) },
+    );
   }
 
   /** The document line under a given point, if there is one and it can be rewritten. */

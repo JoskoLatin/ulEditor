@@ -314,6 +314,7 @@
 .ul-pdf[data-tool='note'] .ul-pdf-annots,
 .ul-pdf[data-tool='ink'] .ul-pdf-annots,
 .ul-pdf[data-tool='text'] .ul-pdf-annots,
+.ul-pdf[data-tool='edit'] .ul-pdf-annots,
 .ul-pdf[data-tool='redact'] .ul-pdf-annots {
   pointer-events: auto;
 }
@@ -328,6 +329,11 @@
 }
 .ul-pdf[data-tool='text'] .ul-pdf-page {
   cursor: text;
+}
+/* A pointer, not a caret: with this tool the click chooses a line rather than a
+   position within one. */
+.ul-pdf[data-tool='edit'] .ul-pdf-page {
+  cursor: pointer;
 }
 .ul-pdf[data-tool='highlight'] .ul-pdf-text {
   cursor: text;
@@ -484,7 +490,8 @@
   gap: 4px;
   margin-left: 6px;
 }
-.ul-pdf[data-tool='text'] .ul-pdf-text-opts {
+.ul-pdf[data-tool='text'] .ul-pdf-text-opts,
+.ul-pdf[data-tool='edit'] .ul-pdf-text-opts {
   display: inline-flex;
 }
 
@@ -749,7 +756,8 @@
   }
 
   /* The face and the size one below the other; they do not fit side by side in a 48 px row. */
-  .ul-pdf[data-tool='text'] .ul-pdf-text-opts {
+  .ul-pdf[data-tool='text'] .ul-pdf-text-opts,
+  .ul-pdf[data-tool='edit'] .ul-pdf-text-opts {
     display: flex;
     flex-direction: column;
     gap: 4px;
