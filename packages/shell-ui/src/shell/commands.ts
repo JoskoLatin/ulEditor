@@ -14,6 +14,7 @@ import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
+import { clearRecent, hasRecent } from './recent.js';
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -214,6 +215,19 @@ export function registerCommands(shell: Shell): () => void {
         const state = store();
         state.focusGroup(state.focused === 'left' ? 'right' : 'left');
         activeInstance()?.focus();
+      },
+    }),
+
+    /* Somewhere to clear it. A list of what you have opened is a small piece of
+       history about you, and a program that keeps one owes you a way to say no. */
+    shell.commands.register({
+      id: 'file.forgetRecent',
+      title: t('Forget recently opened files'),
+      category: t('File'),
+      when: () => hasRecent(shell),
+      run: () => {
+        clearRecent(shell);
+        shell.notify.show('info', t('The list of recent files is empty again.'));
       },
     }),
 

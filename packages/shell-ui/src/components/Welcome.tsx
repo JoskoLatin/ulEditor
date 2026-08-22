@@ -4,9 +4,17 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { formatLabel } from '../shell/formats.js';
-import { openFiles, openFolder } from '../shell/actions.js';
+import { addRoot, openFiles, openFolder, openUri } from '../shell/actions.js';
+import { hasRecent, recentFiles, recentFolders } from '../shell/recent.js';
 import { useWorkspace } from '../state/workspace.js';
-import { FormatIcon } from './Icons.js';
+import { FormatIcon, IconFolderOpen } from './Icons.js';
+import { detectByName } from '../host/detect.js';
+
+/** The icon beside a remembered file: from the name, since the file is not open
+ *  and reading it to decide which picture to draw would be absurd. */
+function formatOfName(name: string) {
+  return detectByName(name).format;
+}
 
 const LIVE = ['code', 'markdown', 'pdf', 'epub', 'image'] as const;
 /** Formats that open, but read-only — the difference matters before opening. */
@@ -22,6 +30,13 @@ const PLANNED: { format: keyof typeof FORMATS; phase: string }[] = [
 export function Welcome() {
   const shell = useShell();
   const setPaletteOpen = useWorkspace((s) => s.setPaletteOpen);
+  /*
+   * Read once, when the empty screen is drawn. The list only changes by opening
+   * something, and opening something replaces this screen — so there is nothing
+   * to keep in sync.
+   */
+  const folders = recentFolders(shell);
+  const files = recentFiles(shell);
 
   return (
     <div className="surface">
@@ -54,6 +69,42 @@ export function Welcome() {
               </div>
             </div>
           </div>
+
+          {/*
+            Where you were. The session brings back the tabs of the last run on
+            its own; this is for the document from last week, whose folder
+            nobody remembers. Absent on the web, where a stored path reopens
+            nothing — see shell/recent.ts.
+          */}
+          {hasRecent(shell) ? (
+            <div className="welcome-col">
+              <h3>{t('Recent')}</h3>
+              <div className="welcome-list">
+                {folders.map((entry) => (
+                  <button
+                    key={entry.uri}
+                    className="welcome-action welcome-recent"
+                    title={entry.uri}
+                    onClick={() => void addRoot(shell, { uri: entry.uri, name: entry.name })}
+                  >
+                    <IconFolderOpen size={13} />
+                    <span className="name">{entry.name}</span>
+                  </button>
+                ))}
+                {files.map((entry) => (
+                  <button
+                    key={entry.uri}
+                    className="welcome-action welcome-recent"
+                    title={entry.uri}
+                    onClick={() => void openUri(shell, entry.uri)}
+                  >
+                    <FormatIcon family={FORMATS[formatOfName(entry.name)].family} size={13} />
+                    <span className="name">{entry.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="welcome-col">
             <h3>{t('Working now')}</h3>

@@ -811,6 +811,25 @@ button {
   color: var(--ink-ghost);
 }
 
+/*
+ * A remembered name, which can be anything — including a scan called
+ * `20260822_ugovor_konacna_verzija_v3.pdf`. It is cut off rather than allowed
+ * to widen the column, and the full path is in the tooltip.
+ */
+.welcome-recent .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-recent {
+  color: var(--ink-soft);
+}
+.welcome-recent:hover {
+  color: var(--accent-ink);
+}
+
 .fmt-line {
   display: flex;
   align-items: center;

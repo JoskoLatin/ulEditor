@@ -65,6 +65,8 @@
   "Preferences…": "Postavke…",
   "Open text in a split below": "Otvori tekst u splitu ispod",
   "Open file by name…": "Otvori datoteku po imenu…",
+  "Forget recently opened files": "Zaboravi nedavno otvorene datoteke",
+  "The list of recent files is empty again.": "Popis nedavnih datoteka je opet prazan.",
   "Open file by name": "Otvori datoteku po imenu",
   "Type a file name…": "Upiši ime datoteke…",
   "Reading the file list…": "Čitam popis datoteka…",
@@ -107,6 +109,7 @@
   "No write permission": "Bez dozvole za pisanje"
 ,
   "Start": "Počni",
+  "Recent": "Nedavno",
   "Working now": "Radi sada",
   "Code, Markdown, PDF, e-books, Word and Excel in one place.": "Kod, Markdown, PDF, e-knjige, Word i Excel na jednom mjestu.",
   "You can also drag files straight into the window.": "Datoteke možeš i povući izravno u prozor.",

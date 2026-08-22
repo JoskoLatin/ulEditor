@@ -13,6 +13,7 @@ import { t } from '@uleditor/i18n';
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
 import { isNarrow } from './views.js';
+import { forget, rememberFile, rememberFolder } from './recent.js';
 import {
   activeTabId,
   tabDocuments,
@@ -66,6 +67,9 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
 
   tabDocuments.set(id, doc);
   store.addTab(tab);
+  /* Remembered on open rather than on close: a document opened and left open is
+     still the last thing worked on, and a crash should not lose that. */
+  rememberFile(shell, { uri: doc.uri, name: doc.name });
 
   if (!provider) return;
 
@@ -93,6 +97,10 @@ export async function openUri(
   try {
     await openDocument(shell, await shell.fs.open(uri));
   } catch (err) {
+    /* A file that will not open is dropped from the recent list. Leaving it
+       there means an error message on every click, and after two of those the
+       list is not trusted again. */
+    forget(shell, uri);
     // Restoring a session opens files the user did not just ask for; if one no
     // longer exists, that is not an error worth interrupting startup for.
     if (opts?.quiet) return;
@@ -135,6 +143,7 @@ export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): P
 
   const { tree, setTree } = useWorkspace.getState();
   setTree([...tree.filter((n) => n.uri !== node.uri), node]);
+  rememberFolder(shell, root);
 }
 
 /**

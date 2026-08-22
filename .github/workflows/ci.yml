@@ -49,6 +49,10 @@ jobs:
       # this existed.
       - run: pnpm verify:languages
 
+      # The recent-files list is desktop-only, so the browser checks below never
+      # reach it. This drives the module directly.
+      - run: pnpm verify:recent
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed
