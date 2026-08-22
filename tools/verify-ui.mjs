@@ -25,6 +25,25 @@ import { MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from '.
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
+/**
+ * Waits for a condition instead of guessing how long it takes.
+ *
+ * A fixed sleep before an assertion is a check that passes on the machine it
+ * was written on. This one cost a red build: the page rail was given 400 ms to
+ * mark a rotated page, which is plenty here and was not enough on a loaded
+ * Windows runner — the rotation had happened, the attribute simply had not been
+ * read yet. Returns whether the condition came true, so the assertion below can
+ * still report the real state rather than a timeout.
+ */
+async function until(condition, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await condition()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
@@ -393,16 +412,15 @@ try {
 
   await pdf.locator('.ul-pdf-thumb').first().hover();
   await pdf.locator('.ul-pdf-thumb').first().locator('button[title*="Rotate right"]').click();
-  await page.waitForTimeout(400);
-  check(
-    'a rotated page is marked as changed',
-    (await pdf.locator('.ul-pdf-thumb .num[data-changed="true"]').count()) === 1,
+  const marked = await until(
+    async () => (await pdf.locator('.ul-pdf-thumb .num[data-changed="true"]').count()) === 1,
   );
+  check('a rotated page is marked as changed', marked);
 
   await pdf.locator('.ul-pdf-thumb').nth(1).hover();
   await pdf.locator('.ul-pdf-thumb').nth(1).locator('button[title*="Delete page"]').click();
-  await page.waitForTimeout(500);
-  check('deleting leaves two pages', (await pdf.locator('.ul-pdf-thumb').count()) === 2);
+  const twoLeft = await until(async () => (await pdf.locator('.ul-pdf-thumb').count()) === 2);
+  check('deleting leaves two pages', twoLeft);
   check(
     'the page counter in the bar follows the deletion',
     (await pdf.locator('.ul-pdf-total').innerText()).includes('2'),

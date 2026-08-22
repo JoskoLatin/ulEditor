@@ -136,7 +136,12 @@ try {
   /* ── SVGZ ──────────────────────────────────────────────────────────── */
 
   await dropFile('drawing.svgz', new Uint8Array(gzipSync(Buffer.from(SVG, 'utf8'))));
-  await page.waitForTimeout(600);
+  /* Waited for rather than slept through: a fixed pause is long enough on the
+     machine it was written on and short on a loaded runner. */
+  await page.waitForFunction(
+    () => document.querySelector('.tab[data-active="true"] .name')?.textContent === 'drawing.svgz',
+    { timeout: 15000 },
+  );
   const svgzStatus = await page.locator('.statusbar').innerText();
   check(
     'a gzipped SVG is unpacked and drawn',
