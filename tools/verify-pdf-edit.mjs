@@ -1,11 +1,13 @@
 /**
- * Checking the rewriting of existing text.
+ * Finding the line under the finger, and what can be done with it.
  *
- * An edit here is assembled out of a deletion and a write, so there is only one
- * question: **does the replacement line up with what was there.** So this does
- * not look at whether something changed but compares the numbers — baseline,
- * size, colour — and checks that the program refuses wherever that alignment
- * cannot be promised.
+ * Two questions, and the first one decides the second. **What is that line** —
+ * its text, its size, its colour, its baseline, and whether it may be touched at
+ * all. Then: **which of the two routes it takes**, in place with the document's
+ * own font or replaced with ours, which comes down to what its font can write.
+ *
+ * The route itself is checked in `verify-pdf-retype.mjs`; the numbers below are
+ * what both routes are aimed at.
  *
  *   node tools/verify-pdf-edit.mjs
  */
@@ -21,8 +23,11 @@ import './ts-resolve.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
 
-const { findEditableLine, metricsWarning } = await import(
+const { findEditableLine, fallbackWarning } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/edit.ts')).href
+);
+const { unwritable } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/retype.ts')).href
 );
 const { standardWidths, layoutTextBox, loadFace, TEXT_PADDING } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/text.ts')).href
@@ -99,7 +104,27 @@ check(
 );
 check('the colour is black', line?.color.every((c) => c === 0) === true, JSON.stringify(line?.color));
 check('Helvetica matches our font metrically', line?.metricsMatch === true);
-check('there is no warning about the letterforms', metricsWarning(line) === null);
+check(
+  'so falling back to ours would not change the letterforms',
+  !/letterforms/.test(fallbackWarning(line, ['č'])),
+  fallbackWarning(line, ['č']),
+);
+
+/* Helvetica is named rather than embedded, so the reader draws it from its own
+   copy and the whole standard encoding is there to write with — not only the
+   letters this page happens to use. */
+check(
+  'a named font can write letters the page never drew',
+  unwritable(line.font, 'Zagreb 2026').length === 0,
+  unwritable(line.font, 'Zagreb 2026').join(' '),
+);
+/* Windows-1252 has ž and š and no č, ć or đ — so those three, and only those,
+   send a Croatian line down the other route. */
+check(
+  'but not what that encoding has no place for',
+  unwritable(line.font, 'Vodice čćžšđ').join('') === 'čćđ',
+  unwritable(line.font, 'Vodice čćžšđ').join(' '),
+);
 
 const red = findEditableLine(plain, { x: 45, y: 124 }, standard);
 check(
@@ -151,9 +176,9 @@ const other = await pageOf(
 const foreign = findEditableLine(other, { x: 40, y: 154 }, standard);
 check('another font is still rewritable', !!foreign?.line, foreign?.line?.text ?? '');
 check(
-  'but it is announced that the letterforms will not be the same',
-  typeof metricsWarning(foreign?.line) === 'string',
-  metricsWarning(foreign?.line) ?? '',
+  'and if ours has to write it, that is announced',
+  /letterforms/.test(fallbackWarning(foreign?.line, ['č'])),
+  fallbackWarning(foreign?.line, ['č']),
 );
 
 /* ── aligning the replacement ────────────────────────────────────────── */

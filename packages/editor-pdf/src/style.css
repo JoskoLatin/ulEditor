@@ -775,3 +775,22 @@
     min-height: 32px;
   }
 }
+
+/*
+ * The paper behind a line being retyped.
+ *
+ * The field itself is only as wide as what has been typed so far; the line
+ * underneath is as wide as it was written. Without this, deleting a word would
+ * leave the tail of the old one showing beside the new text, which reads as a
+ * fault rather than as an edit in progress.
+ */
+.ul-pdf-rewrite-cover {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Over an existing line the ground is opaque — see ul-pdf-rewrite-cover. */
+.ul-pdf-text-input[data-rewrite] {
+  outline-color: var(--accent);
+}

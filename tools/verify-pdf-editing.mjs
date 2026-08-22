@@ -43,6 +43,10 @@ const originalSize = (await readFile(file)).length;
 const contract = join(workspace, 'contract.pdf');
 await writeFile(contract, makePdf('Name and surname'));
 
+/** A third, for the rewrite that stays in the document's own font. */
+const invoice = join(workspace, 'invoice.pdf');
+await writeFile(invoice, makePdf('Total 100 EUR'));
+
 const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
   cwd: ROOT,
   shell: true,
@@ -194,7 +198,126 @@ try {
     JSON.stringify(remaining.replace(/\s+/g, ' ').slice(0, 40)),
   );
 
-  /* ── rewriting an existing line ────────────────────────────────────── */
+  /* ── rewriting a line in the document's own font ───────────────────── */
+
+  /*
+   * The ordinary case, and the one that has to look like nothing happened: a
+   * figure corrected in a document whose font can write the new one. Nothing is
+   * covered, nothing is added, and the page is redrawn from the edited bytes —
+   * so everything asserted below is read back from the document itself, not
+   * from a box we drew over it.
+   */
+  await page.locator('.tab .close').first().click();
+  await page.waitForTimeout(400);
+  await open('invoice.pdf');
+
+  const figure = await page.locator('.ul-pdf-text span').first().boundingBox();
+  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
+  await page.mouse.click(figure.x + figure.width / 2, figure.y + figure.height / 2);
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+
+  check(
+    'the field is prefilled from the page',
+    (await page.locator('.ul-pdf-text-input').inputValue()) === 'Total 100 EUR',
+    JSON.stringify(await page.locator('.ul-pdf-text-input').inputValue()),
+  );
+  check(
+    'the line being replaced is covered while typing',
+    (await page.locator('.ul-pdf-rewrite-cover').count()) === 1,
+  );
+
+  await page.locator('.ul-pdf-text-input').fill('Total 250 EUR');
+  check(
+    'nothing is said about fonts when the document can write it',
+    await page.locator('.ul-pdf-text-warning').isHidden(),
+  );
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () => document.querySelector('.ul-pdf-text')?.innerText.includes('Total 250 EUR'),
+    { timeout: 30000 },
+  );
+  check('the line itself changed on the page', true);
+  check(
+    'the old figure is gone from the page as well',
+    !(await page.locator('.ul-pdf-text').innerText()).includes('Total 100 EUR'),
+  );
+  check('nothing was covered over', (await page.locator('.ul-pdf-redaction').count()) === 0);
+  check('and no box was added on top', (await page.locator('.ul-pdf-ann-text').count()) === 0);
+  check(
+    'the document is modified by it',
+    (await page.locator('.tab[data-dirty="true"]').count()) === 1,
+  );
+
+  /* The edit is in the bytes rather than in a list of annotations, so undo has
+     to reach the bytes too — and put the reader back where it was reading. */
+  await page.keyboard.press('Control+Z');
+  await page.waitForFunction(
+    () => document.querySelector('.ul-pdf-text')?.innerText.includes('Total 100 EUR'),
+    { timeout: 30000 },
+  );
+  check('undo brings the old line back', true);
+  check(
+    'and leaves nothing modified behind it',
+    (await page.locator('.tab[data-dirty="true"]').count()) === 0,
+  );
+
+  await page.keyboard.press('Control+Shift+Z');
+  await page.waitForFunction(
+    () => document.querySelector('.ul-pdf-text')?.innerText.includes('Total 250 EUR'),
+    { timeout: 30000 },
+  );
+  check('redo puts the new one back', true);
+
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
+    timeout: 30000,
+  });
+
+  const retyped = new TextDecoder('latin1').decode(await readFile(invoice));
+  check('the old figure is not in the file', !retyped.includes('Total 100 EUR'));
+  check('no annotation was written for it', !retyped.includes('/FreeText'));
+  check('and no font was embedded to write it', !retyped.includes('/FontFile'));
+
+  await page.locator('.tab .close').first().click();
+  await page.waitForTimeout(400);
+  await open('invoice.pdf');
+  const invoiceText = await page.locator('.ul-pdf-text').innerText();
+  check(
+    'the new figure reads back out of the file',
+    invoiceText.includes('Total 250 EUR'),
+    JSON.stringify(invoiceText.replace(/\s+/g, ' ').slice(0, 40)),
+  );
+
+  /*
+   * And the other side of the same door: a letter that font has no code for is
+   * named while there is still time to do something about it.
+   */
+  const corrected = await page.locator('.ul-pdf-text span').first().boundingBox();
+  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
+  await page.mouse.click(corrected.x + corrected.width / 2, corrected.y + corrected.height / 2);
+  await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
+  await page.locator('.ul-pdf-text-input').fill('Cijena 250 EUR');
+  check(
+    'still nothing to warn about in plain letters',
+    await page.locator('.ul-pdf-text-warning').isHidden(),
+  );
+  await page.locator('.ul-pdf-text-input').fill('Cijena 250 kuna čć');
+  await page.waitForSelector('.ul-pdf-text-warning:not([hidden])', { timeout: 5000 });
+  const said = await page.locator('.ul-pdf-text-warning').innerText();
+  check('the letters it cannot write are named', said.includes('č') && said.includes('ć'), said.slice(0, 90));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ul-pdf-redaction[data-replaced="true"]', { timeout: 10000 });
+  check('and that edit takes the other route instead', true);
+
+  /* Undone rather than saved: what follows opens another document, and a tab
+     left unsaved would ask about it. */
+  await page.keyboard.press('Control+Z');
+  await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, {
+    timeout: 10000,
+  });
+
+  /* ── rewriting a line our font has to write ────────────────────────── */
 
   await page.locator('.tab .close').first().click();
   await page.waitForTimeout(400);

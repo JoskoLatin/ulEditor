@@ -286,6 +286,15 @@ export interface FontInfo {
    * cannot be offered for rewriting either.
    */
   decode(code: number): string | null;
+  /**
+   * Character → code: `decode` read backwards.
+   *
+   * This is what lets a line be retyped **in the document's own font** rather
+   * than in ours. `null` means this font cannot write that character — an
+   * embedded font carries only the glyphs the document already used, so a `č`
+   * added to a document that never had one has nowhere to come from.
+   */
+  encode(char: string): number | null;
   /** Why the font cannot be measured; `null` when all is well. */
   unsupported: string | null;
 }
@@ -445,6 +454,25 @@ function compositeWidths(descendant: PDFDict): (code: number) => number {
   return (code) => table.get(code) ?? defaultWidth;
 }
 
+/**
+ * Whether the glyphs travel with the document.
+ *
+ * It decides whether a code may be trusted without `/ToUnicode`. A font that is
+ * only named is drawn from the reader's own copy, so the whole standard encoding
+ * is there to write with. An embedded one is usually a subset — the code for `Q`
+ * is in the table whether or not the document ever drew a `Q`, and writing it
+ * would produce a blank.
+ */
+function isEmbedded(font: PDFDict): boolean {
+  const descendants = font.lookup(PDFName.of('DescendantFonts'));
+  const inner = descendants instanceof PDFArray ? descendants.lookup(0) : undefined;
+  const descriptor = (inner instanceof PDFDict ? inner : font).lookup(PDFName.of('FontDescriptor'));
+  if (!(descriptor instanceof PDFDict)) return false;
+  return ['FontFile', 'FontFile2', 'FontFile3'].some(
+    (key) => descriptor.get(PDFName.of(key)) !== undefined,
+  );
+}
+
 /** Whether the font has its own code mapping, which would shift the widths table. */
 function hasDifferences(font: PDFDict): boolean {
   const encoding = font.lookup(PDFName.of('Encoding'));
@@ -465,7 +493,7 @@ export function readFonts(
     const font = fonts.lookup(key);
 
     /** Fills in the shared fields so every branch does not repeat them. */
-    const describe = (partial: Omit<FontInfo, 'name' | 'baseFont' | 'decode'>): FontInfo => {
+    const describe = (partial: Omit<FontInfo, 'name' | 'baseFont' | 'decode' | 'encode'>): FontInfo => {
       const raw = font instanceof PDFDict ? font.lookup(PDFName.of('BaseFont')) : undefined;
       const baseFont = (raw instanceof PDFName ? raw.asString() : '')
         .replace(/^\//, '')
@@ -473,6 +501,32 @@ export function readFonts(
 
       const toUnicode = font instanceof PDFDict ? readToUnicode(font) : null;
       const winAnsi = !partial.twoByte && font instanceof PDFDict && !hasDifferences(font);
+      const embedded = font instanceof PDFDict && isEmbedded(font);
+
+      /*
+       * Built on first use and kept: retyping asks for it once per character
+       * typed, and a `/ToUnicode` map of a large font runs to thousands of
+       * entries. The lowest code wins where two draw the same letter — either
+       * would do, and picking deterministically keeps the output reproducible.
+       */
+      let reverse: Map<string, number> | null = null;
+      const reverseMap = (): Map<string, number> => {
+        if (reverse) return reverse;
+        reverse = new Map();
+        if (toUnicode) {
+          for (const [code, text] of toUnicode) {
+            if (!reverse.has(text)) reverse.set(text, code);
+          }
+        } else if (winAnsi && !embedded) {
+          for (let code = 0; code < 256; code++) {
+            const cp = winAnsiCodePoint(code);
+            if (cp === null) continue;
+            const char = String.fromCodePoint(cp);
+            if (!reverse.has(char)) reverse.set(char, code);
+          }
+        }
+        return reverse;
+      };
 
       return {
         ...partial,
@@ -490,6 +544,9 @@ export function readFonts(
           const cp = winAnsiCodePoint(code);
           return cp === null ? null : String.fromCodePoint(cp);
         },
+        /* A font we cannot measure must not be written with either: the codes
+           would be right and every advance wrong. */
+        encode: (char) => (partial.unsupported ? null : reverseMap().get(char) ?? null),
       };
     };
 

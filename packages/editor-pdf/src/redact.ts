@@ -16,12 +16,13 @@
  * document on.
  */
 
-import { PDFArray, PDFDocument, PDFName, PDFRef } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import type { PDFPage } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import type { Rect } from './annotations.js';
 import { readPageContent, type Glyph, type Obstacle, type TextOperation } from './content.js';
+import { adjustmentFor, hexOf, replaceContents, round, splice } from './stream.js';
 import type { StandardWidths } from './text.js';
 
 export interface Redaction {
@@ -82,29 +83,6 @@ function covers(rect: Rect, box: Rect): boolean {
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
-}
-
-function hexOf(bytes: Uint8Array): string {
-  let out = '';
-  for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
-  return `<${out}>`;
-}
-
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
-}
-
-/**
- * The offset that makes up for a removed glyph.
- *
- * A `TJ` number shifts text by `-(n/1000) · Tfs · Th`, so `n` is negative when it
- * has to move forward. Without it the rest of the line would slide left by the
- * width of the removed text.
- */
-function adjustmentFor(advance: number, operation: TextOperation): number {
-  const scale = operation.fontSize * operation.horizontalScale;
-  if (scale === 0) return 0;
-  return -(1000 * advance) / scale;
 }
 
 /**
@@ -170,24 +148,6 @@ function rewrite(operation: TextOperation, doomed: Set<Glyph>): string {
     default:
       return array;
   }
-}
-
-/** Replaces byte ranges, from the end backwards so the offsets do not shift. */
-function splice(bytes: Uint8Array, edits: { start: number; end: number; text: string }[]): Uint8Array {
-  const ordered = [...edits].sort((a, b) => b.start - a.start);
-  const encoder = new TextEncoder();
-  let out = bytes;
-
-  for (const edit of ordered) {
-    const replacement = encoder.encode(edit.text);
-    const next = new Uint8Array(out.length - (edit.end - edit.start) + replacement.length);
-    next.set(out.subarray(0, edit.start), 0);
-    next.set(replacement, edit.start);
-    next.set(out.subarray(edit.end), edit.start + replacement.length);
-    out = next;
-  }
-
-  return out;
 }
 
 /** Obstacles touching the area being redacted — the rest are none of this job's business. */
@@ -292,44 +252,6 @@ export async function applyRedactions(
   }
 
   return { bytes: await doc.save({ useObjectStreams: false }), removed, refused };
-}
-
-/**
- * Replaces a page's content stream with a single new one.
- *
- * **It writes over the existing object, not beside it.** A new stream with
- * `/Contents` redirected would leave the old one orphaned: nothing points at it
- * any more and no reader draws it — yet the bytes with the deleted text are still
- * in the file and come out with the first tool that unpacks streams. The check
- * caught exactly that.
- *
- * The array of streams is collapsed into the first one in the process — it was
- * read as one, so it is written back as one; the rest are emptied so nothing old
- * remains.
- */
-function replaceContents(doc: PDFDocument, page: PDFPage, bytes: Uint8Array): void {
-  const raw = page.node.get(PDFName.of('Contents'));
-
-  const refs: PDFRef[] = [];
-  if (raw instanceof PDFRef) refs.push(raw);
-  else if (raw instanceof PDFArray) {
-    for (let i = 0; i < raw.size(); i++) {
-      const item = raw.get(i);
-      if (item instanceof PDFRef) refs.push(item);
-    }
-  }
-
-  const first = refs[0];
-  if (!first) {
-    page.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(bytes)));
-    return;
-  }
-
-  doc.context.assign(first, doc.context.flateStream(bytes));
-  for (const ref of refs.slice(1)) {
-    doc.context.assign(ref, doc.context.flateStream(new Uint8Array(0)));
-  }
-  page.node.set(PDFName.of('Contents'), first);
 }
 
 /** The message about pages that could not be cleaned. */

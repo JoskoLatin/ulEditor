@@ -47,7 +47,8 @@ import {
   type TextBoxAnnotation,
 } from './annotations.js';
 import { ensureWebFont, loadFontBytes } from './fonts.js';
-import { findEditableLine, metricsWarning } from './edit.js';
+import { fallbackWarning, findEditableLine, type EditableLine } from './edit.js';
+import { applyRetype, unwritable } from './retype.js';
 import { previewRedaction, type Redaction } from './redact.js';
 import {
   DEFAULT_TEXT_SIZE,
@@ -140,7 +141,18 @@ interface Snapshot {
    * source — so the reference is carried along to give merging an undo too.
    */
   source: Uint8Array;
+  /**
+   * Whether those bytes differ from the file on disk.
+   *
+   * Retyping a line changes the source itself rather than adding an annotation
+   * over it, so nothing else in this snapshot shows that the document is
+   * unsaved. Undo has to restore that fact along with the bytes.
+   */
+  sourceEdited: boolean;
 }
+
+/** A rewritten line stays one line; a break sends it down the other route. */
+const NEWLINE = /[\r\n]/;
 
 function cssRgb(color: Rgb, alpha = 1): string {
   const [r, g, b] = color;
@@ -218,12 +230,34 @@ class PdfEditor implements EditorInstance {
     origin: TextBoxAnnotation | null;
     input: HTMLTextAreaElement;
     warning: HTMLElement;
+    /** Covers the line being replaced, in the paper's own colour. */
+    cover: HTMLElement | null;
     metrics: FaceMetrics;
     /** The area of the source line this edit replaces. */
     replaces: Rect | null;
+    /**
+     * The line being rewritten, when there is one.
+     *
+     * Its font is what decides the route: it is asked, on every keystroke,
+     * whether it can write what has been typed so far. It can for the vast
+     * majority of edits — a wrong figure, a misspelt name — and then the line
+     * goes back into the content stream in the document's own letterforms.
+     */
+    line: EditableLine | null;
     /** What has to be said before saving, regardless of typing. */
     notes: string[];
   } | null = null;
+
+  /**
+   * A retype being written into the source.
+   *
+   * Held so a save cannot start in the middle of one and write the document as
+   * it was a moment ago. Nothing else waits on it: the page is redrawn when it
+   * finishes, and until then it shows what the user typed.
+   */
+  #committing: Promise<void> | null = null;
+  /** The source differs from the file on disk — see `Snapshot.sourceEdited`. */
+  #sourceEdited = false;
 
   #drawing: { view: PageView; points: Point[] } | null = null;
   #marquee: { view: PageView; origin: Point; el: HTMLElement } | null = null;
@@ -553,9 +587,18 @@ class PdfEditor implements EditorInstance {
    * loaded pdf.js document, so the plan can no longer be resolved against it.
    * Rotation, deletion and reordering still work over the same document.
    */
-  async #reload(bytes: Uint8Array, plan: PagePlan[]): Promise<void> {
+  async #reload(
+    bytes: Uint8Array,
+    plan: PagePlan[],
+    opts?: { keepPosition?: boolean },
+  ): Promise<void> {
     const scroll = this.#scroll;
     if (!scroll) return;
+
+    /* Retyping a line rebuilds every page, and without this the document would
+       jump to the top on each correction — which is unusable on page forty. The
+       pages are the same size as before, so the same offset is the same place. */
+    const at = opts?.keepPosition ? scroll.scrollTop : null;
 
     this.#observer?.disconnect();
     for (const view of this.#pages) {
@@ -574,6 +617,7 @@ class PdfEditor implements EditorInstance {
     await this.#buildPages();
     for (const view of this.#pages) this.#observer?.observe(view.el);
     await this.#applyPlan();
+    if (at !== null) scroll.scrollTop = at;
   }
 
   /** Inserts the pages of another PDF after the current one. */
@@ -1177,6 +1221,7 @@ class PdfEditor implements EditorInstance {
     if (editor && editor.view === view) {
       Object.assign(editor.input.style, this.#textStyle(editor.draft, editor.metrics));
       this.#placeTextElement(editor.input, view, editor.draft);
+      if (editor.cover) view.annotEl.append(editor.cover);
       view.annotEl.append(editor.input, editor.warning);
       this.#warnAboutGlyphs();
     }
@@ -1203,6 +1248,7 @@ class PdfEditor implements EditorInstance {
       redactions: this.#redactions.map((r) => ({ ...r })),
       plan: this.#plan.map((p) => ({ ...p })),
       source: this.source,
+      sourceEdited: this.#sourceEdited,
     };
   }
 
@@ -1211,7 +1257,13 @@ class PdfEditor implements EditorInstance {
     if (snapshot.source !== this.source) {
       this.#annotations = snapshot.annotations;
       this.#redactions = snapshot.redactions;
-      void this.#reload(snapshot.source, snapshot.plan);
+      this.#sourceEdited = snapshot.sourceEdited;
+      /* A retype leaves the pages where they are, so the reader stays where it
+         was reading; undoing a merge changes the document itself and there is
+         no position to keep. */
+      void this.#reload(snapshot.source, snapshot.plan, {
+        keepPosition: snapshot.plan.length === this.#plan.length,
+      });
       return;
     }
 
@@ -1224,6 +1276,7 @@ class PdfEditor implements EditorInstance {
 
     this.#annotations = snapshot.annotations;
     this.#redactions = snapshot.redactions;
+    this.#sourceEdited = snapshot.sourceEdited;
     this.#plan = snapshot.plan;
 
     if (planChanged) void this.#applyPlan();
@@ -1236,6 +1289,7 @@ class PdfEditor implements EditorInstance {
 
   #markDirty(): void {
     const dirty =
+      this.#sourceEdited ||
       this.#annotations.some((a) => !a.imported) ||
       this.#redactions.some((r) => !r.applied) ||
       !isIdentity(this.#plan, this.pdf.numPages);
@@ -1688,7 +1742,7 @@ class PdfEditor implements EditorInstance {
         size: line.size,
         face,
       },
-      { rect: line.bounds, note: metricsWarning(line) },
+      { rect: line.bounds, line },
     );
   }
 
@@ -1728,6 +1782,33 @@ class PdfEditor implements EditorInstance {
     };
   }
 
+  /**
+   * The page's own colour behind a line, so the field covering it disappears
+   * into the paper.
+   *
+   * Read from the rendered page just outside the line's left edge — beside the
+   * text rather than on it. White is the answer for almost every document, but
+   * assuming it would turn a dark or coloured page into a white stripe, and the
+   * one thing this field must not do is announce itself.
+   */
+  static #groundBehind(view: PageView, rect: Rect): string {
+    try {
+      const scaleX = view.canvas.width / view.baseWidth;
+      const scaleY = view.canvas.height / view.baseHeight;
+      const x = Math.round((rect.x - 2) * scaleX);
+      const y = Math.round((view.baseHeight - (rect.y + rect.height / 2)) * scaleY);
+      if (x < 0 || y < 0 || x >= view.canvas.width || y >= view.canvas.height) return '#fff';
+
+      const ctx = view.canvas.getContext('2d', { willReadFrequently: true });
+      const pixel = ctx?.getImageData(x, y, 1, 1).data;
+      if (!pixel) return '#fff';
+      return `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+    } catch {
+      // A canvas that cannot be read is not a reason to refuse the edit.
+      return '#fff';
+    }
+  }
+
   #placeTextElement(el: HTMLElement, view: PageView, box: TextBoxAnnotation): void {
     const geometry = rectToCss(this.#viewportFor(view), box.rect);
     el.style.left = `${geometry.left}px`;
@@ -1747,8 +1828,8 @@ class PdfEditor implements EditorInstance {
     view: PageView,
     metrics: FaceMetrics,
     draft: TextBoxAnnotation,
-    /** When rewriting an existing line: what goes away and what has to be said about it. */
-    replaces?: { rect: Rect; note: string | null },
+    /** When rewriting an existing line: what is being replaced. */
+    replaces?: { rect: Rect; line: EditableLine },
   ): void {
     this.#finishTextEdit();
     this.#closePopup();
@@ -1759,6 +1840,36 @@ class PdfEditor implements EditorInstance {
     input.spellcheck = false;
     Object.assign(input.style, this.#textStyle(draft, metrics));
 
+    /*
+     * Typing over an existing line, the field has to cover it completely. A pale
+     * ground is right for a new box — it shows how far the box reaches without
+     * hiding the document — but over the line being replaced it leaves the old
+     * letters showing through the new ones, and the result reads as a broken
+     * program rather than as a text field.
+     */
+    let cover: HTMLElement | null = null;
+    if (replaces) {
+      const ground = PdfEditor.#groundBehind(view, replaces.rect);
+      /* Its own element rather than the field's own background: the field is as
+         wide as what has been typed, and the line underneath is as wide as it
+         was written. Neither covers the other on its own. */
+      cover = document.createElement('div');
+      cover.className = 'ul-pdf-rewrite-cover';
+      cover.style.background = ground;
+      const geometry = rectToCss(this.#viewportFor(view), replaces.rect);
+      cover.style.left = `${geometry.left}px`;
+      cover.style.top = `${geometry.top}px`;
+      cover.style.width = `${geometry.width}px`;
+      cover.style.height = `${geometry.height}px`;
+
+      input.dataset.rewrite = 'true';
+      input.style.background = ground;
+      /* The document's own font first: it is often installed, and then what is
+         typed matches the page while it is being typed. Ours is the fallback,
+         and the file gets the document's font either way. */
+      input.style.fontFamily = `"${replaces.line.baseFont}", "${FONT_FAMILY}", Arial, sans-serif`;
+    }
+
     const warning = document.createElement('div');
     warning.className = 'ul-pdf-text-warning';
     warning.hidden = true;
@@ -1768,9 +1879,11 @@ class PdfEditor implements EditorInstance {
       metrics,
       input,
       warning,
+      cover,
       draft,
       replaces: replaces?.rect ?? null,
-      notes: replaces?.note ? [replaces.note] : [],
+      line: replaces?.line ?? null,
+      notes: [],
       origin: this.#annotations.find(
         (a): a is TextBoxAnnotation => a.kind === 'text' && a.id === draft.id,
       ) ?? null,
@@ -1819,9 +1932,21 @@ class PdfEditor implements EditorInstance {
     if (!editor) return;
 
     const messages = [...editor.notes];
+    const text = editor.draft.text;
 
-    const missing = editor.metrics.missing(editor.draft.text);
-    if (missing.length > 0) {
+    /*
+     * A line being rewritten normally goes back in the document's own font, and
+     * then there is nothing to say — which is the whole point of the exercise.
+     * The warning appears only for the characters that font does not have, and
+     * only then does our font, and its different letterforms, come into it.
+     */
+    const unavailable = editor.line ? unwritable(editor.line.font, text) : [];
+    if (editor.line && unavailable.length > 0) {
+      messages.push(fallbackWarning(editor.line, unavailable));
+    }
+
+    const missing = editor.metrics.missing(text);
+    if (missing.length > 0 && (!editor.line || unavailable.length > 0)) {
       messages.push(
         t('This font has no {chars} — they will be saved as blanks.', { chars: missing.join(' ') }),
       );
@@ -1871,25 +1996,36 @@ class PdfEditor implements EditorInstance {
 
     editor.input.remove();
     editor.warning.remove();
+    editor.cover?.remove();
 
-    const { draft, origin, replaces } = editor;
+    const { draft, origin, replaces, line } = editor;
     const empty = draft.text.trim().length === 0;
 
     /*
-     * Rewriting an existing line: the old one leaves the content stream, the new
-     * one arrives on its baseline. Both are one step in the history — undo has to
-     * restore both the text and its place, not half the job.
+     * Rewriting a line of the document. Two routes, and the good one is the
+     * usual one: the operator that draws the line is rewritten in the font
+     * already there, so the page comes back looking untouched. See
+     * [`retype.ts`](./retype.ts) for why the other one exists.
      */
-    if (replaces) {
-      this.#snapshot();
-      this.#redactions = [
-        ...this.#redactions,
-        { id: newId(), page: draft.page, rect: replaces, replaced: !empty },
-      ];
-      if (!empty) this.#annotations = [...this.#annotations, draft];
-      this.#markDirty();
-      this.#renderAllAnnotations();
-      this.#emitStatus();
+    if (replaces && line) {
+      if (draft.text === line.text) {
+        // Opened and closed again. Not an edit, and not a step in the history.
+        this.#renderAllAnnotations();
+        return;
+      }
+
+      const inPlace =
+        !empty && !NEWLINE.test(draft.text) && unwritable(line.font, draft.text).length === 0;
+      if (inPlace) {
+        const done = this.#retypeInPlace(line, draft, replaces);
+        this.#committing = done;
+        void done.finally(() => {
+          if (this.#committing === done) this.#committing = null;
+        });
+        return;
+      }
+
+      this.#replaceWithOurFont(draft, replaces, empty);
       return;
     }
 
@@ -1922,6 +2058,71 @@ class PdfEditor implements EditorInstance {
       // An edited imported box becomes ours, otherwise the change would not be written.
       a.id === draft.id ? { ...draft, imported: false } : a,
     );
+    this.#markDirty();
+    this.#renderAllAnnotations();
+    this.#emitStatus();
+  }
+
+  /**
+   * Writes the line back in the document's own font.
+   *
+   * The source itself changes, and that is deliberate: the page is then redrawn
+   * from the real bytes, so what is on screen after an edit **is** what the file
+   * holds. Nothing is drawn over anything, and there is no preview that could
+   * disagree with the result.
+   *
+   * If the line has moved since it was picked — another edit, or a page that was
+   * merged in between — the retype is refused rather than applied to whatever is
+   * now in that place, and the other route takes over.
+   */
+  async #retypeInPlace(
+    line: EditableLine,
+    draft: TextBoxAnnotation,
+    replaces: Rect,
+  ): Promise<void> {
+    let outcome;
+    try {
+      outcome = await applyRetype(
+        this.source,
+        { page: draft.page, rect: line.bounds, before: line.text, after: draft.text },
+        await this.#standardWidths(),
+      );
+    } catch (err) {
+      outcome = {
+        kind: 'refused' as const,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    if (outcome.kind === 'done') {
+      // Nothing has changed until now, so this captures the state before the edit.
+      this.#snapshot();
+      this.#sourceEdited = true;
+      this.#contentDoc = null;
+      await this.#reload(outcome.bytes, this.#plan, { keepPosition: true });
+      this.#markDirty();
+      this.#emitStatus();
+      return;
+    }
+
+    if (outcome.kind === 'refused') this.host.notify.show('warning', outcome.reason);
+    this.#replaceWithOurFont(draft, replaces, false);
+  }
+
+  /**
+   * The fallback: the old line leaves the content stream, the new one is written
+   * with our own embedded font on the same baseline.
+   *
+   * Both are one step in the history — undo has to restore the text and its
+   * place, not half the job.
+   */
+  #replaceWithOurFont(draft: TextBoxAnnotation, replaces: Rect, empty: boolean): void {
+    this.#snapshot();
+    this.#redactions = [
+      ...this.#redactions,
+      { id: newId(), page: draft.page, rect: replaces, replaced: !empty },
+    ];
+    if (!empty) this.#annotations = [...this.#annotations, draft];
     this.#markDirty();
     this.#renderAllAnnotations();
     this.#emitStatus();
@@ -2147,6 +2348,8 @@ class PdfEditor implements EditorInstance {
     const uri = target?.uri ?? this.docHandle.uri;
     // Unfinished typing is saved along with the rest, not lost.
     this.#finishTextEdit();
+    // ...including a retype still being written into the source.
+    await this.#committing;
 
     const { bytes, lost } = await saveDocument(
       this.source,
@@ -2166,6 +2369,8 @@ class PdfEditor implements EditorInstance {
        brings the text back, which is the only way changing your mind can be
        offered at all. */
     this.#redactions = this.#redactions.map((r) => ({ ...r, applied: true }));
+    // The bytes on screen are now the bytes on disk.
+    this.#sourceEdited = false;
     this.#markDirty();
     this.#syncToolbar();
     this.#emitStatus();

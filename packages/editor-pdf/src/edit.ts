@@ -1,31 +1,25 @@
 /**
- * Rewriting text that is already in the document.
+ * Finding the line under the finger, so it can be rewritten.
  *
- * The edit is assembled from two things the project already has: the old line is
- * **removed from the content stream** (see [`redact.ts`](./redact.ts)) and the
- * new one is **written as text** (see [`text.ts`](./text.ts)). Nothing is
- * covered over and nothing is left underneath.
+ * How it is then written is decided elsewhere, and there are two routes:
  *
- * It is written **with our embedded font**, not the original one. That is a
- * deliberate choice with a cost worth knowing:
- *
- * - For Helvetica and Arial there is no difference — Liberation Sans was built
- *   to match their widths, so a rewritten line sits exactly where the old one
- *   did.
- * - For everything else the size, colour and position stay the same, but the
- *   letterforms do not. This is said before typing starts, not after saving.
- *
- * Why not the original font: an embedded subset contains only the glyphs that
- * document already used. The moment a letter that is not there gets added — and
- * `č`, `ć`, `ž`, `š` and `đ` are almost never there in somebody else's
- * documents — it would come out as a blank in the middle of a sentence.
+ * - **In place, in the document's own font** — [`retype.ts`](./retype.ts).
+ *   The operator that draws the line is rewritten with the codes of the font
+ *   that was already there, so nothing about the page changes except the words.
+ *   This is the normal route.
+ * - **Removed and typed again in ours** — [`redact.ts`](./redact.ts) plus
+ *   [`text.ts`](./text.ts), for when the first route cannot write a character.
+ *   An embedded font is usually a subset holding only the glyphs the document
+ *   already used, and `č`, `ć`, `ž`, `š` and `đ` are almost never among them in
+ *   somebody else's document. Then the size, the colour and the position stay
+ *   and the letterforms do not — which is said while typing, not after saving.
  */
 
 import type { PDFPage } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
-import { boundsOfOperation, readPageContent, textOf } from './content.js';
+import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
 import type { StandardWidths } from './text.js';
 
 /** A line of the document offered for rewriting. */
@@ -40,6 +34,14 @@ export interface EditableLine {
   baseFont: string;
   /** How many glyphs are going; shown before confirmation. */
   glyphs: number;
+  /**
+   * The font the line is drawn with.
+   *
+   * Carried along because it is what decides the route: it knows which
+   * characters it can write, and therefore whether the line can be retyped in
+   * place or has to be replaced with ours.
+   */
+  font: FontInfo;
   /**
    * Whether our font's metrics match the original's.
    *
@@ -117,6 +119,7 @@ export function findEditableLine(
         color: operation.fill,
         baseFont: operation.font.baseFont,
         glyphs,
+        font: operation.font,
         metricsMatch: matchesOurMetrics(operation.font.baseFont),
       },
     };
@@ -125,10 +128,23 @@ export function findEditableLine(
   return null;
 }
 
-/** The warning for when the letterforms will not match the original. */
-export function metricsWarning(line: EditableLine): string | null {
-  if (line.metricsMatch) return null;
-  return t('{font} is not the font we write with — size and position stay, the letterforms change.', {
-    font: line.baseFont || t('The original font'),
-  });
+/**
+ * The warning for the fallback route, once it is known to be needed.
+ *
+ * It names the characters that forced it. "The font is different" is not
+ * actionable; "there is no ć in this document's font" is — the person can decide
+ * to write the word another way, or to accept the change.
+ */
+export function fallbackWarning(line: EditableLine, chars: string[]): string {
+  if (line.metricsMatch) {
+    // Liberation Sans matches Helvetica and Arial width for width, so the line
+    // will not move; only the missing characters are worth mentioning.
+    return t('The font of this document has no {chars}, so the line is written with ours instead.', {
+      chars: chars.join(' '),
+    });
+  }
+  return t(
+    'The font of this document has no {chars}. The line will be written in {font} instead — same size and place, different letterforms.',
+    { chars: chars.join(' '), font: 'Liberation Sans' },
+  );
 }

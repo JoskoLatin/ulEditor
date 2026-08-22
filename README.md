@@ -66,7 +66,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | PDF annotations | **works** — highlights, notes, ink | pdf-lib |
 | **PDF text** | **works** — typing text, font, size, colour, moving | pdf-lib + Liberation Sans |
 | **PDF redaction** | **works** — text leaves the content stream, it is not covered up | own content-stream reader |
-| **PDF text editing** | **works** — click an existing line and rewrite it | the same + pdf-lib |
+| **PDF text editing** | **works** — click an existing line and rewrite it, in the document's own font | the same + pdf-lib |
 | PDF pages | **works** — rotate, delete, reorder, merge, extract | pdf-lib |
 | **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader *(full editing → ProseMirror, phase 2)* |
 | **XLSX** | **works — viewing** (sheets, formats, formulas, merged cells) | own reader *(editing → Univer, phase 2)* |
@@ -90,9 +90,11 @@ The font is **embedded**, and that is a necessity rather than a nicety: the stan
 
 When it **cannot be guaranteed** that everything was removed — a font without a widths table, Type3 glyphs, text inside a Form XObject — the page is left alone and the reason is stated immediately, while the user is still looking at the spot. A redaction that quietly misses part of the text is worse than none at all.
 
-**Editing existing text** uses the same `T` tool: click a line and it opens filled with what is written there. The old line leaves the content stream, the new one sits on **the same baseline**, in the same size and colour, both read from the document itself.
+**Editing existing text** uses the `T✎` tool: click a line and it opens filled with what is written there.
 
-It is written **with our embedded font**, not the original one, and that has a cost worth knowing. For Helvetica and Arial there is no difference — Liberation Sans is metrically identical, so the replacement takes exactly the same width. For other fonts the size, position and colour are kept, but the letterforms change, and this is said **before** you type. The original font cannot be used because it is embedded in the document as a subset: it contains only the glyphs that document already used, so the first `č` you add would come out as a blank in the middle of a sentence.
+Normally the line is rewritten **in the document's own font**. The operator that draws it is written again with the codes of the font that was already on the page — read out of its `/ToUnicode` map backwards — so the letterforms, the size, the colour and the baseline are the ones that were there. Nothing is embedded, nothing is covered, and the difference in width is made up with an offset in the `TJ` array so that whatever follows on the line does not move. The page is then redrawn from the edited bytes: what is on screen is what the file holds.
+
+The limit is the font's, not ours. An embedded font is usually a **subset**, holding only the glyphs the document already used, so a `č` typed into a document that never had one has no code to be written with. Then — and only then — the old line leaves the content stream and the new one is written with our embedded font on the same baseline, in the same size and colour. For Helvetica and Arial nothing moves; Liberation Sans is metrically identical. For other fonts the letterforms change, and **which characters** forced it is said while you are still typing.
 
 Rotated text, stretched text, an invisible OCR layer and a font without a `/ToUnicode` table are **not offered for rewriting** — each with its own reason, rather than letting a replacement sit crooked or having letters guessed at.
 
