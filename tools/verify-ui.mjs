@@ -146,7 +146,7 @@ try {
 
   /* — annotations over the PDF — */
   await page.locator('.tab').nth(2).click();
-  await page.waitForTimeout(300);
+  await until(async () => (await page.locator('.ul-pdf:visible').count()) === 1);
 
   await page.locator('.ul-pdf-tool[title*="Highlight"]').click();
   // The selection is made programmatically: a real mouse drag across the invisible
@@ -174,7 +174,7 @@ try {
   await page.locator('.ul-pdf-note-popup textarea').fill('Check čćžšđ');
   const noteBeforeSave = await page.locator('.ul-pdf-ann-note').count();
   await page.locator('.ul-pdf-note-popup button[data-primary="true"]').click();
-  await page.waitForTimeout(250);
+  await until(async () => (await page.locator('.ul-pdf-ann-note').count()) === 1);
   const noteAfterSave = await page.locator('.ul-pdf-ann-note').count();
   check(
     'the note was placed',
@@ -187,12 +187,14 @@ try {
   // Placing the note and typing its text are two separate history steps, so the
   // first undo restores the empty text and only the second removes the note.
   await page.keyboard.press('Control+Z');
-  await page.waitForTimeout(250);
+  await until(
+    async () => (await page.locator('.ul-pdf-ann-note').first().getAttribute('title')) === 'Note',
+  );
   const titleAfterOne = await page.locator('.ul-pdf-ann-note').first().getAttribute('title');
   check('the first undo restores the note text', titleAfterOne === 'Note', String(titleAfterOne));
 
   await page.keyboard.press('Control+Z');
-  await page.waitForTimeout(250);
+  await until(async () => (await page.locator('.ul-pdf-ann-note').count()) === 0);
   const notesLeft = await page.locator('.ul-pdf-ann-note').count();
   const highlightsLeft = await page.locator('.ul-pdf-ann-highlight').count();
   check(
@@ -203,8 +205,8 @@ try {
 
   // Redo has to bring the note back — otherwise undo is not reversible.
   await page.keyboard.press('Control+Shift+Z');
-  await page.waitForTimeout(250);
-  check('redo brings the note back', (await page.locator('.ul-pdf-ann-note').count()) === 1);
+  const noteBack = await until(async () => (await page.locator('.ul-pdf-ann-note').count()) === 1);
+  check('redo brings the note back', noteBack);
 
   /* — text typed into the PDF — */
   await page.locator('.ul-pdf-tool[title*="Add text"]').click();
@@ -245,6 +247,11 @@ try {
   await page.locator('.ul-pdf-page').first().click({ position: { x: 260, y: 200 } });
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 5000 });
   await page.keyboard.press('Escape');
+  /*
+   * A pause, and it has to be one: this asserts that something does NOT appear,
+   * and there is no condition to wait for. Waiting until the count matches
+   * would be satisfied immediately and prove nothing — the delay is the check.
+   */
   await page.waitForTimeout(250);
   check(
     'an empty box is not saved',
@@ -253,12 +260,12 @@ try {
   );
 
   await page.keyboard.press('Control+Z');
-  await page.waitForTimeout(250);
-  check('undo removes the typed text', (await page.locator('.ul-pdf-ann-text').count()) === 0);
+  const textGone = await until(async () => (await page.locator('.ul-pdf-ann-text').count()) === 0);
+  check('undo removes the typed text', textGone);
 
   await page.keyboard.press('Control+Shift+Z');
-  await page.waitForTimeout(250);
-  check('redo brings it back', (await page.locator('.ul-pdf-ann-text').count()) === 1);
+  const textBack = await until(async () => (await page.locator('.ul-pdf-ann-text').count()) === 1);
+  check('redo brings it back', textBack);
 
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
@@ -336,12 +343,16 @@ try {
   check('search in code', codeHits >= 2, `${codeHits} hits`);
 
   await page.locator('.findpanel-hit').nth(1).click();
-  await page.waitForTimeout(200);
-  check('jumping to a hit works', (await page.locator('.findpanel-hit[data-active="true"]').count()) === 1);
+  const jumped = await until(
+    async () => (await page.locator('.findpanel-hit[data-active="true"]').count()) === 1,
+  );
+  check('jumping to a hit works', jumped);
 
   // The same UI over a PDF — a format that otherwise has no search interface at all.
   await page.locator('.tab').nth(2).click();
-  await page.waitForTimeout(400);
+  // The shortcut acts on whatever is in front, and a keystroke does not wait for
+  // anything the way a click does.
+  await until(async () => (await page.locator('.ul-pdf:visible').count()) === 1);
   await page.keyboard.press('Control+Shift+F');
   await page.waitForSelector('.findpanel', { timeout: 5000 });
   // The query is deliberately kept across tabs, so we replace it here.
@@ -354,6 +365,11 @@ try {
   // Switching back to code has to clear the PDF results at once — a `reveal()` on
   // somebody else's result would jump into an editor that is not in front.
   await page.locator('.tab').first().click();
+  /*
+   * Another deliberate pause. The claim is that the old results are dropped at
+   * once, so waiting until they are gone would turn a real failure — results
+   * that linger for a second — into a pass.
+   */
   await page.waitForTimeout(120);
   const staleWhere = await page.locator('.findpanel-hit .where').allInnerTexts();
   check(
@@ -363,8 +379,8 @@ try {
   );
 
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(150);
-  check('Esc closes the search', (await page.locator('.findpanel').count()) === 0);
+  const closed = await until(async () => (await page.locator('.findpanel').count()) === 0);
+  check('Esc closes the search', closed);
 
   /* — paleta naredbi — */
   await page.keyboard.press('Control+Shift+P');
@@ -384,7 +400,10 @@ try {
 
   const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system');
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(250);
+  await until(
+    async () =>
+      (await page.evaluate(() => document.documentElement.dataset.theme ?? 'system')) !== themeBefore,
+  );
   const themeAfter = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system');
   check('the command changes the theme', themeBefore !== themeAfter, `${themeBefore} → ${themeAfter}`);
 
@@ -392,8 +411,8 @@ try {
   await page.locator('.tab').first().click();
   await page.locator('.cm-content').first().click();
   await page.keyboard.type('// edit\n');
-  await page.waitForTimeout(150);
   // Two modified tabs: the code we have just typed and the PDF with annotations.
+  await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) === 2);
   const dirty = await page.locator('.tab[data-dirty="true"]').count();
   check('the unsaved mark is on both modified tabs', dirty === 2, `${dirty}`);
 
@@ -433,12 +452,18 @@ try {
   );
 
   await page.keyboard.press('Control+Z');
-  await page.waitForTimeout(600);
-  check('undo brings the deleted page back', (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+  const threeAgain = await until(async () => (await pdf.locator('.ul-pdf-thumb').count()) === 3);
+  check('undo brings the deleted page back', threeAgain);
 
   await page.screenshot({ path: resolve(SHOTS, 'pages.png') });
 
-  /* — snimke — */
+  /*
+   * — screenshots —
+   *
+   * The pauses below stay pauses. Nothing is asserted after them: they are there
+   * so the picture is taken after the paint, and "wait until it looks right" is
+   * not a condition a script can evaluate.
+   */
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   await page.waitForTimeout(250);
   await page.screenshot({ path: resolve(SHOTS, 'shell-dark.png') });

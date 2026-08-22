@@ -28,6 +28,25 @@ const args = process.argv.slice(2);
 const url = args.includes('--url') ? args[args.indexOf('--url') + 1] : 'http://localhost:5273';
 const headed = args.includes('--headed');
 
+/**
+ * Waits for a condition rather than guessing how long it takes.
+ *
+ * The wait and the assertion must not be the same sentence, or the check proves
+ * nothing: here it waits for the status bar to carry *a* size and then asserts
+ * *which* size. Waiting for "240" would pass by definition.
+ */
+async function until(condition, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await condition()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** The size an editor publishes once it has the document open. */
+const SIZE_REPORTED = /\d+\s*×\s*\d+/;
+
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
@@ -108,14 +127,15 @@ try {
   await page.waitForSelector('.ul-vec', { timeout: 15000 });
   check('an SVG opens in the vector viewer, not the code editor', true);
 
-  await page.waitForSelector('.ul-vec-frame img', { timeout: 10000 });
-  const drawn = await page.locator('.ul-vec-frame').boundingBox();
+  await page.waitForSelector('.mount:visible .ul-vec-frame img', { timeout: 10000 });
+  const drawn = await page.locator('.mount:visible .ul-vec-frame').boundingBox();
   check(
     'the drawing has real size on screen',
     !!drawn && drawn.width > 50 && drawn.height > 30,
     `${Math.round(drawn?.width ?? 0)} × ${Math.round(drawn?.height ?? 0)} px`,
   );
 
+  await until(async () => SIZE_REPORTED.test(await page.locator('.statusbar').innerText()));
   const svgStatus = await page.locator('.statusbar').innerText();
   check(
     'the status bar reports the size from the file',
@@ -128,7 +148,10 @@ try {
   await page.waitForSelector('.ul-vec-source:not([hidden])', { timeout: 5000 });
   const source = await page.locator('.ul-vec-source').innerText();
   check('the Source button shows the markup', source.includes('<svg') && source.includes('circle'));
-  check('the picture is hidden while the source is shown', await page.locator('.ul-vec-frame').isHidden());
+  check(
+    'the picture is hidden while the source is shown',
+    await page.locator('.mount:visible .ul-vec-frame').isHidden(),
+  );
   await page.locator('.ul-vec-btn', { hasText: 'Source' }).click();
 
   await page.screenshot({ path: resolve(SHOTS, 'vector.png') });
@@ -136,17 +159,25 @@ try {
   /* ── SVGZ ──────────────────────────────────────────────────────────── */
 
   await dropFile('drawing.svgz', new Uint8Array(gzipSync(Buffer.from(SVG, 'utf8'))));
-  /* Waited for rather than slept through: a fixed pause is long enough on the
-     machine it was written on and short on a loaded runner. */
-  await page.waitForFunction(
-    () => document.querySelector('.tab[data-active="true"] .name')?.textContent === 'drawing.svgz',
-    { timeout: 15000 },
-  );
-  const svgzStatus = await page.locator('.statusbar').innerText();
+
+  /*
+   * Measured off the picture rather than read out of the status bar. The tab
+   * becomes active before the editor has finished mounting, so a status line
+   * read at that moment still belongs to the drawing before it — which is
+   * exactly how this check failed once in five runs before it said anything
+   * true. The frame is scoped to the visible pane because every open tab keeps
+   * its own, hidden.
+   */
+  const shown = page.locator('.mount:visible .ul-vec-frame');
+  await shown.locator('img').waitFor({ state: 'visible', timeout: 15000 });
+  const svgzBox = await until(async () => {
+    const box = await shown.boundingBox();
+    return box && box.width > 0 ? box : false;
+  }).then(() => shown.boundingBox());
   check(
-    'a gzipped SVG is unpacked and drawn',
-    svgzStatus.includes('240') && svgzStatus.includes('160'),
-    svgzStatus.replace(/\s+/g, ' ').slice(0, 70),
+    'a gzipped SVG is unpacked and drawn at the size inside it',
+    !!svgzBox && Math.round(svgzBox.width) === 240 && Math.round(svgzBox.height) === 160,
+    `${Math.round(svgzBox?.width ?? 0)} × ${Math.round(svgzBox?.height ?? 0)} px`,
   );
 
   /* ── the ones we cannot open yet ───────────────────────────────────── */
