@@ -212,7 +212,7 @@ try {
   await open('invoice.pdf');
 
   const figure = await page.locator('.ul-pdf-text span').first().boundingBox();
-  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
+  await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
   await page.mouse.click(figure.x + figure.width / 2, figure.y + figure.height / 2);
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
 
@@ -294,7 +294,7 @@ try {
    * named while there is still time to do something about it.
    */
   const corrected = await page.locator('.ul-pdf-text span').first().boundingBox();
-  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
+  await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
   await page.mouse.click(corrected.x + corrected.width / 2, corrected.y + corrected.height / 2);
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });
   await page.locator('.ul-pdf-text-input').fill('Cijena 250 EUR');
@@ -346,7 +346,7 @@ try {
 
   /* Its own tool now. Rewriting used to hide inside "Add text", where clicking a
      line swallowed it and nothing said so. */
-  await page.locator('.ul-pdf-tool[title*="Rewrite text"]').click();
+  await page.locator('.ul-pdf-tool[title*="Edit text"]').click();
   await page.mouse.click(original.x + original.width / 2, original.y + original.height / 2);
 
   await page.waitForSelector('.ul-pdf-text-input', { timeout: 15000 });

@@ -115,15 +115,15 @@ check(
    letters this page happens to use. */
 check(
   'a named font can write letters the page never drew',
-  unwritable(line.font, 'Zagreb 2026').length === 0,
-  unwritable(line.font, 'Zagreb 2026').join(' '),
+  unwritable(line.font, line.inventory, 'Zagreb 2026').length === 0,
+  unwritable(line.font, line.inventory, 'Zagreb 2026').join(' '),
 );
 /* Windows-1252 has ž and š and no č, ć or đ — so those three, and only those,
    send a Croatian line down the other route. */
 check(
   'but not what that encoding has no place for',
-  unwritable(line.font, 'Vodice čćžšđ').join('') === 'čćđ',
-  unwritable(line.font, 'Vodice čćžšđ').join(' '),
+  unwritable(line.font, line.inventory, 'Vodice čćžšđ').join('') === 'čćđ',
+  unwritable(line.font, line.inventory, 'Vodice čćžšđ').join(' '),
 );
 
 const red = findEditableLine(plain, { x: 45, y: 124 }, standard);

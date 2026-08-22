@@ -412,7 +412,7 @@ class PdfEditor implements EditorInstance {
        * without a legend. A single glyph for "rewrite" does not exist that a
        * person would read correctly on sight.
        */
-      { tool: 'edit', label: 'T✎', title: t('Rewrite text — click a line of the document') },
+      { tool: 'edit', label: 'T✎', title: t('Edit text — click a line of the document') },
       { tool: 'redact', label: '⌫', title: t('Erase text — drag over what should go') },
     ];
     const toolButtons = new Map<Tool, HTMLButtonElement>();
@@ -1992,7 +1992,9 @@ class PdfEditor implements EditorInstance {
      * The warning appears only for the characters that font does not have, and
      * only then does our font, and its different letterforms, come into it.
      */
-    const unavailable = editor.line ? unwritable(editor.line.font, text) : [];
+    const unavailable = editor.line
+      ? unwritable(editor.line.font, editor.line.inventory, text)
+      : [];
     if (editor.line && unavailable.length > 0) {
       messages.push(fallbackWarning(editor.line, unavailable));
     }
@@ -2067,7 +2069,9 @@ class PdfEditor implements EditorInstance {
       }
 
       const inPlace =
-        !empty && !NEWLINE.test(draft.text) && unwritable(line.font, draft.text).length === 0;
+        !empty &&
+        !NEWLINE.test(draft.text) &&
+        unwritable(line.font, line.inventory, draft.text).length === 0;
       if (inPlace) {
         const done = this.#retypeInPlace(line, draft, replaces);
         this.#committing = done;

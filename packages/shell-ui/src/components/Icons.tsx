@@ -83,6 +83,23 @@ export const IconSave = (p: IconProps) => (
   </Svg>
 );
 
+/* The two curved arrows of undo and redo. Mirrored on purpose: the pair is read
+   as one gesture in two directions, and a person aiming for the second one
+   should not have to read the tooltip to tell them apart. */
+export const IconUndo = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 8.25h6.4a3.35 3.35 0 1 1 0 6.7H6.5" />
+    <path d="M5.75 5.5 3 8.25l2.75 2.75" />
+  </Svg>
+);
+
+export const IconRedo = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M13 8.25H6.6a3.35 3.35 0 1 0 0 6.7H9.5" />
+    <path d="M10.25 5.5 13 8.25l-2.75 2.75" />
+  </Svg>
+);
+
 export const IconSun = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="8" r="3" />

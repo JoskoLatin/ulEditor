@@ -19,11 +19,22 @@
  *   everything after it sideways, so the difference is made up with an offset in
  *   the `TJ` array, exactly as a redaction makes up for what it removed.
  *
- * The limit is honest and it is the font's, not ours: an embedded font is
- * usually a subset holding only the glyphs the document already used. Type a `č`
- * into a document that never had one and there is no code to write it with — so
- * this refuses, names the characters, and the caller falls back to the old route
- * where the letterforms change but the text is right.
+ * Which characters can be written is decided by **what the page already draws**.
+ * Every code the reader has drawn on that page has a glyph behind it, by
+ * definition — so writing that code again with the same font draws the same
+ * letter, and no map has to be trusted for it. The font's own `/ToUnicode`,
+ * read backwards, adds whatever else it promises.
+ *
+ * That inventory is what makes real documents editable. An invoice from a
+ * payment processor embeds a subset of its font and often ships no `/ToUnicode`
+ * at all; going by the map alone not a single letter of it could be written, and
+ * every correction fell back to being a box glued on top. Going by what is on
+ * the page, the whole alphabet of that invoice is available.
+ *
+ * The limit is what remains honest: a `č` typed into a document that never drew
+ * one has no glyph to come from. Then this refuses, names the characters, and
+ * the caller falls back to the route where the letterforms change but the text
+ * is right.
  *
  * What it does not do is reflow. A retyped line stays one line at one place; if
  * the new text is much longer it will run towards whatever comes next, the way
@@ -57,6 +68,9 @@ export interface RetypeSpec {
   before: string;
   after: string;
 }
+
+/** Character → the code that draws it, for the letters a page already carries. */
+export type Inventory = Map<string, number>;
 
 export type RetypeOutcome =
   /** Written. The bytes are a whole new document. */
@@ -101,16 +115,56 @@ function locate(
 }
 
 /**
- * The characters the font behind a line cannot write.
+ * The letters a page already draws with a given font, and the code each is drawn
+ * with.
+ *
+ * A code that has been drawn has a glyph — there is nothing to verify and
+ * nothing to guess. This is therefore the safest source of codes there is, and
+ * on a real document by far the largest.
+ */
+export function inventoryOf(content: PageContent, font: FontInfo): Inventory {
+  const out: Inventory = new Map();
+  for (const operation of content.operations) {
+    /* By identity: both come out of the same read of the same page, and two
+       different resources can share a name across pages. */
+    if (operation.font !== font) continue;
+    for (const part of operation.parts) {
+      if (part.kind !== 'glyphs') continue;
+      for (const glyph of part.glyphs) {
+        const text = font.decode(glyph.code);
+        // A ligature decodes to several characters; one code per letter here.
+        if (text === null || [...text].length !== 1) continue;
+        if (!out.has(text)) out.set(text, glyph.code);
+      }
+    }
+  }
+  return out;
+}
+
+/** Character → code: the page's own glyphs first, then whatever the font promises. */
+export function codeFor(
+  font: Pick<FontInfo, 'encode'>,
+  inventory: Inventory,
+  char: string,
+): number | null {
+  return inventory.get(char) ?? font.encode(char);
+}
+
+/**
+ * The characters that cannot be written into a line.
  *
  * Offered separately so the warning can appear **while typing**, when the text
  * can still be changed, rather than after the document has been saved.
  */
-export function unwritable(font: Pick<FontInfo, 'encode'>, text: string): string[] {
+export function unwritable(
+  font: Pick<FontInfo, 'encode'>,
+  inventory: Inventory,
+  text: string,
+): string[] {
   const out: string[] = [];
   for (const char of text) {
     if (char === '\n' || char === '\r') continue;
-    if (font.encode(char) === null && !out.includes(char)) out.push(char);
+    if (codeFor(font, inventory, char) === null && !out.includes(char)) out.push(char);
   }
   return out;
 }
@@ -214,12 +268,13 @@ export async function applyRetype(
     };
   }
 
-  const missing = unwritable(operation.font, spec.after);
+  const inventory = inventoryOf(content, operation.font);
+  const missing = unwritable(operation.font, inventory, spec.after);
   if (missing.length > 0) return { kind: 'missing', chars: missing };
 
   const codes: number[] = [];
   for (const char of spec.after) {
-    const code = operation.font.encode(char);
+    const code = codeFor(operation.font, inventory, char);
     // `unwritable` has already been past here; this is the type narrowing.
     if (code === null) return { kind: 'missing', chars: [char] };
     codes.push(code);

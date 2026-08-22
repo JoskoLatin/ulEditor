@@ -20,6 +20,7 @@ import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
 import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
+import { inventoryOf, type Inventory } from './retype.js';
 import type { StandardWidths } from './text.js';
 
 /** A line of the document offered for rewriting. */
@@ -42,6 +43,15 @@ export interface EditableLine {
    * place or has to be replaced with ours.
    */
   font: FontInfo;
+  /**
+   * The letters that page already draws with that font.
+   *
+   * Carried along because it is what decides the route, and it has to be known
+   * while the user types rather than after they have finished — see
+   * [`retype.ts`](./retype.ts) for why the page is a better authority on this
+   * than the font's own map.
+   */
+  inventory: Inventory;
   /**
    * Whether our font's metrics match the original's.
    *
@@ -120,6 +130,7 @@ export function findEditableLine(
         baseFont: operation.font.baseFont,
         glyphs,
         font: operation.font,
+        inventory: inventoryOf(content, operation.font),
         metricsMatch: matchesOurMetrics(operation.font.baseFont),
       },
     };

@@ -312,7 +312,9 @@
   "Resize split": "Promijeni visinu splita"
 ,
   "Add text — click where it should go": "Dodaj tekst — klikni gdje treba stajati",
-  "Rewrite text — click a line of the document": "Prepiši tekst — klikni redak dokumenta",
+  "Edit text — click a line of the document": "Uredi tekst — klikni redak dokumenta",
+  "Undo (Ctrl+Z)": "Poništi (Ctrl+Z)",
+  "Redo (Ctrl+Shift+Z)": "Ponovi (Ctrl+Shift+Z)",
   "There is no rewritable line there. Text inside a picture is part of the picture.": "Tamo nema retka koji se može prepisati. Tekst unutar slike dio je slike.",
   "Font style": "Rez slova",
   "Font size": "Veličina slova",

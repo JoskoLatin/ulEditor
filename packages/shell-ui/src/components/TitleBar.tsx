@@ -7,14 +7,16 @@ import { useShell } from '../shell/context.js';
 import { openFiles, openFolder, saveActive } from '../shell/actions.js';
 import { formatLabel } from '../shell/formats.js';
 import { visibleViews } from '../shell/views.js';
-import { selectActiveTabId, useWorkspace } from '../state/workspace.js';
+import { activeInstance, selectActiveTabId, useWorkspace } from '../state/workspace.js';
 import {
   IconCommand,
   IconFolderOpen,
+  IconRedo,
   IconMaximise,
   IconMinimise,
   IconRestore,
   IconSave,
+  IconUndo,
   IconWindowClose,
 } from './Icons.js';
 
@@ -142,6 +144,13 @@ export function TitleBar() {
 
   const active = tabs.find((t) => t.id === activeTabId);
   const format = active ? FORMATS[active.format] : null;
+  /*
+   * Read while rendering rather than kept in the store: the history belongs to
+   * the editor, and mirroring it here would mean two places that can disagree.
+   * The bar redraws whenever the tab does — which is on the first change, since
+   * that is what turns the document dirty — so the buttons come alive with it.
+   */
+  const instance = activeTabId ? activeInstance() : null;
 
   /*
    * `data-tauri-drag-region` is what makes an undecorated window movable, and it
@@ -188,6 +197,31 @@ export function TitleBar() {
         >
           <IconSave size={14} />
           {t('Save')}
+        </button>
+
+        {/*
+          Undo and redo where they can be seen. The keys have always done this,
+          which is enough for somebody who knows them and nothing at all for
+          somebody who does not — and an editor whose only way back is a
+          shortcut is an editor people are afraid to try things in.
+        */}
+        <button
+          className="chrome-btn icon-only"
+          onClick={() => instance?.undo()}
+          disabled={!instance?.canUndo()}
+          title={t('Undo (Ctrl+Z)')}
+          aria-label={t('Undo (Ctrl+Z)')}
+        >
+          <IconUndo size={14} />
+        </button>
+        <button
+          className="chrome-btn icon-only"
+          onClick={() => instance?.redo()}
+          disabled={!instance?.canRedo()}
+          title={t('Redo (Ctrl+Shift+Z)')}
+          aria-label={t('Redo (Ctrl+Shift+Z)')}
+        >
+          <IconRedo size={14} />
         </button>
       </div>
 

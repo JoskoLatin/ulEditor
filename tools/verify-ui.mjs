@@ -350,6 +350,31 @@ try {
   const textBack = await until(async () => (await page.locator('.ul-pdf-ann-text').count()) === 1);
   check('redo brings it back', textBack);
 
+  /*
+   * The same two steps from the bar. The keys have always done this, which is
+   * everything to somebody who knows them and nothing to somebody who does not.
+   * The buttons read the editor's own history rather than a copy of it, so what
+   * is greyed out is what is genuinely unavailable.
+   */
+  const undoBtn = page.locator('.titlebar .chrome-btn[aria-label^="Undo"]');
+  const redoBtn = page.locator('.titlebar .chrome-btn[aria-label^="Redo"]');
+  check('the bar offers undo and redo', (await undoBtn.count()) === 1 && (await redoBtn.count()) === 1);
+  check('undo is offered once there is something to undo', await undoBtn.isEnabled());
+  check('and redo is not, at the end of the history', await redoBtn.isDisabled());
+
+  await undoBtn.click();
+  const undoneByButton = await until(
+    async () => (await page.locator('.ul-pdf-ann-text').count()) === 0,
+  );
+  check('the undo button removes the typed text', undoneByButton);
+  check('and redo is offered afterwards', await redoBtn.isEnabled());
+
+  await redoBtn.click();
+  const redoneByButton = await until(
+    async () => (await page.locator('.ul-pdf-ann-text').count()) === 1,
+  );
+  check('the redo button brings it back', redoneByButton);
+
   await page.locator('.ul-pdf-tool[title*="Select"]').click();
 
   /* — a box that came out of the file — */

@@ -180,20 +180,42 @@ async function operationsOf(bytes) {
   );
 }
 
+/* ── an embedded font with no map at all, which is the ordinary case ─── */
+
 {
-  /* Embedded glyphs and no map: a code says nothing about the letter, so writing
-     one is guessing — and a guess here comes out as a blank on the page. */
+  /*
+   * A subset of a font and no `/ToUnicode`: this is what a real invoice looks
+   * like, and going by the map alone not one letter of it could be written. What
+   * the page already draws can be, though — those codes have glyphs behind them
+   * by definition.
+   */
   const source = bytesOf(makeToUnicodePdf('Name and surname', { embedded: true, noMap: true }));
   const [before] = await operationsOf(source);
+
   const outcome = await applyRetype(
     source,
-    { page: 1, rect: before.bounds, before: before.text ?? '', after: 'Name and address' },
+    { page: 1, rect: before.bounds, before: 'Name and surname', after: 'Name and address' },
     standard,
   );
   check(
-    'an embedded font without a map is not written into',
-    outcome.kind !== 'done',
+    'a page with no map is edited from the letters it already draws',
+    outcome.kind === 'done',
     outcome.kind,
+  );
+  if (outcome.kind === 'done') {
+    const [after] = await operationsOf(outcome.bytes);
+    check('and it reads as it should', after.text === 'Name and address', String(after.text));
+  }
+
+  const beyond = await applyRetype(
+    source,
+    { page: 1, rect: before.bounds, before: 'Name and surname', after: 'Name and prize' },
+    standard,
+  );
+  check(
+    'a letter that page never drew is still refused',
+    beyond.kind === 'missing' && beyond.chars.join('') === 'piz',
+    beyond.kind === 'missing' ? beyond.chars.join(' ') : beyond.kind,
   );
 }
 
