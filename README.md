@@ -59,7 +59,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 
 | Format | State | Engine |
 |---|---|---|
-| Code, text (13 languages) | **works** | CodeMirror 6 |
+| Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works** | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) |
 | Markdown | **works** — source + live preview + reading mode | CodeMirror 6 + markdown-it |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
 | PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js *(desktop → pdfium, phase 1)* |

@@ -21,7 +21,7 @@ const args = process.argv.slice(2);
 const url = args.includes('--url') ? args[args.indexOf('--url') + 1] : 'http://localhost:5273';
 const headed = args.includes('--headed');
 
-import { MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from './fixtures.mjs';
+import { BAT_SOURCE, MD_SOURCE, TS_SOURCE, makeFakeDocx, makeMultiPagePdf, makePdf } from './fixtures.mjs';
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
@@ -118,6 +118,50 @@ try {
   check('CodeMirror is mounted', true);
   check('the syntax is coloured', highlighted > 0, `${highlighted} coloured tokens`);
   check('the tab got its name', (await page.locator('.tab .name').first().innerText()) === 'example.ts');
+
+  /*
+   * — a batch script, and a shell script —
+   *
+   * Both were grey text until the editor grew the modes for them: nothing had
+   * ever connected the language the detector names to the set the editor can
+   * load. Counting coloured tokens is the only way to tell a mode that loaded
+   * from one that silently did not.
+   */
+  await dropFile(page, 'install.bat', BAT_SOURCE);
+  await page.waitForSelector('.mount:visible .cm-editor', { timeout: 15000 });
+  const batTokens = await until(
+    async () => (await page.locator('.mount:visible .cm-line span[class*="ͼ"]').count()) > 4,
+  );
+  check(
+    'a batch file is syntax coloured',
+    batTokens,
+    `${await page.locator('.mount:visible .cm-line span[class*="ͼ"]').count()} coloured tokens`,
+  );
+
+  await dropFile(
+    page,
+    'setup.sh',
+    ['#!/bin/sh', 'set -eu', 'for f in *.txt; do', '  echo "$f"', 'done', ''].join('\n'),
+  );
+  await page.waitForSelector('.mount:visible .cm-editor', { timeout: 15000 });
+  const shTokens = await until(
+    async () => (await page.locator('.mount:visible .cm-line span[class*="ͼ"]').count()) > 3,
+  );
+  check('a shell script is syntax coloured', shTokens);
+
+  /*
+   * Both are closed again. The checks further down reach tabs by position —
+   * `.tab` nth(2) is the PDF — so leaving two extra ones open moves every one of
+   * them and the failure lands somewhere unrelated, as a click timing out on a
+   * tab that is now something else.
+   */
+  for (const name of ['install.bat', 'setup.sh']) {
+    const tab = page.locator('.tab', { hasText: name });
+    await tab.hover();
+    await tab.locator('.close').click();
+  }
+  const restored = await until(async () => (await page.locator('.tab').count()) === 1);
+  check('the two script tabs closed again', restored, `${await page.locator('.tab').count()} left`);
 
   /* — markdown — */
   await dropFile(page, 'biljeske.md', MD_SOURCE);

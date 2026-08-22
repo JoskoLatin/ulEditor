@@ -109,6 +109,10 @@ const highlight = HighlightStyle.define([
   { tag: [t.variableName, t.propertyName], color: 'var(--syn-variable)' },
   { tag: [t.constant(t.variableName), t.standard(t.variableName)], color: 'var(--syn-constant)' },
   { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: 'var(--syn-operator)' },
+  /* Labels: `:install` in a batch file, and the `goto` that reaches it. They
+     name a place in the script, which is what a function name does. */
+  { tag: [t.labelName], color: 'var(--syn-function)' },
+  { tag: [t.meta], color: 'var(--syn-comment)' },
   { tag: [t.tagName, t.angleBracket], color: 'var(--syn-tag)' },
   { tag: [t.attributeName], color: 'var(--syn-attribute)' },
   { tag: [t.invalid], color: 'var(--syn-invalid)', textDecoration: 'underline wavy' },

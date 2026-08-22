@@ -38,7 +38,21 @@ const CODE_LANGUAGES: Record<string, string> = {
   sh: 'shell',
   bash: 'shell',
   zsh: 'shell',
-  ps1: 'shell',
+  /* PowerShell is not a shell script — it was coloured as one, which got the
+     comments right and everything else wrong. */
+  ps1: 'powershell',
+  psm1: 'powershell',
+  /* The format half the build steps on Windows are written in. See
+     packages/editor-code/src/batch.ts — nothing anywhere has a mode for it. */
+  bat: 'batch',
+  cmd: 'batch',
+  ini: 'properties',
+  cfg: 'properties',
+  conf: 'properties',
+  properties: 'properties',
+  env: 'properties',
+  diff: 'diff',
+  patch: 'diff',
   sql: 'sql',
   go: 'go',
   java: 'java',
@@ -57,7 +71,10 @@ const CODE_LANGUAGES: Record<string, string> = {
   svelte: 'html',
 };
 
-const PLAIN_TEXT = new Set(['txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env', 'gitignore']);
+/* `ini`, `cfg`, `conf` and `env` used to be here. They are configuration with a
+   shape — sections, keys, comments — and reading one is easier when that shape
+   is visible, so they went to the `properties` mode above. */
+const PLAIN_TEXT = new Set(['txt', 'log', 'csv', 'tsv', 'gitignore']);
 const MARKDOWN = new Set(['md', 'markdown', 'mdx']);
 const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
 
@@ -77,7 +94,7 @@ const MODELS = new Set(['stl', 'obj', 'ply', 'gltf', 'glb', '3mf']);
 
 /** Extensionless files that are text nonetheless. */
 const KNOWN_NAMES: Record<string, { format: FormatId; language?: string }> = {
-  dockerfile: { format: 'code', language: 'shell' },
+  dockerfile: { format: 'code', language: 'dockerfile' },
   makefile: { format: 'code', language: 'shell' },
   license: { format: 'text' },
   readme: { format: 'markdown' },

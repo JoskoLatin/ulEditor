@@ -29,6 +29,30 @@ export function main(): number {
 }
 `;
 
+/**
+ * A batch script with one of every shape the mode has a rule for: the two kinds
+ * of comment, a label, all three spellings of a variable, a device name, a
+ * string, a comparison and a line continuation.
+ */
+export const BAT_SOURCE = `@echo off
+:: The installer, checked for colour.
+rem Both kinds of comment above.
+setlocal enabledelayedexpansion
+set "TARGET=%~dp0build"
+if not exist "%TARGET%" (
+  echo %TARGET% is missing 1>nul
+  goto :fail
+)
+for %%f in (*.txt) do (
+  if !ERRORLEVEL! neq 0 echo %%f
+)
+copy /y "%TARGET%pp.exe" ^
+  "%TARGET%pp.bak"
+exit /b 0
+:fail
+exit /b 1
+`;
+
 export const MD_SOURCE = `# ulEditor
 
 A check of the **live preview**.

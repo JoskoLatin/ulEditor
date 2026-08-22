@@ -46,10 +46,10 @@ document.documentElement.lang = shell.locale;
 const CODE_EXTENSIONS = [
   'ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs',
   'json', 'jsonc', 'rs', 'py', 'pyi', 'html', 'htm', 'css', 'scss', 'less',
-  'toml', 'yaml', 'yml', 'xml', 'sh', 'bash', 'zsh', 'ps1', 'sql',
+  'toml', 'yaml', 'yml', 'xml', 'sh', 'bash', 'zsh', 'ps1', 'psm1', 'bat', 'cmd', 'sql',
   'go', 'java', 'kt', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'rb', 'php',
   'swift', 'lua', 'vue', 'svelte',
-  'txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env',
+  'txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env', 'properties', 'diff', 'patch',
 ];
 
 shell.registry.register(

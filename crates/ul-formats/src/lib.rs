@@ -120,7 +120,19 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
     ("sh", "shell"),
     ("bash", "shell"),
     ("zsh", "shell"),
-    ("ps1", "shell"),
+    // PowerShell is not a shell script; it was coloured as one.
+    ("ps1", "powershell"),
+    ("psm1", "powershell"),
+    // Batch has no mode anywhere, so the editor carries its own.
+    ("bat", "batch"),
+    ("cmd", "batch"),
+    ("ini", "properties"),
+    ("cfg", "properties"),
+    ("conf", "properties"),
+    ("properties", "properties"),
+    ("env", "properties"),
+    ("diff", "diff"),
+    ("patch", "diff"),
     ("sql", "sql"),
     ("go", "go"),
     ("java", "java"),
@@ -139,7 +151,9 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
     ("svelte", "html"),
 ];
 
-const PLAIN_TEXT: &[&str] = &["txt", "log", "csv", "tsv", "ini", "cfg", "conf", "env"];
+// `ini`, `cfg`, `conf` and `env` moved to the `properties` language above:
+// configuration has a shape, and seeing it makes the file easier to read.
+const PLAIN_TEXT: &[&str] = &["txt", "log", "csv", "tsv"];
 const MARKDOWN: &[&str] = &["md", "markdown", "mdx"];
 const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"];
 
@@ -171,7 +185,10 @@ pub fn detect_by_name(name: &str) -> Detection {
     let lower = name.to_ascii_lowercase();
 
     match lower.as_str() {
-        "dockerfile" | "makefile" => {
+        "dockerfile" => {
+            return Detection::with_language(FormatId::Code, DetectedVia::Extension, "dockerfile")
+        }
+        "makefile" => {
             return Detection::with_language(FormatId::Code, DetectedVia::Extension, "shell")
         }
         "readme" => return Detection::new(FormatId::Markdown, DetectedVia::Extension),
@@ -347,6 +364,36 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scripts_and_configuration_name_a_language() {
+        // Every one of these was either uncoloured or coloured as the wrong
+        // thing before the editor grew the modes for them.
+        assert_eq!(
+            detect_by_name("install.bat").language.as_deref(),
+            Some("batch")
+        );
+        assert_eq!(
+            detect_by_name("build.cmd").language.as_deref(),
+            Some("batch")
+        );
+        assert_eq!(
+            detect_by_name("deploy.ps1").language.as_deref(),
+            Some("powershell")
+        );
+        assert_eq!(
+            detect_by_name("app.ini").language.as_deref(),
+            Some("properties")
+        );
+        assert_eq!(
+            detect_by_name("Dockerfile").language.as_deref(),
+            Some("dockerfile")
+        );
+        assert_eq!(
+            detect_by_name("fix.patch").language.as_deref(),
+            Some("diff")
+        );
+    }
 
     #[test]
     fn vector_and_model_extensions() {

@@ -44,6 +44,11 @@ jobs:
       # installer named one version that reports another.
       - run: pnpm verify:version
 
+      # A language the detector can name and the editor cannot colour opens as
+      # grey text, with nothing raised anywhere. Seven were in that state before
+      # this existed.
+      - run: pnpm verify:languages
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed
