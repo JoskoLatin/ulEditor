@@ -14,6 +14,7 @@ import { t } from '@uleditor/i18n';
 
 import type { SidebarView } from '../state/workspace.js';
 import { IconBook, IconFiles, IconLayers, IconSearch } from '../components/Icons.js';
+import { isNarrow } from './narrow.js';
 
 export interface ViewEntry {
   id: SidebarView;
@@ -30,13 +31,6 @@ export const views = (): ViewEntry[] => [
   { id: 'search', label: t('Search in project (Ctrl+Shift+H)'), icon: IconSearch },
   { id: 'formats', label: t('Supported formats'), icon: IconLayers, desktopOnly: true },
 ];
-
-/** The threshold matches the CSS — one place decides what "narrow" means. */
-export const NARROW = '(max-width: 720px)';
-
-export function isNarrow(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia(NARROW).matches;
-}
 
 export function visibleViews(): ViewEntry[] {
   const narrow = isNarrow();

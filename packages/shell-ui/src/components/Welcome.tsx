@@ -4,7 +4,7 @@ import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
 import { formatLabel } from '../shell/formats.js';
-import { addRoot, openFiles, openFolder, openUri } from '../shell/actions.js';
+import { openFiles, openFolder, openRecentFolder, openUri } from '../shell/actions.js';
 import { hasRecent, recentFiles, recentFolders } from '../shell/recent.js';
 import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon, IconFolderOpen } from './Icons.js';
@@ -85,7 +85,7 @@ export function Welcome() {
                     key={entry.uri}
                     className="welcome-action welcome-recent"
                     title={entry.uri}
-                    onClick={() => void addRoot(shell, { uri: entry.uri, name: entry.name })}
+                    onClick={() => void openRecentFolder(shell, { uri: entry.uri, name: entry.name })}
                   >
                     <IconFolderOpen size={13} />
                     <span className="name">{entry.name}</span>

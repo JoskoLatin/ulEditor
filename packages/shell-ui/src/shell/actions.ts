@@ -12,7 +12,7 @@ import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
-import { isNarrow } from './views.js';
+import { isNarrow } from './narrow.js';
 import { forget, rememberFile, rememberFolder } from './recent.js';
 import {
   activeTabId,
@@ -128,8 +128,21 @@ export async function openFolder(shell: Shell): Promise<void> {
   }
 }
 
-/** Adds a folder as a tree root and reads the first level straight away. */
-export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
+/**
+ * Adds a folder as a tree root and reads the first level straight away.
+ *
+ * The tree is then **shown**, and that is not decoration. A root added while the
+ * panel is closed, or while it is showing the library, changes nothing anybody
+ * can see — the person clicks their folder, the screen stays exactly as it was,
+ * and they conclude the click was ignored. The one exception is the session
+ * restore, which passes `reveal: false`: it re-adds every root from last time
+ * and must not overrule whichever panel the person left open.
+ */
+export async function addRoot(
+  shell: Shell,
+  root: { uri: Uri; name: string },
+  opts?: { reveal?: boolean },
+): Promise<void> {
   const children = await shell.fs.readDirectory(root.uri);
   const node: TreeNode = {
     uri: root.uri,
@@ -141,9 +154,27 @@ export async function addRoot(shell: Shell, root: { uri: Uri; name: string }): P
     children: children.map((child) => toNode(child, 1)),
   };
 
-  const { tree, setTree } = useWorkspace.getState();
+  const { tree, setTree, setSidebarView } = useWorkspace.getState();
   setTree([...tree.filter((n) => n.uri !== node.uri), node]);
   rememberFolder(shell, root);
+  if (opts?.reveal !== false) setSidebarView('explorer');
+}
+
+/**
+ * A folder chosen from the list of recent ones.
+ *
+ * Separate from `addRoot` because of what happens when it fails. A folder that
+ * has been moved or deleted since must leave the list, exactly as a file that
+ * will not open does — otherwise every click on it is an error message, and
+ * after two of those the list is not trusted again.
+ */
+export async function openRecentFolder(shell: Shell, root: { uri: Uri; name: string }): Promise<void> {
+  try {
+    await addRoot(shell, root);
+  } catch (err) {
+    forget(shell, root.uri);
+    shell.notify.show('error', t('Could not open the folder: {reason}', { reason: describe(err) }));
+  }
 }
 
 /**

@@ -64,7 +64,7 @@ export async function restoreSession(shell: Shell): Promise<void> {
 
   for (const uri of session.roots ?? []) {
     try {
-      await addRoot(shell, { uri, name: baseName(uri) });
+      await addRoot(shell, { uri, name: baseName(uri) }, { reveal: false });
     } catch {
       // The folder no longer exists.
     }

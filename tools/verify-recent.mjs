@@ -8,8 +8,12 @@
  * wrong actually lives: the ordering, the cap, and what happens to an entry that
  * will not open.
  *
- * What it does not cover, stated plainly: the wiring from the welcome screen to
- * these functions. That needs the desktop app, and is checked by hand.
+ * The other half is what happens when one is clicked, and that is here too: a
+ * folder added with nothing visibly changing reads as a dead button, which is
+ * exactly how it was reported.
+ *
+ * What it does not cover, stated plainly: the click itself. That the button on
+ * the welcome screen calls these functions is checked by hand.
  *
  *   node tools/verify-recent.mjs
  */
@@ -22,6 +26,12 @@ import './ts-resolve.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const recent = await import(
   pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/shell/recent.ts')).href
+);
+const { addRoot, openRecentFolder } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/shell/actions.ts')).href
+);
+const { useWorkspace } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/state/workspace.ts')).href
 );
 
 const checks = [];
@@ -40,6 +50,16 @@ function fakeShell(platform = 'desktop') {
       set: (key, value) => values.set(key, value),
     },
     values,
+    /** Filled in by the checks that need a file system. */
+    fs: {
+      readDirectory: async () => [],
+    },
+    notify: {
+      shown: [],
+      show(level, message) {
+        this.shown.push({ level, message });
+      },
+    },
   };
 }
 
@@ -152,6 +172,62 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
   check(
     'clearing empties both lists',
     !recent.hasRecent(shell) && recent.recentFiles(shell).length === 0,
+  );
+}
+
+/* ── opening one ─────────────────────────────────────────────────────── */
+
+{
+  const shell = fakeShell();
+  shell.fs.readDirectory = async () => [
+    { uri: 'C:/w/demo/one.md', name: 'one.md', kind: 'file' },
+  ];
+
+  /* The panel starts somewhere else entirely, which is the case that made this
+     look broken: the root was added and the screen did not change. */
+  useWorkspace.getState().setSidebarView('library');
+  useWorkspace.getState().setSidebarVisible(false);
+
+  await openRecentFolder(shell, { uri: 'C:/w/demo', name: 'demo' });
+
+  const state = useWorkspace.getState();
+  check('the folder became a root', state.tree.some((node) => node.uri === 'C:/w/demo'));
+  check('with what is inside it', state.tree.at(-1)?.children?.length === 1);
+  check('the tree is the panel that is showing', state.sidebarView === 'explorer', state.sidebarView);
+  check('and the panel is open', state.sidebarVisible === true);
+  check('it is remembered as recent', recent.recentFolders(shell)[0]?.name === 'demo');
+}
+
+{
+  /* The session restore re-adds every root from last time. It must not decide
+     which panel the person is looking at while doing so. */
+  const shell = fakeShell();
+  useWorkspace.getState().setSidebarView('library');
+
+  await addRoot(shell, { uri: 'C:/w/restored', name: 'restored' }, { reveal: false });
+  check(
+    'a restored root leaves the panel alone',
+    useWorkspace.getState().sidebarView === 'library',
+    useWorkspace.getState().sidebarView,
+  );
+}
+
+{
+  const shell = fakeShell();
+  recent.rememberFolder(shell, { uri: 'C:/w/moved', name: 'moved' });
+  shell.fs.readDirectory = async () => {
+    throw new Error('no such directory');
+  };
+
+  await openRecentFolder(shell, { uri: 'C:/w/moved', name: 'moved' });
+  check(
+    'a folder that has moved is dropped from the list',
+    recent.recentFolders(shell).length === 0,
+  );
+  check(
+    'and the reason is said out loud',
+    shell.notify.shown.some((n) => n.level === 'error' && /no such directory/.test(n.message)),
+    JSON.stringify(shell.notify.shown[0] ?? null),
   );
 }
 
