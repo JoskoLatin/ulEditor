@@ -344,6 +344,7 @@
   "The font of this document has no {chars}. The line will be written in {font} instead — same size and place, different letterforms.": "Font ovog dokumenta nema {chars}. Redak će biti napisan fontom {font} — ista veličina i mjesto, drukčiji oblik slova.",
   "A line rewritten in place stays one line.": "Redak prepisan na mjestu ostaje jedan redak.",
   "That line is no longer where it was.": "Tog retka više nema na mjestu na kojem je bio.",
+  "That line no longer reads the way it did.": "Taj redak više ne glasi kako je glasio.",
   "That page is no longer there.": "Te stranice više nema.",
   "The font of that line cannot be measured ({reason}).": "Font tog retka ne možemo izmjeriti ({reason}).",
   "The original font": "Izvorni font"

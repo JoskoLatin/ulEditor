@@ -2140,7 +2140,7 @@ class PdfEditor implements EditorInstance {
     try {
       outcome = await applyRetype(
         this.source,
-        { page: draft.page, rect: line.bounds, before: line.text, after: draft.text },
+        { page: draft.page, rect: line.anchor, before: line.text, after: draft.text },
         await this.#standardWidths(),
       );
     } catch (err) {

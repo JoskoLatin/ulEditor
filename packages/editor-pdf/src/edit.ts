@@ -20,14 +20,22 @@ import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
 import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
-import { inventoryOf, type Inventory } from './retype.js';
+import { gatherLine, inventoryOf, type Inventory } from './retype.js';
 import type { StandardWidths } from './text.js';
 
 /** A line of the document offered for rewriting. */
 export interface EditableLine {
   text: string;
-  /** The area it occupies; the redaction mark is derived from it. */
+  /** The area the whole line occupies; the cover and the redaction mark follow it. */
   bounds: Rect;
+  /**
+   * The area of the one operator the finger landed on.
+   *
+   * A visible line is often several instructions, and the line is regathered
+   * around this one when the edit is written — so this, not the line's own
+   * rectangle, is what identifies it again.
+   */
+  anchor: Rect;
   /** The start of the baseline — the replacement is aligned to it. */
   origin: { x: number; y: number };
   size: number;
@@ -70,10 +78,12 @@ function matchesOurMetrics(baseFont: string): boolean {
 /**
  * Finds the line under a given point.
  *
- * The unit is one operator from the content stream, because that is the only
- * piece whose start and end are reliably known. A visual line is often broken
- * across several operators; in that case only the part under the finger is
- * rewritten, and the user is shown exactly which.
+ * What comes back is **the line as it is read**, not the one instruction the
+ * finger happened to land on. `€93.89` on an invoice is often the currency sign
+ * in one instruction and the figure in another, and offering `€ 9` for editing
+ * — which is what taking the single operator did — is not offering the line at
+ * all. The gathering rule lives in [`retype.ts`](./retype.ts), so what is shown
+ * and what is written are decided by the same code.
  */
 export function findEditableLine(
   page: PDFPage,
@@ -108,23 +118,43 @@ export function findEditableLine(
       return { refusal: t('The colour of that text comes from a colour space we do not read.') };
     }
 
-    const text = textOf(operation);
-    if (text === null) {
+    if (textOf(operation) === null) {
       return {
         refusal: t('That text cannot be read back as letters — the font has no /ToUnicode map.'),
       };
     }
 
-    const glyphs = operation.parts.reduce(
-      (sum, part) => sum + (part.kind === 'glyphs' ? part.glyphs.length : 0),
+    const line = gatherLine(content, operation);
+    const glyphs = line.segments.reduce(
+      (sum, segment) =>
+        sum +
+        segment.operation.parts.reduce(
+          (count, part) => count + (part.kind === 'glyphs' ? part.glyphs.length : 0),
+          0,
+        ),
       0,
     );
 
+    const boxes = line.segments
+      .map((segment) => boundsOfOperation(segment.operation))
+      .filter((box): box is Rect => !!box);
+    const left = Math.min(...boxes.map((box) => box.x));
+    const top = Math.max(...boxes.map((box) => box.y + box.height));
+    const bottom = Math.min(...boxes.map((box) => box.y));
+    const whole: Rect = {
+      x: left,
+      y: bottom,
+      width: Math.max(...boxes.map((box) => box.x + box.width)) - left,
+      height: top - bottom,
+    };
+
     return {
       line: {
-        text,
-        bounds,
-        origin: operation.origin,
+        text: line.text,
+        bounds: whole,
+        anchor: bounds,
+        // The first segment: where the line starts, whichever part was clicked.
+        origin: line.segments[0]?.operation.origin ?? operation.origin,
         size: operation.effectiveSize,
         color: operation.fill,
         baseFont: operation.font.baseFont,

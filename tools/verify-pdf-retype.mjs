@@ -29,14 +29,15 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import './ts-resolve.mjs';
-import { makePdf, makeToUnicodePdf } from './fixtures.mjs';
+import { makePdf, makeSplitLinePdf, makeToUnicodePdf } from './fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
 const load = (file) =>
   import(pathToFileURL(resolve(ROOT, `packages/editor-pdf/src/${file}`)).href);
 
-const { applyRetype } = await load('retype.ts');
+const { applyRetype, gatherLine } = await load('retype.ts');
+const { findEditableLine } = await load('edit.ts');
 const { readPageContent, boundsOfOperation, textOf } = await load('content.ts');
 const { standardWidths } = await load('text.ts');
 
@@ -115,21 +116,31 @@ async function operationsOf(bytes) {
 /* ── the pen ends where it did ───────────────────────────────────────── */
 
 {
-  /* A second operator in the same text object, positioned by nothing but where
-     the first one left the pen. If the correction were missing it would slide. */
+  /*
+   * Two operators that read as one line, the second placed by nothing but where
+   * the first left the pen. They are edited as one — and what the arithmetic has
+   * to get right is how far the rest of the line moves when the middle of it
+   * changes length.
+   */
   const source = bytesOf(makeToUnicodePdf('Name and surname', { trailer: ' [ok]' }));
   const before = await operationsOf(source);
   check('the fixture has a line and a trailer', before.length === 2, `${before.length} operators`);
 
-  /* Both new lines are spelt out of letters the page already draws — the point
-     here is the arithmetic, and a missing glyph would stop it before that. */
+  /* Every glyph in this fixture is 500 wide at 12 pt. The expected movement is
+     therefore counted out of the text, not out of the code being checked. */
+  const STEP = 6;
+  const ORIGINAL = 'Name and surname [ok]';
+  const rightOf = (operation) => operation.bounds.x + operation.bounds.width;
+
   for (const [label, text] of [
-    ['a shorter line', 'Name'],
-    ['a longer line', 'Name and surname more'],
+    ['a line that lost a word', 'Name [ok]'],
+    ['a line that gained one', 'Name and surname more [ok]'],
+    /* Only letters this page already draws — the point here is the arithmetic. */
+    ['a line whose length did not change', 'Name and surnome [ok]'],
   ]) {
     const outcome = await applyRetype(
       source,
-      { page: 1, rect: before[0].bounds, before: 'Name and surname', after: text },
+      { page: 1, rect: before[0].bounds, before: ORIGINAL, after: text },
       standard,
     );
     if (outcome.kind !== 'done') {
@@ -138,9 +149,80 @@ async function operationsOf(bytes) {
     }
     const after = await operationsOf(outcome.bytes);
     check(
-      `what follows ${label} does not move`,
-      Math.abs(after[1].origin.x - before[1].origin.x) < 0.01,
-      `x ${before[1].origin.x.toFixed(2)} → ${after[1].origin.x.toFixed(2)}`,
+      `${label} reads as it should`,
+      after.map((operation) => operation.text).join('') === text,
+      JSON.stringify(after.map((operation) => operation.text).join('')),
+    );
+    const moved = rightOf(after.at(-1)) - rightOf(before.at(-1));
+    const expected = (text.length - ORIGINAL.length) * STEP;
+    check(
+      `${label} ends exactly ${expected} pt from where it ended`,
+      Math.abs(moved - expected) < 0.05,
+      `moved ${moved.toFixed(2)} pt`,
+    );
+  }
+}
+
+/* ── a line the file keeps in pieces ─────────────────────────────────── */
+
+{
+  /*
+   * The invoice case, and the one this was reported on. `E93.89` is the sign in
+   * one instruction and the figure in another; the row's label sits far away in
+   * its own column on the same baseline. Clicking the figure has to offer the
+   * whole amount and not the label.
+   */
+  const source = bytesOf(makeSplitLinePdf());
+  const doc = await PDFDocument.load(source, { ignoreEncryption: true });
+  const page = doc.getPages()[0];
+
+  const found = findEditableLine(page, { x: 210, y: 114 }, standard);
+  check('the figure is offered for editing', !!found && 'line' in found, JSON.stringify(found));
+  check(
+    'and what is offered is the whole amount',
+    found?.line?.text === 'E93.89',
+    JSON.stringify(found?.line?.text),
+  );
+  check(
+    'the label in the other column is not part of it',
+    !(found?.line?.text ?? '').includes('Total'),
+    JSON.stringify(found?.line?.text),
+  );
+  check(
+    'the anchor is the one instruction that was clicked',
+    Math.abs((found?.line?.anchor?.x ?? 0) - 206) < 0.01,
+    `x ${found?.line?.anchor?.x}`,
+  );
+
+  const outcome = await applyRetype(
+    source,
+    { page: 1, rect: found.line.anchor, before: 'E93.89', after: 'E93.99' },
+    standard,
+  );
+  check('the amount is corrected in place', outcome.kind === 'done', outcome.kind);
+
+  if (outcome.kind === 'done') {
+    const after = await operationsOf(outcome.bytes);
+    check(
+      'the whole page still reads as it should',
+      after.map((operation) => operation.text).join('|') === 'Total|E|93.99',
+      after.map((operation) => operation.text).join('|'),
+    );
+    const before = await operationsOf(source);
+    check(
+      'the sign did not move',
+      Math.abs(after[1].bounds.x - before[1].bounds.x) < 0.01,
+      `x ${before[1].bounds.x} → ${after[1].bounds.x}`,
+    );
+    check(
+      'the label did not move',
+      Math.abs(after[0].bounds.x - before[0].bounds.x) < 0.01,
+      `x ${before[0].bounds.x} → ${after[0].bounds.x}`,
+    );
+    check(
+      'and the figure kept its width',
+      Math.abs(after[2].bounds.width - before[2].bounds.width) < 0.01,
+      `${before[2].bounds.width} → ${after[2].bounds.width}`,
     );
   }
 }

@@ -223,6 +223,77 @@ export function makeAnnotatedPdf(note = 'Josko Latin', body = 'Name and surname'
 }
 
 /**
+ * A PDF whose visible line is several separately placed instructions, with a
+ * label far away on the same baseline.
+ *
+ * This is what an invoice looks like inside. `E93.89` is the sign in one
+ * instruction and the figure in another, each at its own coordinates, and the
+ * label of the row sits in a different column of the same line. A tool that
+ * takes one instruction for the line offers a fragment for editing; one that
+ * takes the whole baseline swallows the label as well. Both are wrong, and this
+ * fixture is where the difference shows.
+ *
+ * Every glyph is 500 wide, so at 12 pt each is 6 pt and the arithmetic can be
+ * done by hand.
+ *
+ * @returns {string}
+ */
+export function makeSplitLinePdf() {
+  const label = 'Total';
+  const sign = 'E';
+  const figure = '93.89';
+
+  // The sign at 200, the figure immediately after it, the label in its own
+  // column 140 pt away — far enough that no typography joins the two.
+  const stream = [
+    `BT /F1 12 Tf 1 0 0 1 30 110 Tm (${label}) Tj ET`,
+    `BT /F1 12 Tf 1 0 0 1 200 110 Tm (${sign}) Tj ET`,
+    `BT /F1 12 Tf 1 0 0 1 206 110 Tm (${figure}) Tj ET`,
+  ].join('\n');
+
+  const codes = [...new Set([...label, ...sign, ...figure])]
+    .map((ch) => ch.codePointAt(0))
+    .sort((a, b) => a - b);
+  const hex = (code, digits) => code.toString(16).toUpperCase().padStart(digits, '0');
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin 12 dict begin begincmap',
+    '/CMapName /A-B-0 def /CMapType 2 def',
+    '1 begincodespacerange <00> <FF> endcodespacerange',
+    `${codes.length} beginbfchar`,
+    ...codes.map((code) => `<${hex(code, 2)}> <${hex(code, 4)}>`),
+    'endbfchar',
+    'endcmap CMapName currentdict /CMap defineresource pop end end',
+  ].join('\n');
+  const widths = Array.from({ length: 95 }, () => 500).join(' ');
+
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/TrueType/BaseFont/ABCDEF+Inter-Regular/FirstChar 32/LastChar 126' +
+      `/Widths[${widths}]/FontDescriptor 6 0 R/ToUnicode 7 0 R>>`,
+    '<</Type/FontDescriptor/FontName/ABCDEF+Inter-Regular/Flags 32/ItalicAngle 0/Ascent 750' +
+      '/Descent -250/CapHeight 700/StemV 80/FontBBox[0 -250 1000 750]/FontFile2 8 0 R>>',
+    `<</Length ${cmap.length}>>\nstream\n${cmap}\nendstream`,
+    '<</Length 4/Length1 4>>\nstream\n0000\nendstream',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return pdf;
+}
+
+/**
  * A multi-page PDF where each page carries its own label, so after a reorder it
  * can be verified that it really landed in the right place.
  * @param {number} count the number of pages

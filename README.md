@@ -92,7 +92,9 @@ When it **cannot be guaranteed** that everything was removed — a font without 
 
 **Editing existing text** uses the `T✎` tool: click a line and it opens filled with what is written there.
 
-Normally the line is rewritten **in the document's own font**. The operator that draws it is written again with the codes of the font that was already on the page — read out of its `/ToUnicode` map backwards — so the letterforms, the size, the colour and the baseline are the ones that were there. Nothing is embedded, nothing is covered, and the difference in width is made up with an offset in the `TJ` array so that whatever follows on the line does not move. The page is then redrawn from the edited bytes: what is on screen is what the file holds.
+Normally the line is rewritten **in the document's own font**: the instruction that draws it is written again with the codes of the font already on the page, so the letterforms, the size, the colour and the baseline are the ones that were there. Nothing is embedded and nothing is covered. The page is then redrawn from the edited bytes, so what is on screen is what the file holds.
+
+A visible line is rarely one instruction — `€93.89` on an invoice is often the sign in one and the figure in another, and a sentence is frequently a word per instruction. The instructions that share a baseline, a font, a size and a colour, and sit close enough together to read as one line, are gathered into one; the label in the next column of the same row is far enough away to stay a separate thing. Only what you actually changed is written: the rest keeps its own bytes, its own kerning and its own place.
 
 What can be written is decided by **what the page already draws**. Every code the reader has drawn there has a glyph behind it by definition, so writing that code again draws the same letter — no map has to be trusted for it, and the font's own `/ToUnicode` read backwards adds whatever else it promises. That is what makes real documents editable: an invoice from a payment processor embeds a subset of its font and often ships no `/ToUnicode` at all, and going by the map alone not one letter of it could be written.
 
