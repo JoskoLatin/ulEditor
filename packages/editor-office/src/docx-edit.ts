@@ -25,7 +25,7 @@ import type { Archive } from './ooxml.js';
 
 /* ── walking the tags ────────────────────────────────────────────────── */
 
-interface Tag {
+export interface Tag {
   /** The name with its prefix, as it stands in the file: `w:r`, `w:t`. */
   name: string;
   start: number;
@@ -40,8 +40,11 @@ interface Tag {
  * Quotes are respected because an attribute value may contain `>`, and comments
  * and CDATA are skipped whole — otherwise a `<` inside them would look like the
  * start of a tag.
+ *
+ * Exported because [`xlsx-edit.ts`](./xlsx-edit.ts) walks a worksheet with the
+ * same care this file walks a document.
  */
-function* scanTags(xml: string): Generator<Tag> {
+export function* scanTags(xml: string): Generator<Tag> {
   let i = 0;
 
   while (i < xml.length) {
@@ -93,7 +96,7 @@ function* scanTags(xml: string): Generator<Tag> {
   }
 }
 
-function localName(name: string): string {
+export function localName(name: string): string {
   const colon = name.indexOf(':');
   return colon === -1 ? name : name.slice(colon + 1);
 }

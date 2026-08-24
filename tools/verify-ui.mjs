@@ -31,6 +31,7 @@ import {
   makePdf,
   makeSplitLinePdf,
   makeToUnicodePdf,
+  makeXlsx,
 } from './fixtures.mjs';
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -879,6 +880,50 @@ try {
   await page.keyboard.press('Escape');
   await page.unroute('https://fonts.googleapis.com/**');
   await page.unroute('https://fonts.gstatic.com/**');
+
+  /* — retyping a spreadsheet cell — */
+
+  /*
+   * The logic is proven byte for byte in `verify-xlsx-edit.mjs`; what only the
+   * page can prove is the seam between the grid and it: that a double-click
+   * opens the one cell, that the tab admits to being dirty, and that a formula
+   * refuses by name instead of quietly becoming a literal.
+   */
+  await dropFile(page, 'sales.xlsx', makeXlsx());
+  const book = page.locator('.ul-sheet-book:visible');
+  await book.locator('td[data-ref="1,1"]').waitFor({ timeout: 20000 });
+
+  const amount = book.locator('td[data-ref="1,1"]');
+  check('the amount arrives formatted', (await amount.innerText()) === '1.234,50', await amount.innerText());
+
+  await amount.dblclick();
+  check('a double-click opens the cell', await amount.evaluate((el) => el.isContentEditable));
+  await amount.evaluate((el) => {
+    el.textContent = '2000';
+  });
+  await amount.press('Enter');
+  check('the retyped value stands in the grid', (await amount.innerText()) === '2000');
+  const sheetDirty = await until(
+    async () => (await page.locator('.tab[data-dirty="true"]').count()) > 0,
+    10000,
+  );
+  check('and the tab admits to the change', sheetDirty);
+
+  const total = book.locator('td[data-ref="3,1"]');
+  await total.dblclick();
+  check('a formula cell does not open', !(await total.evaluate((el) => el.isContentEditable)));
+  check(
+    'it refuses with the formula named',
+    await until(
+      async () => (await page.locator('.toast').last().innerText().catch(() => '')).includes('SUM(B2:B3)'),
+      10000,
+    ),
+    await page.locator('.toast').last().innerText().catch(() => ''),
+  );
+
+  await page.keyboard.press('Control+Z');
+  const sheetClean = await until(async () => (await amount.innerText()) === '1.234,50', 10000);
+  check('undo puts the old amount back', sheetClean, await amount.innerText());
 
   /*
    * — screenshots —

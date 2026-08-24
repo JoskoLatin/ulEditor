@@ -32,6 +32,8 @@ import { t } from '@uleditor/i18n';
 
 import { renderDocx, type Preview } from './docx.js';
 import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
+import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
+import { readText } from './ooxml.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
 
 export { renderDocx } from './docx.js';
@@ -434,6 +436,12 @@ class XlsxPreviewEditor implements EditorInstance {
   /** Grids are built lazily — a workbook can hold dozens of sheets. */
   #rendered = new Map<number, HTMLElement>();
 
+  /** The retyped cells: `sheet:row,col` → what was typed. */
+  #edits = new Map<string, string>();
+  #undoStack: Map<string, string>[] = [];
+  #redoStack: Map<string, string>[] = [];
+  #dirty = false;
+
   #dirtyEmitter = new Emitter<boolean>();
   #statusEmitter = new Emitter<string>();
   readonly onDirtyChange = this.#dirtyEmitter.event;
@@ -451,11 +459,15 @@ class XlsxPreviewEditor implements EditorInstance {
     root.tabIndex = 0;
 
     root.appendChild(
-      buildNotes(this.workbook.notes, t('Read-only preview — editing arrives in phase 2.')),
+      buildNotes(
+        this.workbook.notes,
+        t('Cells can be retyped — double-click one. Formulas, styles and layout stay as they are.'),
+      ),
     );
 
     const grid = document.createElement('div');
     grid.className = 'ul-sheet-scroll';
+    grid.addEventListener('dblclick', this.#onDoubleClick);
     root.appendChild(grid);
 
     const tabs = document.createElement('div');
@@ -495,39 +507,204 @@ class XlsxPreviewEditor implements EditorInstance {
       if (button instanceof HTMLElement) button.dataset.active = String(i === index);
     }
 
-    this.#statusEmitter.fire(
-      t('{sheet} · {rows} × {cols} · {cells} cells', {
-        sheet: sheet.name,
-        rows: sheet.rows,
-        cols: columnName(Math.max(0, sheet.cols - 1)),
-        cells: sheet.cells.size,
-      }),
-    );
+    this.#emitStatus();
   }
 
   unmount(): void {
     showHit(null);
+    this.#grid?.removeEventListener('dblclick', this.#onDoubleClick);
     this.#rendered.clear();
     this.#root?.remove();
     this.#root = null;
     this.#grid = null;
   }
 
+  /* ── editing the cells ───────────────────────────────────────────── */
+
+  /**
+   * A double-click opens **one cell**, exactly as a double-click in Word opens
+   * one run. A formula cell is refused with its formula named: the number it
+   * shows is a result, and overwriting a result with a literal is the quietest
+   * way to destroy a workbook. A single click stays free for selecting.
+   */
+  #onDoubleClick = (event: MouseEvent): void => {
+    const target = (event.target as HTMLElement | null)?.closest('td[data-ref]');
+    if (!(target instanceof HTMLElement) || target.isContentEditable) return;
+
+    const sheet = this.workbook.sheets[this.#active];
+    const ref = target.dataset.ref ?? '';
+    if (!sheet || !ref) return;
+
+    const cell = sheet.cells.get(ref);
+    if (cell?.formula) {
+      this.host.notify.show(
+        'info',
+        t('The cell holds a formula (={formula}) — formulas are not edited yet.', {
+          formula: cell.formula,
+        }),
+      );
+      return;
+    }
+
+    event.preventDefault();
+    const key = `${this.#active}:${ref}`;
+    const before = target.textContent ?? '';
+
+    target.contentEditable = 'plaintext-only';
+    target.focus();
+    document.getSelection()?.selectAllChildren(target);
+
+    const finish = () => {
+      target.removeEventListener('blur', finish);
+      target.removeEventListener('keydown', onKey);
+      target.contentEditable = 'false';
+
+      const after = target.textContent ?? '';
+      if (after === before) return;
+      this.#record(key, after);
+      target.dataset.kind = typedKind(after);
+    };
+
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key === 'Escape') {
+        keyEvent.stopPropagation();
+        target.textContent = before;
+        target.blur();
+        return;
+      }
+      // A value ends at Enter — a new line inside a cell is not offered.
+      if (keyEvent.key === 'Enter') {
+        keyEvent.preventDefault();
+        target.blur();
+      }
+    };
+
+    target.addEventListener('blur', finish);
+    target.addEventListener('keydown', onKey);
+  };
+
+  #record(key: string, value: string): void {
+    this.#undoStack.push(new Map(this.#edits));
+    this.#redoStack = [];
+    this.#edits.set(key, value);
+    this.#emitDirty();
+  }
+
+  #restore(edits: Map<string, string>): void {
+    this.#edits = edits;
+    for (const [index, table] of this.#rendered) {
+      const sheet = this.workbook.sheets[index];
+      if (!sheet) continue;
+      for (const td of table.querySelectorAll<HTMLElement>('td[data-ref]')) {
+        const ref = td.dataset.ref ?? '';
+        const edited = edits.get(`${index}:${ref}`);
+        const original = sheet.cells.get(ref);
+        td.textContent = edited ?? original?.text ?? '';
+        const kind = edited !== undefined ? typedKind(edited) : original?.kind;
+        if (kind) td.dataset.kind = kind;
+        else delete td.dataset.kind;
+      }
+    }
+    this.#emitDirty();
+  }
+
+  #emitDirty(): void {
+    const dirty = this.#edits.size > 0;
+    if (dirty !== this.#dirty) {
+      this.#dirty = dirty;
+      this.#dirtyEmitter.fire(dirty);
+    }
+    this.#emitStatus();
+  }
+
+  #emitStatus(): void {
+    const sheet = this.workbook.sheets[this.#active];
+    if (!sheet) return;
+    const base = t('{sheet} · {rows} × {cols} · {cells} cells', {
+      sheet: sheet.name,
+      rows: sheet.rows,
+      cols: columnName(Math.max(0, sheet.cols - 1)),
+      cells: sheet.cells.size,
+    });
+    this.#statusEmitter.fire(
+      this.#edits.size > 0 ? `${base} · ${t('{n} edits', { n: this.#edits.size })}` : base,
+    );
+  }
+
   isDirty(): boolean {
-    return false;
+    return this.#dirty;
   }
 
-  async save(): Promise<SaveResult> {
-    throw new Error(t('Excel spreadsheets are read-only for now — editing arrives in phase 2.'));
+  async save(target?: SaveTarget): Promise<SaveResult> {
+    const uri = target?.uri ?? this.doc.uri;
+    const { archive } = this.workbook;
+
+    /* The edits, gathered per sheet part — one part is rewritten per edited
+       sheet, everything else passes through untouched. */
+    const parts = new Map<string, string>();
+    const bySheet = new Map<number, { ref: string; value: string }[]>();
+    for (const [key, value] of this.#edits) {
+      const [indexPart, refPart] = key.split(':') as [string, string];
+      const [row, col] = refPart.split(',').map(Number) as [number, number];
+      const list = bySheet.get(Number(indexPart)) ?? [];
+      list.push({ ref: `${columnName(col)}${row + 1}`, value });
+      bySheet.set(Number(indexPart), list);
+    }
+
+    for (const [index, edits] of bySheet) {
+      const sheet = this.workbook.sheets[index];
+      const xml = sheet ? readText(archive, sheet.path) : null;
+      if (!sheet || xml === null) continue;
+      parts.set(sheet.path, applyCellEdits(xml, findCells(xml), edits));
+    }
+
+    await this.host.fs.writeBytes(uri, writeXlsx(archive, parts));
+
+    /*
+     * What was saved becomes the new starting point — the archive parts, and
+     * the cell map the grid draws from. Without this the next save would begin
+     * from the original parts with an empty edit list and quietly revert.
+     */
+    const encoder = new TextEncoder();
+    for (const [path, xml] of parts) archive[path] = encoder.encode(xml);
+    for (const [key, value] of this.#edits) {
+      const [indexPart, refPart] = key.split(':') as [string, string];
+      const cells = this.workbook.sheets[Number(indexPart)]?.cells;
+      if (!cells) continue;
+      if (value === '') cells.delete(refPart);
+      else cells.set(refPart, { text: value, kind: typedKind(value) });
+    }
+    this.#edits.clear();
+    this.#undoStack = [];
+    this.#redoStack = [];
+    this.#emitDirty();
+
+    /* No fidelity warning here for the same reason `DocxPreviewEditor` gives
+       none: only the rewritten elements changed. The stale formula caches are
+       handled, not lost — the workbook recalculates when Excel opens it. */
+    return { uri, lostFidelity: [] };
   }
 
-  undo(): void {}
-  redo(): void {}
+  undo(): void {
+    const previous = this.#undoStack.pop();
+    if (!previous) return;
+    this.#redoStack.push(new Map(this.#edits));
+    this.#restore(previous);
+  }
+
+  redo(): void {
+    const next = this.#redoStack.pop();
+    if (!next) return;
+    this.#undoStack.push(new Map(this.#edits));
+    this.#restore(next);
+  }
+
   canUndo(): boolean {
-    return false;
+    return this.#undoStack.length > 0;
   }
+
   canRedo(): boolean {
-    return false;
+    return this.#redoStack.length > 0;
   }
 
   /**
@@ -619,12 +796,15 @@ export const docxPreviewProvider: EditorProvider = {
 
 export const xlsxPreviewProvider: EditorProvider = {
   id: 'org.uleditor.xlsx',
-  displayName: 'Excel preview',
+  displayName: 'Excel',
   matches: {
     extensions: ['xlsx'],
     mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   },
-  capabilities: ['view', 'search'],
+  /* `edit` means exactly what the editor can genuinely do: retype the value of
+     a cell. Formulas, styles and layout are left alone, and that is stated
+     above the grid. */
+  capabilities: ['view', 'search', 'edit'],
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {

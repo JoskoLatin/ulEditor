@@ -19,8 +19,8 @@ function formatOfName(name: string) {
 const LIVE = ['code', 'markdown', 'pdf', 'epub', 'image'] as const;
 /** Formats that open, but read-only — the difference matters before opening. */
 const READ_ONLY: { format: keyof typeof FORMATS; note: string }[] = [
-  { format: 'docx', note: 'preview' },
-  { format: 'xlsx', note: 'preview' },
+  { format: 'docx', note: 'text editing' },
+  { format: 'xlsx', note: 'cell editing' },
 ];
 const PLANNED: { format: keyof typeof FORMATS; phase: string }[] = [
   { format: 'odf', phase: 'phase 2' },

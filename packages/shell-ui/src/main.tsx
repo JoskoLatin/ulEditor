@@ -162,12 +162,14 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.xlsx',
-      displayName: 'Excel preview',
+      displayName: 'Excel',
       matches: {
         extensions: ['xlsx'],
         mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
       },
-      capabilities: ['view', 'search'],
+      /* This has to match what the editor reports: the shell decides whether a tab
+         is read-only before the editor is even loaded. */
+      capabilities: ['view', 'search', 'edit'],
       priority: 30,
     },
     async () => (await import('@uleditor/editor-office')).xlsxPreviewProvider,

@@ -33,6 +33,7 @@
     "verify:library": "node tools/verify-mobile-library.mjs",
     "verify:pdf-editing": "node tools/verify-pdf-editing.mjs",
     "verify:docx": "node tools/verify-docx-edit.mjs",
+    "verify:xlsx": "node tools/verify-xlsx-edit.mjs",
     "verify:docx-editing": "node tools/verify-docx-editing.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"

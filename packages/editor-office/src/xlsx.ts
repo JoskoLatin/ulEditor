@@ -27,6 +27,8 @@ export interface Merge {
 
 export interface Sheet {
   name: string;
+  /** Where the sheet lives in the archive — editing rewrites that part. */
+  path: string;
   rows: number;
   cols: number;
   /** The key is `row,column`, both 0-based. Sparse sheets cost no memory. */
@@ -38,6 +40,8 @@ export interface Sheet {
 export interface Workbook {
   sheets: Sheet[];
   notes: string[];
+  /** The opened archive, kept for the save — see `xlsx-edit.ts`. */
+  archive: Archive;
 }
 
 /** Above this the viewer stops being usable, and few people look at that much at once. */
@@ -188,7 +192,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
     const relId = attr(node, 'id');
     const path = relId ? rels.get(relId)?.target : undefined;
     const doc = path ? readXml(archive, path) : null;
-    if (!doc) continue;
+    if (!path || !doc) continue;
 
     const cells = new Map<string, Cell>();
     let maxRow = 0;
@@ -248,6 +252,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
 
     sheets.push({
       name,
+      path,
       rows: maxRow + 1,
       cols: maxCol + 1,
       cells,
@@ -269,7 +274,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
   }
   notes.add('Formulas are not recalculated — the value stored in the file is shown.');
 
-  return { sheets, notes: [...notes] };
+  return { sheets, notes: [...notes], archive };
 }
 
 function readCell(

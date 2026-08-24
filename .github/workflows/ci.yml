@@ -53,6 +53,13 @@ jobs:
       # reach it. This drives the module directly.
       - run: pnpm verify:recent
 
+      # Office editing is byte surgery, and the central claim is what did NOT
+      # change: every part of the archive outside the touched ranges, byte for
+      # byte. The browser check below proves the seam to the page; these prove
+      # the bytes.
+      - run: pnpm verify:docx
+      - run: pnpm verify:xlsx
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed
