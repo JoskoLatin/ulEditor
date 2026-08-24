@@ -849,13 +849,33 @@ button {
 
 /* ── the welcome screen ─────────────────────────────────────────────── */
 
+/*
+ * The welcome screen scrolls.
+ *
+ * It did not, and could not: `.surface` is a flex box with no overflow, so a
+ * welcome taller than the window simply had its lower half outside the
+ * program with no way to reach it — which is how it was reported, with the
+ * format lists below the fold and unreachable.
+ *
+ * `safe center` is what makes centring survive that. Plain centring pushes the
+ * overflow out of *both* ends, so the top of a tall page becomes unreachable
+ * too — the scrollbar cannot go above where the content begins. `safe` gives
+ * up the centring exactly when it would start hiding something.
+ */
+.welcome-surface {
+  overflow-y: auto;
+  align-items: safe center;
+  justify-content: safe center;
+}
+
+/* Wider than it was, because it now carries the two lists of what opens here.
+   The prose does not widen with it — the subtitle keeps its own measure. */
 .welcome {
-  margin: auto;
   padding: 40px;
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  max-width: 620px;
+  gap: 30px;
+  max-width: 880px;
   width: 100%;
 }
 
@@ -890,9 +910,13 @@ button {
   margin: 10px 0 0;
 }
 
+/* `auto-fill`, not `auto-fit`: with the recent list absent — a fresh install,
+   or the web — `auto-fit` collapses the empty track and stretches "Start"
+   across the whole band, its shortcuts pushed to the far edge with a hand's
+   width of nothing between. Keeping the track holds the column its own size. */
 .welcome-cols {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 28px;
 }
 
@@ -971,6 +995,73 @@ button {
   border: 1px solid var(--rule);
   border-radius: 3px;
   padding: 0 5px;
+}
+
+/*
+ * The band that says what the program does with each format.
+ *
+ * The extension and the sentence beside it are two ranks, not one line of
+ * prose: the eye runs down the extensions looking for its own, then across to
+ * the sentence that answers whether this program is any use to it. That only
+ * works while the two stay in their columns — so a line is a grid rather than
+ * a flex row, and a sentence too long for its width wraps inside its own
+ * column instead of falling under the extension and taking the alignment with
+ * it. Squeezed into one of the columns above, every line wrapped and the list
+ * stopped being scannable, which is the only thing a list like this is for.
+ */
+.welcome-formats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 24px 32px;
+  align-items: start;
+}
+.welcome-formats h3 {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+/*
+ * Two rows to a line: the kind of thing with its extensions, and under them
+ * the sentence saying what can be done with it. Side by side they made three
+ * ranks competing for one column's width, and the sentence — the part that
+ * decides anything — was the one that got squeezed.
+ */
+.welcome-formats .fmt-line {
+  display: grid;
+  grid-template-columns: 15px minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 9px;
+  padding: 5px 0;
+}
+.welcome-formats .fmt-line svg {
+  align-self: center;
+}
+.fmt-kind {
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* Extensions, set as the literal text they are — the same face the status bar
+   and the tree already use for a file's own facts. */
+.fmt-ext {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-ghost);
+  white-space: nowrap;
+}
+.fmt-note {
+  grid-column: 2 / -1;
+  margin-top: 1px;
+  color: var(--ink-faint);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.welcome-formats .fmt-line .tag {
+  margin-left: 8px;
+  white-space: nowrap;
 }
 .fmt-line[data-planned="true"] {
   color: var(--ink-ghost);

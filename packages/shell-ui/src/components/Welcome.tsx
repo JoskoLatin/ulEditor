@@ -3,7 +3,6 @@ import { FORMATS } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
-import { formatLabel } from '../shell/formats.js';
 import { openFiles, openFolder, openRecentFolder, openUri } from '../shell/actions.js';
 import { hasRecent, recentFiles, recentFolders } from '../shell/recent.js';
 import { useWorkspace } from '../state/workspace.js';
@@ -16,16 +15,94 @@ function formatOfName(name: string) {
   return detectByName(name).format;
 }
 
-const LIVE = ['code', 'markdown', 'pdf', 'epub', 'image'] as const;
-/** Formats that open, but read-only — the difference matters before opening. */
-const READ_ONLY: { format: keyof typeof FORMATS; note: string }[] = [
-  { format: 'docx', note: 'text editing' },
-  { format: 'xlsx', note: 'cell editing' },
+interface FormatLine {
+  format: keyof typeof FORMATS;
+  /** The kind of thing it is, in a word — what somebody says they are working
+   *  on before they think about which program made the file. */
+  kind: string;
+  /**
+   * The extensions, not the name of the program that made them.
+   *
+   * Somebody looking at this screen has a file in front of them and wants to
+   * know whether it opens. What they know about that file is what comes after
+   * its dot — and an extension belongs to nobody, while "Word" is somebody
+   * else's product being used to describe ours. Code is the one line with no
+   * extensions: there are fifty of them, and a wall of dotted names says less
+   * than the word does.
+   */
+  ext?: string;
+  /** What can actually be done with it — the sentence that decides whether
+   *  somebody opens their document here or somewhere else. */
+  note: string;
+  tag?: string;
+}
+
+/**
+ * What the program does, split the way somebody deciding whether to open a
+ * file here would split it: can I change this, or only look at it.
+ *
+ * Grouped by the kind of thing rather than one line per format. Six lines of
+ * dotted extensions is an inventory, and nobody reads an inventory to find out
+ * whether a program is any use to them — while "documents · tables · drawings"
+ * is answered at a glance.
+ *
+ * Each line says what it can genuinely do, and no line rounds up. A viewer
+ * described as an editor is found out on the first save, and the trust does
+ * not come back — the same rule the fidelity warning is built on. `.eps` and
+ * `.cdr` sit under "later" for exactly that reason: the program opens them,
+ * and what it says when it does is that it cannot draw them yet.
+ */
+const EDITS: FormatLine[] = [
+  { format: 'code', kind: 'Code', note: '23 languages highlighted, with find and replace' },
+  {
+    format: 'pdf',
+    kind: 'Documents',
+    ext: '.pdf .docx .md',
+    note: 'retype the text, annotate, reorder pages — the layout stays',
+  },
+  {
+    format: 'xlsx',
+    kind: 'Tables',
+    ext: '.xlsx .xls',
+    note: 'retype cell values; formulas and styles stay',
+  },
 ];
-const PLANNED: { format: keyof typeof FORMATS; phase: string }[] = [
-  { format: 'odf', phase: 'phase 2' },
-  { format: 'pptx', phase: 'phase 5' },
+
+const VIEWS: FormatLine[] = [
+  { format: 'epub', kind: 'Books', ext: '.epub', note: 'reading mode, contents, search' },
+  { format: 'image', kind: 'Images', ext: '.png .jpg …', note: 'and the text inside them, read out by OCR' },
+  { format: 'vector', kind: 'Drawings', ext: '.svg', note: 'the drawing, and its source one button away' },
+  { format: 'model', kind: 'Models', ext: '.stl .obj .glb', note: 'turned and lit in three dimensions' },
 ];
+
+const PLANNED: FormatLine[] = [
+  { format: 'odf', kind: 'OpenDocument', ext: '.odt .ods .odp', note: 'through the LibreOffice conversion', tag: 'phase 2' },
+  { format: 'vector', kind: 'PostScript', ext: '.eps .cdr', note: 'they need that same conversion', tag: 'phase 2' },
+  { format: 'pptx', kind: 'Presentations', ext: '.pptx', note: '', tag: 'phase 5' },
+];
+
+function FormatLines({ lines }: { lines: FormatLine[] }) {
+  return (
+    <>
+      {lines.map(({ format, kind, ext, note, tag }) => (
+        <div key={kind} className="fmt-line" data-planned={tag ? 'true' : undefined}>
+          <FormatIcon family={FORMATS[format].family} size={15} />
+          <span className="fmt-kind">{t(kind)}</span>
+          {ext ? <span className="fmt-ext">{ext}</span> : null}
+          {/* The tag rides inside the sentence rather than in a column of its
+              own: it is short, it belongs to that line, and given a rank of its
+              own it drops below and makes every planned line twice as tall. */}
+          {note || tag ? (
+            <span className="fmt-note">
+              {note ? t(note) : null}
+              {tag ? <span className="tag">{t(tag)}</span> : null}
+            </span>
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
 
 export function Welcome() {
   const shell = useShell();
@@ -39,16 +116,20 @@ export function Welcome() {
   const files = recentFiles(shell);
 
   return (
-    <div className="surface">
+    <div className="surface welcome-surface">
       <div className="welcome">
         <div>
           <div className="welcome-mark">
             ul<b>Editor</b>
           </div>
           <p className="welcome-origin">made in Vodice</p>
-          <p className="welcome-sub">
-            {t('Code, Markdown, PDF, e-books, Word and Excel in one place.')}
-          </p>
+          {/*
+            A list of formats is not a reason to install anything — it is what
+            the two columns below are for. This says the thing somebody
+            recognises before they have read a single format name: the five
+            programs they currently keep open to get through one afternoon.
+          */}
+          <p className="welcome-sub">{t('One window instead of five programs.')}</p>
         </div>
 
         <div className="welcome-cols">
@@ -106,29 +187,27 @@ export function Welcome() {
             </div>
           ) : null}
 
-          <div className="welcome-col">
-            <h3>{t('Working now')}</h3>
-            {LIVE.map((id) => (
-              <div key={id} className="fmt-line">
-                <FormatIcon family={FORMATS[id].family} size={15} />
-                <span>{formatLabel(id)}</span>
-              </div>
-            ))}
-            {READ_ONLY.map(({ format, note }) => (
+        </div>
 
-              <div key={format} className="fmt-line">
-                <FormatIcon family={FORMATS[format].family} size={15} />
-                <span>{formatLabel(format)}</span>
-                <span className="tag">{t(note)}</span>
-              </div>
-            ))}
-            {PLANNED.map(({ format, phase }) => (
-              <div key={format} className="fmt-line" data-planned="true">
-                <FormatIcon family={FORMATS[format].family} size={15} />
-                <span>{formatLabel(format)}</span>
-                <span className="tag">{t(phase)}</span>
-              </div>
-            ))}
+        {/*
+          Its own band under the two columns rather than a third one beside
+          them. Each line is an extension and a sentence, and a sentence needs
+          a width a narrow column cannot give it — squeezed into one, every
+          line wrapped and the list stopped being scannable, which is the only
+          thing a list like this is for.
+        */}
+        <div className="welcome-formats">
+          <div className="fmt-group">
+            <h3>{t('Edits')}</h3>
+            <FormatLines lines={EDITS} />
+          </div>
+          <div className="fmt-group">
+            <h3>{t('Views')}</h3>
+            <FormatLines lines={VIEWS} />
+          </div>
+          <div className="fmt-group">
+            <h3>{t('Later')}</h3>
+            <FormatLines lines={PLANNED} />
           </div>
         </div>
 

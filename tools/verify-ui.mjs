@@ -154,6 +154,36 @@ try {
     check(`${label} exists`, await page.locator(selector).isVisible());
   }
 
+  /*
+   * A welcome taller than the window has to be reachable. It was not: the
+   * surface is a flex box, it had no overflow, and the lower half of the
+   * screen was simply outside the program. Both ends are checked, because
+   * plain centring pushes the overflow out of *both* — fixing the bottom by
+   * centring differently is how the top becomes unreachable instead.
+   */
+  await page.setViewportSize({ width: 1440, height: 420 });
+  const reach = await page.evaluate(() => {
+    const surface = document.querySelector('.welcome-surface');
+    if (!surface) return null;
+    surface.scrollTop = 0;
+    const top = document.querySelector('.welcome-mark').getBoundingClientRect().top;
+    surface.scrollTop = surface.scrollHeight;
+    const lines = document.querySelectorAll('.welcome-formats .fmt-line');
+    const bottom = lines[lines.length - 1].getBoundingClientRect().bottom;
+    surface.scrollTop = 0;
+    return {
+      scrolls: surface.scrollHeight > surface.clientHeight,
+      topReachable: Math.round(top) >= 0,
+      bottomReachable: Math.round(bottom) <= Math.round(surface.getBoundingClientRect().bottom) + 1,
+    };
+  });
+  check(
+    'a welcome taller than the window scrolls, and both of its ends can be reached',
+    reach?.scrolls && reach.topReachable && reach.bottomReachable,
+    JSON.stringify(reach),
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   /* — code — */
   await dropFile(page, 'example.ts', TS_SOURCE);
   await page.waitForSelector('.cm-editor', { timeout: 15000 });
