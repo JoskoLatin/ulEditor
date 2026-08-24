@@ -12,6 +12,7 @@ export type FormatId =
   | 'epub'
   | 'docx'
   | 'doc'
+  | 'rtf'
   | 'xlsx'
   | 'xls'
   | 'pptx'
@@ -61,6 +62,9 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   /* The same reasoning that gave `.xls` its own id: the old binary Word shares
      nothing with a `.docx` but the name, and opens in a different editor. */
   doc: { id: 'doc', family: 'document', label: 'Word 97-2003 document', textual: false },
+  /* Textual, and that is the point: an `.rtf` is markup a person can read, so a
+     text editor opening one is a reasonable thing rather than a mistake. */
+  rtf: { id: 'rtf', family: 'document', label: 'Rich Text', textual: true },
   xlsx: { id: 'xlsx', family: 'sheet', label: 'Excel spreadsheet', textual: false },
   /* Its own id, not a variant of xlsx: when content decides, the format is what
      routes a file to an editor — and the old binary format opens read-only. */

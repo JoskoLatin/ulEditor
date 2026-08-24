@@ -206,6 +206,27 @@ export interface Chp {
 
 const PLAIN: Chp = { bold: false, italic: false, underline: false, strike: false };
 
+/**
+ * A character toggle — bold, italic, struck through.
+ *
+ * Word does not store *"this is bold"*. It stores **how this differs from the
+ * style**: 0 off, 1 on, 0x80 "whatever the style says", 0x81 "the opposite of
+ * what the style says". Clicking the Bold button on ordinary body text writes
+ * **0x81**, not 1, because the letters are being made to differ from Normal
+ * rather than being given a property of their own.
+ *
+ * A reader that accepts only 1 therefore finds no bold at all in a folder full
+ * of documents that plainly have it — which is exactly what 31 real files said
+ * the first time this ran over them, and what a hand-built fixture writing a
+ * tidy 1 could never have caught.
+ *
+ * Without walking the style chain the base is taken as off, which is what the
+ * body styles a reading view shows actually are: 0x81 is on, 0x80 is off.
+ */
+function toggle(value: number): boolean {
+  return value === 1 || value === 0x81;
+}
+
 /** A byte range of the stream and the properties that hold over it. */
 interface Span<T> {
   fc: number;
@@ -310,20 +331,15 @@ function chpxPage(doc: DataView, page: number, out: Span<Chp>[]): void {
       const end = Math.min(at + 1 + length, base + 511);
 
       eachSprm(doc, at + 1, end, (sprm, operand) => {
-        /* These four are toggles: 0 off, 1 on, and 128/129 meaning "whatever
-           the style said" and "the opposite of it". Without the full style
-           chain the honest reading of an inherit is the style's own value,
-           which for the styles a reader shows is off. */
-        const flag = (value: number) => value === 1;
         switch (sprm) {
           case 0x0835: // sprmCFBold
-            props.bold = flag(doc.getUint8(operand));
+            props.bold = toggle(doc.getUint8(operand));
             break;
           case 0x0836: // sprmCFItalic
-            props.italic = flag(doc.getUint8(operand));
+            props.italic = toggle(doc.getUint8(operand));
             break;
           case 0x0837: // sprmCFStrike
-            props.strike = flag(doc.getUint8(operand));
+            props.strike = toggle(doc.getUint8(operand));
             break;
           case 0x2a3e: // sprmCKul — a kind of underline, not a toggle
             props.underline = doc.getUint8(operand) !== 0;

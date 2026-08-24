@@ -1145,11 +1145,12 @@ try {
     'the CP1252 piece and the UTF-16 piece are both decoded',
     (await docView.innerText()).includes('održan') && (await docView.innerText()).includes('zaključak'),
   );
+  /* Two bold words, written the two ways Word writes bold — plainly, and as a
+     toggle against the style, which is what clicking the button produces. */
   check(
-    'the one bold word is the only bold word',
-    (await docView.locator('strong').count()) === 1 &&
-      (await docView.locator('strong').first().innerText()).trim() === 'održan',
-    await docView.locator('strong').first().innerText(),
+    'both spellings of bold reach the page',
+    (await docView.locator('strong').allInnerTexts()).map((s) => s.trim()).join('|') === 'održan|Vodicama',
+    (await docView.locator('strong').allInnerTexts()).join('|'),
   );
   check(
     'the table inferred from the cell marks has two rows of two',

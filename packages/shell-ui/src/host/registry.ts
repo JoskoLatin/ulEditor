@@ -19,6 +19,10 @@ const PLANNED: Partial<Record<FormatId, string>> = {
      what is left under `odf` is the rest of the family — presentations,
      drawings, formulas — and none of those has one yet. */
   odf: 'OpenDocument presentations and drawings arrive in phase 5; text and spreadsheets open now.',
+  /* Recognised but not read. That is worth an id of its own: without one the
+     file falls back to its extension, and an `.rtf` saved as `.doc` reaches the
+     old binary Word reader, which can only report that it is damaged. */
+  rtf: 'Rich Text (.rtf) is recognised but not read yet.',
   archive: 'Browsing archives is not planned — ulEditor opens documents, it does not pack them.',
 };
 

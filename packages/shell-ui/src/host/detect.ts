@@ -198,6 +198,7 @@ export function detectByName(name: string): FormatDetection {
   // Its own id, for the reason `.xls` has one: the old binary Word opens in a
   // reader of its own, and read-only.
   if (ext === 'doc') return { format: 'doc', via: 'extension' };
+  if (ext === 'rtf') return { format: 'rtf', via: 'extension' };
   if (ext === 'xlsx') return { format: 'xlsx', via: 'extension' };
   // Its own id, not a variant of xlsx: when content decides, the format is what
   // routes the file to an editor, and the two need different ones.
@@ -226,6 +227,15 @@ export function detectByName(name: string): FormatDetection {
  */
 export function detect(name: string, bytes: Uint8Array): FormatDetection {
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46])) return { format: 'pdf', via: 'magic' }; // %PDF
+
+  /*
+   * `{tf` — and it is checked here, before anything reads the extension,
+   * because the file that made this necessary is named `.doc` and is not one.
+   * Word has always been happy to save Rich Text under the Word extension, and
+   * the old binary reader met one and reported the only thing it could: that
+   * the file was damaged. It was not. The bytes say what it is.
+   */
+  if (startsWith(bytes, [0x7b, 0x5c, 0x72, 0x74, 0x66])) return { format: 'rtf', via: 'magic' };
 
   if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]) || startsWith(bytes, [0x50, 0x4b, 0x05, 0x06])) {
     return { format: classifyZip(bytes), via: 'magic' };

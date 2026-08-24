@@ -1193,23 +1193,46 @@ export function makeDoc() {
     papxFkp[511] = count;
   }
 
-  // One bold word, in the narrow piece: "Sastanak je " and then "održan".
-  const boldAt = TEXT + NARROW[0].text.length + 1 + 'Sastanak je '.length;
-  const boldEnd = boldAt + 'održan'.length;
+  /*
+   * Two bold words in the narrow piece, written **the two ways Word writes
+   * bold**. `održan` carries the plain 1; `Vodicama` carries 0x81 — the toggle,
+   * which means "the opposite of whatever the style says" and is what Word
+   * actually puts in the file when somebody selects ordinary text and clicks
+   * the Bold button.
+   *
+   * The second one is here because a fixture writing only the tidy 1 said the
+   * reader worked while it was finding no bold at all in thirty-one real
+   * documents that are visibly full of it.
+   */
+  const BOLD = [0x35, 0x08, 0x01]; // sprmCFBold, plainly on
+  const BOLD_TOGGLE = [0x35, 0x08, 0x81]; // sprmCFBold, "unlike the style"
+  const para = TEXT + NARROW[0].text.length + 1;
+  const RUNS = [
+    { at: TEXT, sprms: [] },
+    { at: para + 'Sastanak je '.length, sprms: BOLD },
+    { at: para + 'Sastanak je održan'.length, sprms: [] },
+    { at: para + 'Sastanak je održan u '.length, sprms: BOLD_TOGGLE },
+    { at: para + 'Sastanak je održan u Vodicama'.length, sprms: [] },
+  ];
 
   const chpxFkp = new Uint8Array(512);
   {
     const view = new DataView(chpxFkp.buffer);
-    const runs = [TEXT, boldAt, boldEnd, textEnd];
-    const count = runs.length - 1;
-    runs.forEach((fc, i) => view.setUint32(i * 4, fc, true));
+    const count = RUNS.length;
+    [...RUNS.map((run) => run.at), textEnd].forEach((fc, i) => view.setUint32(i * 4, fc, true));
 
     let at = (count + 1) * 4 + count;
     if (at % 2) at++;
-    // A zero means "nothing said here" — only the middle run carries anything.
-    chpxFkp[(count + 1) * 4 + 1] = at / 2;
-    chpxFkp[at] = 3;
-    chpxFkp.set([0x35, 0x08, 0x01], at + 1); // sprmCFBold
+    RUNS.forEach((run, i) => {
+      // A zero means "nothing said here" — that run keeps the default.
+      if (run.sprms.length === 0) return;
+      chpxFkp[(count + 1) * 4 + i] = at / 2;
+      chpxFkp[at] = run.sprms.length;
+      chpxFkp.set(run.sprms, at + 1);
+      at += run.sprms.length + 1;
+      if (at % 2) at++;
+    });
+    if (at > 511) throw new Error('the character property page overflowed');
     chpxFkp[511] = count;
   }
 

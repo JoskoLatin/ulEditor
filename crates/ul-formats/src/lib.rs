@@ -28,6 +28,10 @@ pub enum FormatId {
     /// reason `Xls` has one: nothing but the name is shared with `Docx`, and
     /// the two open in different editors.
     Doc,
+    /// Rich Text. Recognised by content because it is routinely saved under a
+    /// `.doc` name, where the extension would send it to the binary Word
+    /// reader — which can only report that a perfectly good file is damaged.
+    Rtf,
     Xlsx,
     /// The old binary Excel (97–2003) — read, never written.
     Xls,
@@ -56,6 +60,7 @@ impl FormatId {
             Self::Epub => "epub",
             Self::Docx => "docx",
             Self::Doc => "doc",
+            Self::Rtf => "rtf",
             Self::Xlsx => "xlsx",
             Self::Xls => "xls",
             Self::Pptx => "pptx",
@@ -239,6 +244,7 @@ pub fn detect_by_name(name: &str) -> Detection {
         "docx" => FormatId::Docx,
         // Its own id for the reason `.xls` has one — see `FormatId::Doc`.
         "doc" => FormatId::Doc,
+        "rtf" => FormatId::Rtf,
         "xlsx" => FormatId::Xlsx,
         // Its own id, not a variant of xlsx: when content decides, the format is
         // what routes the file to an editor, and the two need different ones.
@@ -346,6 +352,12 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
         || (bytes.starts_with(b"RIFF") && bytes.len() > 12 && &bytes[8..12] == b"WEBP");
     if is_image {
         return Detection::new(FormatId::Image, DetectedVia::Magic);
+    }
+
+    // Rich Text, checked before the extension is looked at: the file that made
+    // this necessary is named `.doc` and is not one.
+    if bytes.starts_with(br"{\rtf") {
+        return Detection::new(FormatId::Rtf, DetectedVia::Magic);
     }
 
     // Legacy binary Office (OLE2 compound file) — the extension decides the type.
@@ -494,6 +506,19 @@ mod tests {
 
         assert_eq!(detect_by_name("a.doc").format, FormatId::Doc);
         assert_eq!(detect_by_name("a.docx").format, FormatId::Docx);
+    }
+
+    #[test]
+    fn rich_text_saved_as_a_doc_is_still_rich_text() {
+        // A real file in a real folder: Word saved Rich Text under the Word
+        // extension, the extension sent it to the binary reader, and the reader
+        // told the user their document was damaged. The bytes never said that.
+        let rtf = br"{\rtf1\ansi\ansicpg1252 Postovani,\par}";
+        let d = detect("Upitnik za poslodavca.doc", rtf);
+        assert_eq!(d.format, FormatId::Rtf);
+        assert_eq!(d.via, DetectedVia::Magic);
+
+        assert_eq!(detect_by_name("a.rtf").format, FormatId::Rtf);
     }
 
     #[test]

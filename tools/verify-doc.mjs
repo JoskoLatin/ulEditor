@@ -90,9 +90,25 @@ check(
 /* ── the property pages ──────────────────────────────────────────────── */
 
 const bold = paragraphs[1].runs.filter((run) => run.chp.bold);
-check('the character properties cut the paragraph into runs', paragraphs[1].runs.length === 3, `${paragraphs[1].runs.length}`);
-check('and exactly the bold word is bold', bold.length === 1 && bold[0].text === 'održan', JSON.stringify(bold.map((r) => r.text)));
-check('the rest of the paragraph is not', paragraphs[1].runs.every((run) => run.text === 'održan' || !run.chp.bold));
+check('the character properties cut the paragraph into runs', paragraphs[1].runs.length === 5, `${paragraphs[1].runs.length}`);
+
+/*
+ * Both spellings of bold, because Word uses both. It does not store "this is
+ * bold" but how the letters differ from their style, so clicking the Bold
+ * button on ordinary text writes 0x81 — "unlike the style" — and not 1. A
+ * reader that took only the 1 passed every check written against a hand-built
+ * file and found no bold whatsoever in thirty-one real documents.
+ */
+check(
+  'bold written plainly and bold written as a toggle both arrive',
+  bold.length === 2 && bold[0].text === 'održan' && bold[1].text === 'Vodicama',
+  JSON.stringify(bold.map((run) => run.text)),
+);
+check(
+  'and nothing else in the paragraph is bold',
+  paragraphs[1].runs.filter((run) => !run.chp.bold).map((run) => run.text).join('') === 'Sastanak je  u .',
+  JSON.stringify(paragraphs[1].runs.filter((run) => !run.chp.bold).map((run) => run.text)),
+);
 
 check('alignment is read off the paragraph', paragraphs[12].pap.jc === 1, `${paragraphs[12].pap.jc}`);
 check(
