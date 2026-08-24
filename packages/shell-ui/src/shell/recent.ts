@@ -29,10 +29,11 @@ export interface RecentEntry {
 
 /**
  * Enough to be useful, short enough to read at a glance. A list that scrolls is
- * a list nobody scans — past about a dozen the file dialog is faster, and the
- * point of this is to be faster than the file dialog.
+ * a list nobody scans — past a handful the file dialog is faster, and the point
+ * of this is to be faster than the file dialog. Twelve files pushed everything
+ * under them off the welcome screen, which is a high price for the eleventh.
  */
-const LIMITS = { 'recent.files': 12, 'recent.folders': 8 } as const;
+const LIMITS = { 'recent.files': 5, 'recent.folders': 5 } as const;
 type Key = keyof typeof LIMITS;
 
 function read(shell: Shell, key: Key): RecentEntry[] {

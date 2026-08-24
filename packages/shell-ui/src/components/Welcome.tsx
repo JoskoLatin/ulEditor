@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import { FORMATS } from '@uleditor/plugin-sdk';
 
 import { t } from '@uleditor/i18n';
@@ -104,6 +105,66 @@ function FormatLines({ lines }: { lines: FormatLine[] }) {
   );
 }
 
+const ORIGIN = 'made in Vodice';
+
+/**
+ * The name with its signature under it, the two set to one width.
+ *
+ * The spacing is measured rather than written down: a value that happens to
+ * fit "ulEditor" at this size fits nothing else — not the fallback the mono
+ * face lands on where it is not installed, not an interface zoomed to 120%,
+ * which this program has a command for. So the word is measured, the line
+ * under it is measured, and the difference is divided between its letters.
+ *
+ * Letter-spacing leaves a gap after the *last* letter as well, which would
+ * stop the line short of the edge it is meant to meet; the negative margin
+ * takes that one gap back off the end.
+ */
+function Lockup() {
+  const markRef = useRef<HTMLDivElement>(null);
+  const originRef = useRef<HTMLParagraphElement>(null);
+
+  useLayoutEffect(() => {
+    const mark = markRef.current;
+    const origin = originRef.current;
+    if (!mark || !origin) return;
+
+    const fit = () => {
+      origin.style.letterSpacing = '0px';
+      origin.style.marginRight = '0px';
+      const natural = origin.getBoundingClientRect().width;
+      const target = mark.getBoundingClientRect().width;
+      const gaps = ORIGIN.length - 1;
+      if (gaps < 1 || natural <= 0 || target <= natural) return;
+
+      const spacing = (target - natural) / gaps;
+      origin.style.letterSpacing = `${spacing}px`;
+      origin.style.marginRight = `${-spacing}px`;
+    };
+
+    fit();
+
+    /* The word changes width for reasons of its own — the interface zoom, a
+       font arriving late — and the line under it has to follow. */
+    const observer = new ResizeObserver(fit);
+    observer.observe(mark);
+    void document.fonts?.ready.then(fit).catch(() => {});
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    /* A box only as wide as the word, which is what gives the line its measure. */
+    <div className="welcome-title">
+      <div className="welcome-mark" ref={markRef}>
+        ul<b>Editor</b>
+      </div>
+      <p className="welcome-origin" ref={originRef}>
+        {ORIGIN}
+      </p>
+    </div>
+  );
+}
+
 export function Welcome() {
   const shell = useShell();
   const setPaletteOpen = useWorkspace((s) => s.setPaletteOpen);
@@ -119,17 +180,14 @@ export function Welcome() {
     <div className="surface welcome-surface">
       <div className="welcome">
         <div>
-          <div className="welcome-mark">
-            ul<b>Editor</b>
-          </div>
-          <p className="welcome-origin">made in Vodice</p>
+          <Lockup />
           {/*
             A list of formats is not a reason to install anything — it is what
             the two columns below are for. This says the thing somebody
             recognises before they have read a single format name: the five
             programs they currently keep open to get through one afternoon.
           */}
-          <p className="welcome-sub">{t('One window instead of five programs.')}</p>
+          <p className="welcome-sub">{t('One window instead of a dozen programs.')}</p>
         </div>
 
         <div className="welcome-cols">

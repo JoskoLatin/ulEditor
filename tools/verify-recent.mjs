@@ -101,14 +101,14 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
     recent.rememberFile(shell, { uri: `C:/w/file-${i}.md`, name: `file-${i}.md` });
   }
   const files = recent.recentFiles(shell);
-  check('the list is capped', files.length === 12, `${files.length} entries`);
+  check('the list is capped', files.length === 5, `${files.length} entries`);
   check('and it keeps the newest end', files[0]?.name === 'file-39.md', files[0]?.name);
 
   for (let i = 0; i < 20; i++) {
     recent.rememberFolder(shell, { uri: `C:/w/dir-${i}`, name: `dir-${i}` });
   }
-  check('folders have their own, shorter cap', recent.recentFolders(shell).length === 8);
-  check('and they did not disturb the files', recent.recentFiles(shell).length === 12);
+  check('folders are capped too', recent.recentFolders(shell).length === 5);
+  check('and they did not disturb the files', recent.recentFiles(shell).length === 5);
 }
 
 /* ── a file that will not open ───────────────────────────────────────── */

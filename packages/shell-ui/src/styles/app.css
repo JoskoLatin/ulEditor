@@ -871,10 +871,10 @@ button {
 /* Wider than it was, because it now carries the two lists of what opens here.
    The prose does not widen with it — the subtitle keeps its own measure. */
 .welcome {
-  padding: 40px;
+  padding: 36px 40px;
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 24px;
   max-width: 880px;
   width: 100%;
 }
@@ -892,22 +892,46 @@ button {
   font-weight: 600;
 }
 
-/* The signature under the logotype — aligned to the word, not to the edge. */
+/* Only as wide as the logotype, which is what gives the signature its measure. */
+.welcome-title {
+  width: fit-content;
+}
+
+/*
+ * The signature under the logotype, set to the width of the word above it.
+ *
+ * The spacing is measured and applied in the component, not written here.
+ * Justifying instead — the obvious CSS answer — stretches the spaces *between
+ * words*, so "MADE IN VODICE" came out as three words with holes between them
+ * rather than as one spaced line. A signature wants its letters evenly apart,
+ * and only letter-spacing does that; what the measuring buys is a value that
+ * still fits when the font falls back or the interface is zoomed.
+ */
 .welcome-origin {
-  margin: 7px 0 0;
+  width: fit-content;
+  /*
+   * Set so the *letters* sit 5px under the letters above, which is the gap
+   * anybody is looking at. The margin is not that number: the word's line box
+   * reaches below its baseline to leave room for descenders, and "ulEditor"
+   * has none, so a 5px margin under the box shows as 1px under the ink.
+   */
+  margin: 9px 0 0;
   font-family: var(--mono);
   font-size: var(--fs-xs);
-  letter-spacing: 0.22em;
+  /* The line box hugs the letters, like the word above it. Left at the body's
+     leading it would carry half a line of nothing over the text. */
+  line-height: 1;
   text-transform: uppercase;
   color: var(--ink-ghost);
+  white-space: nowrap;
 }
 
 .welcome-sub {
   color: var(--ink-faint);
   font-size: var(--fs-lg);
-  line-height: 1.5;
+  line-height: 1.45;
   max-width: 40ch;
-  margin: 10px 0 0;
+  margin: 6px 0 0;
 }
 
 /* `auto-fill`, not `auto-fit`: with the recent list absent — a fresh install,
@@ -1035,7 +1059,9 @@ button {
   grid-template-columns: 15px minmax(0, auto) minmax(0, 1fr);
   align-items: baseline;
   column-gap: 9px;
-  padding: 5px 0;
+  /* The space between one entry and the next, not between a heading and the
+     sentence that belongs to it — those two are one thing and sit close. */
+  padding: 0 0 12px;
 }
 .welcome-formats .fmt-line svg {
   align-self: center;
@@ -1054,10 +1080,10 @@ button {
 }
 .fmt-note {
   grid-column: 2 / -1;
-  margin-top: 1px;
+  margin-top: 2px;
   color: var(--ink-faint);
   font-size: var(--fs-sm);
-  line-height: 1.45;
+  line-height: 1.4;
 }
 .welcome-formats .fmt-line .tag {
   margin-left: 8px;
