@@ -16,7 +16,9 @@ import '@uleditor/editor-3d/style.css';
 import { App } from './App.js';
 import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
+import { isTreeSort } from './shell/tree-sort.js';
 import { restoreZoom } from './shell/zoom.js';
+import { useWorkspace } from './state/workspace.js';
 
 const shell = createShell();
 
@@ -35,6 +37,11 @@ setLocale(shell.locale);
 /* The document has to report its real language, not the one written into
    `index.html`: screen readers and hyphenation rules depend on it. */
 document.documentElement.lang = shell.locale;
+
+/* The order the tree was left in. Read before the first render, so the tree
+   does not appear in one order and jump into another. */
+const storedSort = shell.settings.get<string>('explorer.sort', 'name');
+if (isTreeSort(storedSort)) useWorkspace.getState().setTreeSort(storedSort);
 
 /*
  * Editor registration — the only place in the shell that mentions individual

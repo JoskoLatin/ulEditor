@@ -152,6 +152,22 @@ export const IconType = (p: IconProps) => (
   </Svg>
 );
 
+export const IconTrash = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5" />
+    <path d="M4.25 4.25 5 13.25h6l.75-9" />
+    <path d="M6.75 6.75v4M9.25 6.75v4" />
+  </Svg>
+);
+
+/** Bars of falling length beside an arrow — the shape every list uses for its order. */
+export const IconSort = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.25 4h7M2.25 8h4.5M2.25 12h2.5" />
+    <path d="M12 3.25v9.5M10 10.75 12 12.75l2-2" />
+  </Svg>
+);
+
 export const IconArrow = ({ dir = 'left', ...p }: IconProps & { dir?: 'left' | 'right' }) => (
   <Svg {...p}>
     {dir === 'left' ? <path d="M10 3 5 8l5 5" /> : <path d="m6 3 5 5-5 5" />}

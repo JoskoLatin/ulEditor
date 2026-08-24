@@ -457,15 +457,31 @@ button {
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 6px;
   width: 100%;
   height: 24px;
-  padding-right: 10px;
   font-size: var(--fs-md);
   color: var(--ink-soft);
   text-align: left;
   white-space: nowrap;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+/* The row is no longer a button — it holds them — so the part that opens the
+   node carries the click, and takes the width the actions leave it. */
+.tree-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding-right: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 .tree-row:hover {
   background: var(--rule-soft);
@@ -496,6 +512,81 @@ button {
   font-size: var(--fs-xs);
   color: var(--ink-ghost);
   padding-left: 8px;
+}
+
+/*
+ * A root's own controls. Hidden until the row is touched — a tree of five
+ * folders would otherwise carry ten buttons nobody is looking at — but kept
+ * reachable: `:focus-within` brings them back for the keyboard, which cannot
+ * hover, and a narrow screen shows them always, since a touch is a tap and
+ * there is no hovering before it.
+ */
+.tree-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 6px;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.tree-row:hover .tree-actions,
+.tree-row:focus-within .tree-actions {
+  opacity: 1;
+}
+.tree-actions .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+/* Turning while it reads, so a folder that takes a moment says it is working. */
+.tree-actions .icon-btn[data-busy] {
+  animation: tree-refresh 900ms linear infinite;
+  opacity: 0.6;
+}
+@keyframes tree-refresh {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 720px) {
+  .tree-actions {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-actions .icon-btn[data-busy] {
+    animation: none;
+  }
+}
+
+/* The order picker beside the panel's title: a native select, dressed down to
+   the chrome around it rather than left in the platform's own colours. */
+.sort-select {
+  height: 22px;
+  max-width: 108px;
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.sort-select:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.sort-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The list itself is drawn by the platform, which does not inherit a
+   transparent background — without this it opens as white text on white. */
+.sort-select option {
+  background: var(--bg-raised);
+  color: var(--ink);
 }
 
 .fmt-icon {

@@ -184,12 +184,77 @@ export async function addRoot(
     expanded: opts?.expanded !== false,
     format: 'unknown',
     children: children.map((child) => toNode(child, 1)),
+    modified: null,
   };
 
   const { tree, setTree, setSidebarView } = useWorkspace.getState();
   setTree([...tree.filter((n) => n.uri !== node.uri), node]);
   rememberFolder(shell, root);
   if (opts?.reveal !== false) setSidebarView('explorer');
+}
+
+/**
+ * Reads a folder again, for the files that appeared in it since.
+ *
+ * The tree is read lazily and never watched, so a file saved by another
+ * program is simply not there — this is how it arrives. Which branches were
+ * open is carried across: re-reading a tree and finding it collapsed to a
+ * single line loses the place the person was working in, which is a worse
+ * failure than the stale list it fixed.
+ *
+ * A folder that has gone away since is dropped, with its name said — the same
+ * treatment `openRecentFolder` gives one.
+ */
+export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
+  const { updateNode, setTree, tree } = useWorkspace.getState();
+
+  /** Which directories were open, so the re-read can put them back. */
+  const openBefore = new Map<Uri, TreeNode>();
+  const collect = (node: TreeNode) => {
+    if (node.kind !== 'directory' || !node.expanded) return;
+    openBefore.set(node.uri, node);
+    for (const child of node.children ?? []) collect(child);
+  };
+  collect(root);
+
+  /** Reads one directory and, below it, whatever was open before. */
+  const reread = async (node: TreeNode): Promise<TreeNode[]> => {
+    const entries = await shell.fs.readDirectory(node.uri);
+    const children: TreeNode[] = [];
+    for (const entry of entries) {
+      const child = toNode(entry, node.depth + 1);
+      if (child.kind === 'directory' && openBefore.has(child.uri)) {
+        child.expanded = true;
+        child.children = await reread(child).catch(() => []);
+      }
+      children.push(child);
+    }
+    return children;
+  };
+
+  try {
+    const children = await reread(root);
+    updateNode(root.uri, { children, expanded: true });
+    shell.notify.show('info', t('{name}: {n} entries', { name: root.name, n: children.length }));
+  } catch (err) {
+    setTree(tree.filter((n) => n.uri !== root.uri));
+    forget(shell, root.uri);
+    shell.notify.show('error', t('Could not read the folder: {reason}', { reason: describe(err) }));
+  }
+}
+
+/**
+ * Takes a folder off the tree.
+ *
+ * Nothing on disk is touched — the folder stops being shown, which is the only
+ * thing a file tree has any business doing to somebody's documents. Its open
+ * documents stay open: they were opened from it, not by it, and closing tabs
+ * somebody is working in would be a surprise nobody asked for.
+ */
+export function removeRoot(shell: Shell, root: TreeNode): void {
+  const { tree, setTree } = useWorkspace.getState();
+  setTree(tree.filter((node) => node.uri !== root.uri));
+  forget(shell, root.uri);
 }
 
 /**
@@ -240,7 +305,10 @@ export async function adoptDropped(
   }
 }
 
-function toNode(entry: { uri: Uri; name: string; kind: 'file' | 'directory' }, depth: number): TreeNode {
+function toNode(
+  entry: { uri: Uri; name: string; kind: 'file' | 'directory'; modified?: number | null },
+  depth: number,
+): TreeNode {
   return {
     uri: entry.uri,
     name: entry.name,
@@ -249,6 +317,7 @@ function toNode(entry: { uri: Uri; name: string; kind: 'file' | 'directory' }, d
     expanded: false,
     children: null,
     format: entry.kind === 'directory' ? 'unknown' : detectByName(entry.name).format,
+    modified: entry.modified ?? null,
   };
 }
 

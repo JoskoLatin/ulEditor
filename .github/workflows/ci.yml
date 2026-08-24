@@ -53,6 +53,11 @@ jobs:
       # reach it. This drives the module directly.
       - run: pnpm verify:recent
 
+      # The tree's ordering is a pure function over nodes, and the cases worth
+      # pinning are ones a screenshot would never show — a Croatian name in the
+      # right place, slika2 before slika10, an entry with no date going last.
+      - run: pnpm verify:tree
+
       # Office editing is byte surgery, and the central claim is what did NOT
       # change: every part of the archive outside the touched ranges, byte for
       # byte. The browser check below proves the seam to the page; these prove

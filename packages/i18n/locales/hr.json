@@ -39,6 +39,13 @@
   "Supported formats": "Podržani formati",
   "Registered editors": "Učitani editori",
   "Resize panel": "Promijeni širinu ploče",
+  "Sort by": "Poredaj po",
+  "Name": "Imenu",
+  "Type": "Vrsti",
+  "Date modified": "Datumu izmjene",
+  "Check for new files": "Provjeri ima li novih datoteka",
+  "Remove from the list — the folder itself is not touched": "Ukloni s popisa — sama mapa ostaje netaknuta",
+  "{name}: {n} entries": "{name}: {n} stavki",
   "No folder open. Open one to get a file tree, or drop files straight into the window.": "Nema otvorene mape. Otvori mapu da dobiješ stablo datoteka, ili povuci datoteke izravno u prozor.",
   "This browser has no File System Access API — files can be read but not saved. The desktop build has no such limit.": "Ovaj preglednik nema File System Access API — datoteke se mogu čitati, ali ne i spremati. Na desktopu to ograničenje ne postoji."
 ,

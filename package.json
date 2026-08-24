@@ -15,6 +15,8 @@
     "verify:version": "node tools/verify-version.mjs",
     "verify:languages": "node tools/verify-languages.mjs",
     "verify:recent": "node tools/verify-recent.mjs",
+    "verify:tree": "node tools/verify-tree.mjs",
+    "verify:tree-desktop": "node tools/verify-tree-desktop.mjs",
     "i18n:template": "node tools/i18n-template.mjs",
     "verify:pdf": "node tools/verify-pdf-annotations.mjs && node tools/verify-pdf-pages.mjs && node tools/verify-pdf-text.mjs && node tools/verify-pdf-redact.mjs && node tools/verify-pdf-retype.mjs && node tools/verify-pdf-edit.mjs",
     "icons": "node tools/make-icons.mjs",

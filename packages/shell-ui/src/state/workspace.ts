@@ -19,7 +19,19 @@ export interface TreeNode {
   children: TreeNode[] | null;
   expanded: boolean;
   format: FormatId;
+  /** Unix ms, last written. `null` where the platform does not report it — the
+   *  web gives it for dropped files and not for directory entries. */
+  modified: number | null;
 }
+
+/**
+ * How the tree is ordered.
+ *
+ * Sorting happens where the tree is drawn, not in the stored nodes: the order
+ * is a way of looking at a folder, and re-sorting must not mean re-reading it
+ * or losing which branches are open.
+ */
+export type TreeSort = 'name' | 'type' | 'date';
 
 /**
  * The two editor groups.
@@ -76,6 +88,7 @@ function defaultSidebarView(): SidebarView {
 
 interface WorkspaceState {
   tree: TreeNode[];
+  treeSort: TreeSort;
   tabs: TabState[];
   /** The tab in front of each group. The one the user is in is `active[focused]`. */
   active: Record<GroupId, string | null>;
@@ -94,6 +107,7 @@ interface WorkspaceState {
 
   setTree(tree: TreeNode[]): void;
   updateNode(uri: Uri, patch: Partial<TreeNode>): void;
+  setTreeSort(sort: TreeSort): void;
 
   addTab(tab: Omit<TabState, 'group'> & { group?: GroupId }): void;
   closeTab(id: string): void;
@@ -169,6 +183,7 @@ function neighbourOf(tabs: TabState[], group: GroupId, id: string): string | nul
 
 export const useWorkspace = create<WorkspaceState>((set) => ({
   tree: [],
+  treeSort: 'name',
   tabs: [],
   active: { left: null, right: null },
   focused: 'left',
@@ -184,6 +199,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   quickOpen: false,
 
   setTree: (tree) => set({ tree }),
+  setTreeSort: (treeSort) => set({ treeSort }),
 
   updateNode: (uri, patch) => set((s) => ({ tree: mapTree(s.tree, uri, patch) })),
 

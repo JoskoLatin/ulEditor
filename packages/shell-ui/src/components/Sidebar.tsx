@@ -5,7 +5,7 @@ import { t } from '@uleditor/i18n';
 import { useShell } from '../shell/context.js';
 import { openFolder } from '../shell/actions.js';
 import { useWorkspace } from '../state/workspace.js';
-import { Explorer } from './Explorer.js';
+import { Explorer, TreeSortPicker } from './Explorer.js';
 import { FormatsPanel } from './FormatsPanel.js';
 import { Library } from './Library.js';
 import { SearchPanel } from './SearchPanel.js';
@@ -36,9 +36,12 @@ export function Sidebar() {
       <div className="sidebar-head">
         <h2>{title(view)}</h2>
         {view === 'explorer' && (
-          <button className="icon-btn" title={t('Open folder')} onClick={() => void openFolder(shell)}>
-            <IconFolderOpen size={14} />
-          </button>
+          <>
+            <TreeSortPicker />
+            <button className="icon-btn" title={t('Open folder')} onClick={() => void openFolder(shell)}>
+              <IconFolderOpen size={14} />
+            </button>
+          </>
         )}
       </div>
       <div className="sidebar-scroll">
