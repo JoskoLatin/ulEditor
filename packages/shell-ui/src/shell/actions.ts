@@ -109,6 +109,9 @@ export async function openUri(
           await openDocument(shell, doc);
           return;
         }
+        /* Re-adopting found nothing, and the only way it does that quietly is
+           the file itself being gone. Said as that, not as a sandbox refusal. */
+        err = new Error(t('The file no longer exists.'));
       } catch {
         /* The retry failing leaves the original error standing. */
       }
@@ -157,7 +160,7 @@ export async function openFolder(shell: Shell): Promise<void> {
 export async function addRoot(
   shell: Shell,
   root: { uri: Uri; name: string },
-  opts?: { reveal?: boolean },
+  opts?: { reveal?: boolean; expanded?: boolean },
 ): Promise<void> {
   /* The recent list and the session survive a restart; the desktop sandbox
      does not — it starts every launch with no roots at all. A remembered
@@ -169,12 +172,16 @@ export async function addRoot(
     if (directories.length === 0) throw new Error(t('The folder no longer exists.'));
   }
   const children = await shell.fs.readDirectory(root.uri);
+  /* A folder opened by hand unfolds — that is what was asked for. A restored
+     one stays shut: several of them all unfolded bury each other, and the
+     morning after, the shelf reads better than the spread. The first level is
+     read either way, so unfolding one later is a click, not a wait. */
   const node: TreeNode = {
     uri: root.uri,
     name: root.name,
     kind: 'directory',
     depth: 0,
-    expanded: true,
+    expanded: opts?.expanded !== false,
     format: 'unknown',
     children: children.map((child) => toNode(child, 1)),
   };

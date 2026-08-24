@@ -145,6 +145,7 @@
   "Could not open the files: {reason}": "Otvaranje datoteka nije uspjelo: {reason}",
   "Could not open the folder: {reason}": "Otvaranje mape nije uspjelo: {reason}",
   "The folder no longer exists.": "Mapa više ne postoji.",
+  "The file no longer exists.": "Datoteka više ne postoji.",
   "Could not open what was dropped: {reason}": "Otvaranje ispuštenog sadržaja nije uspjelo: {reason}",
   "Could not read the folder: {reason}": "Čitanje mape nije uspjelo: {reason}",
   "{name} has unsaved changes.": "{name} ima nespremljene promjene.",

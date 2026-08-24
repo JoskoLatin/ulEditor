@@ -204,11 +204,18 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
   const shell = fakeShell();
   useWorkspace.getState().setSidebarView('library');
 
-  await addRoot(shell, { uri: 'C:/w/restored', name: 'restored' }, { reveal: false });
+  await addRoot(shell, { uri: 'C:/w/restored', name: 'restored' }, { reveal: false, expanded: false });
   check(
     'a restored root leaves the panel alone',
     useWorkspace.getState().sidebarView === 'library',
     useWorkspace.getState().sidebarView,
+  );
+
+  const restored = useWorkspace.getState().tree.find((node) => node.uri === 'C:/w/restored');
+  check('and comes back collapsed', restored?.expanded === false);
+  check(
+    'with its first level already read, so unfolding is a click',
+    Array.isArray(restored?.children),
   );
 }
 
@@ -312,9 +319,9 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
   shell.fs.adoptPaths = async () => ({ documents: [], directories: [] });
   await openUri(shell, 'C:/w/vanished.pdf');
   check(
-    'a file that is gone is still dropped and said out loud',
+    'a file that is gone is still dropped, and named as gone',
     recent.recentFiles(shell).every((e) => e.uri !== 'C:/w/vanished.pdf') &&
-      shell.notify.shown.some((n) => n.level === 'error'),
+      shell.notify.shown.some((n) => n.level === 'error' && /no longer exists/.test(n.message)),
     JSON.stringify(shell.notify.shown[0] ?? null),
   );
 }

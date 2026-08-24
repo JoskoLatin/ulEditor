@@ -62,9 +62,12 @@ export async function restoreSession(shell: Shell): Promise<void> {
   const session = shell.settings.get<StoredSession | null>(KEY, null);
   if (!session) return;
 
+  /* The folders come back collapsed: the person did not just ask for any of
+     them, and a morning tree of roots reads better as a shelf than as last
+     night's spread. Expanding one is a click — the first level is already read. */
   for (const uri of session.roots ?? []) {
     try {
-      await addRoot(shell, { uri, name: baseName(uri) }, { reveal: false });
+      await addRoot(shell, { uri, name: baseName(uri) }, { reveal: false, expanded: false });
     } catch {
       // The folder no longer exists.
     }

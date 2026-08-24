@@ -12,7 +12,9 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,6 +34,10 @@ export async function startDesktop(opts = {}) {
     env: {
       ...process.env,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+      /* A scratch profile. Settings live in the WebView2 localStorage, and
+         without this the checks run in the person's own — every fixture they
+         open lands in the real recent list and the real session. */
+      WEBVIEW2_USER_DATA_FOLDER: await mkdtemp(join(tmpdir(), 'ul-profile-')),
     },
     stdio: 'ignore',
   });

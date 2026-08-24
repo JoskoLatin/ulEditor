@@ -43,6 +43,9 @@ const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
   env: {
     ...process.env,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
+    /* A scratch profile — see desktop-session.mjs: without it the fixtures
+       land in the person's real recent list and session. */
+    WEBVIEW2_USER_DATA_FOLDER: await mkdtemp(join(tmpdir(), 'ul-profile-')),
   },
   stdio: 'ignore',
 });
