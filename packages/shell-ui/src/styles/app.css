@@ -558,35 +558,37 @@ button {
   }
 }
 
-/* The order picker beside the panel's title: a native select, dressed down to
-   the chrome around it rather than left in the platform's own colours. */
+/*
+ * The order picker beside the panel's title.
+ *
+ * The closed control is ours to style; **the open list is not**. Windows draws
+ * that popup itself, and it takes a `color` from CSS while ignoring a
+ * `background` — so styling `option` produced the one combination worse than
+ * leaving it alone: pale text on the platform's white. What makes the popup
+ * match the theme is `color-scheme` in tokens.css, which is already set for
+ * both, and the only thing this rule has to do is not fight it.
+ */
 .sort-select {
   height: 22px;
-  max-width: 108px;
+  max-width: 116px;
   margin-left: auto;
   padding: 0 4px;
-  border: 1px solid transparent;
+  border: 1px solid var(--rule);
   border-radius: 5px;
-  background: none;
-  color: var(--ink-faint);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
   font: inherit;
   font-size: var(--fs-xs);
   cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .sort-select:hover {
-  background: var(--rule-soft);
   color: var(--ink);
+  border-color: var(--rule-strong);
 }
 .sort-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* The list itself is drawn by the platform, which does not inherit a
-   transparent background — without this it opens as white text on white. */
-.sort-select option {
-  background: var(--bg-raised);
-  color: var(--ink);
+  outline: none;
+  border-color: var(--accent);
 }
 
 .fmt-icon {

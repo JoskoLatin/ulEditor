@@ -973,6 +973,41 @@ try {
     await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) > 0, 10000),
   );
 
+  /* — what the platform draws for us — */
+
+  /*
+   * Parts of the interface are drawn by the operating system and not by our
+   * CSS at all: the list a `<select>` opens, scrollbars, the checkbox tick.
+   * The single thing that tells the platform which colours to use for them is
+   * `color-scheme`, and when it disagrees with the theme those controls come
+   * back in the other one — a dropdown of pale text on white, which is how it
+   * was reported. Styling `option` directly is what causes that rather than
+   * cures it: Windows takes the `color` and ignores the `background`.
+   */
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+    const scheme = await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
+    check(`the platform is told the theme is ${theme}`, scheme === theme, scheme);
+  }
+
+  const optionRules = await page.evaluate(() =>
+    [...document.styleSheets]
+      .flatMap((sheet) => {
+        try {
+          return [...sheet.cssRules];
+        } catch {
+          return [];
+        }
+      })
+      .filter((rule) => rule.selectorText?.includes('option') && /background|color/.test(rule.style?.cssText ?? ''))
+      .map((rule) => rule.selectorText),
+  );
+  check(
+    'and nothing tries to paint the list it opens',
+    optionRules.length === 0,
+    optionRules.join(', '),
+  );
+
   /*
    * — screenshots —
    *
