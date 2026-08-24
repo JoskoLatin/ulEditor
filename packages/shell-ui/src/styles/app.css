@@ -910,12 +910,13 @@ button {
 .welcome-origin {
   width: fit-content;
   /*
-   * Set so the *letters* sit 5px under the letters above, which is the gap
-   * anybody is looking at. The margin is not that number: the word's line box
-   * reaches below its baseline to leave room for descenders, and "ulEditor"
-   * has none, so a 5px margin under the box shows as 1px under the ink.
+   * Set so the *letters* sit 2px under the letters above — close enough that
+   * the two read as one mark rather than as a heading with a line under it.
+   * The margin is not that number: the word's line box reaches below its
+   * baseline to leave room for descenders, and "ulEditor" has none, so the
+   * gap that shows is four pixels less than the one written here.
    */
-  margin: 9px 0 0;
+  margin: 6px 0 0;
   font-family: var(--mono);
   font-size: var(--fs-xs);
   /* The line box hugs the letters, like the word above it. Left at the body's
