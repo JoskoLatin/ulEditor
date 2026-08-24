@@ -27,7 +27,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const recent = await import(
   pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/shell/recent.ts')).href
 );
-const { addRoot, openRecentFolder } = await import(
+const { addRoot, openRecentFolder, openUri } = await import(
   pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/shell/actions.ts')).href
 );
 const { useWorkspace } = await import(
@@ -227,6 +227,94 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
   check(
     'and the reason is said out loud',
     shell.notify.shown.some((n) => n.level === 'error' && /no such directory/.test(n.message)),
+    JSON.stringify(shell.notify.shown[0] ?? null),
+  );
+}
+
+/* ── the sandbox starts every launch empty ───────────────────────────── */
+
+/* The recent list survives a restart; the desktop sandbox does not. These
+   stand-ins refuse to read anything that has not gone through `adoptPaths`
+   first — which is exactly what a freshly launched Rust workspace does, and
+   what the real error looked like: "no workspace is open" on every click. */
+
+{
+  const shell = fakeShell();
+  const adopted = new Set();
+  shell.fs.adoptPaths = async (paths) => {
+    for (const p of paths) adopted.add(p);
+    return {
+      documents: [],
+      directories: paths.map((uri) => ({ uri, name: uri.split('/').pop(), kind: 'directory' })),
+    };
+  };
+  shell.fs.readDirectory = async (uri) => {
+    if (!adopted.has(uri)) throw new Error('no workspace is open');
+    return [{ uri: `${uri}/one.md`, name: 'one.md', kind: 'file' }];
+  };
+
+  await openRecentFolder(shell, { uri: 'C:/w/fresh', name: 'fresh' });
+  check(
+    'a remembered folder is re-registered before it is read',
+    useWorkspace.getState().tree.some((node) => node.uri === 'C:/w/fresh'),
+  );
+  check('with no error said for it', shell.notify.shown.length === 0, JSON.stringify(shell.notify.shown[0] ?? null));
+}
+
+{
+  /* A folder that is gone must not hide behind the sandbox message. */
+  const shell = fakeShell();
+  recent.rememberFolder(shell, { uri: 'C:/w/gone-for-good', name: 'gone-for-good' });
+  shell.fs.adoptPaths = async () => ({ documents: [], directories: [] });
+  shell.fs.readDirectory = async () => {
+    throw new Error('no workspace is open');
+  };
+
+  await openRecentFolder(shell, { uri: 'C:/w/gone-for-good', name: 'gone-for-good' });
+  check('a folder that is gone is still dropped from the list', recent.recentFolders(shell).length === 0);
+  check(
+    'and named as gone, not as a sandbox refusal',
+    shell.notify.shown.some((n) => n.level === 'error' && /no longer exists/.test(n.message)),
+    JSON.stringify(shell.notify.shown[0] ?? null),
+  );
+}
+
+{
+  /* The same launch-empty sandbox, seen from a remembered file. */
+  const shell = fakeShell();
+  shell.registry = {
+    resolve: () => null,
+    explainMissing: () => 'no editor in this stand-in',
+  };
+  const doc = {
+    uri: 'C:/w/kept.pdf',
+    name: 'kept.pdf',
+    stat: { uri: 'C:/w/kept.pdf', name: 'kept.pdf', parent: 'C:/w', kind: 'file', size: 1, modified: null, readonly: false },
+    detection: { format: 'pdf', via: 'magic' },
+    bytes: async () => new Uint8Array(),
+    text: async () => '',
+    slice: async () => new Uint8Array(),
+  };
+  shell.fs.open = async () => {
+    throw new Error('no workspace is open');
+  };
+  shell.fs.adoptPaths = async () => ({ documents: [doc], directories: [] });
+  recent.rememberFile(shell, { uri: doc.uri, name: doc.name });
+
+  await openUri(shell, doc.uri);
+  check(
+    'a remembered file is re-adopted and opens',
+    useWorkspace.getState().tabs.some((tab) => tab.uri === doc.uri),
+  );
+  check('and stays on the recent list', recent.recentFiles(shell)[0]?.name === 'kept.pdf');
+
+  /* When re-adopting finds nothing, the file really is gone. */
+  shell.fs.adoptPaths = async () => ({ documents: [], directories: [] });
+  await openUri(shell, 'C:/w/vanished.pdf');
+  check(
+    'a file that is gone is still dropped and said out loud',
+    recent.recentFiles(shell).every((e) => e.uri !== 'C:/w/vanished.pdf') &&
+      shell.notify.shown.some((n) => n.level === 'error'),
     JSON.stringify(shell.notify.shown[0] ?? null),
   );
 }

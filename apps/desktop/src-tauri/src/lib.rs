@@ -137,11 +137,14 @@ async fn pick_save_target(
 
 /* ── file system ─────────────────────────────────────────────────────── */
 
-/// Takes in paths dropped onto the window.
+/// Takes in paths the user pointed at — dropped onto the window, or remembered
+/// from an earlier session and clicked in the recent list.
 ///
-/// A drop is an explicit user gesture, so the parent folder of each file is
+/// Both are explicit user gestures, so the parent folder of each file is
 /// added as a root — otherwise the sandbox would refuse it immediately. A folder
-/// dropped directly becomes a root in its own right.
+/// becomes a root in its own right. A path that no longer exists adds nothing:
+/// it is reported by its stat failing, not by quietly widening the sandbox
+/// with its parent.
 #[tauri::command]
 fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Stat>, VfsError> {
     let mut out = Vec::new();
@@ -150,7 +153,7 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
         let stat = with_workspace(&state, |workspace| {
             if path.is_dir() {
                 workspace.add_root(&path)?;
-            } else if let Some(parent) = path.parent() {
+            } else if let Some(parent) = path.parent().filter(|_| path.is_file()) {
                 workspace.add_root(parent)?;
             }
             workspace.stat(&path)
@@ -158,7 +161,7 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
         // One failed path must not bring down the whole drop.
         match stat {
             Ok(stat) => out.push(stat),
-            Err(err) => eprintln!("[uleditor] dropped path refused: {raw} — {err}"),
+            Err(err) => eprintln!("[uleditor] adopted path refused: {raw} — {err}"),
         }
     }
     Ok(out)

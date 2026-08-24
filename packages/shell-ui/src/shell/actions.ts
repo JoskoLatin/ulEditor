@@ -97,6 +97,22 @@ export async function openUri(
   try {
     await openDocument(shell, await shell.fs.open(uri));
   } catch (err) {
+    /* The recent list and the session survive a restart; the desktop sandbox
+       does not — it starts every launch with no roots at all, so the first
+       open of a remembered file is refused. Pointing at the file again is the
+       same explicit gesture the file picker makes, so it re-registers the
+       file's folder and the open is tried once more. */
+    if (shell.fs.adoptPaths) {
+      try {
+        const [doc] = (await shell.fs.adoptPaths([uri])).documents;
+        if (doc) {
+          await openDocument(shell, doc);
+          return;
+        }
+      } catch {
+        /* The retry failing leaves the original error standing. */
+      }
+    }
     /* A file that will not open is dropped from the recent list. Leaving it
        there means an error message on every click, and after two of those the
        list is not trusted again. */
@@ -143,6 +159,15 @@ export async function addRoot(
   root: { uri: Uri; name: string },
   opts?: { reveal?: boolean },
 ): Promise<void> {
+  /* The recent list and the session survive a restart; the desktop sandbox
+     does not — it starts every launch with no roots at all. A remembered
+     folder is therefore handed back to it before it is read. For a folder
+     that was just picked or dropped this re-registers a root that is already
+     there, which changes nothing. */
+  if (shell.fs.adoptPaths) {
+    const { directories } = await shell.fs.adoptPaths([root.uri]);
+    if (directories.length === 0) throw new Error(t('The folder no longer exists.'));
+  }
   const children = await shell.fs.readDirectory(root.uri);
   const node: TreeNode = {
     uri: root.uri,
