@@ -21,12 +21,12 @@
  *   counts are the one thing that has to be handled carefully: taken literally
  *   they ask for a million rows of nothing.
  *
+ * `.ods` is **editable in place**: a save writes the `.ods` it came from, with
+ * only the cells that were retyped changed — see [`ods-edit.ts`](./ods-edit.ts).
  * `.odt` opens **read-only**, and says so. The `.docx` editor rewrites a run by
  * cutting into the bytes it came from; nothing here has been proven to that
  * standard yet, and an editor that cannot say what it will do to the file it
- * saves is the thing this project refuses to ship. `.ods` *is* editable, by the
- * same route the old binary Excel takes — the save writes a new `.xlsx` beside
- * the original and names what the conversion costs before it happens.
+ * saves is the thing this project refuses to ship.
  */
 
 import { t } from '@uleditor/i18n';
@@ -45,9 +45,6 @@ import {
 } from './ooxml.js';
 import type { Preview, PreviewOutline } from './docx.js';
 import { MAX_COLS, MAX_ROWS, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
-
-const LOSS_FORMULAS = 'Formulas are not carried over — their last calculated values are saved instead.';
-const LOSS_STYLING = 'Cell colours, borders, fonts, charts and images are not carried over.';
 
 /**
  * A cell repeated with content is written out that many times; one repeated
@@ -515,9 +512,10 @@ function readTable(
   return {
     sheet: {
       name: attr(node, 'name') ?? `${t('Sheet')} ${index + 1}`,
-      /* No path: nothing is written back into an OpenDocument file. Saving
-         writes a fresh `.xlsx`, which needs no seam in the original. */
-      path: '',
+      /* Every sheet lives in the same part — a `.ods` keeps the whole
+         spreadsheet in one `content.xml`, and which table is which is decided
+         by order. See `ods-edit.ts`. */
+      path: 'content.xml',
       rows: maxRow + 1,
       cols: maxCol + 1,
       cells,
@@ -565,15 +563,7 @@ export function readOds(bytes: Uint8Array): Workbook {
   }
   notes.add('Formulas are not recalculated — the value stored in the file is shown.');
 
-  const hasFormulas = sheets.some((sheet) =>
-    [...sheet.cells.values()].some((cell) => cell.fromFormula),
-  );
-
-  return {
-    sheets,
-    notes: [...notes],
-    convert: { losses: [...(hasFormulas ? [LOSS_FORMULAS] : []), LOSS_STYLING] },
-  };
+  return { sheets, notes: [...notes], archive: opened.archive, kind: 'odf' };
 }
 
 /* ── text document ───────────────────────────────────────────────────── */

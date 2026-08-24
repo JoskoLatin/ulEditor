@@ -248,15 +248,16 @@ export function buildXlsx(sheets: Sheet[]): Uint8Array {
 }
 
 /**
- * `cjenik.xls` → `cjenik.xlsx`, and `cjenik.ods` → `cjenik.xlsx`.
+ * `cjenik.xls` → `cjenik.xlsx`.
  *
- * Only an extension this program actually converts *from* is replaced. A name
- * with some other dot in it — `popis.2026.tablica` — keeps every character it
- * had and gains the new ending, because guessing which dot ends the name is how
- * a file called `v1.2` becomes `v1.xlsx`.
+ * Only the one extension this program converts *from* is replaced — the old
+ * binary Excel, which has no seam to write back into. A name with some other
+ * dot in it, `popis.2026.tablica`, keeps every character it had and gains the
+ * new ending, because guessing which dot ends a name is how a file called
+ * `v1.2` becomes `v1.xlsx`.
  */
 export function convertedName(name: string): string {
-  return /\.(xls|ods|ots)$/i.test(name)
+  return /\.xls$/i.test(name)
     ? `${name.slice(0, name.lastIndexOf('.'))}.xlsx`
     : `${name}.xlsx`;
 }

@@ -71,7 +71,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader *(full editing → ProseMirror, phase 2)* |
 | **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells) | own reader + byte-range editing *(formulas → Univer, phase 2)* |
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
-| **ODS** (OpenDocument) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own reader |
+| **ODS** (OpenDocument) | **works — viewing + cell editing**, written back into the `.ods` itself | own reader + byte-range editing |
 | **ODT** (OpenDocument) | **works — viewing** (headings, formatting, lists, tables, images) | own reader |
 | Images | **works** — viewing, zoom, transparency, **OCR** | Tesseract (wasm) *(editing → image-rs, phase 1)* |
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
@@ -114,6 +114,8 @@ The XML is **not re-serialised**; only the byte ranges the user touched are chan
 
 **Cells in a spreadsheet are retyped the same way** — double-click one. A cell holding a formula does not open, and says which formula it holds: the number on screen is a *result*, and overwriting a result with a literal is the quietest way there is to destroy a workbook. When an edited workbook does contain formulas, it is marked for full recalculation, so Excel works the totals out again on opening instead of showing stale ones.
 
+A date typed the way a person writes one — `15.6.2026.` — is stored as a date rather than as those characters, so the cell's own format keeps drawing it the way the sheet already drew it. Excel stores a date as a count of days, and counts a 29 February 1900 that never happened; the offset every library uses is right from 1 March 1900 onward and one day out below it. That is the quietest sort of wrong there is — an archival record dated 1898 simply arrives on the wrong day and nothing looks broken — so the arithmetic follows Excel's, bug included, and a date older than the first one it can store is refused rather than moved a century.
+
 Everything the view does not show — headers, footnotes, comments, charts — is listed in the bar above the document, before anything is saved rather than after.
 
 ### OpenDocument, without LibreOffice
@@ -122,9 +124,11 @@ Everything the view does not show — headers, footnotes, comments, charts — i
 
 The format returns the favour in two places. A cell carries **both** the number and the text the writing program drew for it, so the grid shows exactly what LibreOffice showed without a single format code being interpreted here. And empty space is written as a repeat count rather than as cells — which is also the one thing that has to be handled carefully, since a real sheet says its last row repeats a million times and a reader that believes it allocates a million rows to show nothing.
 
-`.ods` is **editable**, by the same route the old `.xls` takes: the original is never written, a save produces a new `.xlsx` beside it, and what the conversion cannot carry is named before it happens. `.odt` opens **read-only** and says so — the Word editor rewrites a run by cutting into the bytes it came from, nothing here has been proven to that standard yet, and an editor that cannot say what it will do to the file it saves is the thing this project refuses to ship.
+`.ods` is **edited in place**: a save writes the `.ods` it came from, changing only the cells that were retyped, exactly as `.docx` and `.xlsx` are. No conversion, no second file in somebody else's format.
 
-Dates are the detail worth naming: ODF writes `2026-06-15`, a converted `.xlsx` needs the number Excel counts days with, and Excel counts a 29 February 1900 that never happened. A date one out is the quietest possible corruption — nothing looks broken, an invoice is simply dated yesterday — so the conversion follows Excel's arithmetic, bug included, and refuses outright any date older than the first one it can store.
+The awkward part is that **a cell there has no address**. A worksheet in OOXML says `<c r="B4">` and can be found by name; in OpenDocument a cell's position is wherever the counting has reached, and the counting is done in repeat attributes — `table:number-columns-repeated="1021"` stands for a thousand cells nobody wrote. Putting a value in one of them means splitting the group: the run before it, the cell itself, the run after, with the counts either side still adding up to what the group stood for. The same again one dimension up for a repeated row. Only rows holding an edit are rebuilt, and inside a rebuilt row every untouched cell is copied across as its original bytes — the verification checks that every other part of the archive comes back byte for byte, and that `mimetype` goes back first and uncompressed, which is what lets any program tell what the file is without unpacking it.
+
+`.odt` opens **read-only** and says so — the Word editor rewrites a run by cutting into the bytes it came from, nothing here has been proven to that standard yet, and an editor that cannot say what it will do to the file it saves is the thing this project refuses to ship.
 
 ## Reading mode
 

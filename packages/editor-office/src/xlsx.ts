@@ -51,6 +51,15 @@ export interface Workbook {
    *  old binary format, which is never written back. */
   archive?: Archive;
   /**
+   * Which dialect the archive is written back in.
+   *
+   * Both are a ZIP of XML edited by byte range, and both keep every part the
+   * person did not touch — but the cells are named differently enough that the
+   * writer cannot be shared. Absent means OOXML, which is what a `Workbook`
+   * meant before there was a second kind.
+   */
+  kind?: 'ooxml' | 'odf';
+  /**
    * Saving means writing a fresh `.xlsx` from the grid, not touching the
    * original — the old binary format has no safe seam to write into. Set for
    * `.xls`; `losses` is what the conversion cannot carry, said before it

@@ -1050,9 +1050,11 @@ try {
     `${await odsBook.locator('tbody tr').count()} rows · ${odsStatus}`,
   );
 
+  /* An `.ods` is written back into the file it came from, so the bar must not
+     promise a converted copy the way the `.xls` one does. */
   check(
-    'the bar says a save will write a new .xlsx',
-    (await odsBook.locator('.ul-office-notes strong').innerText()).includes('.xlsx'),
+    'the bar does not promise a converted copy',
+    !(await odsBook.locator('.ul-office-notes strong').innerText()).includes('.xlsx'),
     await odsBook.locator('.ul-office-notes strong').innerText(),
   );
 

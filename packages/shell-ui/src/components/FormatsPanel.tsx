@@ -31,7 +31,7 @@ const ROADMAP: Row[] = [
   { format: 'xlsx', note: 'view, retype cells', phase: 'phase 2' },
   { format: 'xls', note: 'view, edit — saves as .xlsx', phase: '' },
   { format: 'odt', note: 'view, read', phase: 'phase 2' },
-  { format: 'ods', note: 'view, edit — saves as .xlsx', phase: 'phase 2' },
+  { format: 'ods', note: 'view, retype cells', phase: 'phase 2' },
   { format: 'odf', note: 'presentations and drawings', phase: 'phase 5' },
   { format: 'pptx', note: 'Univer Slides', phase: 'phase 5' },
 ];

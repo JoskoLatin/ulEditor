@@ -145,18 +145,29 @@ function numberOf(value: string): string | null {
 
 /**
  * `15.6.2026.` → the Excel serial for that day, so a date typed the way a
- * person writes one lands in the file as a date and the cell's own format
- * keeps drawing it as one. Serial zero is 30 December 1899 — the well-known
- * compatibility bug the whole format carries.
+ * person writes one lands in the file as a date and the cell's own format keeps
+ * drawing it as one.
+ *
+ * The arithmetic counts from 30 December 1899 — an epoch that is itself a
+ * workaround, because Excel counts a 29 February 1900 that never happened and
+ * has kept doing so since 1985 for the sake of files written for Lotus 1-2-3.
+ * That offset is right from 1 March 1900 onward and one day out below it, which
+ * is the quietest sort of wrong there is: a record dated 1898 simply arrives on
+ * the wrong day and nothing anywhere looks broken. Dates before Excel's first
+ * are refused rather than moved.
+ *
+ * Exported for the checks — an off-by-one here is invisible from the interface.
  */
-function dateSerialOf(value: string): string | null {
+export function dateSerialOf(value: string): string | null {
   const match = /^(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})\.?$/.exec(value.trim());
   if (!match) return null;
   const [, day, month, year] = match.map(Number) as unknown as [number, number, number, number];
   const time = Date.UTC(year, month - 1, day);
   if (Number.isNaN(time)) return null;
+
   const serial = (time - Date.UTC(1899, 11, 30)) / 86400000;
-  return serial > 0 ? String(serial) : null;
+  if (serial >= 61) return String(serial);
+  return serial - 1 >= 1 ? String(serial - 1) : null;
 }
 
 /** What the grid should call the value it just accepted — the same decision `cellXml` makes. */

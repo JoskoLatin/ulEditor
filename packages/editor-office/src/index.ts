@@ -39,8 +39,9 @@ import { t } from '@uleditor/i18n';
 import { renderDocx, type Preview } from './docx.js';
 import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
-import { readText } from './ooxml.js';
+import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
+import { applyOdsEdits, writeOds, type OdsEdit } from './ods-edit.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
@@ -671,6 +672,8 @@ class XlsxPreviewEditor implements EditorInstance {
 
     const { archive } = this.workbook;
     if (!archive) throw new Error(t('The workbook cannot be written.'));
+    if (this.workbook.kind === 'odf') return this.#saveOds(archive, target);
+
     const uri = target?.uri ?? this.doc.uri;
 
     /* The edits, gathered per sheet part — one part is rewritten per edited
@@ -716,6 +719,53 @@ class XlsxPreviewEditor implements EditorInstance {
     /* No fidelity warning here for the same reason `DocxPreviewEditor` gives
        none: only the rewritten elements changed. The stale formula caches are
        handled, not lost — the workbook recalculates when Excel opens it. */
+    return { uri, lostFidelity: [] };
+  }
+
+  /**
+   * The OpenDocument save: the `.ods` it came from, with only the retyped
+   * cells changed.
+   *
+   * A separate method rather than a branch inside the one above, because the
+   * two formats disagree about everything except the idea. There, a cell is
+   * named `B4` and every sheet is its own part; here a cell's position is
+   * wherever the counting has reached, and the whole spreadsheet is one
+   * `content.xml` — so the edits carry a sheet ordinal and a row and column,
+   * and the writer splits the repeated groups they land in.
+   */
+  async #saveOds(archive: Archive, target?: SaveTarget): Promise<SaveResult> {
+    const uri = target?.uri ?? this.doc.uri;
+    const xml = readText(archive, 'content.xml');
+    if (xml === null) throw new Error(t('The workbook cannot be written.'));
+
+    const edits: OdsEdit[] = [];
+    for (const [key, value] of this.#edits) {
+      const [indexPart, refPart] = key.split(':') as [string, string];
+      const [row, col] = refPart.split(',').map(Number) as [number, number];
+      edits.push({ sheet: Number(indexPart), row, col, value });
+    }
+
+    const next = applyOdsEdits(xml, edits);
+    await this.host.fs.writeBytes(uri, writeOds(archive, next));
+
+    /* What was saved becomes the new starting point — the part and the cell
+       map the grid draws from. Without this the next save would begin from the
+       original bytes with an empty edit list, and quietly revert. */
+    archive['content.xml'] = new TextEncoder().encode(next);
+    for (const [key, value] of this.#edits) {
+      const [indexPart, refPart] = key.split(':') as [string, string];
+      const cells = this.workbook.sheets[Number(indexPart)]?.cells;
+      if (!cells) continue;
+      if (value === '') cells.delete(refPart);
+      else cells.set(refPart, this.#typedCell(value));
+    }
+    this.#edits.clear();
+    this.#undoStack = [];
+    this.#redoStack = [];
+    this.#emitDirty();
+
+    /* No fidelity warning, for the reason the other two in-place saves give
+       none: only the rewritten cells changed. */
     return { uri, lostFidelity: [] };
   }
 

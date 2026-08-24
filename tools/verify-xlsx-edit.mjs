@@ -21,8 +21,16 @@ import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const { findCells, applyCellEdits, cellXml, markRecalc, parseCellRef, typedKind, writeXlsx } =
-  await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/xlsx-edit.ts')).href);
+const {
+  findCells,
+  applyCellEdits,
+  cellXml,
+  dateSerialOf,
+  markRecalc,
+  parseCellRef,
+  typedKind,
+  writeXlsx,
+} = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/xlsx-edit.ts')).href);
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -68,6 +76,25 @@ check(
   'a date typed as a person writes one becomes a serial',
   cellXml('C2', '1', '15.6.2026.') === '<c r="C2" s="1"><v>46188</v></c>',
   cellXml('C2', '1', '15.6.2026.'),
+);
+
+/*
+ * The numbers are Excel's own. Serial 1 is 1 January 1900, and serial 61 is
+ * 1 March 1900 — because between them Excel counts a 29 February that never
+ * happened, a bug it inherited from Lotus 1-2-3 and has kept since 1985. The
+ * offset every library uses is right above that line and one day out below it,
+ * which is invisible from the interface: an archival record dated 1898 simply
+ * arrives on the wrong day.
+ */
+check(
+  'the leap day Excel invented is counted the way Excel counts it',
+  dateSerialOf('1.1.1900.') === '1' && dateSerialOf('1.3.1900.') === '61',
+  `${dateSerialOf('1.1.1900.')} / ${dateSerialOf('1.3.1900.')}`,
+);
+check(
+  'and a date it cannot store is refused rather than moved a century',
+  dateSerialOf('31.12.1899.') === null,
+  String(dateSerialOf('31.12.1899.')),
 );
 check(
   'text becomes an inline string, not a shared one',
