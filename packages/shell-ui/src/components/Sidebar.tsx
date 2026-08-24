@@ -10,7 +10,7 @@ import { FormatsPanel } from './FormatsPanel.js';
 import { Library } from './Library.js';
 import { SearchPanel } from './SearchPanel.js';
 import { IconFolderOpen } from './Icons.js';
-import type { SidebarView } from '../state/workspace.js';
+import { SIDEBAR_WIDTH, type SidebarView } from '../state/workspace.js';
 
 const title = (view: SidebarView): string =>
   view === 'library'
@@ -77,6 +77,7 @@ export function SidebarScrim() {
 }
 
 export function SidebarResizer() {
+  const shell = useShell();
   const width = useWorkspace((s) => s.sidebarWidth);
   const setWidth = useWorkspace((s) => s.setSidebarWidth);
   const [dragging, setDragging] = useState(false);
@@ -97,7 +98,12 @@ export function SidebarResizer() {
     const onMove = (event: PointerEvent) => {
       setWidth(origin.current.width + (event.clientX - origin.current.x));
     };
-    const onUp = () => setDragging(false);
+    /* Written once the drag ends, not on every pixel of it: the store is what
+       the panel is drawn from, and settings are where it is remembered. */
+    const onUp = () => {
+      setDragging(false);
+      shell.settings.set('sidebar.width', useWorkspace.getState().sidebarWidth);
+    };
 
     // While dragging, text must not be selectable, otherwise the cursor "sticks".
     const previous = document.body.style.userSelect;
@@ -112,7 +118,7 @@ export function SidebarResizer() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [dragging, setWidth]);
+  }, [dragging, setWidth, shell]);
 
   return (
     <div
@@ -122,7 +128,12 @@ export function SidebarResizer() {
       aria-orientation="vertical"
       aria-label={t('Resize panel')}
       onPointerDown={onPointerDown}
-      onDoubleClick={() => setWidth(264)}
+      onDoubleClick={() => {
+        // Back to the width it starts at — and remembered, or the next start
+        // would undo the reset.
+        setWidth(SIDEBAR_WIDTH);
+        shell.settings.set('sidebar.width', SIDEBAR_WIDTH);
+      }}
     />
   );
 }

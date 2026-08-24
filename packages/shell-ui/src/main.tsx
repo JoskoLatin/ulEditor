@@ -18,7 +18,7 @@ import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
 import { restoreZoom } from './shell/zoom.js';
-import { useWorkspace } from './state/workspace.js';
+import { SIDEBAR_WIDTH, useWorkspace } from './state/workspace.js';
 
 const shell = createShell();
 
@@ -38,10 +38,14 @@ setLocale(shell.locale);
    `index.html`: screen readers and hyphenation rules depend on it. */
 document.documentElement.lang = shell.locale;
 
-/* The order the tree was left in. Read before the first render, so the tree
-   does not appear in one order and jump into another. */
+/* The order the tree was left in, and how wide the panel was left. Read before
+   the first render: drawn at one size and corrected afterwards, the interface
+   rearranges itself in front of the person while they are looking at it. */
 const storedSort = shell.settings.get<string>('explorer.sort', 'name');
 if (isTreeSort(storedSort)) useWorkspace.getState().setTreeSort(storedSort);
+
+const storedWidth = shell.settings.get<number>('sidebar.width', SIDEBAR_WIDTH);
+if (Number.isFinite(storedWidth)) useWorkspace.getState().setSidebarWidth(storedWidth);
 
 /*
  * Editor registration — the only place in the shell that mentions individual

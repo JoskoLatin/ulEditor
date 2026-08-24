@@ -351,7 +351,7 @@ button {
 .sidebar {
   /* The component sets the value; the fallback is there so the panel has a width
      even if the stylesheet loads before the first render. */
-  width: var(--sidebar-w, 264px);
+  width: var(--sidebar-w, 220px);
   background: var(--surface);
   border-right: 1px solid var(--rule);
   display: flex;
@@ -364,11 +364,20 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 6px 0 14px;
+  gap: 6px;
+  padding: 0 6px 0 12px;
   height: 34px;
   flex: none;
   border-bottom: 1px solid var(--rule-soft);
+}
+
+/* The title gives way first. At the panel's narrow end the three of them do
+   not all fit, and the word "Explorer" is the one nobody needs to read twice —
+   the panel is already named by the lit icon in the bar beside it. */
+.sidebar-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-head h2 {
@@ -570,6 +579,9 @@ button {
  */
 .sort-select {
   height: 22px;
+  /* It may shrink but not vanish: below this the chosen order is unreadable,
+     and a control that cannot be read is worse than one that is not there. */
+  min-width: 76px;
   max-width: 116px;
   margin-left: auto;
   padding: 0 4px;

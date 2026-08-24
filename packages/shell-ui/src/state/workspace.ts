@@ -34,6 +34,24 @@ export interface TreeNode {
 export type TreeSort = 'name' | 'type' | 'date';
 
 /**
+ * How wide the side panel starts.
+ *
+ * Narrow enough that the document keeps the window and the tree is a margin
+ * beside it rather than a second column competing with it — which is what a
+ * file tree is for. Long names are cut with an ellipsis and shown whole on
+ * hover, and the panel is draggable for the folder deep enough to need it.
+ *
+ * Not narrower: this is the least width at which the panel's own header is
+ * whole — its title, the order picker and the open-folder button, measured
+ * rather than guessed. Below it the title is the first thing to go.
+ */
+export const SIDEBAR_WIDTH = 220;
+
+/** The panel's limits: below the first the header does not fit, above the
+ *  second it stops being a margin and starts being a column. */
+export const clampSidebar = (width: number): number => Math.min(520, Math.max(168, width));
+
+/**
  * The two editor groups.
  *
  * Two, not n. A third column on a normal screen leaves each document too narrow
@@ -190,7 +208,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   splitRatio: 0.5,
 
   sidebarVisible: true,
-  sidebarWidth: 264,
+  sidebarWidth: SIDEBAR_WIDTH,
   sidebarView: defaultSidebarView(),
   paletteOpen: false,
   findOpen: false,
@@ -277,7 +295,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setSplitRatio: (ratio) => set({ splitRatio: Math.min(0.8, Math.max(0.2, ratio)) }),
 
   setSidebarVisible: (sidebarVisible) => set({ sidebarVisible }),
-  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth: Math.min(520, Math.max(180, sidebarWidth)) }),
+  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth: clampSidebar(sidebarWidth) }),
   setSidebarView: (sidebarView) => set({ sidebarView, sidebarVisible: true }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setFindOpen: (findOpen) => set({ findOpen }),

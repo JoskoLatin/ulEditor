@@ -127,17 +127,40 @@ try {
   check('the refresh button finds it', found, await fileNames());
   check('and it is placed in the chosen order', (await fileNames()).startsWith('alpha.txt, beta.md, delta.txt'), await fileNames());
 
-  /* The order the picker was left in survives a restart — it is a preference,
-     not something to choose again every morning. */
+  /* — what the panel remembers — */
+
+  /*
+   * The order and the width are preferences, not things to set again every
+   * morning. Both are checked across a real reload rather than by reading the
+   * settings back: what matters is that the panel comes up in them, and it is
+   * read before the first paint so it does not rearrange itself in front of
+   * the person.
+   */
+  const startWidth = Math.round((await page.locator('.sidebar').boundingBox()).width);
+  check('the panel starts at the width it is meant to', startWidth === 220, `${startWidth}px`);
+  check(
+    'and its header is whole at that width — the title is not cut',
+    !(await page.locator('.sidebar-head h2').evaluate((el) => el.scrollWidth > el.clientWidth + 1)),
+  );
+
   await page.locator('.sort-select').selectOption('date');
+  await page.evaluate(() => {
+    const key = 'uleditor.settings';
+    const stored = JSON.parse(localStorage.getItem(key) ?? '{}');
+    stored['sidebar.width'] = 300;
+    localStorage.setItem(key, JSON.stringify(stored));
+  });
   await page.reload();
   await page.waitForSelector('.shell', { timeout: 30000 });
   await until(async () => (await page.locator('.tree-row').count()) > 0, 20000);
+
   check(
     'the chosen order is still chosen after a restart',
     (await page.locator('.sort-select').inputValue()) === 'date',
     await page.locator('.sort-select').inputValue(),
   );
+  const widthBack = Math.round((await page.locator('.sidebar').boundingBox()).width);
+  check('and a width that was set comes back with it', widthBack === 300, `${widthBack}px`);
 
   /* — removing — */
 
