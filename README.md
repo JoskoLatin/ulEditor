@@ -5,7 +5,7 @@
 <h1 align="center">ulEditor</h1>
 
 <p align="center">
-  One open-source editor for every format — code, Markdown, PDF, Word, Excel — in one place.
+  One open-source editor for every format — code, Markdown, PDF, Word, Excel, OpenDocument — in one place.
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-**Status:** phases 0 and 1 complete. The desktop app runs, nine editors work, e-books and Office documents open, and the window splits in two. The interface is in English; Croatian can be selected in settings.
+**Status:** phases 0 and 1 complete, phase 2 begun. The desktop app runs, twelve editors work, e-books and Office documents open — Word, Excel and OpenDocument alike — and the window splits in two. The interface is in English; Croatian can be selected in settings.
 
 What phase 1 asked for and did not get: **the installers are not code-signed**, so Windows and macOS both warn on first launch — see [below](#the-warning-you-will-see-and-why). That is a certificate to buy, not code to write, and the Android build is signed.
 
@@ -69,14 +69,16 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **PDF text editing** | **works** — click an existing line and rewrite it, in the document's own font | the same + pdf-lib |
 | PDF pages | **works** — rotate, delete, reorder, merge, extract | pdf-lib |
 | **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader *(full editing → ProseMirror, phase 2)* |
-| **XLSX** | **works — viewing** (sheets, formats, formulas, merged cells) | own reader *(editing → Univer, phase 2)* |
+| **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells) | own reader + byte-range editing *(formulas → Univer, phase 2)* |
+| **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
+| **ODS** (OpenDocument) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own reader |
+| **ODT** (OpenDocument) | **works — viewing** (headings, formatting, lists, tables, images) | own reader |
 | Images | **works** — viewing, zoom, transparency, **OCR** | Tesseract (wasm) *(editing → image-rs, phase 1)* |
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
 | **3D models** | **works — viewing** (STL, OBJ, PLY, glTF, GLB, 3MF — turn, zoom, wireframe, triangle count) | three.js *(loaded only when a model is opened)* |
 | Corel `.cdr`, EPS, PostScript | phase 2 — each says so on opening rather than showing a blank page | LibreOffice headless (libcdr) |
-| ODF, conversions | phase 2 | LibreOffice headless |
-| PPTX | phase 5 | Univer Slides |
+| PPTX, ODP, ODG | phase 5 | Univer Slides |
 
 Formats that have no editor yet open with **a clear explanation of what is missing and when it arrives**, not with a blank screen.
 
@@ -110,7 +112,19 @@ Page operations do not change the document until it is saved — until then ther
 
 The XML is **not re-serialised**; only the byte ranges the user touched are changed, and every other part of the archive — styles, numbering, images, metadata — passes through untouched. The verification measures exactly that: after saving, every other part must be **byte for byte identical**. Runs holding a line break, a tab, a drawing or split text are not offered for editing, because there more than the text would change.
 
-Excel is **read-only** for now, and the document itself says so. Editing without a fidelity harness means quietly losing someone else's formatting, so these editors do not declare an `edit` capability — rather than declaring it and failing on save. Everything the preview does not show (headers, footnotes, comments, charts) is listed in the bar above the document.
+**Cells in a spreadsheet are retyped the same way** — double-click one. A cell holding a formula does not open, and says which formula it holds: the number on screen is a *result*, and overwriting a result with a literal is the quietest way there is to destroy a workbook. When an edited workbook does contain formulas, it is marked for full recalculation, so Excel works the totals out again on opening instead of showing stale ones.
+
+Everything the view does not show — headers, footnotes, comments, charts — is listed in the bar above the document, before anything is saved rather than after.
+
+### OpenDocument, without LibreOffice
+
+`.odt` and `.ods` open with **our own reader**. The plan had them arriving through LibreOffice running headless; that is still the right instrument for `.cdr` and PostScript, which hold drawing models nobody else implements, but it is the wrong one here. An OpenDocument file is a ZIP of XML, exactly like the OOXML alongside it, and requiring a four-hundred-megabyte office suite before a spreadsheet will open is a bigger imposition than the reader is a piece of work.
+
+The format returns the favour in two places. A cell carries **both** the number and the text the writing program drew for it, so the grid shows exactly what LibreOffice showed without a single format code being interpreted here. And empty space is written as a repeat count rather than as cells — which is also the one thing that has to be handled carefully, since a real sheet says its last row repeats a million times and a reader that believes it allocates a million rows to show nothing.
+
+`.ods` is **editable**, by the same route the old `.xls` takes: the original is never written, a save produces a new `.xlsx` beside it, and what the conversion cannot carry is named before it happens. `.odt` opens **read-only** and says so — the Word editor rewrites a run by cutting into the bytes it came from, nothing here has been proven to that standard yet, and an editor that cannot say what it will do to the file it saves is the thing this project refuses to ship.
+
+Dates are the detail worth naming: ODF writes `2026-06-15`, a converted `.xlsx` needs the number Excel counts days with, and Excel counts a 29 February 1900 that never happened. A date one out is the quietest possible corruption — nothing looks broken, an invoice is simply dated yesterday — so the conversion follows Excel's arithmetic, bug included, and refuses outright any date older than the first one it can store.
 
 ## Reading mode
 
@@ -204,7 +218,8 @@ pnpm verify:reading   # reading room, EPUB, Word and Excel viewing
 pnpm verify:ocr       # OCR, the panel below, interface language switching
 pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:pdf       # annotations and page operations (no browser)
-pnpm verify:all       # all of the above — 180 checks
+pnpm verify:odf       # OpenDocument dates and formulas (no browser)
+pnpm verify:all       # all of the above
 
 pnpm verify:search    # project search, in the REAL desktop application
 ```

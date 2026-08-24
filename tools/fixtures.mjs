@@ -760,3 +760,183 @@ export function makeXls(opts = {}) {
   out.set(stream, sectorSize * 3);
   return out;
 }
+
+/* ── OpenDocument ────────────────────────────────────────────────────── */
+
+/**
+ * The namespaces an OpenDocument part declares.
+ *
+ * Written out in full because the reader looks up elements by local name and
+ * would happily read a file with the wrong namespaces on it — a fixture that
+ * left them out would prove the reader works on something LibreOffice never
+ * writes.
+ */
+const ODF_NS =
+  `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+  `xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ` +
+  `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+  `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ` +
+  `xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+  `xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+  `xmlns:dc="http://purl.org/dc/elements/1.1/" ` +
+  `xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
+  `xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2"`;
+
+const ODF_MANIFEST = (mime) =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest ` +
+  `xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">` +
+  `<manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/>` +
+  `</manifest:manifest>`;
+
+/**
+ * An `.ods` — an OpenDocument spreadsheet, written the way LibreOffice writes one.
+ *
+ * Everything awkward about the format is deliberately in here: a number format
+ * described in elements instead of named in a code, a date as an ISO string
+ * instead of a serial, a formula in the `of:` language with its bracketed
+ * references, a merge written as a span plus a covered placeholder — and the
+ * one that decides whether the reader is usable at all, the trailing repeat
+ * counts. A real sheet says its last row repeats a million times, and a reader
+ * that takes that literally allocates a million rows to show nothing.
+ */
+export function makeOds() {
+  const styles =
+    `<office:automatic-styles>` +
+    `<style:style style:name="co1" style:family="table-column">` +
+    `<style:table-column-properties style:column-width="4.5cm"/></style:style>` +
+    `<number:number-style style:name="N108">` +
+    `<number:number number:decimal-places="2" number:min-decimal-places="2" ` +
+    `number:min-integer-digits="1" number:grouping="true"/></number:number-style>` +
+    `<number:date-style style:name="N37">` +
+    `<number:day number:style="long"/><number:text>.</number:text>` +
+    `<number:month number:style="long"/><number:text>.</number:text>` +
+    `<number:year number:style="long"/><number:text>.</number:text></number:date-style>` +
+    `<style:style style:name="ce1" style:family="table-cell" style:data-style-name="N108"/>` +
+    `<style:style style:name="ce2" style:family="table-cell" style:data-style-name="N37"/>` +
+    `</office:automatic-styles>`;
+
+  const text = (value) =>
+    `<table:table-cell office:value-type="string"><text:p>${value}</text:p></table:table-cell>`;
+  const number = (value, shown) =>
+    `<table:table-cell table:style-name="ce1" office:value-type="float" office:value="${value}">` +
+    `<text:p>${shown}</text:p></table:table-cell>`;
+
+  /* The empty tail of a row and the empty rows under the sheet — the counts a
+     real file carries, not tidied-up ones. */
+  const tail = `<table:table-cell table:number-columns-repeated="1021"/>`;
+  const emptyRows =
+    `<table:table-row table:number-rows-repeated="1048570">` +
+    `<table:table-cell table:number-columns-repeated="1024"/></table:table-row>`;
+
+  const sales =
+    `<table:table table:name="Prodaja">` +
+    `<table:table-column table:style-name="co1"/>` +
+    `<table:table-column table:number-columns-repeated="1023"/>` +
+    `<table:table-row>${text('Mjesec')}${text('Iznos')}${text('Datum')}${tail}</table:table-row>` +
+    `<table:table-row>${text('Siječanj')}${number('1234.5', '1.234,50')}` +
+    `<table:table-cell table:style-name="ce2" office:value-type="date" ` +
+    `office:date-value="2026-06-15"><text:p>15.06.2026.</text:p></table:table-cell>` +
+    `${tail}</table:table-row>` +
+    `<table:table-row>${text('Veljača')}${number('987.25', '987,25')}${tail}</table:table-row>` +
+    `<table:table-row>${text('Ukupno')}` +
+    `<table:table-cell table:style-name="ce1" table:formula="of:=SUM([.B2:.B3])" ` +
+    `office:value-type="float" office:value="2221.75"><text:p>2.221,75</text:p></table:table-cell>` +
+    `${tail}</table:table-row>` +
+    `<table:table-row>` +
+    `<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="1" ` +
+    `office:value-type="boolean" office:boolean-value="true"><text:p>TOCNO</text:p></table:table-cell>` +
+    `<table:covered-table-cell/>${tail}</table:table-row>` +
+    emptyRows +
+    `</table:table>`;
+
+  const notes =
+    `<table:table table:name="Biljeske">` +
+    `<table:table-row>${text('uniqueods')}</table:table-row>` +
+    emptyRows +
+    `</table:table>`;
+
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<office:document-content ${ODF_NS} office:version="1.3">${styles}` +
+    `<office:body><office:spreadsheet>${sales}${notes}</office:spreadsheet></office:body>` +
+    `</office:document-content>`;
+
+  const mime = 'application/vnd.oasis.opendocument.spreadsheet';
+  return zipSync({
+    // First and uncompressed, which is what makes the kind readable from the
+    // first bytes without unpacking anything.
+    mimetype: [strToU8(mime), { level: 0 }],
+    'META-INF/manifest.xml': strToU8(ODF_MANIFEST(mime)),
+    'content.xml': strToU8(content),
+    'styles.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${ODF_NS}/>`),
+  });
+}
+
+/**
+ * An `.odt` — an OpenDocument text document.
+ *
+ * The things a reader has to carry across: headings at their outline level,
+ * formatting held by a named style rather than by the element, a bulleted list,
+ * a table with a header row, and a run of spaces written as `<text:s>` — which
+ * `textContent` on its own silently eats.
+ */
+export function makeOdt() {
+  const styles =
+    `<office:automatic-styles>` +
+    `<style:style style:name="T1" style:family="text">` +
+    `<style:text-properties fo:font-weight="bold"/></style:style>` +
+    `<style:style style:name="T2" style:family="text">` +
+    `<style:text-properties fo:font-style="italic"/></style:style>` +
+    `<text:list-style style:name="L1">` +
+    `<text:list-level-style-bullet text:level="1" text:bullet-char="-"/></text:list-style>` +
+    `</office:automatic-styles>`;
+
+  const body =
+    `<text:h text:style-name="Heading_20_1" text:outline-level="1">Izvjestaj o vjernosti</text:h>` +
+    `<text:p text:style-name="Standard">Uvodni odlomak s dijakriticima: čćšžđ.</text:p>` +
+    `<text:p><text:span text:style-name="T1">Podebljano </text:span>` +
+    `<text:span text:style-name="T2">i ukoseno</text:span></text:p>` +
+    `<text:h text:style-name="Heading_20_2" text:outline-level="2">Popis zahtjeva</text:h>` +
+    `<text:list text:style-name="L1">` +
+    `<text:list-item><text:p>prvi zahtjev</text:p></text:list-item>` +
+    `<text:list-item><text:p>drugi zahtjev</text:p></text:list-item></text:list>` +
+    `<text:p>Ime<text:s text:c="5"/>Prezime</text:p>` +
+    `<table:table table:name="Tablica1">` +
+    `<table:table-header-rows><table:table-row>` +
+    `<table:table-cell><text:p>Format</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>Faza</text:p></table:table-cell>` +
+    `</table:table-row></table:table-header-rows>` +
+    `<table:table-row><table:table-cell><text:p>PDF</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>1</text:p></table:table-cell></table:table-row>` +
+    `<table:table-row><table:table-cell><text:p>ODS</text:p></table:table-cell>` +
+    `<table:table-cell><text:p>2</text:p></table:table-cell></table:table-row>` +
+    `</table:table>` +
+    `<text:p>Zakljucak spominje uniqueodt zbog pretrage.</text:p>`;
+
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<office:document-content ${ODF_NS} office:version="1.3">${styles}` +
+    `<office:body><office:text>${body}</office:text></office:body></office:document-content>`;
+
+  const mime = 'application/vnd.oasis.opendocument.text';
+  return zipSync({
+    mimetype: [strToU8(mime), { level: 0 }],
+    'META-INF/manifest.xml': strToU8(ODF_MANIFEST(mime)),
+    'content.xml': strToU8(content),
+    'meta.xml': strToU8(
+      `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${ODF_NS}>` +
+        `<office:meta><dc:title>Izvjestaj o vjernosti</dc:title></office:meta>` +
+        `</office:document-meta>`,
+    ),
+    // A header in the master styles, so the view has something to admit it is
+    // not showing.
+    'styles.xml': strToU8(
+      `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${ODF_NS}>` +
+        `<office:master-styles><style:master-page style:name="Standard">` +
+        `<style:header><text:p>ulEditor</text:p></style:header>` +
+        `</style:master-page></office:master-styles></office:document-styles>`,
+    ),
+  });
+}

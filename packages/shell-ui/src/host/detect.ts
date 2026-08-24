@@ -140,6 +140,14 @@ function classifyZip(bytes: Uint8Array): FormatId {
   // EPUB and ODF keep `mimetype` as the first, uncompressed entry — the
   // signature sits right behind the ZIP header, so the first 128 bytes suffice.
   if (containsAscii(bytes, 'mimetypeapplication/epub+zip', 128)) return 'epub';
+  /* The kind is in the mimetype itself, and it decides which editor opens the
+     file — a text document and a spreadsheet share nothing but the container.
+     The template variants (`.ott`, `.ots`) carry `-template` after this prefix
+     and land in the same place, which is where they belong. */
+  if (containsAscii(bytes, 'mimetypeapplication/vnd.oasis.opendocument.text', 128)) return 'odt';
+  if (containsAscii(bytes, 'mimetypeapplication/vnd.oasis.opendocument.spreadsheet', 128)) {
+    return 'ods';
+  }
   if (containsAscii(bytes, 'mimetypeapplication/vnd.oasis.opendocument', 128)) return 'odf';
 
   const head = bytes.subarray(0, Math.min(bytes.length, 65536));
@@ -192,7 +200,9 @@ export function detectByName(name: string): FormatDetection {
   // routes the file to an editor, and the two need different ones.
   if (ext === 'xls') return { format: 'xls', via: 'extension' };
   if (ext === 'pptx' || ext === 'ppt') return { format: 'pptx', via: 'extension' };
-  if (ext === 'odt' || ext === 'ods' || ext === 'odp') return { format: 'odf', via: 'extension' };
+  if (ext === 'odt' || ext === 'ott') return { format: 'odt', via: 'extension' };
+  if (ext === 'ods' || ext === 'ots') return { format: 'ods', via: 'extension' };
+  if (ext === 'odp' || ext === 'odg' || ext === 'odf') return { format: 'odf', via: 'extension' };
   if (IMAGES.has(ext)) return { format: 'image', via: 'extension' };
   if (VECTORS.has(ext)) return { format: 'vector', via: 'extension' };
   if (MODELS.has(ext)) return { format: 'model', via: 'extension' };

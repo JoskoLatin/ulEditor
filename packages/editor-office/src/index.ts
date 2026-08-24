@@ -1,14 +1,20 @@
 /**
- * Viewing Office documents — Word and Excel, read-only.
+ * Office documents — Word, Excel and OpenDocument.
  *
  * This is the item that makes the "everything in one place" thesis hold as early
  * as v0.1: without it ulEditor opens code, text and PDF, but a `.docx` from an
  * email attachment still needs another program.
  *
- * Editing arrives in phase 2 (ProseMirror for Word, Univer for Excel) and only
- * then does the fidelity rule start to matter. While nothing is saved, nothing
- * can be quietly corrupted — which is why these editors do not have the `edit`
- * capability, rather than "having it but reporting an error".
+ * Each editor declares exactly what it can do to the file it opened, and no
+ * more. Word text is rewritten a run at a time, straight into the archive it
+ * came from. Excel cells are retyped the same way. The old binary `.xls` and
+ * OpenDocument spreadsheets have no seam to cut into, so their save is a
+ * conversion into a new `.xlsx` beside the original — declared as `edit`
+ * because the cells genuinely are editable, with the cost named before the
+ * first write. OpenDocument text has neither, and declares no `edit` at all.
+ *
+ * The full editors of phase 2 (ProseMirror for Word, Univer for Excel) change
+ * how much can be done, not this rule about saying so.
  */
 
 import {
@@ -34,6 +40,7 @@ import { renderDocx, type Preview } from './docx.js';
 import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText } from './ooxml.js';
+import { readOds, readOdt } from './odf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
@@ -157,7 +164,11 @@ class DocxPreviewEditor implements EditorInstance {
     root.appendChild(
       buildNotes(
         this.preview.notes,
-        t('Text can be retyped — double-click it. Layout and styles stay as they are.'),
+        /* No seam to write into means no promise of writing. The reading room,
+           the outline and the search are the same either way. */
+        this.preview.source
+          ? t('Text can be retyped — double-click it. Layout and styles stay as they are.')
+          : t('This document is shown, not edited — it opens for reading and searching.'),
       ),
     );
 
@@ -228,6 +239,7 @@ class DocxPreviewEditor implements EditorInstance {
    * A single click stays free for selecting text while reading.
    */
   #onDoubleClick = (event: MouseEvent): void => {
+    if (!this.preview.source) return;
     const target = (event.target as HTMLElement | null)?.closest('.ul-office-run');
     if (!(target instanceof HTMLElement) || target.isContentEditable) return;
 
@@ -275,12 +287,14 @@ class DocxPreviewEditor implements EditorInstance {
   }
 
   #restore(edits: Map<number, string>): void {
+    const source = this.preview.source;
     this.#edits = edits;
+    if (!source) return;
     // The view returns to whatever the edit list says, including the original text.
     for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run')) {
       const index = Number(el.dataset.run);
-      const run = this.preview.source.runs[index];
-      el.textContent = edits.get(index) ?? (run ? runText(this.preview.source.xml, run) : el.textContent);
+      const run = source.runs[index];
+      el.textContent = edits.get(index) ?? (run ? runText(source.xml, run) : el.textContent);
     }
     this.#emitDirty();
   }
@@ -294,7 +308,9 @@ class DocxPreviewEditor implements EditorInstance {
     this.#statusEmitter.fire(
       dirty
         ? t('{words} words · {n} edits', { words: this.#words, n: this.#edits.size })
-        : t('{n} words · double-click text to edit', { n: this.#words }),
+        : this.preview.source
+          ? t('{n} words · double-click text to edit', { n: this.#words })
+          : t('{n} words · read-only', { n: this.#words }),
     );
   }
 
@@ -303,8 +319,14 @@ class DocxPreviewEditor implements EditorInstance {
   }
 
   async save(target?: SaveTarget): Promise<SaveResult> {
+    const source = this.preview.source;
+    /* A view with no seam declares no `edit` capability, so the shell never
+       offers this — the guard is for the keyboard shortcut, which asks the
+       editor directly. */
+    if (!source) throw new Error(t('This document is open for reading only.'));
+
     const uri = target?.uri ?? this.doc.uri;
-    const { archive, xml, runs } = this.preview.source;
+    const { archive, xml, runs } = source;
 
     const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
     const nextXml = applyRunEdits(xml, runs, edits);
@@ -319,8 +341,8 @@ class DocxPreviewEditor implements EditorInstance {
      * Run ordinals survive because only the content of `w:t` changes, not their
      * order; the ranges are recomputed.
      */
-    this.preview.source.xml = nextXml;
-    this.preview.source.runs = findRuns(nextXml);
+    source.xml = nextXml;
+    source.runs = findRuns(nextXml);
     this.#edits.clear();
     this.#undoStack = [];
     this.#redoStack = [];
@@ -901,5 +923,51 @@ export const xlsPreviewProvider: EditorProvider = {
   },
 };
 
+/**
+ * OpenDocument text — shown, not written.
+ *
+ * The same reading room a `.docx` gets: headings, formatting, lists, tables,
+ * images, the outline, the search and the reading mode. No `edit`, because the
+ * `Preview` it is handed carries no seam to write into — see `readOdt`.
+ */
+export const odtPreviewProvider: EditorProvider = {
+  id: 'org.uleditor.odt',
+  displayName: 'OpenDocument Text',
+  matches: {
+    extensions: ['odt', 'ott'],
+    mimeTypes: ['application/vnd.oasis.opendocument.text'],
+  },
+  capabilities: ['view', 'search', 'read'],
+  priority: 30,
+
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new DocxPreviewEditor(host, doc, readOdt(await doc.bytes()));
+  },
+};
+
+/**
+ * OpenDocument spreadsheet — in the grid, and editable by conversion.
+ *
+ * Its own provider rather than a branch of the `.xlsx` one for the reason the
+ * `.xls` provider is its own: the two save differently. Nothing is written back
+ * into the `.ods`; a save writes a new `.xlsx` beside it and names what the
+ * conversion costs first.
+ */
+export const odsPreviewProvider: EditorProvider = {
+  id: 'org.uleditor.ods',
+  displayName: 'OpenDocument Spreadsheet',
+  matches: {
+    extensions: ['ods', 'ots'],
+    mimeTypes: ['application/vnd.oasis.opendocument.spreadsheet'],
+  },
+  capabilities: ['view', 'search', 'edit'],
+  priority: 30,
+
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new XlsxPreviewEditor(host, doc, readOds(await doc.bytes()));
+  },
+};
+
 export { readXls } from './xls.js';
+export { readOds, readOdt } from './odf.js';
 export { DocxPreviewEditor, XlsxPreviewEditor };

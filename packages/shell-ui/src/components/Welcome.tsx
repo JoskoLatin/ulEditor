@@ -64,12 +64,13 @@ const EDITS: FormatLine[] = [
   {
     format: 'xlsx',
     kind: 'Tables',
-    ext: '.xlsx .xls',
+    ext: '.xlsx .xls .ods',
     note: 'retype cell values; formulas and styles stay',
   },
 ];
 
 const VIEWS: FormatLine[] = [
+  { format: 'odt', kind: 'OpenDocument', ext: '.odt', note: 'headings, tables and pictures in their places' },
   { format: 'epub', kind: 'Books', ext: '.epub', note: 'reading mode, contents, search' },
   { format: 'image', kind: 'Images', ext: '.png .jpg …', note: 'and the text inside them, read out by OCR' },
   { format: 'vector', kind: 'Drawings', ext: '.svg', note: 'the drawing, and its source one button away' },
@@ -77,9 +78,8 @@ const VIEWS: FormatLine[] = [
 ];
 
 const PLANNED: FormatLine[] = [
-  { format: 'odf', kind: 'OpenDocument', ext: '.odt .ods .odp', note: 'through the LibreOffice conversion', tag: 'phase 2' },
-  { format: 'vector', kind: 'PostScript', ext: '.eps .cdr', note: 'they need that same conversion', tag: 'phase 2' },
-  { format: 'pptx', kind: 'Presentations', ext: '.pptx', note: '', tag: 'phase 5' },
+  { format: 'vector', kind: 'PostScript', ext: '.eps .cdr', note: 'they need a LibreOffice conversion', tag: 'phase 2' },
+  { format: 'pptx', kind: 'Presentations', ext: '.pptx .odp', note: '', tag: 'phase 5' },
 ];
 
 function FormatLines({ lines }: { lines: FormatLine[] }) {

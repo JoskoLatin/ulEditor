@@ -28,6 +28,11 @@ pub enum FormatId {
     /// The old binary Excel (97–2003) — read, never written.
     Xls,
     Pptx,
+    /// A text document and a spreadsheet open in different editors, so — as
+    /// with `Xls` — each gets its own id. `Odf` stays for the rest of the
+    /// family: presentations, drawings, formulas.
+    Odt,
+    Ods,
     Odf,
     Image,
     Vector,
@@ -49,6 +54,8 @@ impl FormatId {
             Self::Xlsx => "xlsx",
             Self::Xls => "xls",
             Self::Pptx => "pptx",
+            Self::Odt => "odt",
+            Self::Ods => "ods",
             Self::Odf => "odf",
             Self::Image => "image",
             Self::Vector => "vector",
@@ -230,7 +237,9 @@ pub fn detect_by_name(name: &str) -> Detection {
         // what routes the file to an editor, and the two need different ones.
         "xls" => FormatId::Xls,
         "pptx" | "ppt" => FormatId::Pptx,
-        "odt" | "ods" | "odp" => FormatId::Odf,
+        "odt" | "ott" => FormatId::Odt,
+        "ods" | "ots" => FormatId::Ods,
+        "odp" | "odg" | "odf" => FormatId::Odf,
         "zip" | "7z" | "tar" | "gz" => FormatId::Archive,
         _ => {
             if let Some((_, language)) = CODE_LANGUAGES.iter().find(|(e, _)| *e == ext) {
@@ -259,6 +268,18 @@ fn classify_zip(bytes: &[u8]) -> FormatId {
     let head = &bytes[..bytes.len().min(128)];
     if find_ascii(head, b"mimetypeapplication/epub+zip") {
         return FormatId::Epub;
+    }
+    // The kind is in the mimetype itself, and it decides which editor opens the
+    // file. The template variants (`.ott`, `.ots`) carry `-template` after this
+    // prefix and land in the same place, which is where they belong.
+    if find_ascii(head, b"mimetypeapplication/vnd.oasis.opendocument.text") {
+        return FormatId::Odt;
+    }
+    if find_ascii(
+        head,
+        b"mimetypeapplication/vnd.oasis.opendocument.spreadsheet",
+    ) {
+        return FormatId::Ods;
     }
     if find_ascii(head, b"mimetypeapplication/vnd.oasis.opendocument") {
         return FormatId::Odf;
@@ -471,7 +492,26 @@ mod tests {
     fn odf_detected_from_mimetype_entry() {
         let mut odt = b"PK\x03\x04".to_vec();
         odt.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.text");
-        assert_eq!(detect("a.odt", &odt).format, FormatId::Odf);
+        assert_eq!(detect("a.odt", &odt).format, FormatId::Odt);
+
+        let mut ods = b"PK\x03\x04".to_vec();
+        ods.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.spreadsheet");
+        assert_eq!(detect("a.ods", &ods).format, FormatId::Ods);
+
+        // A presentation is the rest of the family — still recognised, still
+        // without an editor of its own.
+        let mut odp = b"PK\x03\x04".to_vec();
+        odp.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.presentation");
+        assert_eq!(detect("a.odp", &odp).format, FormatId::Odf);
+    }
+
+    /// The extension is a hint, and a wrong one has to lose to the bytes: a
+    /// spreadsheet saved as `.odt` by hand opens the grid, not the reader.
+    #[test]
+    fn odf_content_outranks_the_extension() {
+        let mut mislabelled = b"PK\x03\x04".to_vec();
+        mislabelled.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.spreadsheet");
+        assert_eq!(detect("tablica.odt", &mislabelled).format, FormatId::Ods);
     }
 
     #[test]

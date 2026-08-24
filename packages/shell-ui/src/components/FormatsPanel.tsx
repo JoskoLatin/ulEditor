@@ -21,7 +21,7 @@ interface Row {
 }
 
 const ROADMAP: Row[] = [
-  { format: 'code', note: 'CodeMirror 6, 13 languages', phase: '' },
+  { format: 'code', note: 'CodeMirror 6, 23 languages', phase: '' },
   { format: 'text', note: 'plain text', phase: '' },
   { format: 'markdown', note: 'source + live preview', phase: '' },
   { format: 'pdf', note: 'view, annotate, pages', phase: '' },
@@ -30,7 +30,9 @@ const ROADMAP: Row[] = [
   { format: 'docx', note: 'view, retype text', phase: 'phase 2' },
   { format: 'xlsx', note: 'view, retype cells', phase: 'phase 2' },
   { format: 'xls', note: 'view, edit — saves as .xlsx', phase: '' },
-  { format: 'odf', note: 'LibreOffice conversion', phase: 'phase 2' },
+  { format: 'odt', note: 'view, read', phase: 'phase 2' },
+  { format: 'ods', note: 'view, edit — saves as .xlsx', phase: 'phase 2' },
+  { format: 'odf', note: 'presentations and drawings', phase: 'phase 5' },
   { format: 'pptx', note: 'Univer Slides', phase: 'phase 5' },
 ];
 

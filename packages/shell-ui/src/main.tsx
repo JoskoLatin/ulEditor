@@ -208,6 +208,42 @@ shell.registry.register(
 shell.registry.register(
   lazyProvider(
     {
+      id: 'org.uleditor.odt',
+      displayName: 'OpenDocument Text',
+      matches: {
+        extensions: ['odt', 'ott'],
+        mimeTypes: ['application/vnd.oasis.opendocument.text'],
+      },
+      /* No `edit`: the reader hands over a view with no seam to write into, and
+         the tab has to know that before the editor is even loaded. */
+      capabilities: ['view', 'search', 'read'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).odtPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
+      id: 'org.uleditor.ods',
+      displayName: 'OpenDocument Spreadsheet',
+      matches: {
+        extensions: ['ods', 'ots'],
+        mimeTypes: ['application/vnd.oasis.opendocument.spreadsheet'],
+      },
+      /* `edit`, though the file it came from is never written: saving writes a
+         new .xlsx beside it, exactly as for the old binary Excel. */
+      capabilities: ['view', 'search', 'edit'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).odsPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
       id: 'org.uleditor.pdf',
       displayName: 'PDF viewer',
       matches: {

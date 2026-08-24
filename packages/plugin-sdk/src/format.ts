@@ -14,6 +14,8 @@ export type FormatId =
   | 'xlsx'
   | 'xls'
   | 'pptx'
+  | 'odt'
+  | 'ods'
   | 'odf'
   | 'image'
   | 'vector'
@@ -60,6 +62,12 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
      routes a file to an editor — and the old binary format opens read-only. */
   xls: { id: 'xls', family: 'sheet', label: 'Excel 97-2003 spreadsheet', textual: false },
   pptx: { id: 'pptx', family: 'slides', label: 'PowerPoint presentation', textual: false },
+  /* A text document and a spreadsheet are as different from each other as a
+     `.docx` is from an `.xlsx`, and they open in different editors — so the
+     same reasoning that gave `.xls` its own id gives these theirs. `odf` stays
+     for the rest of the family: presentations, drawings, formulas. */
+  odt: { id: 'odt', family: 'document', label: 'OpenDocument text', textual: false },
+  ods: { id: 'ods', family: 'sheet', label: 'OpenDocument spreadsheet', textual: false },
   odf: { id: 'odf', family: 'document', label: 'OpenDocument', textual: false },
   image: { id: 'image', family: 'media', label: 'Image', textual: false },
   /* Textual, because an SVG is markup — the viewer shows the source beside the

@@ -15,7 +15,10 @@ import { extensionOf } from './detect.js';
 /** Formats we will support, but which have no provider yet. */
 const PLANNED: Partial<Record<FormatId, string>> = {
   pptx: 'PowerPoint arrives in phase 5.',
-  odf: 'OpenDocument arrives in phase 2, via LibreOffice conversion.',
+  /* Text documents and spreadsheets have their own ids and their own editors;
+     what is left under `odf` is the rest of the family — presentations,
+     drawings, formulas — and none of those has one yet. */
+  odf: 'OpenDocument presentations and drawings arrive in phase 5; text and spreadsheets open now.',
   archive: 'Browsing archives is not planned — ulEditor opens documents, it does not pack them.',
 };
 

@@ -44,8 +44,15 @@ export interface Preview {
   notes: string[];
   release(): void;
 
-  /** Everything needed to write an edit back into the file. */
-  source: {
+  /**
+   * Everything needed to write an edit back into the file.
+   *
+   * **Absent means read-only**, and the view is expected to say so. The same
+   * reading room serves formats we can only show — OpenDocument text is the
+   * first — and a missing seam is a better way to express that than an `edit`
+   * that throws at the moment of saving.
+   */
+  source?: {
     archive: Archive;
     /** The raw `word/document.xml`; edits are made against it, not against the DOM. */
     xml: string;

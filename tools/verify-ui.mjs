@@ -28,6 +28,8 @@ import {
   makeAnnotatedPdf,
   makeFakeDocx,
   makeMultiPagePdf,
+  makeOds,
+  makeOdt,
   makePdf,
   makeSplitLinePdf,
   makeToUnicodePdf,
@@ -1001,6 +1003,117 @@ try {
   check(
     'the tab admits the change',
     await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) > 0, 10000),
+  );
+
+  /* — OpenDocument — */
+
+  /*
+   * The two OpenDocument readers, which have no test outside this page: both
+   * build their view through `DOMParser`, so there is no half of them that runs
+   * in plain Node the way the `.xls` reader does.
+   *
+   * What is checked is what the format makes hard. The spreadsheet: that the
+   * display text the writing program computed is what the grid shows, that a
+   * date written as an ISO string arrives as a date, that a formula refuses by
+   * name, and — the one that decides whether any of it is usable — that the
+   * trailing repeat counts are a jump rather than a million rows. The document:
+   * that a heading is a heading, that formatting held by a named style is
+   * applied, that a run of spaces written as `<text:s>` survives, and that the
+   * bar says the file is not going to be written.
+   */
+  await dropFile(page, 'prodaja.ods', makeOds());
+  const odsBook = page.locator('.ul-sheet-book:visible');
+  await odsBook.locator('td[data-ref="1,0"]').waitFor({ timeout: 20000 });
+
+  check(
+    'an .ods opens in the grid, diacritics intact',
+    (await odsBook.locator('td[data-ref="1,0"]').innerText()) === 'Siječanj',
+    await odsBook.locator('td[data-ref="1,0"]').innerText(),
+  );
+  check(
+    'the amount is shown exactly as the writing program drew it',
+    (await odsBook.locator('td[data-ref="1,1"]').innerText()) === '1.234,50',
+    await odsBook.locator('td[data-ref="1,1"]').innerText(),
+  );
+  check(
+    'a date written as an ISO string is a date',
+    (await odsBook.locator('td[data-ref="1,2"]').getAttribute('data-kind')) === 'date',
+    await odsBook.locator('td[data-ref="1,2"]').getAttribute('data-kind'),
+  );
+
+  /* A million empty rows are a cursor jump, not a million rows. Read literally
+     the sheet below would be 1,048,575 rows tall and the tab would never open. */
+  const odsStatus = await page.locator('.status-editor, .statusbar').first().innerText().catch(() => '');
+  check(
+    'the empty tail of the sheet costs nothing',
+    (await odsBook.locator('tbody tr').count()) < 20,
+    `${await odsBook.locator('tbody tr').count()} rows · ${odsStatus}`,
+  );
+
+  check(
+    'the bar says a save will write a new .xlsx',
+    (await odsBook.locator('.ul-office-notes strong').innerText()).includes('.xlsx'),
+    await odsBook.locator('.ul-office-notes strong').innerText(),
+  );
+
+  const odsTotal = odsBook.locator('td[data-ref="3,1"]');
+  await odsTotal.dblclick();
+  check('a formula cell does not open', !(await odsTotal.evaluate((el) => el.isContentEditable)));
+  check(
+    'and it refuses with the formula in plain form, not in the `of:` language',
+    await until(
+      async () => (await page.locator('.toast').last().innerText().catch(() => '')).includes('SUM(B2:B3)'),
+      10000,
+    ),
+    await page.locator('.toast').last().innerText().catch(() => ''),
+  );
+
+  const odsCell = odsBook.locator('td[data-ref="1,1"]');
+  await odsCell.dblclick();
+  check('an ordinary cell opens for editing', await odsCell.evaluate((el) => el.isContentEditable));
+  await odsCell.press('Escape');
+
+  await dropFile(page, 'izvjestaj.odt', makeOdt());
+  const odtView = page.locator('.ul-office-doc:visible').first();
+  await odtView.locator('h1').first().waitFor({ timeout: 20000 });
+
+  check(
+    'an .odt opens with its heading',
+    (await odtView.locator('h1').first().innerText()).includes('Izvjestaj'),
+    await odtView.locator('h1').first().innerText(),
+  );
+  check(
+    'formatting held by a named style is applied',
+    (await odtView.locator('strong').first().innerText()).trim() === 'Podebljano' &&
+      (await odtView.locator('em').first().innerText()).trim() === 'i ukoseno',
+    `${await odtView.locator('strong').first().innerText()} / ${await odtView.locator('em').first().innerText()}`,
+  );
+  check(
+    'the list and the table arrive',
+    (await odtView.locator('ul li').count()) === 2 && (await odtView.locator('table th').count()) === 2,
+    `${await odtView.locator('ul li').count()} items · ${await odtView.locator('table th').count()} headers`,
+  );
+
+  /*
+   * `<text:s text:c="5"/>` is five spaces, and reading the DOM property alone
+   * drops every one of them — "ImePrezime", which is what a column laid out
+   * with spaces turns into.
+   *
+   * Asserted on the text the document holds, not on what the screen draws: HTML
+   * collapses a run of spaces on display, here as in the Word view, and it is
+   * the held text that search, copy, the word count and the export all read.
+   */
+  const spaced = await odtView
+    .locator('p', { hasText: 'Prezime' })
+    .first()
+    .evaluate((el) => el.textContent ?? '');
+  check('a run of spaces written as an element survives', /Ime {5}Prezime/.test(spaced), JSON.stringify(spaced));
+
+  const odtBar = page.locator('.ul-office:visible .ul-office-notes').first();
+  check(
+    'and the bar says the document is shown, not written',
+    !(await odtBar.locator('strong').innerText()).includes('retyped'),
+    await odtBar.locator('strong').innerText(),
   );
 
   /* — what the platform draws for us — */
