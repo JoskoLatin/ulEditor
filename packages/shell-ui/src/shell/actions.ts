@@ -336,9 +336,23 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
       if (answer === 'cancel') return false;
     }
 
+    /* A save that could not write back into its own file wrote a new one —
+       the old `.xls` converted to `.xlsx`. The tab follows it: it is the file
+       the next save goes to, and a tab still named after the original would
+       send the person looking for their changes in the wrong document. */
+    if (result.uri !== tab.uri) {
+      const name = result.uri.split(/[\\/]/).pop() ?? result.uri;
+      useWorkspace.getState().patchTab(id, { uri: result.uri, name });
+      rememberFile(shell, { uri: result.uri, name });
+      shell.notify.show('info', t('Saved as {name}', { name }));
+      return true;
+    }
+
     shell.notify.show('info', t('Saved: {name}', { name: tab.name }));
     return true;
   } catch (err) {
+    // The person closed the "where to" dialog; that is not a failure to report.
+    if (isAbort(err)) return false;
     shell.notify.show('error', t('Save failed: {reason}', { reason: describe(err) }));
     return false;
   }

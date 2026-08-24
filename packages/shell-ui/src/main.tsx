@@ -185,9 +185,9 @@ shell.registry.register(
         extensions: ['xls'],
         mimeTypes: ['application/vnd.ms-excel'],
       },
-      /* No `edit`: the old binary format is read, never written — the tab is
-         read-only from the moment it opens, and the grid says why. */
-      capabilities: ['view', 'search'],
+      /* `edit`, though the file it came from is never written: saving writes a
+         new .xlsx beside it. See `xlsPreviewProvider`. */
+      capabilities: ['view', 'search', 'edit'],
       priority: 30,
     },
     async () => (await import('@uleditor/editor-office')).xlsPreviewProvider,

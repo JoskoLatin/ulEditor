@@ -35,6 +35,7 @@ import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText } from './ooxml.js';
 import { readXls } from './xls.js';
+import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
 
 export { renderDocx } from './docx.js';
@@ -462,8 +463,8 @@ class XlsxPreviewEditor implements EditorInstance {
     root.appendChild(
       buildNotes(
         this.workbook.notes,
-        this.workbook.readonly
-          ? t(this.workbook.readonly)
+        this.workbook.convert
+          ? t('Cells can be retyped — double-click one. Saving writes a new .xlsx beside the original, which is left untouched.')
           : t('Cells can be retyped — double-click one. Formulas, styles and layout stay as they are.'),
       ),
     );
@@ -534,16 +535,16 @@ class XlsxPreviewEditor implements EditorInstance {
     const target = (event.target as HTMLElement | null)?.closest('td[data-ref]');
     if (!(target instanceof HTMLElement) || target.isContentEditable) return;
 
-    if (this.workbook.readonly) {
-      this.host.notify.show('info', t(this.workbook.readonly));
-      return;
-    }
-
     const sheet = this.workbook.sheets[this.#active];
     const ref = target.dataset.ref ?? '';
     if (!sheet || !ref) return;
 
     const cell = sheet.cells.get(ref);
+
+    /* The old format keeps no formula text — only the number it last worked
+       out. Retyping that number is allowed, and it is the conversion warning
+       that says the formula itself will not survive; refusing here would
+       forbid editing a column of totals for a formula nobody can see. */
     if (cell?.formula) {
       this.host.notify.show(
         'info',
@@ -644,10 +645,10 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   async save(target?: SaveTarget): Promise<SaveResult> {
+    if (this.workbook.convert) return this.#saveAsConverted(target);
+
     const { archive } = this.workbook;
-    if (this.workbook.readonly || !archive) {
-      throw new Error(t(this.workbook.readonly ?? 'The workbook cannot be written.'));
-    }
+    if (!archive) throw new Error(t('The workbook cannot be written.'));
     const uri = target?.uri ?? this.doc.uri;
 
     /* The edits, gathered per sheet part — one part is rewritten per edited
@@ -683,7 +684,7 @@ class XlsxPreviewEditor implements EditorInstance {
       const cells = this.workbook.sheets[Number(indexPart)]?.cells;
       if (!cells) continue;
       if (value === '') cells.delete(refPart);
-      else cells.set(refPart, { text: value, kind: typedKind(value) });
+      else cells.set(refPart, this.#typedCell(value));
     }
     this.#edits.clear();
     this.#undoStack = [];
@@ -694,6 +695,58 @@ class XlsxPreviewEditor implements EditorInstance {
        none: only the rewritten elements changed. The stale formula caches are
        handled, not lost — the workbook recalculates when Excel opens it. */
     return { uri, lostFidelity: [] };
+  }
+
+  /**
+   * Saving a workbook that has no file to be written back into.
+   *
+   * The old binary `.xls` has no safe seam to cut into, so what is saved is a
+   * **new `.xlsx` beside the original**, which is left exactly as it was. The
+   * first save asks where it should go, defaulting to the same name with the
+   * new extension; later saves go back to the same place, so `Ctrl+S` twice
+   * does not produce two files.
+   *
+   * `lostFidelity` carries what the conversion cannot bring along, so the
+   * shell can ask before it happens — the project's central rule, and the one
+   * case in this editor where it genuinely applies.
+   */
+  async #saveAsConverted(target?: SaveTarget): Promise<SaveResult> {
+    const convert = this.workbook.convert!;
+    const uri = target?.uri ?? convert.target ?? (await this.#pickConvertTarget());
+    if (!uri) throw new DOMException('The save was cancelled.', 'AbortError');
+
+    await this.host.fs.writeBytes(uri, buildXlsx(this.workbook.sheets));
+
+    /* Where it went, so the next save goes to the same file rather than asking
+       again — and the losses are reported only for the save that first writes
+       it, since the second save of the same grid loses nothing new. */
+    const first = convert.target === undefined;
+    convert.target = uri;
+
+    for (const [key, value] of this.#edits) {
+      const [indexPart, refPart] = key.split(':') as [string, string];
+      const cells = this.workbook.sheets[Number(indexPart)]?.cells;
+      if (!cells) continue;
+      if (value === '') cells.delete(refPart);
+      else cells.set(refPart, this.#typedCell(value));
+    }
+    this.#edits.clear();
+    this.#undoStack = [];
+    this.#redoStack = [];
+    this.#emitDirty();
+
+    return { uri, lostFidelity: first ? convert.losses.map((loss) => t(loss)) : [] };
+  }
+
+  async #pickConvertTarget(): Promise<string | null> {
+    return this.host.fs.pickSaveTarget(convertedName(this.doc.name), ['xlsx']);
+  }
+
+  /** A retyped value as the grid and a written file both need it. */
+  #typedCell(value: string): { text: string; kind: 'number' | 'date' | 'text'; raw: number | string } {
+    const kind = typedKind(value);
+    if (kind === 'number') return { text: value, kind, raw: Number(value.replace(',', '.')) };
+    return { text: value, kind, raw: value };
   }
 
   undo(): void {
@@ -824,10 +877,14 @@ export const xlsxPreviewProvider: EditorProvider = {
 };
 
 /**
- * The old binary `.xls`, in the same grid — reading only. Its own provider
- * rather than a branch of the one above, because the capability list is the
- * honest difference: the shell marks the tab read-only before the editor is
- * even loaded, and the grid says why when a cell is double-clicked.
+ * The old binary `.xls`, in the same grid — and editable, by conversion.
+ *
+ * Its own provider rather than a branch of the one above because the two save
+ * differently, and that difference is the whole point: this one cannot write
+ * back into the file it came from, so saving writes a new `.xlsx` beside it
+ * and the original is left untouched. `edit` is therefore honest — the cells
+ * really are editable — while the fidelity warning names what the conversion
+ * cannot carry, before it carries anything.
  */
 export const xlsPreviewProvider: EditorProvider = {
   id: 'org.uleditor.xls',
@@ -836,7 +893,7 @@ export const xlsPreviewProvider: EditorProvider = {
     extensions: ['xls'],
     mimeTypes: ['application/vnd.ms-excel'],
   },
-  capabilities: ['view', 'search'],
+  capabilities: ['view', 'search', 'edit'],
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {

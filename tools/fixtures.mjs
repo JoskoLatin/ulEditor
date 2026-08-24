@@ -706,6 +706,10 @@ export function makeXls(opts = {}) {
   sheet.push(...rec(0x0203, [...cell(1, 1, 2), ...f64(1234.5)]));
   // 15 June 2026 is serial 46188; an RK integer is the value shifted left twice.
   sheet.push(...rec(0x027e, [...cell(1, 2, 1), ...u32((46188 << 2) | 0x02)]));
+  /* A formula and the number it last worked out. The old format keeps no
+     readable formula text, only this cached result — which is exactly why a
+     conversion has to say the formula will not survive it. */
+  sheet.push(...rec(0x0006, [...cell(2, 1, 2), ...f64(2469), ...u16(0), ...u32(0), ...u16(0)]));
   sheet.push(...rec(0x00e5, [...u16(1), ...u16(2), ...u16(2), ...u16(0), ...u16(1)]));
   sheet.push(...rec(0x000a, []));
 

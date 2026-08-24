@@ -35,8 +35,9 @@ import {
   type Workbook,
 } from './xlsx.js';
 
-export const XLS_READONLY =
-  'An old binary Excel file (.xls) — shown read-only. Save it as .xlsx in Excel or LibreOffice to edit it here.';
+/** What the conversion to `.xlsx` cannot carry — said before it happens. */
+const LOSS_FORMULAS = 'Formulas are not carried over — their last calculated values are saved instead.';
+const LOSS_STYLING = 'Styling, charts and images of the old file are not carried over.';
 
 /* ── the OLE2 compound file ──────────────────────────────────────────── */
 
@@ -436,10 +437,13 @@ export function readXls(bytes: Uint8Array): Workbook {
 
     const numberCell = (value: number, ixfe: number): Cell => {
       const { id, code } = codeOf(ixfe);
+      const fmt = code ?? id;
       if (isDateFormat(id, code)) {
-        return { text: formatDate(date1904 ? value + 1462 : value, code), kind: 'date' };
+        // The raw value carries the 1900-system serial, whatever the file used.
+        const serial = date1904 ? value + 1462 : value;
+        return { text: formatDate(serial, code), kind: 'date', raw: serial, fmt };
       }
-      return { text: formatNumber(value, code), kind: 'number' };
+      return { text: formatNumber(value, code), kind: 'number', raw: value, fmt };
     };
 
     let depth = 0;
@@ -487,7 +491,7 @@ export function readXls(bytes: Uint8Array): Workbook {
           const col = view.getUint16(record.start + 2, true);
           const isst = view.getUint32(record.start + 6, true);
           const text = shared[isst] ?? '';
-          if (text) put(row, col, { text, kind: 'text' });
+          if (text) put(row, col, { text, kind: 'text', raw: text });
           break;
         }
         case 0x0204: {
@@ -497,7 +501,7 @@ export function readXls(bytes: Uint8Array): Workbook {
           const col = cursor.u16();
           cursor.u16();
           const text = cursor.string(2);
-          if (text) put(row, col, { text, kind: 'text' });
+          if (text) put(row, col, { text, kind: 'text', raw: text });
           break;
         }
         case 0x0006: {
@@ -509,15 +513,22 @@ export function readXls(bytes: Uint8Array): Workbook {
             const kind = view.getUint8(record.start + 6);
             if (kind === 0) pendingString = { row, col };
             else if (kind === 1) {
+              const truth = view.getUint8(record.start + 8) !== 0;
               put(row, col, {
-                text: view.getUint8(record.start + 8) ? t('TRUE') : t('FALSE'),
+                text: truth ? t('TRUE') : t('FALSE'),
                 kind: 'bool',
+                raw: truth,
+                fromFormula: true,
               });
             } else if (kind === 2) {
-              put(row, col, { text: BIFF_ERRORS[view.getUint8(record.start + 8)] ?? '#ERR', kind: 'error' });
+              const code = BIFF_ERRORS[view.getUint8(record.start + 8)] ?? '#ERR';
+              put(row, col, { text: code, kind: 'error', raw: code, fromFormula: true });
             }
           } else {
-            put(row, col, numberCell(view.getFloat64(record.start + 6, true), ixfe));
+            put(row, col, {
+              ...numberCell(view.getFloat64(record.start + 6, true), ixfe),
+              fromFormula: true,
+            });
           }
           break;
         }
@@ -525,7 +536,9 @@ export function readXls(bytes: Uint8Array): Workbook {
           // STRING — the text result of the formula just seen.
           if (!pendingString) break;
           const text = segmentsOf(index).string(2);
-          if (text) put(pendingString.row, pendingString.col, { text, kind: 'text' });
+          if (text) {
+            put(pendingString.row, pendingString.col, { text, kind: 'text', raw: text, fromFormula: true });
+          }
           pendingString = null;
           break;
         }
@@ -535,13 +548,12 @@ export function readXls(bytes: Uint8Array): Workbook {
           const col = view.getUint16(record.start + 2, true);
           const value = view.getUint8(record.start + 6);
           const isError = view.getUint8(record.start + 7) === 1;
-          put(
-            row,
-            col,
-            isError
-              ? { text: BIFF_ERRORS[value] ?? '#ERR', kind: 'error' }
-              : { text: value ? t('TRUE') : t('FALSE'), kind: 'bool' },
-          );
+          if (isError) {
+            const code = BIFF_ERRORS[value] ?? '#ERR';
+            put(row, col, { text: code, kind: 'error', raw: code });
+          } else {
+            put(row, col, { text: value ? t('TRUE') : t('FALSE'), kind: 'bool', raw: value !== 0 });
+          }
           break;
         }
         case 0x00e5: {
@@ -594,5 +606,10 @@ export function readXls(bytes: Uint8Array): Workbook {
   notes.add('Only cell values and number formats are read from the old format — charts, images and styling are not shown.');
   notes.add('Formulas are not recalculated — the value stored in the file is shown.');
 
-  return { sheets, notes: [...notes], readonly: XLS_READONLY };
+  /* What a save — a conversion — will not carry, decided now so the warning
+     can name it before anything is written. */
+  const hasFormulas = sheets.some((sheet) => [...sheet.cells.values()].some((cell) => cell.fromFormula));
+  const losses = [...(hasFormulas ? [LOSS_FORMULAS] : []), LOSS_STYLING];
+
+  return { sheets, notes: [...notes], convert: { losses } };
 }

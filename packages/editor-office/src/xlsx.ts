@@ -16,6 +16,13 @@ export interface Cell {
   text: string;
   kind: CellKind;
   formula?: string;
+  /** The value as the file stores it — kept where the grid may be written out
+   *  again as a fresh file (the `.xls` conversion). */
+  raw?: number | string | boolean;
+  /** The number format behind `text`: a built-in id, or the custom code. */
+  fmt?: number | string;
+  /** The value is a formula's cached result — a conversion loses the formula. */
+  fromFormula?: boolean;
 }
 
 export interface Merge {
@@ -41,11 +48,15 @@ export interface Workbook {
   sheets: Sheet[];
   notes: string[];
   /** The opened archive, kept for the save — see `xlsx-edit.ts`. Absent for the
-   *  old binary format, which is never written. */
+   *  old binary format, which is never written back. */
   archive?: Archive;
-  /** Why the workbook cannot be edited — an English source string for `t()`.
-   *  Set for the old binary `.xls`, whose writing nobody should attempt. */
-  readonly?: string;
+  /**
+   * Saving means writing a fresh `.xlsx` from the grid, not touching the
+   * original — the old binary format has no safe seam to write into. Set for
+   * `.xls`; `losses` is what the conversion cannot carry, said before it
+   * happens, and `target` is where the converted file went once it has.
+   */
+  convert?: { losses: string[]; target?: string };
 }
 
 /** Above this the viewer stops being usable, and few people look at that much at once. */

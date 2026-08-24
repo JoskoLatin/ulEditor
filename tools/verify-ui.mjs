@@ -948,16 +948,29 @@ try {
     await oldBook.locator('td[data-ref="1,1"]').innerText(),
   );
 
+  /*
+   * The old format is editable too — its save is a conversion, which is what
+   * the bar above the grid says. The write itself needs a file system the web
+   * build has not got, so what the page can prove is the half before it: the
+   * cell opens, takes a value, and the tab admits the change.
+   */
+  check(
+    'the bar says a save will write a new .xlsx',
+    (await oldBook.locator('.ul-office-notes strong').innerText()).includes('.xlsx'),
+    await oldBook.locator('.ul-office-notes strong').innerText(),
+  );
+
   const oldCell = oldBook.locator('td[data-ref="1,1"]');
   await oldCell.dblclick();
-  check('a cell of the old format does not open', !(await oldCell.evaluate((el) => el.isContentEditable)));
+  check('a cell of the old format opens for editing', await oldCell.evaluate((el) => el.isContentEditable));
+  await oldCell.evaluate((el) => {
+    el.textContent = '4321';
+  });
+  await oldCell.press('Enter');
+  check('and takes the retyped value', (await oldCell.innerText()) === '4321', await oldCell.innerText());
   check(
-    'and the grid says what to do instead',
-    await until(
-      async () => (await page.locator('.toast').last().innerText().catch(() => '')).includes('.xlsx'),
-      10000,
-    ),
-    await page.locator('.toast').last().innerText().catch(() => ''),
+    'the tab admits the change',
+    await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) > 0, 10000),
   );
 
   /*

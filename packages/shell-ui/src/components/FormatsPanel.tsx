@@ -29,7 +29,7 @@ const ROADMAP: Row[] = [
   { format: 'image', note: 'view, OCR', phase: 'phase 1' },
   { format: 'docx', note: 'view, retype text', phase: 'phase 2' },
   { format: 'xlsx', note: 'view, retype cells', phase: 'phase 2' },
-  { format: 'xls', note: 'view — save as .xlsx to edit', phase: '' },
+  { format: 'xls', note: 'view, edit — saves as .xlsx', phase: '' },
   { format: 'odf', note: 'LibreOffice conversion', phase: 'phase 2' },
   { format: 'pptx', note: 'Univer Slides', phase: 'phase 5' },
 ];
