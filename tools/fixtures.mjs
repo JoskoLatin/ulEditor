@@ -940,3 +940,353 @@ export function makeOdt() {
     ),
   });
 }
+
+/* ── the old binary Word ─────────────────────────────────────────────── */
+
+/**
+ * An OLE2 compound file around named streams.
+ *
+ * `makeXls` writes its container by hand and gets away with it because it has
+ * one stream, padded past the mini cutoff so the fixture needs no mini FAT. A
+ * Word file cannot: it is at least two streams, and the small one — the table
+ * stream, where the piece table and every property index live — lands under the
+ * cutoff and therefore **inside the mini stream**, a second allocation of
+ * 64-byte sectors held inside an ordinary stream of the root entry. That is the
+ * half of the container real `.doc` files use and no fixture had ever built, so
+ * it is built properly here rather than padded around.
+ *
+ * @param {{ name: string, data: Uint8Array }[]} streams
+ */
+function compoundFile(streams) {
+  const SECTOR = 512;
+  const MINI = 64;
+  const CUTOFF = 4096;
+  const END = 0xfffffffe;
+
+  const padTo = (data, size) => {
+    const out = new Uint8Array(Math.ceil(data.length / size) * size);
+    out.set(data);
+    return out;
+  };
+
+  const entries = streams.map((s) => ({ ...s, mini: s.data.length < CUTOFF, start: END }));
+  const small = entries.filter((e) => e.mini);
+
+  /* The mini stream: every small stream in turn, each starting on its own
+     64-byte sector. */
+  let miniSectors = 0;
+  const miniParts = [];
+  for (const entry of small) {
+    entry.start = miniSectors;
+    const padded = padTo(entry.data, MINI);
+    miniParts.push(padded);
+    miniSectors += padded.length / MINI;
+  }
+  const miniStream = new Uint8Array(miniSectors * MINI);
+  {
+    let at = 0;
+    for (const part of miniParts) {
+      miniStream.set(part, at);
+      at += part.length;
+    }
+  }
+
+  const miniFat = new Uint8Array(miniSectors * 4);
+  {
+    const view = new DataView(miniFat.buffer);
+    for (let i = 0; i < miniSectors; i++) view.setUint32(i * 4, i + 1, true);
+    for (const entry of small) {
+      view.setUint32((entry.start + Math.ceil(entry.data.length / MINI) - 1) * 4, END, true);
+    }
+  }
+
+  const sectors = [];
+  const fat = [];
+  const alloc = (data) => {
+    if (data.length === 0) return END;
+    const padded = padTo(data, SECTOR);
+    const count = padded.length / SECTOR;
+    const start = sectors.length;
+    for (let i = 0; i < count; i++) {
+      sectors.push(padded.subarray(i * SECTOR, (i + 1) * SECTOR));
+      fat.push(start + i + 1);
+    }
+    fat[start + count - 1] = END;
+    return start;
+  };
+
+  // Sector 0 is the FAT itself, written once every chain below is known.
+  sectors.push(new Uint8Array(SECTOR));
+  fat.push(0xfffffffd);
+
+  for (const entry of entries) {
+    if (!entry.mini) entry.start = alloc(entry.data);
+  }
+  const miniFatStart = alloc(miniFat);
+  const miniStart = alloc(miniStream);
+
+  const directory = new Uint8Array(Math.ceil((entries.length + 1) / 4) * SECTOR);
+  const dir = new DataView(directory.buffer);
+  const describe = (index, name, type, start, size) => {
+    const at = index * 128;
+    name.split('').forEach((ch, i) => dir.setUint16(at + i * 2, ch.charCodeAt(0), true));
+    dir.setUint16(at + 64, (name.length + 1) * 2, true);
+    dir.setUint8(at + 66, type);
+    dir.setUint32(at + 68, 0xffffffff, true); // left sibling
+    dir.setUint32(at + 72, 0xffffffff, true); // right sibling
+    dir.setUint32(at + 76, type === 5 ? 1 : 0xffffffff, true); // the root's child
+    dir.setUint32(at + 116, start, true);
+    dir.setUint32(at + 120, size, true);
+  };
+  describe(0, 'Root Entry', 5, miniStream.length ? miniStart : END, miniStream.length);
+  entries.forEach((entry, i) => describe(i + 1, entry.name, 2, entry.start, entry.data.length));
+  const dirStart = alloc(directory);
+
+  if (fat.length > SECTOR / 4) throw new Error('the fixture outgrew a single FAT sector');
+
+  const out = new Uint8Array(SECTOR * (sectors.length + 1));
+  const view = new DataView(out.buffer);
+  out.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  view.setUint16(24, 0x003e, true); // minor
+  view.setUint16(26, 0x0003, true); // major — the 512-byte-sector version
+  view.setUint16(28, 0xfffe, true); // byte order
+  view.setUint16(30, 9, true); // 2^9 = 512
+  view.setUint16(32, 6, true); // 2^6 = 64
+  view.setUint32(44, 1, true); // one FAT sector
+  view.setUint32(48, dirStart, true);
+  view.setUint32(56, CUTOFF, true);
+  view.setUint32(60, miniFat.length ? miniFatStart : END, true);
+  view.setUint32(64, miniFat.length ? 1 : 0, true);
+  view.setUint32(68, END, true); // no extra DIFAT
+  view.setUint32(76, 0, true); // DIFAT[0] -> the FAT sector
+  for (let i = 1; i < 109; i++) view.setUint32(76 + i * 4, 0xffffffff, true);
+
+  sectors.forEach((data, i) => out.set(data, SECTOR * (i + 1)));
+  for (let i = 0; i < SECTOR / 4; i++) view.setUint32(SECTOR + i * 4, fat[i] ?? 0xffffffff, true);
+  return out;
+}
+
+/** The mark that ends a table cell — code 7, which is also how a row ends. */
+const CELL = String.fromCharCode(7);
+/** The three characters a field is punctuated with: begin, separator, end. */
+const FIELD = [19, 20, 21].map((code) => String.fromCharCode(code));
+
+/**
+ * An old binary Word document — `.doc`, Word 97–2003 — assembled by hand.
+ *
+ * Everything the reader has to get right is here on purpose, and the fixture is
+ * built out of the same numbers the reader reads back, so a wrong offset shows
+ * up as a wrong document rather than as a crash:
+ *
+ * - **two pieces, one narrow and one wide.** The first paragraphs are CP1252,
+ *   one byte per character, and hold `ž` — which CP1252 has. The rest are
+ *   UTF-16 because they hold `č` and `ć`, which it does not. This is not a
+ *   contrived split: it is what Word writes for a Croatian document, and
+ *   reading such a file under one encoding garbles exactly those files.
+ * - **the table stream inside the mini stream**, where a real small `.doc`
+ *   keeps it.
+ * - **a heading known by its `sti`** and a second known only by its name, in
+ *   Croatian, because files do it both ways.
+ * - **a table that is only punctuation** — cells ended by the cell mark, rows
+ *   by a paragraph carrying `sprmPFTtp`.
+ * - **a field**, whose instruction must be dropped and whose result must not.
+ */
+export function makeDoc() {
+  const u16 = (n) => [n & 0xff, (n >> 8) & 0xff];
+  const u32 = (n) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+
+  /* The 32 characters CP1252 puts where Latin-1 keeps control codes — the same
+     table the reader has, used backwards. A character in neither this range nor
+     Latin-1 has no narrow form, and the fixture says so rather than writing a
+     byte that would come back as something else. */
+  const CP1252_HIGH = [
+    0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+    0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d, 0x017d, 0x008f,
+    0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+    0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x009d, 0x017e, 0x0178,
+  ];
+  const narrowByte = (ch) => {
+    const code = ch.charCodeAt(0);
+    const high = CP1252_HIGH.indexOf(code);
+    if (high !== -1) return 0x80 + high;
+    if (code < 0x100) return code;
+    throw new Error(`"${ch}" has no CP1252 byte — it belongs in the wide piece.`);
+  };
+
+  const IN_TABLE = [0x16, 0x24, 0x01]; // sprmPFInTable
+  const ROW_END = [0x17, 0x24, 0x01]; // sprmPFTtp
+  const IN_LIST = [0x0b, 0x46, 0x01, 0x00]; // sprmPIlfo
+  const CENTRED = [0x03, 0x24, 0x01]; // sprmPJc80
+
+  const NARROW = [
+    { text: 'Zapisnik', istd: 1, sprms: [] },
+    { text: 'Sastanak je održan u Vodicama.', istd: 0, sprms: [] },
+  ];
+  const WIDE = [
+    { text: 'Zaključci', istd: 2, sprms: [] },
+    { text: 'Prvi zaključak', istd: 0, sprms: IN_LIST },
+    { text: 'Drugi zaključak', istd: 0, sprms: IN_LIST },
+    { text: 'Stavka', istd: 0, sprms: IN_TABLE, cell: true },
+    { text: 'Iznos', istd: 0, sprms: IN_TABLE, cell: true },
+    { text: '', istd: 0, sprms: [...IN_TABLE, ...ROW_END], cell: true },
+    { text: 'Prijevoz', istd: 0, sprms: IN_TABLE, cell: true },
+    { text: '1.234,50', istd: 0, sprms: IN_TABLE, cell: true },
+    { text: '', istd: 0, sprms: [...IN_TABLE, ...ROW_END], cell: true },
+    // The instruction is machinery and must not be shown; the 2 after the
+    // separator is what Word last drew, and must be.
+    { text: `Stranica ${FIELD[0]}PAGE${FIELD[1]}2${FIELD[2]}.`, istd: 0, sprms: [] },
+    { text: 'Kraj.', istd: 0, sprms: CENTRED },
+  ];
+  const mark = (para) => (para.cell ? CELL : '\r');
+
+  const narrowText = NARROW.map((p) => p.text + mark(p)).join('');
+  const wideText = WIDE.map((p) => p.text + mark(p)).join('');
+
+  const narrowBytes = Uint8Array.from([...narrowText].map(narrowByte));
+  const wideBytes = new Uint8Array(wideText.length * 2);
+  {
+    const view = new DataView(wideBytes.buffer);
+    for (let i = 0; i < wideText.length; i++) view.setUint16(i * 2, wideText.charCodeAt(i), true);
+  }
+
+  /* Pages 0-1 the FIB, page 2 the text, page 3 the paragraph properties, page 4
+     the character ones. The stream is padded to the mini cutoff so it lives in
+     ordinary sectors while the table stream does not — which is the arrangement
+     of every small Word file. */
+  const TEXT = 0x400;
+  const PAPX_PAGE = 3;
+  const CHPX_PAGE = 4;
+  const wideAt = TEXT + narrowBytes.length;
+  const textEnd = wideAt + wideBytes.length;
+
+  /* Where each paragraph ends, in bytes — the only index the property pages
+     have. A narrow character costs one and a wide one two, which is why this
+     cannot be counted in characters. */
+  const bounds = [TEXT];
+  {
+    let at = TEXT;
+    for (const para of NARROW) bounds.push((at += para.text.length + 1));
+    at = wideAt;
+    for (const para of WIDE) bounds.push((at += (para.text.length + 1) * 2));
+  }
+
+  const papxFkp = new Uint8Array(512);
+  {
+    const view = new DataView(papxFkp.buffer);
+    const count = bounds.length - 1;
+    bounds.forEach((fc, i) => view.setUint32(i * 4, fc, true));
+
+    let at = (count + 1) * 4 + count * 13;
+    if (at % 2) at++;
+    [...NARROW, ...WIDE].forEach((para, i) => {
+      /* The length convention: the leading byte is half the property list plus
+         one, so the list is always an odd number of bytes and the whole entry an
+         even one. A padding zero keeps that true. */
+      const grpprl = [...u16(para.istd), ...para.sprms];
+      if (grpprl.length % 2 === 0) grpprl.push(0);
+      papxFkp[at] = (grpprl.length + 1) / 2;
+      papxFkp.set(grpprl, at + 1);
+      papxFkp[(count + 1) * 4 + i * 13] = at / 2;
+      at += grpprl.length + 1;
+    });
+    if (at > 511) throw new Error('the paragraph property page overflowed');
+    papxFkp[511] = count;
+  }
+
+  // One bold word, in the narrow piece: "Sastanak je " and then "održan".
+  const boldAt = TEXT + NARROW[0].text.length + 1 + 'Sastanak je '.length;
+  const boldEnd = boldAt + 'održan'.length;
+
+  const chpxFkp = new Uint8Array(512);
+  {
+    const view = new DataView(chpxFkp.buffer);
+    const runs = [TEXT, boldAt, boldEnd, textEnd];
+    const count = runs.length - 1;
+    runs.forEach((fc, i) => view.setUint32(i * 4, fc, true));
+
+    let at = (count + 1) * 4 + count;
+    if (at % 2) at++;
+    // A zero means "nothing said here" — only the middle run carries anything.
+    chpxFkp[(count + 1) * 4 + 1] = at / 2;
+    chpxFkp[at] = 3;
+    chpxFkp.set([0x35, 0x08, 0x01], at + 1); // sprmCFBold
+    chpxFkp[511] = count;
+  }
+
+  const word = new Uint8Array(4096);
+  word.set(narrowBytes, TEXT);
+  word.set(wideBytes, wideAt);
+  word.set(papxFkp, PAPX_PAGE * 512);
+  word.set(chpxFkp, CHPX_PAGE * 512);
+
+  /* The table stream. The style sheet first: one style known by the number Word
+     gives its own, one known only by a Croatian name — a reader that handles
+     only the first turns half the headings in this country into paragraphs. */
+  const style = (sti, name) => {
+    const std = [
+      ...u16(sti),
+      ...u16(0),
+      ...u16(0),
+      ...u16(0),
+      ...u16(0),
+      ...u16(name.length),
+      ...[...name].flatMap((ch) => u16(ch.charCodeAt(0))),
+      ...u16(0),
+    ];
+    return [...u16(std.length), ...std];
+  };
+  const stshi = [...u16(3), ...u16(10), ...u16(0), ...u16(3), ...u16(3), ...u16(0), 0, 0, 0, 0, 0, 0];
+  const stsh = [
+    ...u16(stshi.length),
+    ...stshi,
+    ...style(0, 'Normal'),
+    ...style(1, ''), // heading 1, named by its sti alone
+    ...style(0x0ffe, 'Naslov 2'), // heading 2, named only in Croatian
+  ];
+
+  const plcBte = (page) => [...u32(TEXT), ...u32(textEnd), ...u32(page)];
+
+  const pcd = (fc, narrow) => [...u16(0), ...u32(narrow ? ((fc * 2) | 0x40000000) >>> 0 : fc), ...u16(0)];
+  const plcPcd = [
+    ...u32(0),
+    ...u32(narrowText.length),
+    ...u32(narrowText.length + wideText.length),
+    ...pcd(TEXT, true),
+    ...pcd(wideAt, false),
+  ];
+  const clx = [0x02, ...u32(plcPcd.length), ...plcPcd];
+
+  const table = [];
+  const fcStshf = table.length;
+  table.push(...stsh);
+  const fcChpx = table.length;
+  table.push(...plcBte(CHPX_PAGE));
+  const fcPapx = table.length;
+  table.push(...plcBte(PAPX_PAGE));
+  const fcClx = table.length;
+  table.push(...clx);
+
+  const fib = new DataView(word.buffer);
+  fib.setUint16(0x00, 0xa5ec, true); // wIdent
+  fib.setUint16(0x02, 0x00c1, true); // nFib — Word 97
+  fib.setUint16(0x0a, 0x0200, true); // fWhichTblStm: the table stream is 1Table
+  fib.setUint16(0x20, 14, true); // csw
+  fib.setUint16(0x3e, 22, true); // cslw
+  fib.setUint32(0x40, word.length, true); // cbMac
+  fib.setUint32(0x40 + 3 * 4, narrowText.length + wideText.length, true); // ccpText
+  fib.setUint32(0x40 + 5 * 4, 2, true); // ccpHdd — a header we do not show
+  fib.setUint16(0x98, 0x005d, true); // cbRgFcLcb
+  const fcLcb = (index, fc, lcb) => {
+    fib.setUint32(0x9a + index * 8, fc, true);
+    fib.setUint32(0x9a + index * 8 + 4, lcb, true);
+  };
+  fcLcb(1, fcStshf, stsh.length);
+  fcLcb(12, fcChpx, 12);
+  fcLcb(13, fcPapx, 12);
+  fcLcb(33, fcClx, clx.length);
+
+  return compoundFile([
+    { name: 'WordDocument', data: word },
+    { name: '1Table', data: Uint8Array.from(table) },
+  ]);
+}

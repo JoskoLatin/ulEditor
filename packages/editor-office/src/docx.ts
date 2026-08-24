@@ -317,9 +317,10 @@ export function renderDocx(bytes: Uint8Array): Preview {
   const archive = openArchive(bytes);
   const doc = readXml(archive, 'word/document.xml');
   if (!doc) {
-    throw new Error(
-      t('The file has no `word/document.xml`. The older binary `.doc` is not supported — save it as .docx.'),
-    );
+    /* The old binary `.doc` no longer reaches here — it has its own id, its own
+       provider and its own reader (see `doc.ts`). What is left is a file that
+       claims to be a `.docx` and is not one. */
+    throw new Error(t('The file has no `word/document.xml` — this is not a Word document.'));
   }
 
   /*

@@ -28,6 +28,7 @@ const ROADMAP: Row[] = [
   { format: 'epub', note: 'reading, contents, search', phase: '' },
   { format: 'image', note: 'view, OCR', phase: 'phase 1' },
   { format: 'docx', note: 'view, retype text', phase: 'phase 2' },
+  { format: 'doc', note: 'view, read', phase: 'phase 2' },
   { format: 'xlsx', note: 'view, retype cells', phase: 'phase 2' },
   { format: 'xls', note: 'view, edit — saves as .xlsx', phase: '' },
   { format: 'odt', note: 'view, read', phase: 'phase 2' },

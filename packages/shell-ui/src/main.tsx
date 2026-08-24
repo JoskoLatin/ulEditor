@@ -172,6 +172,24 @@ shell.registry.register(
 shell.registry.register(
   lazyProvider(
     {
+      id: 'org.uleditor.doc',
+      displayName: 'Word 97-2003',
+      matches: {
+        extensions: ['doc'],
+        mimeTypes: ['application/msword'],
+      },
+      /* No `edit`: everything in the old binary format is indexed by byte
+         offset, so there is no seam to write into. See `docPreviewProvider`. */
+      capabilities: ['view', 'search', 'read'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).docPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
       id: 'org.uleditor.xlsx',
       displayName: 'Excel',
       matches: {
@@ -232,8 +250,8 @@ shell.registry.register(
         extensions: ['ods', 'ots'],
         mimeTypes: ['application/vnd.oasis.opendocument.spreadsheet'],
       },
-      /* `edit`, though the file it came from is never written: saving writes a
-         new .xlsx beside it, exactly as for the old binary Excel. */
+      /* `edit`, and written back into the .ods itself — only the retyped cells
+         change. See `#saveOds`. */
       capabilities: ['view', 'search', 'edit'],
       priority: 30,
     },

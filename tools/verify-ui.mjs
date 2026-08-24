@@ -26,6 +26,7 @@ import {
   MD_SOURCE,
   TS_SOURCE,
   makeAnnotatedPdf,
+  makeDoc,
   makeFakeDocx,
   makeMultiPagePdf,
   makeOds,
@@ -1116,6 +1117,60 @@ try {
     'and the bar says the document is shown, not written',
     !(await odtBar.locator('strong').innerText()).includes('retyped'),
     await odtBar.locator('strong').innerText(),
+  );
+
+  /* — the old binary Word — */
+
+  /*
+   * Until this reader existed, a `.doc` opened with the worst message in the
+   * program: that the file was damaged. It was not; it was from before 2007.
+   * What is checked here is the half that needs a browser — the elements. What
+   * the bytes turn into before that is checked in verify-doc.mjs.
+   */
+  await dropFile(page, 'zapisnik.doc', makeDoc());
+  const docView = page.locator('.ul-office-doc:visible').first();
+  await docView.locator('h1').first().waitFor({ timeout: 20000 });
+
+  check(
+    'a .doc opens instead of being called damaged',
+    (await docView.locator('h1').first().innerText()).trim() === 'Zapisnik',
+    await docView.locator('h1').first().innerText(),
+  );
+  check(
+    'a heading Word named by number and one named only in Croatian both arrive',
+    (await docView.locator('h2').first().innerText()).trim() === 'Zaključci',
+    await docView.locator('h2').first().innerText(),
+  );
+  check(
+    'the CP1252 piece and the UTF-16 piece are both decoded',
+    (await docView.innerText()).includes('održan') && (await docView.innerText()).includes('zaključak'),
+  );
+  check(
+    'the one bold word is the only bold word',
+    (await docView.locator('strong').count()) === 1 &&
+      (await docView.locator('strong').first().innerText()).trim() === 'održan',
+    await docView.locator('strong').first().innerText(),
+  );
+  check(
+    'the table inferred from the cell marks has two rows of two',
+    (await docView.locator('table tr').count()) === 2 && (await docView.locator('table td').count()) === 4,
+    `${await docView.locator('table tr').count()} rows · ${await docView.locator('table td').count()} cells`,
+  );
+  check(
+    'the list arrives with both of its items',
+    (await docView.locator('ul li').count()) === 2,
+    `${await docView.locator('ul li').count()}`,
+  );
+  check(
+    'a field shows its result and not its instruction',
+    (await docView.innerText()).includes('Stranica 2.') && !(await docView.innerText()).includes('PAGE'),
+  );
+
+  const docBar = page.locator('.ul-office:visible .ul-office-notes').first();
+  check(
+    'and the bar says this one is shown, not written either',
+    !(await docBar.locator('strong').innerText()).includes('retyped'),
+    await docBar.locator('strong').innerText(),
   );
 
   /* — what the platform draws for us — */

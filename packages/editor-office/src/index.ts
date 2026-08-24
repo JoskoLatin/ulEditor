@@ -7,11 +7,12 @@
  *
  * Each editor declares exactly what it can do to the file it opened, and no
  * more. Word text is rewritten a run at a time, straight into the archive it
- * came from. Excel cells are retyped the same way. The old binary `.xls` and
- * OpenDocument spreadsheets have no seam to cut into, so their save is a
- * conversion into a new `.xlsx` beside the original — declared as `edit`
- * because the cells genuinely are editable, with the cost named before the
- * first write. OpenDocument text has neither, and declares no `edit` at all.
+ * came from; Excel cells and OpenDocument ones are retyped the same way. The
+ * old binary `.xls` has no seam to cut into, so its save is a conversion into a
+ * new `.xlsx` beside the original — declared as `edit` because the cells
+ * genuinely are editable, with the cost named before the first write. The old
+ * binary `.doc` and OpenDocument text have neither a seam nor a conversion, and
+ * declare no `edit` at all.
  *
  * The full editors of phase 2 (ProseMirror for Word, Univer for Excel) change
  * how much can be done, not this rule about saying so.
@@ -42,6 +43,7 @@ import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js'
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
 import { applyOdsEdits, writeOds, type OdsEdit } from './ods-edit.js';
+import { readDoc } from './doc.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
@@ -996,12 +998,13 @@ export const odtPreviewProvider: EditorProvider = {
 };
 
 /**
- * OpenDocument spreadsheet — in the grid, and editable by conversion.
+ * OpenDocument spreadsheet — in the grid, and written back into itself.
  *
- * Its own provider rather than a branch of the `.xlsx` one for the reason the
- * `.xls` provider is its own: the two save differently. Nothing is written back
- * into the `.ods`; a save writes a new `.xlsx` beside it and names what the
- * conversion costs first.
+ * Its own provider rather than a branch of the `.xlsx` one because the two save
+ * differently even though both save in place: one cell in an `.xlsx` is named
+ * `B4` and lives in its own sheet part, while one in an `.ods` has no name at
+ * all and its position has to be counted out of the repeat attributes in a
+ * single `content.xml`. See `#saveOds`.
  */
 export const odsPreviewProvider: EditorProvider = {
   id: 'org.uleditor.ods',
@@ -1018,6 +1021,30 @@ export const odsPreviewProvider: EditorProvider = {
   },
 };
 
+/**
+ * The old binary Word — shown, not written.
+ *
+ * The same reading room as the `.odt` above and for the same reason: the
+ * `Preview` [`readDoc`](./doc.ts) hands over carries no seam to write into, so
+ * no `edit` is claimed. Its own provider rather than a branch of the `.docx`
+ * one because nothing about the two formats is shared but the word Word.
+ */
+export const docPreviewProvider: EditorProvider = {
+  id: 'org.uleditor.doc',
+  displayName: 'Word 97-2003',
+  matches: {
+    extensions: ['doc'],
+    mimeTypes: ['application/msword'],
+  },
+  capabilities: ['view', 'search', 'read'],
+  priority: 30,
+
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new DocxPreviewEditor(host, doc, readDoc(await doc.bytes()));
+  },
+};
+
 export { readXls } from './xls.js';
+export { readDoc, parseDoc } from './doc.js';
 export { readOds, readOdt } from './odf.js';
 export { DocxPreviewEditor, XlsxPreviewEditor };

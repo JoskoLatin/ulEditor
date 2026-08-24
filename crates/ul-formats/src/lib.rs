@@ -24,6 +24,10 @@ pub enum FormatId {
     Pdf,
     Epub,
     Docx,
+    /// The old binary Word (97–2003) — read, never written. Its own id for the
+    /// reason `Xls` has one: nothing but the name is shared with `Docx`, and
+    /// the two open in different editors.
+    Doc,
     Xlsx,
     /// The old binary Excel (97–2003) — read, never written.
     Xls,
@@ -51,6 +55,7 @@ impl FormatId {
             Self::Pdf => "pdf",
             Self::Epub => "epub",
             Self::Docx => "docx",
+            Self::Doc => "doc",
             Self::Xlsx => "xlsx",
             Self::Xls => "xls",
             Self::Pptx => "pptx",
@@ -231,7 +236,9 @@ pub fn detect_by_name(name: &str) -> Detection {
     let format = match ext {
         "pdf" => FormatId::Pdf,
         "epub" => FormatId::Epub,
-        "docx" | "doc" => FormatId::Docx,
+        "docx" => FormatId::Docx,
+        // Its own id for the reason `.xls` has one — see `FormatId::Doc`.
+        "doc" => FormatId::Doc,
         "xlsx" => FormatId::Xlsx,
         // Its own id, not a variant of xlsx: when content decides, the format is
         // what routes the file to an editor, and the two need different ones.
@@ -473,6 +480,20 @@ mod tests {
 
         assert_eq!(detect_by_name("a.xls").format, FormatId::Xls);
         assert_eq!(detect_by_name("a.xlsx").format, FormatId::Xlsx);
+    }
+
+    #[test]
+    fn old_binary_word_is_its_own_format_too() {
+        // It used to be routed to the .docx editor, which opened the compound
+        // file, found no archive in it, and told the user the file was damaged.
+        let mut doc = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        doc.extend_from_slice(&[0u8; 16]);
+        let d = detect("Zapisnik sa sastanka.doc", &doc);
+        assert_eq!(d.format, FormatId::Doc);
+        assert_eq!(d.via, DetectedVia::Magic);
+
+        assert_eq!(detect_by_name("a.doc").format, FormatId::Doc);
+        assert_eq!(detect_by_name("a.docx").format, FormatId::Docx);
     }
 
     #[test]

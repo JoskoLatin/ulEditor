@@ -11,6 +11,7 @@ export type FormatId =
   | 'pdf'
   | 'epub'
   | 'docx'
+  | 'doc'
   | 'xlsx'
   | 'xls'
   | 'pptx'
@@ -57,6 +58,9 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   pdf: { id: 'pdf', family: 'fixed', label: 'PDF', textual: false },
   epub: { id: 'epub', family: 'book', label: 'E-book (EPUB)', textual: false },
   docx: { id: 'docx', family: 'document', label: 'Word document', textual: false },
+  /* The same reasoning that gave `.xls` its own id: the old binary Word shares
+     nothing with a `.docx` but the name, and opens in a different editor. */
+  doc: { id: 'doc', family: 'document', label: 'Word 97-2003 document', textual: false },
   xlsx: { id: 'xlsx', family: 'sheet', label: 'Excel spreadsheet', textual: false },
   /* Its own id, not a variant of xlsx: when content decides, the format is what
      routes a file to an editor — and the old binary format opens read-only. */

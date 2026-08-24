@@ -14,7 +14,7 @@
   <a href="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-**Status:** phases 0 and 1 complete, phase 2 begun. The desktop app runs, twelve editors work, e-books and Office documents open — Word, Excel and OpenDocument alike — and the window splits in two. The interface is in English; Croatian can be selected in settings.
+**Status:** phases 0 and 1 complete, phase 2 begun. The desktop app runs, thirteen editors work, e-books and Office documents open — Word, Excel and OpenDocument alike, back to the binary formats of 1997 — and the window splits in two. The interface is in English; Croatian can be selected in settings.
 
 What phase 1 asked for and did not get: **the installers are not code-signed**, so Windows and macOS both warn on first launch — see [below](#the-warning-you-will-see-and-why). That is a certificate to buy, not code to write, and the Android build is signed.
 
@@ -69,6 +69,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **PDF text editing** | **works** — click an existing line and rewrite it, in the document's own font | the same + pdf-lib |
 | PDF pages | **works** — rotate, delete, reorder, merge, extract | pdf-lib |
 | **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader *(full editing → ProseMirror, phase 2)* |
+| **DOC** (Word 97–2003) | **works — viewing** (headings, bold, lists, tables, fields) | own OLE2/FIB reader |
 | **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells) | own reader + byte-range editing *(formulas → Univer, phase 2)* |
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
 | **ODS** (OpenDocument) | **works — viewing + cell editing**, written back into the `.ods` itself | own reader + byte-range editing |
@@ -129,6 +130,18 @@ The format returns the favour in two places. A cell carries **both** the number 
 The awkward part is that **a cell there has no address**. A worksheet in OOXML says `<c r="B4">` and can be found by name; in OpenDocument a cell's position is wherever the counting has reached, and the counting is done in repeat attributes — `table:number-columns-repeated="1021"` stands for a thousand cells nobody wrote. Putting a value in one of them means splitting the group: the run before it, the cell itself, the run after, with the counts either side still adding up to what the group stood for. The same again one dimension up for a repeated row. Only rows holding an edit are rebuilt, and inside a rebuilt row every untouched cell is copied across as its original bytes — the verification checks that every other part of the archive comes back byte for byte, and that `mimetype` goes back first and uncompressed, which is what lets any program tell what the file is without unpacking it.
 
 `.odt` opens **read-only** and says so — the Word editor rewrites a run by cutting into the bytes it came from, nothing here has been proven to that standard yet, and an editor that cannot say what it will do to the file it saves is the thing this project refuses to ship.
+
+### The binary formats of 1997
+
+`.doc` and `.xls` open too, with readers of their own. Until they did, a `.doc` produced the worst message in the program — *"this file is probably damaged"* — when it was nothing of the kind. It was written before 2007, which is where a great deal of what people actually keep still lives: contracts, minutes, court filings, everything an office wrote in the decade the format was the default.
+
+Nothing about a `.doc` resembles a `.docx`. There is no XML and no archive of parts, and the text is not stored in reading order at all. It lies scattered through the file in whatever order successive saves left it, and a **piece table** says which run of bytes holds which run of characters. Each piece declares its own width, and this is where a Croatian document gets interesting: a narrow piece is one byte per character in **CP1252**, which has `ž` and `š` but not `č`, `ć` or `đ`. So Word writes the paragraphs that need those wide and the rest narrow, **in the same file** — and a reader that assumes one encoding garbles precisely the documents written here. Both are read, and the fixture holds both on purpose.
+
+Which paragraph is a heading and which words are bold is not stored beside the text either. It lives in a second index of 512-byte pages keyed by **byte position**, so every character has to be converted back from where it is being read to where it sits in the file before its formatting can be looked up. A heading is then recognised two ways, because files do it both ways: by the number Word gives its own styles, and — for a style somebody made — by its name, which in a document written here is `Naslov 1`.
+
+And a table is not an element but **punctuation**: a paragraph ending in a cell mark instead of a paragraph mark means "this was a cell", and a paragraph carrying `sprmPFTtp` means "the row ended here". The grid is inferred rather than read.
+
+Both open **read-only**, and that is a judgement rather than a shortfall. Everything in these formats is positional — the piece table, the property pages and the field boundaries all point at byte offsets — so inserting one character means rewriting every index that points past it. There is no seam to cut along, so no `edit` is claimed: the reader hands the view over without one, which is how this codebase says read-only, and the bar above the document says it in words.
 
 ## Reading mode
 
@@ -223,6 +236,7 @@ pnpm verify:ocr       # OCR, the panel below, interface language switching
 pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
+pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm verify:all       # all of the above
 
 pnpm verify:search    # project search, in the REAL desktop application

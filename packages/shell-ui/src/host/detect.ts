@@ -194,7 +194,10 @@ export function detectByName(name: string): FormatDetection {
   if (MARKDOWN.has(ext)) return { format: 'markdown', via: 'extension', language: 'markdown' };
   if (ext === 'pdf') return { format: 'pdf', via: 'extension' };
   if (ext === 'epub') return { format: 'epub', via: 'extension' };
-  if (ext === 'docx' || ext === 'doc') return { format: 'docx', via: 'extension' };
+  if (ext === 'docx') return { format: 'docx', via: 'extension' };
+  // Its own id, for the reason `.xls` has one: the old binary Word opens in a
+  // reader of its own, and read-only.
+  if (ext === 'doc') return { format: 'doc', via: 'extension' };
   if (ext === 'xlsx') return { format: 'xlsx', via: 'extension' };
   // Its own id, not a variant of xlsx: when content decides, the format is what
   // routes the file to an editor, and the two need different ones.

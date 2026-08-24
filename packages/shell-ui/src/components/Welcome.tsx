@@ -71,6 +71,7 @@ const EDITS: FormatLine[] = [
 
 const VIEWS: FormatLine[] = [
   { format: 'odt', kind: 'OpenDocument', ext: '.odt', note: 'headings, tables and pictures in their places' },
+  { format: 'doc', kind: 'Older Word', ext: '.doc', note: 'read as written, back to 1997' },
   { format: 'epub', kind: 'Books', ext: '.epub', note: 'reading mode, contents, search' },
   { format: 'image', kind: 'Images', ext: '.png .jpg …', note: 'and the text inside them, read out by OCR' },
   { format: 'vector', kind: 'Drawings', ext: '.svg', note: 'the drawing, and its source one button away' },
