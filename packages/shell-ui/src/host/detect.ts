@@ -187,7 +187,10 @@ export function detectByName(name: string): FormatDetection {
   if (ext === 'pdf') return { format: 'pdf', via: 'extension' };
   if (ext === 'epub') return { format: 'epub', via: 'extension' };
   if (ext === 'docx' || ext === 'doc') return { format: 'docx', via: 'extension' };
-  if (ext === 'xlsx' || ext === 'xls') return { format: 'xlsx', via: 'extension' };
+  if (ext === 'xlsx') return { format: 'xlsx', via: 'extension' };
+  // Its own id, not a variant of xlsx: when content decides, the format is what
+  // routes the file to an editor, and the two need different ones.
+  if (ext === 'xls') return { format: 'xls', via: 'extension' };
   if (ext === 'pptx' || ext === 'ppt') return { format: 'pptx', via: 'extension' };
   if (ext === 'odt' || ext === 'ods' || ext === 'odp') return { format: 'odf', via: 'extension' };
   if (IMAGES.has(ext)) return { format: 'image', via: 'extension' };

@@ -34,6 +34,7 @@ import { renderDocx, type Preview } from './docx.js';
 import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText } from './ooxml.js';
+import { readXls } from './xls.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
 
 export { renderDocx } from './docx.js';
@@ -461,7 +462,9 @@ class XlsxPreviewEditor implements EditorInstance {
     root.appendChild(
       buildNotes(
         this.workbook.notes,
-        t('Cells can be retyped — double-click one. Formulas, styles and layout stay as they are.'),
+        this.workbook.readonly
+          ? t(this.workbook.readonly)
+          : t('Cells can be retyped — double-click one. Formulas, styles and layout stay as they are.'),
       ),
     );
 
@@ -530,6 +533,11 @@ class XlsxPreviewEditor implements EditorInstance {
   #onDoubleClick = (event: MouseEvent): void => {
     const target = (event.target as HTMLElement | null)?.closest('td[data-ref]');
     if (!(target instanceof HTMLElement) || target.isContentEditable) return;
+
+    if (this.workbook.readonly) {
+      this.host.notify.show('info', t(this.workbook.readonly));
+      return;
+    }
 
     const sheet = this.workbook.sheets[this.#active];
     const ref = target.dataset.ref ?? '';
@@ -636,8 +644,11 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   async save(target?: SaveTarget): Promise<SaveResult> {
-    const uri = target?.uri ?? this.doc.uri;
     const { archive } = this.workbook;
+    if (this.workbook.readonly || !archive) {
+      throw new Error(t(this.workbook.readonly ?? 'The workbook cannot be written.'));
+    }
+    const uri = target?.uri ?? this.doc.uri;
 
     /* The edits, gathered per sheet part — one part is rewritten per edited
        sheet, everything else passes through untouched. */
@@ -812,4 +823,26 @@ export const xlsxPreviewProvider: EditorProvider = {
   },
 };
 
+/**
+ * The old binary `.xls`, in the same grid — reading only. Its own provider
+ * rather than a branch of the one above, because the capability list is the
+ * honest difference: the shell marks the tab read-only before the editor is
+ * even loaded, and the grid says why when a cell is double-clicked.
+ */
+export const xlsPreviewProvider: EditorProvider = {
+  id: 'org.uleditor.xls',
+  displayName: 'Excel 97-2003',
+  matches: {
+    extensions: ['xls'],
+    mimeTypes: ['application/vnd.ms-excel'],
+  },
+  capabilities: ['view', 'search'],
+  priority: 30,
+
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new XlsxPreviewEditor(host, doc, readXls(await doc.bytes()));
+  },
+};
+
+export { readXls } from './xls.js';
 export { DocxPreviewEditor, XlsxPreviewEditor };

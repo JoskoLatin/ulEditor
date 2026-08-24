@@ -31,6 +31,7 @@ import {
   makePdf,
   makeSplitLinePdf,
   makeToUnicodePdf,
+  makeXls,
   makeXlsx,
 } from './fixtures.mjs';
 
@@ -924,6 +925,40 @@ try {
   await page.keyboard.press('Control+Z');
   const sheetClean = await until(async () => (await amount.innerText()) === '1.234,50', 10000);
   check('undo puts the old amount back', sheetClean, await amount.innerText());
+
+  /* — the old binary Excel — */
+
+  /*
+   * The bytes are proven in `verify-xls.mjs`; the page proves the routing and
+   * the honesty: a `.xls` reaches the reader (not the .xlsx editor and its
+   * "not a valid archive"), draws its values, and a double-click explains
+   * itself instead of opening a cell it could never save.
+   */
+  await dropFile(page, 'stari-cjenik.xls', makeXls());
+  const oldBook = page.locator('.ul-sheet-book:visible');
+  await oldBook.locator('td[data-ref="1,0"]').waitFor({ timeout: 20000 });
+  check(
+    'the old binary Excel opens with its diacritics intact',
+    (await oldBook.locator('td[data-ref="1,0"]').innerText()) === 'Siječanj',
+    await oldBook.locator('td[data-ref="1,0"]').innerText(),
+  );
+  check(
+    'and its amounts under their formats',
+    (await oldBook.locator('td[data-ref="1,1"]').innerText()) === '1.234,50',
+    await oldBook.locator('td[data-ref="1,1"]').innerText(),
+  );
+
+  const oldCell = oldBook.locator('td[data-ref="1,1"]');
+  await oldCell.dblclick();
+  check('a cell of the old format does not open', !(await oldCell.evaluate((el) => el.isContentEditable)));
+  check(
+    'and the grid says what to do instead',
+    await until(
+      async () => (await page.locator('.toast').last().innerText().catch(() => '')).includes('.xlsx'),
+      10000,
+    ),
+    await page.locator('.toast').last().innerText().catch(() => ''),
+  );
 
   /*
    * — screenshots —

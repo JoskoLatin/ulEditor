@@ -60,6 +60,10 @@ jobs:
       - run: pnpm verify:docx
       - run: pnpm verify:xlsx
 
+      # The old binary Excel: a hand-built compound file read back, including
+      # the shared string a CONTINUE record cuts in half.
+      - run: pnpm verify:xls
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed

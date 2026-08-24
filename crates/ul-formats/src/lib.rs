@@ -25,6 +25,8 @@ pub enum FormatId {
     Epub,
     Docx,
     Xlsx,
+    /// The old binary Excel (97–2003) — read, never written.
+    Xls,
     Pptx,
     Odf,
     Image,
@@ -45,6 +47,7 @@ impl FormatId {
             Self::Epub => "epub",
             Self::Docx => "docx",
             Self::Xlsx => "xlsx",
+            Self::Xls => "xls",
             Self::Pptx => "pptx",
             Self::Odf => "odf",
             Self::Image => "image",
@@ -222,7 +225,10 @@ pub fn detect_by_name(name: &str) -> Detection {
         "pdf" => FormatId::Pdf,
         "epub" => FormatId::Epub,
         "docx" | "doc" => FormatId::Docx,
-        "xlsx" | "xls" => FormatId::Xlsx,
+        "xlsx" => FormatId::Xlsx,
+        // Its own id, not a variant of xlsx: when content decides, the format is
+        // what routes the file to an editor, and the two need different ones.
+        "xls" => FormatId::Xls,
         "pptx" | "ppt" => FormatId::Pptx,
         "odt" | "ods" | "odp" => FormatId::Odf,
         "zip" | "7z" | "tar" | "gz" => FormatId::Archive,
@@ -432,6 +438,20 @@ mod tests {
         let mut xlsx = b"PK\x03\x04".to_vec();
         xlsx.extend_from_slice(b"........xl/workbook.xml");
         assert_eq!(detect("a.bin", &xlsx).format, FormatId::Xlsx);
+    }
+
+    #[test]
+    fn old_binary_excel_is_its_own_format() {
+        // When content decides, the format routes the file to an editor — and
+        // the old binary format must reach the reader, not the .xlsx editor.
+        let mut xls = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        xls.extend_from_slice(&[0u8; 16]);
+        let d = detect("Promet po lokalima.xls", &xls);
+        assert_eq!(d.format, FormatId::Xls);
+        assert_eq!(d.via, DetectedVia::Magic);
+
+        assert_eq!(detect_by_name("a.xls").format, FormatId::Xls);
+        assert_eq!(detect_by_name("a.xlsx").format, FormatId::Xlsx);
     }
 
     #[test]

@@ -12,6 +12,7 @@ export type FormatId =
   | 'epub'
   | 'docx'
   | 'xlsx'
+  | 'xls'
   | 'pptx'
   | 'odf'
   | 'image'
@@ -55,6 +56,9 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
   epub: { id: 'epub', family: 'book', label: 'E-book (EPUB)', textual: false },
   docx: { id: 'docx', family: 'document', label: 'Word document', textual: false },
   xlsx: { id: 'xlsx', family: 'sheet', label: 'Excel spreadsheet', textual: false },
+  /* Its own id, not a variant of xlsx: when content decides, the format is what
+     routes a file to an editor — and the old binary format opens read-only. */
+  xls: { id: 'xls', family: 'sheet', label: 'Excel 97-2003 spreadsheet', textual: false },
   pptx: { id: 'pptx', family: 'slides', label: 'PowerPoint presentation', textual: false },
   odf: { id: 'odf', family: 'document', label: 'OpenDocument', textual: false },
   image: { id: 'image', family: 'media', label: 'Image', textual: false },

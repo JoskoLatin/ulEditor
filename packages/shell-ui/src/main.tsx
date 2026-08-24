@@ -179,6 +179,24 @@ shell.registry.register(
 shell.registry.register(
   lazyProvider(
     {
+      id: 'org.uleditor.xls',
+      displayName: 'Excel 97-2003',
+      matches: {
+        extensions: ['xls'],
+        mimeTypes: ['application/vnd.ms-excel'],
+      },
+      /* No `edit`: the old binary format is read, never written — the tab is
+         read-only from the moment it opens, and the grid says why. */
+      capabilities: ['view', 'search'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).xlsPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
       id: 'org.uleditor.pdf',
       displayName: 'PDF viewer',
       matches: {

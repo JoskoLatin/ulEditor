@@ -40,13 +40,17 @@ export interface Sheet {
 export interface Workbook {
   sheets: Sheet[];
   notes: string[];
-  /** The opened archive, kept for the save — see `xlsx-edit.ts`. */
-  archive: Archive;
+  /** The opened archive, kept for the save — see `xlsx-edit.ts`. Absent for the
+   *  old binary format, which is never written. */
+  archive?: Archive;
+  /** Why the workbook cannot be edited — an English source string for `t()`.
+   *  Set for the old binary `.xls`, whose writing nobody should attempt. */
+  readonly?: string;
 }
 
 /** Above this the viewer stops being usable, and few people look at that much at once. */
-const MAX_ROWS = 5000;
-const MAX_COLS = 256;
+export const MAX_ROWS = 5000;
+export const MAX_COLS = 256;
 
 /* ── cell references ─────────────────────────────────────────────────── */
 
@@ -81,7 +85,7 @@ function formatSkeleton(code: string): string {
     .replace(/\\./g, '');
 }
 
-function isDateFormat(id: number, code: string | undefined): boolean {
+export function isDateFormat(id: number, code: string | undefined): boolean {
   if (BUILTIN_DATE.has(id)) return true;
   if (!code) return false;
   return /[ymdhs]/i.test(formatSkeleton(code));
@@ -103,7 +107,7 @@ function serialToDate(serial: number): Date {
   return new Date(Date.UTC(1899, 11, 30) + Math.round(serial * 86400000));
 }
 
-function formatDate(serial: number, code: string | undefined): string {
+export function formatDate(serial: number, code: string | undefined): string {
   const date = serialToDate(serial);
   const pad = (n: number) => String(n).padStart(2, '0');
   const day = `${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}.${date.getUTCFullYear()}.`;
@@ -118,7 +122,7 @@ function formatDate(serial: number, code: string | undefined): string {
   return day;
 }
 
-function formatNumber(value: number, code: string | undefined): string {
+export function formatNumber(value: number, code: string | undefined): string {
   const skeleton = formatSkeleton(code ?? '');
   const percent = skeleton.includes('%');
   const grouped = skeleton.includes('#,#') || skeleton.includes('0,0');

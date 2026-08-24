@@ -136,7 +136,8 @@
       },
       {
         "ext": [
-          "xlsx"
+          "xlsx",
+          "xls"
         ],
         "name": "Excel spreadsheet",
         "description": "Excel spreadsheet",

@@ -635,3 +635,124 @@ export function makeXlsx() {
     'xl/worksheets/sheet2.xml': strToU8(sheet2),
   });
 }
+
+/**
+ * An old binary Excel file — `.xls`, Excel 97–2003 — assembled by hand.
+ *
+ * Two layers, both spelled out: an OLE2 compound file whose FAT, directory and
+ * `Workbook` stream are written sector by sector, and BIFF8 records inside the
+ * stream. Hand-built for the same reason the PDFs above are: what is being
+ * tested stays visible, and the trickiest case — a shared string cut in half
+ * by a CONTINUE record, resuming under a different flags byte — can be forced
+ * on demand with `opts.splitSst`, which no real writer produces small.
+ *
+ * @param {{ splitSst?: boolean, biff5?: boolean }} [opts]
+ */
+export function makeXls(opts = {}) {
+  const u16 = (n) => [n & 0xff, (n >> 8) & 0xff];
+  const u32 = (n) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+  const f64 = (n) => {
+    const view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, n, true);
+    return [...new Uint8Array(view.buffer)];
+  };
+  const wide = (text) => [...text].flatMap((ch) => u16(ch.codePointAt(0)));
+  const narrow = (text) => [...text].map((ch) => ch.codePointAt(0));
+  const rec = (id, payload) => [...u16(id), ...u16(payload.length), ...payload];
+
+  // One compressed string, one wide one (a *wide* letter has no single-byte form).
+  const sstString = (text) =>
+    /[^ -ÿ]/.test(text)
+      ? [...u16(text.length), 0x01, ...wide(text)]
+      : [...u16(text.length), 0x00, ...narrow(text)];
+
+  const strings = ['Mjesec', 'Iznos', 'Siječanj', 'uniquexls'];
+  const xf = (numfmt) => [...u16(0), ...u16(numfmt), ...u16(0), ...new Array(14).fill(0)];
+
+  /* The globals substream. The BOUNDSHEET's sheet offset is patched afterwards,
+     once the length of the globals is known. */
+  const sheetNameBytes = narrow('List1');
+  const globals = [];
+  globals.push(...rec(0x0809, [...u16(opts.biff5 ? 0x0500 : 0x0600), ...u16(0x0005), ...new Array(12).fill(0)]));
+  globals.push(...rec(0x0022, u16(0)));
+  globals.push(...rec(0x00e0, xf(0)));
+  globals.push(...rec(0x00e0, xf(14)));
+  globals.push(...rec(0x00e0, xf(4)));
+
+  if (opts.splitSst) {
+    /* The third string cut after four characters; the CONTINUE resumes with its
+       own flags byte. The other strings ride along whole. */
+    const head = strings.slice(0, 2).flatMap(sstString);
+    const cut = [...u16(8), 0x01, ...wide('Sije')];
+    globals.push(...rec(0x00fc, [...u32(4), ...u32(4), ...head, ...cut]));
+    globals.push(...rec(0x003c, [0x01, ...wide('čanj'), ...sstString('uniquexls')]));
+  } else {
+    globals.push(...rec(0x00fc, [...u32(4), ...u32(4), ...strings.flatMap(sstString)]));
+  }
+
+  const boundsheetLen = 4 + 4 + 2 + 1 + 1 + sheetNameBytes.length;
+  const sheetOffset = globals.length + boundsheetLen + 4; // + the EOF record
+  globals.push(...rec(0x0085, [...u32(sheetOffset), ...u16(0), sheetNameBytes.length, 0x00, ...sheetNameBytes]));
+  globals.push(...rec(0x000a, []));
+
+  /* The worksheet: two labels, a formatted amount, a date as RK, a merge. */
+  const cell = (row, col, ixfe) => [...u16(row), ...u16(col), ...u16(ixfe)];
+  const sheet = [];
+  sheet.push(...rec(0x0809, [...u16(0x0600), ...u16(0x0010), ...new Array(12).fill(0)]));
+  sheet.push(...rec(0x00fd, [...cell(0, 0, 0), ...u32(0)]));
+  sheet.push(...rec(0x00fd, [...cell(0, 1, 0), ...u32(1)]));
+  sheet.push(...rec(0x00fd, [...cell(1, 0, 0), ...u32(2)]));
+  sheet.push(...rec(0x00fd, [...cell(3, 0, 0), ...u32(3)]));
+  sheet.push(...rec(0x0203, [...cell(1, 1, 2), ...f64(1234.5)]));
+  // 15 June 2026 is serial 46188; an RK integer is the value shifted left twice.
+  sheet.push(...rec(0x027e, [...cell(1, 2, 1), ...u32((46188 << 2) | 0x02)]));
+  sheet.push(...rec(0x00e5, [...u16(1), ...u16(2), ...u16(2), ...u16(0), ...u16(1)]));
+  sheet.push(...rec(0x000a, []));
+
+  /* The stream, padded past the 4096-byte mini-stream cutoff so it may legally
+     live in ordinary sectors and the fixture needs no mini FAT at all. */
+  const stream = new Uint8Array(4096);
+  stream.set([...globals, ...sheet]);
+
+  /* The compound file: sector 0 the FAT, sector 1 the directory, 2-9 the stream. */
+  const sectorSize = 512;
+  const out = new Uint8Array(sectorSize * 11);
+  const view = new DataView(out.buffer);
+
+  out.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  view.setUint16(24, 0x003e, true); // minor
+  view.setUint16(26, 0x0003, true); // major — the 512-byte-sector version
+  view.setUint16(28, 0xfffe, true); // byte order
+  view.setUint16(30, 9, true); // 2^9 = 512
+  view.setUint16(32, 6, true); // 2^6 = 64
+  view.setUint32(44, 1, true); // one FAT sector
+  view.setUint32(48, 1, true); // the directory starts at sector 1
+  view.setUint32(56, 4096, true); // mini-stream cutoff
+  view.setUint32(60, 0xfffffffe, true); // no mini FAT
+  view.setUint32(68, 0xfffffffe, true); // no extra DIFAT
+  view.setUint32(76, 0, true); // DIFAT[0] -> the FAT sector
+  for (let i = 1; i < 109; i++) view.setUint32(76 + i * 4, 0xffffffff, true);
+
+  const fatAt = sectorSize;
+  view.setUint32(fatAt, 0xfffffffd, true); // sector 0: the FAT itself
+  view.setUint32(fatAt + 4, 0xfffffffe, true); // sector 1: the directory, one sector
+  for (let i = 2; i <= 9; i++) view.setUint32(fatAt + i * 4, i === 9 ? 0xfffffffe : i + 1, true);
+  for (let i = 10; i < sectorSize / 4; i++) view.setUint32(fatAt + i * 4, 0xffffffff, true);
+
+  const entry = (index, name, type, start, size) => {
+    const at = sectorSize * 2 + index * 128;
+    name.split('').forEach((ch, i) => view.setUint16(at + i * 2, ch.charCodeAt(0), true));
+    view.setUint16(at + 64, (name.length + 1) * 2, true);
+    view.setUint8(at + 66, type);
+    view.setUint32(at + 68, 0xffffffff, true); // left sibling
+    view.setUint32(at + 72, 0xffffffff, true); // right sibling
+    view.setUint32(at + 76, type === 5 ? 1 : 0xffffffff, true); // the root's child
+    view.setUint32(at + 116, start, true);
+    view.setUint32(at + 120, size, true);
+  };
+  entry(0, 'Root Entry', 5, 0xfffffffe, 0);
+  entry(1, 'Workbook', 2, 2, stream.length);
+
+  out.set(stream, sectorSize * 3);
+  return out;
+}
