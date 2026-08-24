@@ -219,9 +219,16 @@ fn save_as_new_file_is_allowed() {
     dir.write("postojeca.md", b"# Postoji\n");
 
     let mut workspace = Workspace::new();
-    let root = workspace.add_root(dir.path()).expect("korijen");
+    workspace.add_root(dir.path()).expect("korijen");
 
-    let fresh = root.join("new.md");
+    /*
+     * Built from the plain folder path, not from what `add_root` handed back.
+     * That distinction is the whole test: `add_root` returns the canonical form,
+     * and on Windows that is `\\?\C:\…` — so a target built from it matched by
+     * accident while the application, which passes the path the save dialog
+     * gave it, was refused. This test used to pass over a save that failed.
+     */
+    let fresh = dir.path().join("new.md");
     workspace
         .write(&fresh, b"# New\n")
         .expect("saving the new file");

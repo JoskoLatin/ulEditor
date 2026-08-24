@@ -114,9 +114,19 @@ async fn pick_files(
     Ok(out)
 }
 
+/// Where a converted or exported file should go.
+///
+/// The chosen folder is **granted** before the path is handed back. Choosing a
+/// file in a dialog the operating system drew is the strongest permission there
+/// is — stronger than anything this program could ask for itself — and without
+/// recording it the write that follows was refused by our own sandbox, with a
+/// message saying the file escaped a workspace the user had just pointed at.
+/// Granted rather than opened: naming a folder to save into is not asking to
+/// browse it, so it stays out of the tree.
 #[tauri::command]
 async fn pick_save_target(
     app: tauri::AppHandle,
+    state: State<'_, AppState>,
     suggested_name: String,
 ) -> Result<Option<String>, VfsError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -127,12 +137,15 @@ async fn pick_save_target(
             let _ = tx.send(picked);
         });
 
-    Ok(rx
-        .await
-        .ok()
-        .flatten()
-        .and_then(|p| p.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned()))
+    let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+
+    if let Some(parent) = path.parent() {
+        with_workspace(&state, |workspace| workspace.grant_folder(parent))?;
+    }
+
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 /// Opens a web link in the system browser.
@@ -273,7 +286,7 @@ async fn scan_library(
         let mut usable = Vec::new();
         for root in &roots {
             // Missing folders are expected — the list is the same for every device.
-            if workspace.add_library_root(root).is_ok() {
+            if workspace.grant_folder(root).is_ok() {
                 usable.push(root.clone());
             }
         }

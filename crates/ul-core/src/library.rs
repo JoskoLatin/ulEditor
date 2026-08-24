@@ -446,12 +446,12 @@ mod tests {
 
     /// The library may read its own folders, but must not push them into the explorer.
     #[test]
-    fn library_roots_do_not_enter_the_tree() {
+    fn a_granted_folder_does_not_enter_the_tree() {
         let dir = temp_dir("roots");
         fs::write(dir.join("ugovor.pdf"), b"%PDF").unwrap();
 
         let mut workspace = Workspace::new();
-        workspace.add_library_root(&dir).unwrap();
+        workspace.grant_folder(&dir).unwrap();
 
         assert!(
             workspace.roots().is_empty(),

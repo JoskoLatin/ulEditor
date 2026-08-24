@@ -75,7 +75,7 @@ pub(crate) fn is_noise(name: &str) -> bool {
 #[derive(Debug, Default)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
-    library_roots: Vec<PathBuf>,
+    granted: Vec<PathBuf>,
 }
 
 impl Workspace {
@@ -99,42 +99,53 @@ impl Workspace {
         Ok(canonical)
     }
 
-    /// A location the library scanned.
+    /// A folder the user reached without opening it — permitted, but not shown.
     ///
-    /// Kept apart from `roots` for a reason: a document from the library must
-    /// be openable, so its folder has to pass through `resolve` — but it must
-    /// not show up in the explorer tree. Otherwise, on desktop, a single glance
-    /// at the library would quietly drop Documents, Downloads, Desktop and
-    /// Pictures among the user's opened folders, which nobody asked for.
-    pub fn add_library_root(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+    /// Kept apart from `roots` for a reason: what is in `roots` is what the
+    /// explorer draws. Two things need to pass through `resolve` without
+    /// appearing there.
+    ///
+    /// The library is one: a document it found must be openable, but a single
+    /// glance at the library would otherwise drop Documents, Downloads, Desktop
+    /// and Pictures among the user's opened folders, which nobody asked for.
+    ///
+    /// The save dialog is the other. Choosing a file in it is an explicit grant
+    /// — the user named the folder to a dialog the operating system drew, which
+    /// is a stronger act of permission than anything inside this program — and
+    /// without recording it the write that follows is refused by our own
+    /// sandbox. The folder still does not belong in the tree: saving a
+    /// converted spreadsheet somewhere is not asking to browse there.
+    pub fn grant_folder(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
         let canonical = fs::canonicalize(path.as_ref())?;
         if !canonical.is_dir() {
             return Err(VfsError::NotADirectory(display(&canonical)));
         }
-        if !self.library_roots.contains(&canonical) {
-            self.library_roots.push(canonical.clone());
+        if !self.granted.contains(&canonical) {
+            self.granted.push(canonical.clone());
         }
         Ok(canonical)
     }
 
     /// Resolves a path and checks that it stays inside one of the roots.
     ///
-    /// It does not rely on `canonicalize` for files that do not exist yet
-    /// (save-as), so `..` is removed lexically before the check.
+    /// `..` is removed lexically first, because a file that does not exist yet
+    /// (save-as) cannot be resolved by the file system at all — and then as
+    /// much of the path as does exist is resolved for real, so a symlink out of
+    /// the workspace is caught. See `canonical_prefix`.
     pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
-        if self.roots.is_empty() && self.library_roots.is_empty() {
+        if self.roots.is_empty() && self.granted.is_empty() {
             return Err(VfsError::NoWorkspace);
         }
 
         let normalized = normalize(path.as_ref());
 
-        // A symlink can lead outside; for existing paths we check the real one too.
-        let effective = fs::canonicalize(&normalized).unwrap_or_else(|_| normalized.clone());
+        // A symlink can lead outside; the real path is what gets checked.
+        let effective = canonical_prefix(&normalized);
 
         let allowed = self
             .roots
             .iter()
-            .chain(self.library_roots.iter())
+            .chain(self.granted.iter())
             .any(|root| effective.starts_with(root));
 
         if allowed {
@@ -249,6 +260,44 @@ pub(crate) fn display(path: &Path) -> String {
     }
 }
 
+/// Canonicalises as much of a path as exists, keeping the rest as it was written.
+///
+/// A file that is not there yet cannot be canonicalised, and on Windows that is
+/// not a cosmetic difference: `fs::canonicalize` hands back the extended-length
+/// form, `\\?\C:\Users\…`, which is what the roots are stored as — while a path
+/// to something that does not exist stays plain `C:\Users\…`. Comparing the two
+/// never matches.
+///
+/// Every write until now went to a file that was already there, so the two
+/// forms always agreed and this stayed invisible. The first save that creates a
+/// file — the `.xls` and `.ods` conversions, which write a new `.xlsx` beside
+/// the original — was refused as an escape from the very folder it was being
+/// written into.
+///
+/// Walking up to the nearest ancestor that does exist and re-attaching the rest
+/// puts both sides in the same form. It does not weaken the check: the part
+/// that exists is still resolved through the file system, symlinks included,
+/// and the part that does not cannot be a symlink to anywhere.
+fn canonical_prefix(path: &Path) -> PathBuf {
+    if let Ok(real) = fs::canonicalize(path) {
+        return real;
+    }
+
+    let mut tail = Vec::new();
+    let mut cursor = path;
+    while let (Some(parent), Some(name)) = (cursor.parent(), cursor.file_name()) {
+        tail.push(name.to_owned());
+        if let Ok(real) = fs::canonicalize(parent) {
+            let mut out = real;
+            out.extend(tail.iter().rev());
+            return out;
+        }
+        cursor = parent;
+    }
+
+    path.to_path_buf()
+}
+
 /// Lexical normalisation: drops `.` and resolves `..` without touching the disk.
 fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -321,6 +370,40 @@ mod tests {
         let escaped = dir.join("..").join("..").join("etc").join("passwd");
         assert!(matches!(
             workspace.resolve(escaped),
+            Err(VfsError::OutsideWorkspace(_))
+        ));
+    }
+
+    /// The case that was broken: saving a file that does not exist yet, into a
+    /// folder that is open. On Windows the root is stored as `\\?\C:\…` and a
+    /// path to something not on disk stays `C:\…`, so the two never matched and
+    /// the write was refused as leaving the folder it was going into.
+    #[test]
+    fn a_file_that_does_not_exist_yet_resolves_inside_a_root() {
+        let mut workspace = Workspace::new();
+        let dir = std::env::temp_dir();
+        workspace.add_root(&dir).expect("temp has to exist");
+
+        let fresh = dir.join("ul-nothing-here-yet.xlsx");
+        assert!(!fresh.exists(), "the test needs a name nothing uses");
+        assert!(workspace.resolve(&fresh).is_ok());
+    }
+
+    /// And it must not have opened a door: a path that does not exist *outside*
+    /// the roots is still refused, however far up its first real ancestor is.
+    #[test]
+    fn a_file_that_does_not_exist_yet_is_still_kept_inside() {
+        let mut workspace = Workspace::new();
+        let dir = std::env::temp_dir();
+        workspace.add_root(&dir).expect("temp has to exist");
+
+        let outside = dir
+            .join("..")
+            .join("ul-not-here-either")
+            .join("deep")
+            .join("file.xlsx");
+        assert!(matches!(
+            workspace.resolve(outside),
             Err(VfsError::OutsideWorkspace(_))
         ));
     }
