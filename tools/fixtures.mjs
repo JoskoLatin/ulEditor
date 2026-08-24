@@ -456,7 +456,21 @@ export function makeMultiPagePdf(count = 3) {
 
 /** A ZIP that looks like a .docx but has no content — for checking the error message. */
 export function makeFakeDocx() {
-  return 'PK' + ' '.repeat(26) + 'word/document.xml' + ' '.repeat(40);
+  /*
+   * A **real** ZIP local-file header over bytes that are not an archive: the
+   * four signature bytes, a plausible header, the part name that says "Word",
+   * and then the file stops in the middle of it.
+   *
+   * The signature has to be genuine. This fixture used to be the plain string
+   * `PK…word/document.xml`, which detection quite rightly reads as a text file
+   * that has been misnamed — so it opened in the text editor, showed its own
+   * contents, and never reached the Word reader whose message this checks. A
+   * document that is damaged and one that was never a document are two
+   * different things, and only the first belongs here.
+   */
+  const header = [0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00];
+  const name = [...'word/document.xml'].map((ch) => ch.charCodeAt(0));
+  return Uint8Array.from([...header, ...new Array(16).fill(0), ...name, 0xff, 0xfe, 0xfd]);
 }
 
 /* ── ZIP kontejneri ──────────────────────────────────────────────────── */

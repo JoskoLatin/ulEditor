@@ -387,6 +387,31 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
     if by_name.format == FormatId::Unknown {
         return Detection::new(FormatId::Text, DetectedVia::Fallback);
     }
+
+    // The name claims a format that cannot be text, and the bytes are text.
+    // Every format below is *defined* by a signature; none of them matched, so
+    // the name is simply wrong, and honouring it hands the file to a reader
+    // that can only report a perfectly good file as damaged. Textual formats
+    // are deliberately absent: an ASCII `.stl`, an `.obj` and an `.svg` are all
+    // text and all correctly named.
+    if matches!(
+        by_name.format,
+        FormatId::Pdf
+            | FormatId::Epub
+            | FormatId::Docx
+            | FormatId::Doc
+            | FormatId::Xlsx
+            | FormatId::Xls
+            | FormatId::Pptx
+            | FormatId::Odt
+            | FormatId::Ods
+            | FormatId::Odf
+            | FormatId::Image
+            | FormatId::Archive
+    ) {
+        return Detection::new(FormatId::Text, DetectedVia::Magic);
+    }
+
     by_name
 }
 
@@ -506,6 +531,32 @@ mod tests {
 
         assert_eq!(detect_by_name("a.doc").format, FormatId::Doc);
         assert_eq!(detect_by_name("a.docx").format, FormatId::Docx);
+    }
+
+    #[test]
+    fn a_text_file_named_xls_is_text() {
+        // A real file: a tab-separated instrument export named `.xls`. The name
+        // sent it to the BIFF reader, which said the file was damaged. It is a
+        // perfectly good text file and opens as one.
+        let tsv = b"Model Name	CV600
+Serial Number	19J00789
+Time	2021/01/04
+";
+        let d = detect("ESPD2021_0104_231446.xls", tsv);
+        assert_eq!(d.format, FormatId::Text);
+        assert_eq!(d.via, DetectedVia::Magic);
+
+        // An ASCII model is text too, and is *not* renamed out of its viewer.
+        let stl = b"solid cube
+ facet normal 0 0 1
+ endfacet
+endsolid cube
+";
+        assert_eq!(detect("cube.stl", stl).format, FormatId::Model);
+        assert_eq!(
+            detect("drawing.svg", b"<svg xmlns=\"...\"></svg>").format,
+            FormatId::Vector
+        );
     }
 
     #[test]

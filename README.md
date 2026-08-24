@@ -78,10 +78,22 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
 | **3D models** | **works — viewing** (STL, OBJ, PLY, glTF, GLB, 3MF — turn, zoom, wireframe, triangle count) | three.js *(loaded only when a model is opened)* |
+| **RTF** | recognised by its first bytes, not read yet — and no longer reported as a damaged Word file | — |
 | Corel `.cdr`, EPS, PostScript | phase 2 — each says so on opening rather than showing a blank page | LibreOffice headless (libcdr) |
 | PPTX, ODP, ODG | phase 5 | Univer Slides |
 
 Formats that have no editor yet open with **a clear explanation of what is missing and when it arrives**, not with a blank screen.
+
+**The bytes decide, and they outrank the name.** Running the readers over a
+folder of real documents turned up two files whose names lied: Rich Text saved
+as `.doc`, and a tab-separated instrument export saved as `.xls`. Both were
+perfectly good files, and both were handed to a binary reader that could only
+report them as damaged. A format that is *defined* by a signature — PDF, the
+OOXML and OpenDocument containers, the old binary Office pair — is therefore
+never accepted on the strength of its extension alone: if none of the
+signatures matched and what is left reads as text, it opens as text. Formats
+that genuinely are text keep their own readers, so an ASCII `.stl` is still a
+model and an `.svg` is still a drawing.
 
 Annotations are written as **real PDF objects** (`/Highlight`, `/Text`, `/Ink`), not as a drawing stamped into the page — Acrobat and other readers open, edit and delete them as their own. Annotations already present in a file are loaded and displayed.
 

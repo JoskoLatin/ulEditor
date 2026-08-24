@@ -32,6 +32,12 @@ function check(name, passed, detail = '') {
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
+/* Written as codes because the shells and formatters between here and the file
+   have each had their own opinion about a lone backslash. */
+const BACKSLASH = String.fromCharCode(92);
+const TAB = String.fromCharCode(9);
+const NEWLINE = String.fromCharCode(10);
+
 const bytes = makeDoc();
 
 /* ── the container ───────────────────────────────────────────────────── */
@@ -168,6 +174,48 @@ check(
 check(
   'and so is everything about the look that is not carried across',
   [...notes].some((note) => /Fonts, sizes/.test(note)),
+);
+
+/* ── what a .doc turns out not to be ─────────────────────────────────── */
+
+/*
+ * Both of these came out of running the readers over a folder of real files,
+ * and both produced the same lie: *"this document is damaged."* It was not.
+ * The name had outranked the bytes — in the one place the header of detect.ts
+ * says it must never happen.
+ */
+const { detect } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/host/detect.ts')).href
+);
+const asBytes = (text) => new TextEncoder().encode(text);
+
+check(
+  'a real .doc is still a .doc',
+  detect('zapisnik.doc', bytes).format === 'doc',
+  detect('zapisnik.doc', bytes).format,
+);
+check(
+  'Rich Text saved under a .doc name is Rich Text',
+  detect('Upitnik.doc', asBytes('{RTFrtf1RTFansi Postovani,RTFpar}'.replaceAll('RTF', BACKSLASH))).format === 'rtf',
+  detect('Upitnik.doc', asBytes('{RTFrtf1RTFansi'.replaceAll('RTF', BACKSLASH))).format,
+);
+check(
+  'a tab-separated export named .xls is text, not a damaged workbook',
+  detect('ESPD2021.xls', asBytes('Model NameTABCV600NLSerial NumberTAB19J00789NL'.replaceAll('TAB', TAB).replaceAll('NL', NEWLINE))).format === 'text',
+  detect('ESPD2021.xls', asBytes('Model NameTABCV600'.replaceAll('TAB', TAB))).format,
+);
+
+/* The rule is about formats that cannot exist without a signature. Plenty of
+   correctly named files are text — and must not be swept up with the liars. */
+check(
+  'an ASCII model stays a model',
+  detect('cube.stl', asBytes('solid cubeNL facet normal 0 0 1NLendsolid cubeNL'.replaceAll('NL', NEWLINE))).format === 'model',
+  detect('cube.stl', asBytes('solid cube')).format,
+);
+check(
+  'and a drawing stays a drawing',
+  detect('crtez.svg', asBytes('<svg xmlns="http://www.w3.org/2000/svg"></svg>')).format === 'vector',
+  detect('crtez.svg', asBytes('<svg></svg>')).format,
 );
 
 /* ── the refusals ────────────────────────────────────────────────────── */

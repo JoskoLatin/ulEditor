@@ -164,6 +164,27 @@ function classifyZip(bytes: Uint8Array): FormatId {
   return 'archive';
 }
 
+/**
+ * Formats a file cannot be without carrying the signature for it.
+ *
+ * Checked against the *name*, not the content: these are the claims that a
+ * textual file disproves by being textual at all.
+ */
+const SEALED = new Set<FormatId>([
+  'pdf',
+  'epub',
+  'docx',
+  'doc',
+  'xlsx',
+  'xls',
+  'pptx',
+  'odt',
+  'ods',
+  'odf',
+  'image',
+  'archive',
+]);
+
 /** The text heuristic: a NUL byte almost always means binary content. */
 function looksTextual(bytes: Uint8Array): boolean {
   const end = Math.min(bytes.length, 2048);
@@ -229,7 +250,8 @@ export function detect(name: string, bytes: Uint8Array): FormatDetection {
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46])) return { format: 'pdf', via: 'magic' }; // %PDF
 
   /*
-   * `{tf` — and it is checked here, before anything reads the extension,
+   * `{
+tf` — and it is checked here, before anything reads the extension,
    * because the file that made this necessary is named `.doc` and is not one.
    * Word has always been happy to save Rich Text under the Word extension, and
    * the old binary reader met one and reported the only thing it could: that
@@ -268,5 +290,22 @@ export function detect(name: string, bytes: Uint8Array): FormatDetection {
   }
 
   if (byName.format === 'unknown') return { format: 'text', via: 'fallback' };
+
+  /*
+   * The name claims a format that cannot be text, and the bytes are text.
+   *
+   * Every format in `SEALED` is *defined* by a signature — a PDF begins `%PDF`,
+   * an OOXML file is a ZIP, an old Office file is a compound file. If none of
+   * those matched above and what is left reads as plain text, the name is
+   * simply wrong, and honouring it hands the file to a reader that can only
+   * report that a perfectly good file is damaged. That is not a hypothetical:
+   * a tab-separated export named `.xls` did exactly that.
+   *
+   * Textual formats are deliberately absent from the list. An ASCII `.stl`, an
+   * `.obj` and an `.svg` are all text and all correctly named, and the 3D and
+   * vector viewers read them as such.
+   */
+  if (SEALED.has(byName.format)) return { format: 'text', via: 'magic' };
+
   return byName;
 }
