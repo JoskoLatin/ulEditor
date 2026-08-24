@@ -30,6 +30,7 @@ import {
   makeMultiPagePdf,
   makePdf,
   makeSplitLinePdf,
+  makeToUnicodePdf,
 } from './fixtures.mjs';
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -769,6 +770,115 @@ try {
   check('undo brings the deleted page back', threeAgain);
 
   await page.screenshot({ path: resolve(SHOTS, 'pages.png') });
+
+  /* — a document font the screen does not have — */
+
+  /*
+   * Google Fonts is played by routes: the checks must not depend on a network,
+   * and a real family could genuinely be installed on somebody's machine —
+   * which would silently skip the very state being checked. `Downloadia` is
+   * served (the bytes are Liberation Sans, which is beside the point);
+   * `Fantomica` is not, so its button has to fall back to a browser search.
+   */
+  const ttf = await readFile(
+    resolve(ROOT, 'packages/editor-pdf/node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf'),
+  );
+  await page.route('https://fonts.googleapis.com/**', (route) => {
+    if (route.request().url().includes('Downloadia')) {
+      void route.fulfill({
+        contentType: 'text/css',
+        body: '@font-face { font-family: "Downloadia"; font-style: normal; font-weight: 400; src: url(https://fonts.gstatic.com/mock/regular.ttf) format("truetype"); }',
+      });
+    } else {
+      /* Google answers an unknown family with a 400; an empty stylesheet takes
+         the same no-faces path without a resource error in the console, which
+         the last check reads as the page's own failure. */
+      void route.fulfill({ contentType: 'text/css', body: '' });
+    }
+  });
+  await page.route('https://fonts.gstatic.com/**', (route) => {
+    void route.fulfill({ contentType: 'font/ttf', body: ttf });
+  });
+
+  const openLineOf = async (pane, text) => {
+    await until(
+      async () => (await pane.locator('.ul-pdf-text').innerText().catch(() => '')).includes(text),
+      20000,
+    );
+    const line = await pane.locator('.ul-pdf-text span', { hasText: text }).first().boundingBox();
+    await pane.locator('.ul-pdf-tool[title*="Edit text"]').click();
+    await page.mouse.click(line.x + Math.min(line.width / 2, 20), line.y + line.height / 2);
+    /* Scoped to the visible pane: the editor closed in a background tab keeps
+       its textarea in the document, and the bare selector finds that one first. */
+    await pane.locator('.ul-pdf-text-input').waitFor({ timeout: 15000 });
+  };
+
+  await dropFile(
+    page,
+    'downloadia.pdf',
+    new TextEncoder().encode(makeToUnicodePdf('Set in a foreign font', { embedded: true, font: 'Downloadia' })),
+  );
+  const foreign = page.locator('.ul-pdf:visible');
+  await openLineOf(foreign, 'foreign');
+
+  const fetchButton = foreign.locator('.ul-pdf-fetch-font');
+  check(
+    'a font the screen does not have grows a download button',
+    await fetchButton.isVisible(),
+  );
+
+  await fetchButton.click();
+  /* Not `document.fonts.check` — that answers "is anything still loading?" and
+     is true for a family it never heard of. The registered face itself is the
+     evidence. */
+  const fetched = await until(
+    async () =>
+      page.evaluate(() =>
+        [...document.fonts].some(
+          (f) => f.family.replace(/"/g, '') === 'Downloadia' && f.status === 'loaded',
+        ),
+      ),
+    15000,
+  );
+  check('clicking it fetches the family from Google Fonts', fetched);
+  const buttonGone = await until(async () => !(await fetchButton.isVisible()), 10000);
+  check('and the button leaves once the screen has it', buttonGone);
+  await page.keyboard.press('Escape');
+
+  /* The other answer: a family Google Fonts does not carry. */
+  await page.evaluate(() => {
+    window.__opened = [];
+    window.open = (target) => {
+      window.__opened.push(String(target));
+      return null;
+    };
+  });
+  await dropFile(
+    page,
+    'fantomica.pdf',
+    new TextEncoder().encode(makeToUnicodePdf('Nobody carries this one', { embedded: true, font: 'Fantomica' })),
+  );
+  const nowhere = page.locator('.ul-pdf:visible');
+  await openLineOf(nowhere, 'carries');
+
+  await nowhere.locator('.ul-pdf-fetch-font').click();
+  const searched = await until(
+    async () => page.evaluate(() => (window.__opened ?? []).length > 0),
+    15000,
+  );
+  const openedUrl = await page.evaluate(() => window.__opened?.[0] ?? '');
+  check(
+    'a family Google Fonts does not carry goes to a browser search',
+    searched && openedUrl.includes('google.com/search') && openedUrl.includes('Fantomica'),
+    openedUrl,
+  );
+  check(
+    'and the button stays, because the screen still does not have it',
+    await nowhere.locator('.ul-pdf-fetch-font').isVisible(),
+  );
+  await page.keyboard.press('Escape');
+  await page.unroute('https://fonts.googleapis.com/**');
+  await page.unroute('https://fonts.gstatic.com/**');
 
   /*
    * — screenshots —

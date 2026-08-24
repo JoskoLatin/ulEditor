@@ -49,6 +49,16 @@ export function createShell(): Shell {
   const stored = settings.get<string>('locale', 'en');
   const desktop = isTauri();
 
+  /* Desktop goes through Rust: the webview's own `window.open` would put the
+     page inside another webview, not in the person's browser. */
+  const openExternal = desktop
+    ? (url: string) => {
+        void import('@tauri-apps/api/core').then(({ invoke }) => invoke('open_external', { url }));
+      }
+    : (url: string) => {
+        window.open(url, '_blank', 'noopener');
+      };
+
   return {
     fs: desktop ? new TauriFileSystem() : new BrowserFileSystem(),
     commands: new Commands(),
@@ -60,6 +70,7 @@ export function createShell(): Shell {
     platform: desktop ? 'desktop' : 'web',
     canPersist: desktop || hasFileSystemAccess(),
     locale: isLocale(stored) ? stored : 'en',
+    openExternal,
   };
 }
 

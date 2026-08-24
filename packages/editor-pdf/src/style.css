@@ -82,12 +82,22 @@
   gap: 5px;
   transition: background 120ms, color 120ms;
 }
+/* The class sets its own display, which would silently beat the `hidden`
+   attribute the toolbar uses to show a control only when it has work. */
+.ul-pdf-btn[hidden] {
+  display: none;
+}
 .ul-pdf-btn:hover:not(:disabled) {
   background: var(--rule-soft);
   color: var(--ink);
 }
 .ul-pdf-btn:active:not(:disabled) {
   background: var(--rule);
+}
+/* The one control that announces a problem rather than offering a tool — the
+   document names a font the screen cannot draw — so it alone gets the accent. */
+.ul-pdf-fetch-font {
+  color: var(--accent);
 }
 .ul-pdf-btn:focus-visible {
   outline: 2px solid var(--accent);

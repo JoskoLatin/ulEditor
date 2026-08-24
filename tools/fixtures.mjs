@@ -109,7 +109,7 @@ export function makePdf(text = 'ulEditor PDF') {
  * has can be written back, and the ones it never had cannot.
  *
  * @param {string} text the line printed on the page
- * @param {{ embedded?: boolean, trailer?: string, noMap?: boolean }} [opts]
+ * @param {{ embedded?: boolean, trailer?: string, noMap?: boolean, font?: string }} [opts]
  *   `embedded` attaches a `/FontFile2`, which is what tells the reader the
  *   glyphs travel with the document; `noMap` leaves out the `/ToUnicode`, which
  *   is the case where a code says nothing about the letter; `trailer` adds a
@@ -209,9 +209,9 @@ export function makeToUnicodePdf(text = 'Name and surname', opts = {}) {
     '<</Type/Pages/Kids[3 0 R]/Count 1>>',
     '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
     `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
-    '<</Type/Font/Subtype/TrueType/BaseFont/ABCDEF+Inter-Regular/FirstChar 32/LastChar 126' +
+    `<</Type/Font/Subtype/TrueType/BaseFont/ABCDEF+${opts.font ?? 'Inter'}-Regular/FirstChar 32/LastChar 126` +
       `/Widths[${widths}]/FontDescriptor 6 0 R${opts.noMap ? '' : '/ToUnicode 7 0 R'}>>`,
-    '<</Type/FontDescriptor/FontName/ABCDEF+Inter-Regular/Flags 32/ItalicAngle 0/Ascent 750' +
+    `<</Type/FontDescriptor/FontName/ABCDEF+${opts.font ?? 'Inter'}-Regular/Flags 32/ItalicAngle 0/Ascent 750` +
       '/Descent -250/CapHeight 700/StemV 80/FontBBox[0 -250 1000 750]' +
       (opts.embedded ? '/FontFile2 8 0 R' : '') +
       '>>',

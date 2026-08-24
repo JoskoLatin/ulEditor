@@ -91,4 +91,10 @@ export interface EditorHost {
   readonly settings: SettingsService;
   readonly notify: NotificationService;
   readonly convert: ConversionService;
+  /**
+   * Opens a web link in the system browser — outside the application, so
+   * nothing of the document travels with it. Optional: a host without a
+   * browser around it (a check harness) simply does not offer it.
+   */
+  readonly openExternal?: (url: string) => void;
 }

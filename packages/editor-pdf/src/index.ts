@@ -46,7 +46,7 @@ import {
   type Rgb,
   type TextBoxAnnotation,
 } from './annotations.js';
-import { ensureWebFont, loadFontBytes } from './fonts.js';
+import { ensureWebFont, fetchDisplayFont, loadFontBytes, screenHasFont } from './fonts.js';
 import { icon } from './icons.js';
 import { fallbackWarning, findEditableLine, type EditableLine } from './edit.js';
 import { applyRetype, changedSpan, unwritable } from './retype.js';
@@ -510,6 +510,17 @@ class PdfEditor implements EditorInstance {
     familySelect.setAttribute('aria-label', t('Font'));
     familySelect.addEventListener('change', () => this.setTextFamily(familySelect.value));
 
+    /* Shown only while the open line names a family the screen cannot draw.
+       The file is fine either way — the glyphs are its own — but the box being
+       typed in is drawn in a substitute until the family is fetched. */
+    const fetchFontButton = iconButton(
+      'download',
+      t('The screen does not have this font — get it'),
+      () => void this.#fetchDisplayFont(),
+    );
+    fetchFontButton.classList.add('ul-pdf-fetch-font');
+    fetchFontButton.hidden = true;
+
     /*
      * A field with suggestions rather than a list of sizes: a line of a real
      * document is routinely set in 9.96 pt, and a list of round numbers can
@@ -552,6 +563,7 @@ class PdfEditor implements EditorInstance {
 
     textOpts.append(
       familySelect,
+      fetchFontButton,
       sizeInput,
       sizes,
       group('ul-pdf-switches', boldButton, italicButton, underlineButton),
@@ -607,6 +619,9 @@ class PdfEditor implements EditorInstance {
       }
       familySelect.value = this.#textFamily;
 
+      const openLine = this.#editor?.line;
+      fetchFontButton.hidden = !openLine || screenHasFont(familyNameOf(openLine.baseFont));
+
       /* Rounded, because a line set in 9.9626 pt is set in 9.96 pt as far as
          anybody reading the bar is concerned. */
       sizeInput.value = String(Math.round(this.#textSize * 100) / 100);
@@ -640,6 +655,31 @@ class PdfEditor implements EditorInstance {
     const line = this.#editor?.line;
     if (!line) return [ours];
     return [{ value: 'document' as const, label: familyNameOf(line.baseFont) }, ours];
+  }
+
+  /**
+   * Gets the open line's family onto the screen, one way or the other.
+   *
+   * Google Fonts first, quietly — most missing document fonts are there, and a
+   * fetched family reaches the box being typed in through its font stack the
+   * moment it registers. A family Google does not carry goes to the system
+   * browser as a search: the person then installs it themselves, and the next
+   * session's `screenHasFont` finds it.
+   */
+  async #fetchDisplayFont(): Promise<void> {
+    const line = this.#editor?.line;
+    if (!line) return;
+    const family = familyNameOf(line.baseFont);
+
+    if (await fetchDisplayFont(family)) {
+      this.host.notify.show('info', t('{name} is now drawn with its own letterforms.', { name: family }));
+    } else {
+      this.host.notify.show('info', t('{name} is not on Google Fonts — opening a search for it.', { name: family }));
+      this.host.openExternal?.(
+        `https://www.google.com/search?q=${encodeURIComponent(`"${family}" font download`)}`,
+      );
+    }
+    this.#syncToolbar();
   }
 
   #syncToolbar: () => void = () => {};
@@ -2116,10 +2156,13 @@ class PdfEditor implements EditorInstance {
 
       input.dataset.rewrite = 'true';
       input.style.background = ground;
-      /* The document's own font first: it is often installed, and then what is
-         typed matches the page while it is being typed. Ours is the fallback,
-         and the file gets the document's font either way. */
-      input.style.fontFamily = `"${replaces.line.baseFont}", "${FONT_FAMILY}", Arial, sans-serif`;
+      /* The document's own font first — under the name a machine would know it
+         by, since `/BaseFont` says `ABCDEF+BookAntiqua-Bold` and no system has
+         a family called that. When it is installed, or fetched through the
+         toolbar's download button, what is typed matches the page while it is
+         being typed. Ours is the fallback, and the file gets the document's
+         font either way. */
+      input.style.fontFamily = `"${familyNameOf(replaces.line.baseFont)}", "${replaces.line.baseFont}", "${FONT_FAMILY}", Arial, sans-serif`;
     }
 
     const warning = document.createElement('div');

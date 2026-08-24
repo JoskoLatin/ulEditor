@@ -135,6 +135,45 @@ async fn pick_save_target(
         .map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// Opens a web link in the system browser.
+///
+/// Only `https://` — the command is callable from the webview, and a scheme
+/// like `file:` or `ms-settings:` would make it a lever it must not be. The
+/// shell asks for it when a document names a font the machine does not have,
+/// to send the person to a search for it.
+#[cfg(desktop)]
+#[tauri::command]
+fn open_external(url: String) -> Result<(), VfsError> {
+    if !url.starts_with("https://") {
+        return Err(VfsError::Unsupported(
+            "Only web links open outside the application.".into(),
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    // `rundll32 url.dll` rather than `cmd /C start`: `start` reads `&` in a
+    // query string as a command separator.
+    let spawned = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+
+    spawned.map(|_| ()).map_err(VfsError::from)
+}
+
+/// On a phone the browser is reached through an Intent, which needs the plugin
+/// we have not taken yet. Said out loud rather than silently swallowed.
+#[cfg(mobile)]
+#[tauri::command]
+fn open_external(_url: String) -> Result<(), VfsError> {
+    Err(VfsError::Unsupported(
+        "Opening the browser is not wired up on mobile devices yet.".into(),
+    ))
+}
+
 /* ── file system ─────────────────────────────────────────────────────── */
 
 /// Takes in paths the user pointed at — dropped onto the window, or remembered
@@ -344,6 +383,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_external,
             pick_directory,
             pick_files,
             pick_save_target,

@@ -42,6 +42,98 @@ const registered = new Map<TextFace, Promise<void>>();
  * metrically identical); on Android it would not, since the default there is
  * Roboto.
  */
+/* ── a document font the screen does not have ────────────────────────── */
+
+let measureContext: CanvasRenderingContext2D | null | undefined;
+
+/** Wide and narrow letters both, so two different fonts cannot tie by luck. */
+const MEASURE_SAMPLE = 'mmmWWWiiil10 rijeci';
+
+function widthIn(stack: string): number {
+  if (measureContext === undefined) {
+    measureContext = document.createElement('canvas').getContext('2d');
+  }
+  if (!measureContext) return 0;
+  measureContext.font = `48px ${stack}`;
+  return measureContext.measureText(MEASURE_SAMPLE).width;
+}
+
+/**
+ * Whether the screen can already draw this family — installed on the machine,
+ * or registered by an earlier fetch. What it decides is only how the box being
+ * typed in is drawn; the file never depends on it.
+ *
+ * Measured, not asked: `document.fonts.check()` answers *"is anything still
+ * loading for this?"* and says `true` for a family it has never heard of. So
+ * the family is put in front of two fallbacks instead — if it changes the
+ * metrics of neither, nothing on this machine answers to its name.
+ */
+export function screenHasFont(family: string): boolean {
+  if (typeof document === 'undefined') return false;
+  const quoted = `"${family.replace(/"/g, '')}"`;
+  return (
+    widthIn(`${quoted}, monospace`) !== widthIn('monospace') ||
+    widthIn(`${quoted}, serif`) !== widthIn('serif')
+  );
+}
+
+/**
+ * `false` stays cached — a family Google Fonts does not carry will not appear
+ * there between two clicks. A network failure is not cached, so the next click
+ * tries again.
+ */
+const displayFetched = new Map<string, Promise<boolean>>();
+
+/**
+ * Fetches a missing family from Google Fonts and registers it for display.
+ *
+ * Display only, deliberately: an edited line still goes into the file with the
+ * document's own embedded glyphs, or with ours. What this changes is the box
+ * being typed in, which until then is drawn in a substitute the reader never
+ * sees. Resolves `false` when Google Fonts does not carry the family or the
+ * network is not there — the caller then falls back to a search.
+ */
+export async function fetchDisplayFont(family: string): Promise<boolean> {
+  const existing = displayFetched.get(family);
+  if (existing) return existing;
+
+  const pending = (async () => {
+    /* The four faces the toolbar can ask for. A family that only has some of
+       them still registers — the browser synthesises the rest, which is what
+       it would do for an installed font too. */
+    const query = encodeURIComponent(family.trim()).replace(/%20/g, '+');
+    const css = await fetch(
+      `https://fonts.googleapis.com/css2?family=${query}:ital,wght@0,400;0,700;1,400;1,700`,
+    );
+    if (!css.ok) return false;
+
+    const text = await css.text();
+    const faces = [...text.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((m) => m[1] ?? '');
+    let registered = 0;
+    for (const block of faces) {
+      const url = /src:\s*url\((https:[^)\s]+)\)/.exec(block)?.[1];
+      if (!url) continue;
+      const style = /font-style:\s*(\w+)/.exec(block)?.[1] ?? 'normal';
+      const weight = /font-weight:\s*(\d+)/.exec(block)?.[1] ?? '400';
+      /* Bytes over connect-src rather than a url() FontFace: the CSP then
+         needs no font-src of its own. */
+      const bytes = await fetch(url);
+      if (!bytes.ok) continue;
+      const face = new FontFace(family, await bytes.arrayBuffer(), { style, weight });
+      await face.load();
+      document.fonts.add(face);
+      registered += 1;
+    }
+    return registered > 0;
+  })().catch(() => {
+    displayFetched.delete(family);
+    return false;
+  });
+
+  displayFetched.set(family, pending);
+  return pending;
+}
+
 export function ensureWebFont(face: TextFace): Promise<void> {
   const existing = registered.get(face);
   if (existing) return existing;
