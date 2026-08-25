@@ -36,6 +36,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
+import { PDFDocument, PDFArray, PDFName, PDFRawStream } from 'pdf-lib';
 import { join, resolve, dirname, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -55,6 +56,7 @@ const { findCells, applyCellEdits, cellXml, writeXlsx } = await load(
 const { findOdsCells, applyOdsEdits, writeOds } = await load('packages/editor-office/src/ods-edit.ts');
 const { readXls } = await load('packages/editor-office/src/xls.ts');
 const { parseDoc } = await load('packages/editor-office/src/doc.ts');
+const { saveDocument } = await load('packages/editor-pdf/src/document.ts');
 
 /* ── the run ─────────────────────────────────────────────────────────── */
 
@@ -64,7 +66,7 @@ const roots = args.filter((a) => !a.startsWith('--'));
 
 
 /** What the harness knows how to measure. Anything else is not walked at all. */
-const WANTED = new Set(['.docx', '.xlsx', '.ods', '.xls', '.doc', '.odt', '.rtf']);
+const WANTED = new Set(['.docx', '.xlsx', '.ods', '.xls', '.doc', '.odt', '.rtf', '.pdf']);
 
 /** Folders that hold other people's files rather than the user's documents. */
 const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'dist', 'venv', '__pycache__']);
@@ -371,6 +373,155 @@ function checkOds(bytes) {
   return { ok: `${edits.length} edits · ${Object.keys(archive).length - 1} parts intact · geometry held` };
 }
 
+/* ── PDF ─────────────────────────────────────────────────────────────── */
+
+/**
+ * What a page is made of, reduced to something comparable.
+ *
+ * The content stream is where every mark on the page lives — the text, the
+ * lines, the images placed on it. Comparing those bytes is a stricter question
+ * than comparing extracted text: it asks whether **anything at all** on the page
+ * moved, including the things text extraction cannot see. And it can be asked
+ * without a browser, which is what makes a corpus of four hundred documents
+ * possible at all.
+ */
+async function pdfShape(bytes) {
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const pages = doc.getPages().map((page) => {
+    const contents = page.node.get(PDFName.of('Contents'));
+    const refs = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+
+    let length = 0;
+    let hash = 0;
+    for (const ref of refs) {
+      const stream = doc.context.lookup(ref);
+      if (!(stream instanceof PDFRawStream)) continue;
+      length += stream.contents.length;
+      for (const byte of stream.contents) hash = (hash * 31 + byte) >>> 0;
+    }
+
+    const size = page.getSize();
+    return {
+      width: Math.round(size.width),
+      height: Math.round(size.height),
+      rotation: ((page.getRotation().angle % 360) + 360) % 360,
+      content: `${length}:${hash}`,
+      annotations: page.node.Annots()?.size?.() ?? 0,
+    };
+  });
+
+  return { count: doc.getPageCount(), title: doc.getTitle() ?? '', author: doc.getAuthor() ?? '', pages };
+}
+
+/** Every page carries exactly what it carried, in the same place and the same way. */
+function pagesHeld(before, after, map) {
+  for (let i = 0; i < map.length; i++) {
+    const was = before.pages[map[i] - 1];
+    const now = after.pages[i];
+    if (!was || !now) return `page ${i + 1} is missing`;
+    if (was.content !== now.content) return `the content of page ${map[i]} changed`;
+    if (was.width !== now.width || was.height !== now.height) return `page ${map[i]} changed size`;
+  }
+  return null;
+}
+
+async function checkPdf(bytes) {
+  let before;
+  try {
+    before = await pdfShape(bytes);
+  } catch (error) {
+    /* Not a failure of fidelity but worth counting: the viewer renders with
+       pdf.js and writes with pdf-lib, so a file only one of them accepts is one
+       that opens and then cannot be saved. */
+    return { skip: `it cannot be written at all: ${error.message.slice(0, 60)}` };
+  }
+  if (before.count === 0) return { skip: 'no pages' };
+
+  const plan = before.pages.map((_, i) => ({ source: i + 1, rotate: 0 }));
+  const identity = plan.map((entry) => entry.source);
+
+  /* An annotation, over an otherwise untouched document. This is the common
+     save: a highlight on the first page, and nothing else in the file may move. */
+  const highlight = {
+    id: 'fidelity',
+    kind: 'highlight',
+    page: 1,
+    color: [1, 1, 0],
+    createdAt: 0,
+    quads: [{ x: 40, y: 40, width: 80, height: 10 }],
+  };
+  const annotated = await saveDocument(bytes, plan, [highlight], before.count);
+  const afterNote = await pdfShape(annotated.bytes);
+
+  if (afterNote.count !== before.count) return { fail: `annotating changed the page count` };
+  const noteMoved = pagesHeld(before, afterNote, identity);
+  if (noteMoved) return { fail: `annotating moved something: ${noteMoved}` };
+  if (afterNote.title !== before.title || afterNote.author !== before.author) {
+    return { fail: 'annotating dropped the document metadata' };
+  }
+  if (afterNote.pages[0].annotations !== before.pages[0].annotations + 1) {
+    return { fail: `the highlight did not arrive (${before.pages[0].annotations} → ${afterNote.pages[0].annotations})` };
+  }
+  if (annotated.lost.length > 0) return { fail: `annotating declared a loss: ${annotated.lost[0]}` };
+
+  /* A rotation, which the editor performs on the original document rather than
+     by rebuilding it — so nothing outside the page tree may be touched. */
+  const turned = await saveDocument(
+    bytes,
+    plan.map((entry, i) => (i === 0 ? { ...entry, rotate: 90 } : entry)),
+    [],
+    before.count,
+  );
+  const afterTurn = await pdfShape(turned.bytes);
+  const turnMoved = pagesHeld(before, afterTurn, identity);
+  if (turnMoved) return { fail: `rotating moved something: ${turnMoved}` };
+  if (afterTurn.pages[0].rotation !== (before.pages[0].rotation + 90) % 360) {
+    return { fail: `the rotation did not take (${before.pages[0].rotation} → ${afterTurn.pages[0].rotation})` };
+  }
+  if (turned.lost.length > 0) return { fail: `rotating declared a loss: ${turned.lost[0]}` };
+
+  /* Dropping the last page. The pages that stay must be the pages that were
+     there — a deletion that shifts content by one is the quietest way to ruin a
+     document, and the page count alone would not show it. */
+  let cut = '';
+  if (before.count > 1) {
+    const kept = plan.slice(0, -1);
+    const shorter = await saveDocument(bytes, kept, [], before.count);
+    const afterCut = await pdfShape(shorter.bytes);
+    if (afterCut.count !== before.count - 1) {
+      return { fail: `deleting a page left ${afterCut.count} of ${before.count - 1}` };
+    }
+    const cutMoved = pagesHeld(before, afterCut, kept.map((entry) => entry.source));
+    if (cutMoved) return { fail: `deleting a page moved another: ${cutMoved}` };
+    cut = ' · cut';
+  }
+
+  /*
+   * Reordering, which is the one page operation the editor performs by
+   * rebuilding the document — and the one it declares a loss for, because
+   * bookmarks, forms and attachments live outside the page tree and do not
+   * survive the copy. What must survive is the pages themselves: every one of
+   * them, byte for byte, in its new place. Asserting that is what keeps the
+   * declared loss honest — a save that quietly lost a page as well would look
+   * exactly the same to somebody reading the warning.
+   */
+  let moved = '';
+  if (before.count > 1) {
+    const swapped = [...plan];
+    [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+    const rebuilt = await saveDocument(bytes, swapped, [], before.count);
+    const afterSwap = await pdfShape(rebuilt.bytes);
+
+    if (afterSwap.count !== before.count) return { fail: 'reordering changed the page count' };
+    const swapMoved = pagesHeld(before, afterSwap, swapped.map((entry) => entry.source));
+    if (swapMoved) return { fail: `reordering lost a page: ${swapMoved}` };
+    if (rebuilt.lost.length === 0) return { fail: 'reordering is lossy and said nothing' };
+    moved = ' · reordered';
+  }
+
+  return { ok: `${before.count} pages · annotated · rotated${cut}${moved} · content held` };
+}
+
 /* ── the read-only formats ───────────────────────────────────────────── */
 
 /**
@@ -414,7 +565,7 @@ function checkDoc(bytes) {
 
 /* ── walking the corpus ──────────────────────────────────────────────── */
 
-const CHECKS = { docx: checkDocx, xlsx: checkXlsx, ods: checkOds, xls: checkXls, doc: checkDoc };
+const CHECKS = { docx: checkDocx, xlsx: checkXlsx, ods: checkOds, xls: checkXls, doc: checkDoc, pdf: checkPdf };
 
 /* Readers whose output is a page of elements rather than a structure. They are
    checked in verify-ui.mjs, in a browser, because that is where a DOM exists. */
@@ -440,6 +591,12 @@ async function corpus() {
   console.log('');
 
   const made = await import('./fixtures.mjs');
+  /* The PDF fixtures are written as text, because a PDF is mostly text and
+     reading one in a diff is worth more than a byte array. One character is one
+     byte here, which is why this is not a `TextEncoder`. */
+  const asBytes = (made) =>
+    typeof made === 'string' ? Uint8Array.from([...made].map((ch) => ch.charCodeAt(0) & 0xff)) : made;
+
   return [
     { name: 'ugovor.docx', bytes: made.makeDocx() },
     { name: 'prodaja.xlsx', bytes: made.makeXlsx() },
@@ -447,6 +604,7 @@ async function corpus() {
     { name: 'promet.xls', bytes: made.makeXls() },
     { name: 'zapisnik.doc', bytes: made.makeDoc() },
     { name: 'izvjestaj.odt', bytes: made.makeOdt() },
+    { name: 'dokument.pdf', bytes: asBytes(made.makeMultiPagePdf(3)) },
   ];
 }
 
@@ -479,7 +637,7 @@ for (const source of sources) {
   }
 
   try {
-    const outcome = check(bytes);
+    const outcome = await check(bytes);
     if (outcome.fail) results.push({ file, name, format, state: 'fail', detail: outcome.fail });
     else if (outcome.skip) results.push({ file, name, format, state: 'skip', detail: outcome.skip });
     else results.push({ file, name, format, state: 'ok', detail: outcome.ok });

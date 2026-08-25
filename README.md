@@ -267,22 +267,35 @@ as skipped, not as passed.
 program actually promises rather than what the plan assumed it would. The plan
 said: open every document, save it, render both to PDF and compare the pages.
 That measures a program which re-lays-out what it opened, and this one does not
-— a `.docx`, an `.xlsx` and an `.ods` are edited by byte range, so the question
-worth asking is not *does it still look the same* but **did anything else
-move**. Point it at a folder and, for each document, it retypes three pieces
+— so the question worth asking is not *does it still look the same* but **did
+anything else move**.
+
+For an Office document, which is edited by byte range, it retypes three pieces
 spread across the file, writes the result in memory, and checks that every other
 part of the archive comes back byte for byte, that the rewritten part differs
 only inside the elements it was told to rewrite, that the file reopens, and that
 the shape the next save depends on — Word's run ordinals, a spreadsheet's grid
 geometry and formula cells — is unchanged. For the read-only formats it checks
-that nothing arrived as mojibake. **It never writes to the corpus.**
+that nothing arrived as mojibake.
 
-With no folder named it runs over the fixtures instead and says so: that proves
-the harness still works, not that the readers do. Real documents are somebody's
-and do not belong in a repository, which is why this is the one check CI cannot
-meaningfully run. Its first run over one real Documents folder measured 131
-documents and found seven files listed as Word documents that were Word's own
-lock files.
+For a PDF it performs the four operations the editor offers and compares the
+**content stream of every page**, which is a stricter question than comparing
+extracted text: it asks whether anything at all on the page moved, including
+what text extraction cannot see. Annotating and rotating must leave every page
+byte-identical and declare no loss; deleting a page must leave the others
+exactly as they were, in their own places; reordering must keep every page
+whole in its new place *and* say what it costs, since it rebuilds the document
+and bookmarks, forms and attachments do not survive the copy. A save that
+quietly lost a page as well would read the same to somebody looking at that
+warning.
+
+**It never writes to the corpus.** With no folder named it runs over the
+fixtures instead and says so: that proves the harness still works, not that the
+readers do. Real documents are somebody's and do not belong in a repository,
+which is why this is the one check CI cannot meaningfully run — and it takes
+minutes, not seconds. Over one real Documents folder it measures **599
+documents, 468 of them PDFs**, and the run that first did so found seven files
+listed as Word documents that were Word's own lock files.
 
 `verify:i18n` exists because the i18n design hides its own gaps: the key is the
 English source text, so an untranslated string renders as English and nothing
