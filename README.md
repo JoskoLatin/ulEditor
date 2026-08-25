@@ -249,6 +249,7 @@ pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
+pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm verify:all       # all of the above
 
 pnpm verify:search    # project search, in the REAL desktop application
@@ -261,6 +262,27 @@ work.
 
 `verify:ocr` downloads a language model on first run; with no network it reports
 as skipped, not as passed.
+
+`fidelity` is the harness the plan called for, built to measure what this
+program actually promises rather than what the plan assumed it would. The plan
+said: open every document, save it, render both to PDF and compare the pages.
+That measures a program which re-lays-out what it opened, and this one does not
+— a `.docx`, an `.xlsx` and an `.ods` are edited by byte range, so the question
+worth asking is not *does it still look the same* but **did anything else
+move**. Point it at a folder and, for each document, it retypes three pieces
+spread across the file, writes the result in memory, and checks that every other
+part of the archive comes back byte for byte, that the rewritten part differs
+only inside the elements it was told to rewrite, that the file reopens, and that
+the shape the next save depends on — Word's run ordinals, a spreadsheet's grid
+geometry and formula cells — is unchanged. For the read-only formats it checks
+that nothing arrived as mojibake. **It never writes to the corpus.**
+
+With no folder named it runs over the fixtures instead and says so: that proves
+the harness still works, not that the readers do. Real documents are somebody's
+and do not belong in a repository, which is why this is the one check CI cannot
+meaningfully run. Its first run over one real Documents folder measured 131
+documents and found seven files listed as Word documents that were Word's own
+lock files.
 
 `verify:i18n` exists because the i18n design hides its own gaps: the key is the
 English source text, so an untranslated string renders as English and nothing

@@ -27,7 +27,7 @@
     "clean": "pnpm -r exec rimraf dist node_modules/.vite",
     "verify:reading": "node tools/verify-reading.mjs",
     "verify:viewers": "node tools/verify-viewers.mjs",
-    "verify:all": "node tools/verify-i18n.mjs && node tools/verify-ui.mjs && node tools/verify-viewers.mjs && node tools/verify-reading.mjs && node tools/verify-ocr.mjs && node tools/verify-export.mjs && node tools/verify-odf.mjs && node tools/verify-doc.mjs && pnpm verify:pdf",
+    "verify:all": "node tools/verify-i18n.mjs && node tools/verify-ui.mjs && node tools/verify-viewers.mjs && node tools/verify-reading.mjs && node tools/verify-ocr.mjs && node tools/verify-export.mjs && node tools/verify-odf.mjs && node tools/verify-doc.mjs && node tools/fidelity.mjs && pnpm verify:pdf",
     "verify:ocr": "node tools/verify-ocr.mjs",
     "verify:export": "node tools/verify-export.mjs",
     "verify:search": "node tools/verify-project-search.mjs",
@@ -39,6 +39,7 @@
     "verify:xls": "node tools/verify-xls.mjs",
     "verify:odf": "node tools/verify-odf.mjs",
     "verify:doc": "node tools/verify-doc.mjs",
+    "fidelity": "node tools/fidelity.mjs",
     "verify:docx-editing": "node tools/verify-docx-editing.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"

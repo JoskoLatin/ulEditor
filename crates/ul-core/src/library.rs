@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use ul_formats::{detect_by_name, FormatId};
 
-use crate::vfs::{display, is_noise, VfsError, Workspace};
+use crate::vfs::{display, is_noise, is_scratch, VfsError, Workspace};
 
 /// How deep we go. Shared storage tends to hold deep cache trees unrelated to
 /// documents, and every level costs.
@@ -272,6 +272,12 @@ fn walk(root: &Path, dir: &Path, depth: usize, limit: usize, walked: &mut Walked
         }
 
         walked.seen_files += 1;
+
+        // An Office owner file carries the extension of the document beside it
+        // and none of its content — see `is_scratch`.
+        if is_scratch(&name) {
+            continue;
+        }
 
         let format = detect_by_name(&name).format;
         if !is_library_format(format) {

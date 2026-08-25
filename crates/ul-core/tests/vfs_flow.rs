@@ -234,3 +234,37 @@ fn save_as_new_file_is_allowed() {
         .expect("saving the new file");
     assert_eq!(fs::read_to_string(&fresh).unwrap(), "# New\n");
 }
+
+/// Word's owner file is not a Word document.
+///
+/// While a `.docx` is open, Word keeps `~$` plus the name beside it — a hundred
+/// and sixty bytes holding whoever has the file open. It carries the same
+/// extension as the real document and cannot be opened as one, so listing it
+/// turns a folder of seven documents into a folder of fourteen, half of which
+/// answer that they are damaged. The fidelity harness found seven of them in one
+/// real Documents folder.
+#[test]
+fn the_tree_leaves_out_what_word_left_behind() {
+    let dir = TempDir::new("owner-files");
+    fs::write(dir.path().join("Ugovor.docx"), b"x").expect("write");
+    fs::write(dir.path().join("~$Ugovor.docx"), b"noob").expect("write");
+    fs::write(dir.path().join(".gitignore"), b"target").expect("write");
+
+    let mut workspace = Workspace::new();
+    let root = workspace.add_root(dir.path()).expect("the folder exists");
+
+    let names: Vec<String> = workspace
+        .read_dir(&root)
+        .expect("the root lists")
+        .into_iter()
+        .map(|entry| entry.stat.name)
+        .collect();
+
+    assert!(names.iter().any(|name| name == "Ugovor.docx"));
+    // A dotfile is something somebody opens on purpose, and stays.
+    assert!(names.iter().any(|name| name == ".gitignore"));
+    assert!(
+        !names.iter().any(|name| name.starts_with("~$")),
+        "the owner file was listed: {names:?}"
+    );
+}

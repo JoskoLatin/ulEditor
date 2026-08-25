@@ -72,6 +72,21 @@ pub(crate) fn is_noise(name: &str) -> bool {
     NOISE.contains(&name)
 }
 
+/// A file Office leaves beside a document, which is never a document itself.
+///
+/// While a `.docx` is open, Word keeps a second file next to it called
+/// `~$` plus the name — a hundred and sixty bytes holding the name of whoever
+/// has it open, so a colleague opening the same file is told who has it. It is
+/// marked hidden, it carries the same extension as the real document, and every
+/// reader that opens it can only report that it is damaged.
+///
+/// Listing them turns a folder of seven documents into a folder of fourteen,
+/// half of which cannot be opened. A run of the fidelity harness over one real
+/// Documents folder found exactly seven of them and nothing else wrong.
+pub(crate) fn is_scratch(name: &str) -> bool {
+    name.starts_with("~$")
+}
+
 #[derive(Debug, Default)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
@@ -176,6 +191,11 @@ impl Workspace {
                 continue;
             }
             if is_dir && name.starts_with('.') {
+                continue;
+            }
+            /* Dotfiles stay: `.gitignore` and `.editorconfig` are files somebody
+            opens on purpose. An Office owner file is not. */
+            if !is_dir && is_scratch(&name) {
                 continue;
             }
 
@@ -358,6 +378,19 @@ mod tests {
             workspace.resolve("anything/at-all"),
             Err(VfsError::NoWorkspace)
         ));
+    }
+
+    /// Word's owner file is not a Word document, and a folder holding seven
+    /// open documents should not read as fourteen.
+    #[test]
+    fn office_owner_files_are_not_documents() {
+        assert!(is_scratch("~$Ugovor o najmu.docx"));
+        assert!(is_scratch("~$racun.xlsx"));
+
+        // A dotfile is something somebody opens on purpose, and stays.
+        assert!(!is_scratch(".gitignore"));
+        assert!(!is_scratch("Ugovor o najmu.docx"));
+        assert!(!is_scratch("proracun~1.xlsx"));
     }
 
     #[test]
