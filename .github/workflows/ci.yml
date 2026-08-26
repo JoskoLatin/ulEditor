@@ -58,6 +58,11 @@ jobs:
       # right place, slika2 before slika10, an entry with no date going last.
       - run: pnpm verify:tree
 
+      # The menu draws rows out of a list of command ids, and an id that no
+      # longer exists is not an error — it is one row fewer, which is how a
+      # deliberate absence and a typo come to look exactly alike.
+      - run: pnpm verify:menu
+
       # Office editing is byte surgery, and the central claim is what did NOT
       # change: every part of the archive outside the touched ranges, byte for
       # byte. The browser check below proves the seam to the page; these prove

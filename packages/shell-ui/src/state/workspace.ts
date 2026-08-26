@@ -121,6 +121,7 @@ interface WorkspaceState {
   findOpen: boolean;
   find: FindQuery;
   preferencesOpen: boolean;
+  aboutOpen: boolean;
   quickOpen: boolean;
 
   setTree(tree: TreeNode[]): void;
@@ -143,6 +144,7 @@ interface WorkspaceState {
   setFindOpen(open: boolean): void;
   setFind(patch: Partial<FindQuery>): void;
   setPreferencesOpen(open: boolean): void;
+  setAboutOpen(open: boolean): void;
   setQuickOpen(open: boolean): void;
 }
 
@@ -214,6 +216,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   findOpen: false,
   find: { query: '', caseSensitive: false, regex: false },
   preferencesOpen: false,
+  aboutOpen: false,
   quickOpen: false,
 
   setTree: (tree) => set({ tree }),
@@ -301,6 +304,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setFindOpen: (findOpen) => set({ findOpen }),
   setFind: (patch) => set((s) => ({ find: { ...s.find, ...patch } })),
   setPreferencesOpen: (preferencesOpen) => set({ preferencesOpen }),
+  setAboutOpen: (aboutOpen) => set({ aboutOpen }),
   setQuickOpen: (quickOpen) => set({ quickOpen }),
 }));
 

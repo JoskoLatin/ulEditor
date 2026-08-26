@@ -12,6 +12,7 @@ import { exitReading, useReading } from './shell/reading.js';
 import { restoreSession, watchSession } from './shell/session.js';
 import { watchLaunchPaths } from './shell/launch.js';
 
+import { About } from './components/About.js';
 import { ActivityBar } from './components/ActivityBar.js';
 import { EditorGroup, GroupResizer } from './components/EditorGroup.js';
 import { CommandPalette } from './components/CommandPalette.js';
@@ -175,6 +176,7 @@ export function App({ shell }: { shell: Shell }) {
       <CommandPalette />
       <QuickOpen />
       <Preferences />
+      <About />
       <Toasts />
 
       {dropActive && (

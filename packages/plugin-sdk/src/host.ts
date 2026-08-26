@@ -24,7 +24,17 @@ export interface Command {
 export interface CommandRegistry {
   register(command: Command): Disposable;
   execute(id: string, ...args: unknown[]): Promise<void>;
+  /** Everything currently available — `when` has already been applied. */
   all(): Command[];
+  /**
+   * One command by id, available or not.
+   *
+   * `all()` is the right question for a palette, which lists what can be done
+   * now. A menu asks the other one: it draws a fixed list and greys what is out
+   * of reach, because a menu whose items come and go moves every item below
+   * them and has to be re-read each time it is opened.
+   */
+  get(id: string): Command | undefined;
 }
 
 /* ── themes ──────────────────────────────────────────────────────────── */

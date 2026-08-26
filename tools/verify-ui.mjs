@@ -756,6 +756,116 @@ try {
   const themeAfter = await page.evaluate(() => document.documentElement.dataset.theme ?? 'system');
   check('the command changes the theme', themeBefore !== themeAfter, `${themeBefore} → ${themeAfter}`);
 
+  /* — the menu bar — */
+
+  /*
+   * Alt on its own. This is the whole reason the bar exists: everything the
+   * program can do was reachable only by somebody who already knew it was
+   * there, and one key is what turns that around.
+   */
+  await page.keyboard.press('Alt');
+  const menuOpened = await until(async () => (await page.locator('.menu-panel').count()) === 1);
+  check('Alt on its own opens the menu', menuOpened);
+  check(
+    'and the letters that open the others appear with it',
+    (await page.locator('.menu-title u').count()) === 5,
+    `${await page.locator('.menu-title u').count()} of 5 headings underlined`,
+  );
+
+  await page.keyboard.press('Escape');
+  check('Escape closes it', await until(async () => (await page.locator('.menu-panel').count()) === 0));
+
+  /*
+   * AltGr is not Alt, and on this keyboard it is how @ and [ and € are typed.
+   * Windows reports it as Ctrl and Alt together, so a menu bar that reads Alt
+   * without looking at Ctrl opens a menu every time somebody types an e-mail
+   * address.
+   */
+  await page.keyboard.press('Control+Alt+v');
+  await page.waitForTimeout(80);
+  check(
+    'AltGr types a character rather than opening a menu',
+    (await page.locator('.menu-panel').count()) === 0,
+  );
+
+  await page.keyboard.press('Alt+v');
+  const viewOpened = await until(
+    async () => (await page.locator('.menu-panel[aria-label]').count()) === 1,
+  );
+  const openedLabel = await page.locator('.menu-panel').getAttribute('aria-label');
+  check('Alt and a letter open that menu directly', viewOpened && openedLabel === 'View', openedLabel);
+
+  await page.keyboard.press('ArrowDown');
+  check(
+    'the arrows walk the rows',
+    await until(async () => (await page.locator('.menu-row[data-active="true"]').count()) === 1),
+  );
+  await page.keyboard.press('Escape');
+  await until(async () => (await page.locator('.menu-panel').count()) === 0);
+
+  /*
+   * Greyed and absent, side by side in one menu. Forgetting the recent files is
+   * something this build can do and cannot do *now* — there is no such list in a
+   * browser — so the row is drawn and out of reach. Exit needs a window to
+   * close, which a browser tab does not have, so it is not drawn at all.
+   */
+  await page.locator('.menu-title').first().click();
+  await page.waitForSelector('.menu-panel', { timeout: 5000 });
+  const fileRows = await page.locator('.menu-panel .menu-row').allInnerTexts();
+  check(
+    'a row that cannot run now is drawn out of reach rather than removed',
+    (await page.locator('.menu-panel .menu-row:disabled').count()) > 0,
+    fileRows.join(' / '),
+  );
+  check(
+    'and one this build has no use for is not drawn at all',
+    !fileRows.some((row) => row.includes('Exit')),
+    fileRows.join(' / '),
+  );
+
+  /* A click anywhere else is how a menu opened by accident is closed. */
+  await page.locator('.titlebar-title').click({ force: true });
+  check(
+    'a click outside closes it',
+    await until(async () => (await page.locator('.menu-panel').count()) === 0),
+  );
+
+  /*
+   * The theme, from the menu — two clicks and no dialog. It used to be behind
+   * Ctrl+comma or a name typed into the palette, both of which have to be known
+   * about first.
+   */
+  await page.locator('.menu-title', { hasText: 'Preferences' }).click();
+  await page.waitForSelector('.menu-panel', { timeout: 5000 });
+  await page.locator('.menu-panel .menu-row', { hasText: 'Light' }).first().click();
+  const light = await until(
+    async () => (await page.evaluate(() => document.documentElement.dataset.theme)) === 'light',
+  );
+  check('the theme changes from the menu', light, await page.evaluate(() => document.documentElement.dataset.theme ?? 'system'));
+
+  await page.locator('.menu-title', { hasText: 'Preferences' }).click();
+  await page.waitForSelector('.menu-panel', { timeout: 5000 });
+  const ticked = await page.evaluate(() =>
+    [...document.querySelectorAll('.menu-panel .menu-row')]
+      .filter((row) => row.querySelector('.menu-mark')?.textContent?.trim())
+      .map((row) => row.querySelector('.menu-label')?.textContent ?? ''),
+  );
+  check(
+    'and the menu says which one is in use',
+    ticked.includes('Light') && ticked.length === 2,
+    ticked.join(', '),
+  );
+  await page.keyboard.press('Escape');
+
+  /* Which build is this — the first question of every bug report. */
+  await page.locator('.menu-title', { hasText: 'Help' }).click();
+  await page.locator('.menu-panel .menu-row', { hasText: 'About' }).first().click();
+  const about = await until(async () => (await page.locator('.about').count()) === 1);
+  const version = await page.locator('.about-facts dd').first().innerText();
+  check('the About box names the version', about && /^\d+\.\d+\.\d+/.test(version), version);
+  await page.keyboard.press('Escape');
+  await until(async () => (await page.locator('.about').count()) === 0);
+
   /* — editing and the dirty flag — */
   await page.locator('.tab').first().click();
   await page.locator('.cm-content').first().click();

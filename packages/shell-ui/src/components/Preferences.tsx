@@ -10,14 +10,14 @@
  * unmounting every open document — and the session is restored on start anyway.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { LOCALES, t, type Locale } from '@uleditor/i18n';
+import { LOCALES, t } from '@uleditor/i18n';
 import { DEFAULT_READING, type ReadingOptions } from '@uleditor/plugin-sdk';
 
 import { useShell } from '../shell/context.js';
 import { useWorkspace } from '../state/workspace.js';
-import { saveSession } from '../shell/session.js';
+import { chooseLocale } from '../shell/lifecycle.js';
 import { canZoom, isDefaultZoom, resetZoom, stepZoom, zoomFactor } from '../shell/zoom.js';
 import type { ThemePreference } from '../host/index.js';
 import { IconClose } from './Icons.js';
@@ -37,19 +37,19 @@ export function Preferences() {
    */
   const [theme, setTheme] = useState(shell.theme.preference);
   const [zoom, setZoom] = useState(() => zoomFactor(shell));
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  /* Escape is read from the panel, so the panel has to hold the focus — opened
+     from the menu or the palette it otherwise appears with the focus still on
+     whatever was behind it, and the key does nothing. */
+  useEffect(() => {
+    if (open) boxRef.current?.focus();
+  }, [open]);
 
   if (!open) return null;
 
   const locale = shell.locale;
   const reading = { ...DEFAULT_READING, ...shell.settings.get<Partial<ReadingOptions>>('reading.options', {}) };
-
-  const chooseLocale = (next: Locale) => {
-    if (next === locale) return;
-    shell.settings.set('locale', next);
-    // The session is saved before the reload so the tabs come back exactly as they were.
-    saveSession(shell);
-    window.location.reload();
-  };
 
   return (
     <div
@@ -61,6 +61,8 @@ export function Preferences() {
       <div
         className="prefs"
         role="dialog"
+        tabIndex={-1}
+        ref={boxRef}
         aria-label={t('Preferences')}
         onKeyDown={(e) => {
           if (e.key === 'Escape') setOpen(false);
@@ -81,7 +83,7 @@ export function Preferences() {
               <button
                 key={entry.id}
                 data-active={locale === entry.id}
-                onClick={() => chooseLocale(entry.id)}
+                onClick={() => chooseLocale(shell, entry.id)}
               >
                 {entry.native}
               </button>

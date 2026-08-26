@@ -302,6 +302,124 @@ button {
   line-height: 1.5;
 }
 
+/* ── the menu bar ───────────────────────────────────────────────────── */
+
+/*
+ * Headings in the title bar, panels hanging under them.
+ *
+ * Nothing here is a drag region: the bar above it is, and a menu you cannot
+ * press because pressing it moves the window would be a cruel joke.
+ */
+.menubar {
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.menu-anchor {
+  position: relative;
+}
+
+.menu-title {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  font-size: var(--fs-sm);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.menu-title:hover,
+.menu-title[data-open='true'] {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+
+.menu-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The underline is the letter Alt reaches, and it appears only once somebody
+   has reached for Alt — see `underlined` in MenuBar.tsx. */
+.menu-title u,
+.menu-row u {
+  text-underline-offset: 2px;
+}
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 45;
+  min-width: 240px;
+  padding: 5px;
+  background: var(--overlay);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: rise 120ms var(--ease);
+  outline: none;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* The highlight follows the keyboard as well as the pointer, so arrowing down
+   and moving the mouse cannot both claim to be somewhere else. */
+.menu-row[data-active='true']:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+/* Out of reach at this moment, and still in its place — the list keeps its
+   shape, and what was the fourth row is the fourth row next time too. */
+.menu-row:disabled {
+  color: var(--ink-ghost);
+  cursor: default;
+}
+
+.menu-label {
+  flex: 1;
+}
+
+/* A fixed width rather than a space that appears with the tick: the labels of a
+   menu whose rows shift sideways as the theme changes are a menu that moves
+   while you read it. */
+.menu-mark {
+  width: 12px;
+  flex: none;
+  color: var(--accent);
+  text-align: center;
+}
+
+.menu-row kbd {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-ghost);
+  letter-spacing: 0.04em;
+}
+
+.menu-row[data-active='true']:not(:disabled) kbd {
+  color: var(--accent-ink);
+}
+
+.menu-rule {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--rule-soft);
+}
+
 /* ── the activity bar ───────────────────────────────────────────────── */
 
 .activitybar {
@@ -2184,6 +2302,13 @@ button.status-item:hover {
     display: none;
   }
 
+  /* No Alt on a phone, and no room in the bar either. Everything the menu
+     holds is in the palette and in the panels; what is only in the menu — the
+     theme, the language — is in the settings, which the palette opens. */
+  .menubar {
+    display: none;
+  }
+
   /*
    * The panel drops from the top, full width, and stops short of the bottom.
    *
@@ -2441,4 +2566,48 @@ button.status-item:hover {
 }
 .library-retry:hover {
   background: var(--rule-soft);
+}
+
+/* ── the about box ──────────────────────────────────────────────────── */
+
+.about {
+  width: min(400px, 92vw);
+}
+
+.about-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-family: var(--mono);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink-faint);
+}
+.about-mark b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Two columns, the names quiet and the answers not — this is read to copy the
+   version out of it into a bug report, not admired. */
+.about-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.about-facts dt {
+  color: var(--ink-faint);
+}
+.about-facts dd {
+  margin: 0;
+  color: var(--ink);
+  user-select: text;
+}
+
+.about-links {
+  display: flex;
+  gap: 8px;
 }

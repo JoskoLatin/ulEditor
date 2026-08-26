@@ -6,16 +6,32 @@
  * entry point.
  */
 
-import { t } from '@uleditor/i18n';
+import { LOCALES, t } from '@uleditor/i18n';
 
-import type { Shell } from '../host/index.js';
+import type { Shell, ThemePreference } from '../host/index.js';
 import { activeInstance, activeTabId, useWorkspace } from '../state/workspace.js';
 import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
+import { chooseLocale, requestExit } from './lifecycle.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
 import { clearRecent, hasRecent } from './recent.js';
 import { devtoolsAvailable, openDevtools, watchDevtools } from './devtools.js';
+
+/** Where the program comes from. The Help menu is the only thing that asks. */
+const REPOSITORY = 'https://github.com/JoskoLatin/ulEditor';
+
+/**
+ * The theme, applied and remembered in one move.
+ *
+ * Two steps rather than one, and forgetting the second is invisible until the
+ * next start — which is exactly the kind of bug that gets reported as "it does
+ * not remember anything".
+ */
+function setTheme(shell: Shell, preference: ThemePreference): void {
+  shell.theme.setPreference(preference);
+  shell.settings.set('theme', preference);
+}
 
 export function registerCommands(shell: Shell): () => void {
   const store = () => useWorkspace.getState();
@@ -232,6 +248,16 @@ export function registerCommands(shell: Shell): () => void {
       },
     }),
 
+    /* The way out that asks first — see `requestExit`. The button in the corner
+       of the title bar goes through the same function. */
+    shell.commands.register({
+      id: 'file.exit',
+      title: t('Exit'),
+      category: t('File'),
+      when: () => shell.platform === 'desktop',
+      run: () => requestExit(shell),
+    }),
+
     /*
      * The inspector. It opens in a window of its own — WebView2 owns its
      * devtools and offers no way to dock them beside the page; docking is a
@@ -248,10 +274,87 @@ export function registerCommands(shell: Shell): () => void {
 
     shell.commands.register({
       id: 'view.preferences',
-      title: t('Preferences…'),
-      category: t('View'),
+      title: t('All preferences…'),
+      category: t('Preferences'),
       keybinding: ['Ctrl', ','],
       run: () => store().setPreferencesOpen(true),
+    }),
+
+    /*
+     * The palette as a command of its own, so it has a row in the menu. Its
+     * keystroke has always worked and told nobody it existed; the one route
+     * into everything this program can do should not itself be the thing you
+     * have to already know.
+     */
+    shell.commands.register({
+      id: 'view.commandPalette',
+      title: t('Command palette'),
+      category: t('View'),
+      keybinding: ['Ctrl', 'Shift', 'P'],
+      run: () => store().setPaletteOpen(true),
+    }),
+
+    /*
+     * The theme, spelled out rather than cycled. `view.cycleTheme` stays for the
+     * button in the activity bar, where one press and one icon is the whole
+     * interaction — but a menu that offers "cycle" makes the reader work out
+     * which of three states they are in and how many presses away the one they
+     * want is.
+     */
+    shell.commands.register({
+      id: 'prefs.themeLight',
+      title: t('Light'),
+      category: t('Theme'),
+      run: () => setTheme(shell, 'light'),
+    }),
+    shell.commands.register({
+      id: 'prefs.themeDark',
+      title: t('Dark'),
+      category: t('Theme'),
+      run: () => setTheme(shell, 'dark'),
+    }),
+    shell.commands.register({
+      id: 'prefs.themeSystem',
+      title: t('Follow system'),
+      category: t('Theme'),
+      run: () => setTheme(shell, 'system'),
+    }),
+
+    /*
+     * One command per language, from the same list the settings panel reads.
+     * The title is the language's own name and is not translated: `Hrvatski` is
+     * what somebody looking for Croatian is looking for, whatever language the
+     * interface is currently in — which, if they are looking, is one they cannot
+     * read.
+     */
+    ...LOCALES.map((locale) =>
+      shell.commands.register({
+        id: `prefs.language.${locale.id}`,
+        title: locale.native,
+        category: t('Language'),
+        run: () => chooseLocale(shell, locale.id),
+      }),
+    ),
+
+    shell.commands.register({
+      id: 'help.source',
+      title: t('Source code'),
+      category: t('Help'),
+      when: () => !!shell.openExternal,
+      run: () => shell.openExternal?.(REPOSITORY),
+    }),
+    shell.commands.register({
+      id: 'help.report',
+      title: t('Report a problem'),
+      category: t('Help'),
+      when: () => !!shell.openExternal,
+      run: () => shell.openExternal?.(`${REPOSITORY}/issues`),
+    }),
+    shell.commands.register({
+      id: 'help.about',
+      title: t('About ulEditor'),
+      category: t('Help'),
+      run: () => store().setAboutOpen(true),
     }),
 
     shell.commands.register({

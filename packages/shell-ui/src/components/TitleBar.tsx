@@ -4,13 +4,14 @@ import { FORMATS } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
-import { openFiles, openFolder, saveActive } from '../shell/actions.js';
+import { saveActive } from '../shell/actions.js';
+import { requestExit } from '../shell/lifecycle.js';
+import { MenuBar } from './MenuBar.js';
 import { formatLabel } from '../shell/formats.js';
 import { visibleViews } from '../shell/views.js';
 import { activeInstance, selectActiveTabId, useWorkspace } from '../state/workspace.js';
 import {
   IconCommand,
-  IconFolderOpen,
   IconRedo,
   IconMaximise,
   IconMinimise,
@@ -41,6 +42,7 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platfor
  * for a button it owns. Dragging to the edge of the screen still snaps.
  */
 function WindowControls() {
+  const shell = useShell();
   const [maximised, setMaximised] = useState(false);
 
   useEffect(() => {
@@ -65,7 +67,7 @@ function WindowControls() {
     };
   }, []);
 
-  const act = (name: 'minimize' | 'toggleMaximize' | 'close') => {
+  const act = (name: 'minimize' | 'toggleMaximize') => {
     void (async () => {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       await getCurrentWindow()[name]();
@@ -90,10 +92,15 @@ function WindowControls() {
       >
         {maximised ? <IconRestore size={16} /> : <IconMaximise size={16} />}
       </button>
+      {/*
+        Not `window.close()`. The button in the corner and Exit in the File menu
+        are the same act, and the question about unsaved work belongs to the act
+        rather than to the route taken to it — see `requestExit`.
+      */}
       <button
         className="window-btn"
         data-close="true"
-        onClick={() => act('close')}
+        onClick={() => void requestExit(shell)}
         title={t('Close window')}
         aria-label={t('Close window')}
       >
@@ -170,25 +177,15 @@ export function TitleBar() {
         <ViewSwitch />
 
         {/*
-          Opening a folder and picking files are desktop actions: on a phone the
-          library covers them entirely, so they would be a second route to the
-          same place. The CSS hides them there.
+          The menu carries what used to be two buttons here — Folder and Files —
+          along with everything else the program can do. Two of its rows drawn a
+          second time beside it would be a second answer to the same question,
+          and the bar has only so much room before the document's name in the
+          middle stops fitting. On a phone there is no Alt and no room at all;
+          the CSS hides it there, where the library covers the same ground.
         */}
-        <button
-          className="chrome-btn desktop-only"
-          onClick={() => void openFolder(shell)}
-          title={t('Open folder (Ctrl+K)')}
-        >
-          <IconFolderOpen size={14} />
-          {t('Folder')}
-        </button>
-        <button
-          className="chrome-btn desktop-only"
-          onClick={() => void openFiles(shell)}
-          title={t('Open files (Ctrl+O)')}
-        >
-          {t('Files')}
-        </button>
+        <MenuBar />
+
         <button
           className="chrome-btn"
           onClick={() => void saveActive(shell)}

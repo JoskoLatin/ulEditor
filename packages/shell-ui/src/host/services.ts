@@ -52,6 +52,10 @@ export class Commands implements CommandRegistry {
   all(): Command[] {
     return [...this.#map.values()].filter((c) => c.when?.() !== false);
   }
+
+  get(id: string): Command | undefined {
+    return this.#map.get(id);
+  }
 }
 
 /* ── teme ────────────────────────────────────────────────────────────── */
