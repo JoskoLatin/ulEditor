@@ -38,3 +38,4 @@ tools/android-dev.log
 *.jks
 *.keystore
 keystore.properties
+.fidelity-run.txt

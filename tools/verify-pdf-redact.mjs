@@ -19,12 +19,13 @@ import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { makeUndecodablePdf } from './fixtures.mjs';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
 
-const { applyRedactions, previewRedaction } = await import(
+const { applyRedactions, previewRedaction, refusalWarning } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-pdf/src/redact.ts')).href
 );
 const { readPageContent, contentsOf } = await import(
@@ -84,6 +85,7 @@ function buildPdf({ font = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>', ex
   pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
   return new TextEncoder().encode(pdf);
 }
+
 
 const encode = (text) => new TextEncoder().encode(text);
 
@@ -254,6 +256,59 @@ const miss = await applyRedactions(
   standard,
 );
 check('an area with no text leaves the document alone', miss.bytes === source && miss.removed === 0);
+
+/* ── a page that cannot be read at all ───────────────────────────────── */
+
+/*
+ * The refusal that was missing. A stream nothing can decode used to escape as an
+ * exception out of the whole save — so the person lost the annotations they had
+ * made along with the redaction, and was told `Unknown compression method in
+ * flate stream: 169, 191`, which names nothing they can act on.
+ *
+ * The rule for this case was already written down for every other one: if it
+ * cannot be guaranteed that the text is gone, the document stays exactly as it
+ * was and the reason reaches the user.
+ */
+const undecodable = makeUndecodablePdf();
+let broke = null;
+let outcome = null;
+try {
+  outcome = await applyRedactions(
+    undecodable,
+    [{ id: 'r7', page: 1, rect: { x: 0, y: 0, width: 300, height: 200 } }],
+    standard,
+  );
+} catch (error) {
+  broke = error.message;
+}
+
+check('a page nothing can decode does not throw', broke === null, broke ?? 'it refused instead');
+
+/* The preview is what the person sees *before* confirming, and it reads the
+   same page the same way — so it has to answer the same, and not throw. */
+let previewBroke = null;
+let blindPreview = null;
+try {
+  const blind = await PDFDocument.load(undecodable);
+  blindPreview = previewRedaction(blind.getPages()[0], [{ x: 0, y: 0, width: 300, height: 200 }], standard);
+} catch (error) {
+  previewBroke = error.message;
+}
+check(
+  'and the preview shown before confirming says so rather than throwing',
+  previewBroke === null && blindPreview?.glyphs === 0 && blindPreview.obstacles.length === 1,
+  previewBroke ?? JSON.stringify(blindPreview?.obstacles ?? []),
+);
+check(
+  'it is refused, and the document is left exactly as it was',
+  outcome?.refused.length === 1 && outcome.refused[0].page === 1 && outcome.bytes === undecodable,
+  JSON.stringify(outcome?.refused ?? []),
+);
+check(
+  'and the refusal reaches the user as a sentence',
+  refusalWarning(outcome?.refused ?? []).some((line) => /Page 1 was left untouched/.test(line)),
+  refusalWarning(outcome?.refused ?? [])[0] ?? 'nothing was said',
+);
 
 /* ── outcome ─────────────────────────────────────────────────────────── */
 

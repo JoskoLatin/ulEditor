@@ -79,7 +79,7 @@ import { t } from '@uleditor/i18n';
 import type { Rect } from './annotations.js';
 import {
   boundsOfOperation,
-  readPageContent,
+  pageContentOrNothing,
   textOf,
   type FontInfo,
   type PageContent,
@@ -194,7 +194,10 @@ function locate(
   spec: RetypeSpec,
   standard?: StandardWidths,
 ): { operation: TextOperation; content: PageContent } | null {
-  const content = readPageContent(page, standard);
+  // Nothing to locate on a page nothing can read — see `pageContentOrNothing`.
+  const content = pageContentOrNothing(page, standard);
+  if (!content) return null;
+
   for (const operation of content.operations) {
     const bounds = boundsOfOperation(operation);
     if (!bounds || !near(bounds, spec.rect)) continue;

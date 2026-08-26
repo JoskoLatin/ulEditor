@@ -21,7 +21,12 @@ import type { PDFPage } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import type { Rect } from './annotations.js';
-import { readPageContent, type Glyph, type Obstacle, type TextOperation } from './content.js';
+import {
+  pageContentOrNothing,
+  type Glyph,
+  type Obstacle,
+  type TextOperation,
+} from './content.js';
 import { adjustmentFor, hexOf, replaceContents, round, splice } from './stream.js';
 import type { StandardWidths } from './text.js';
 
@@ -168,7 +173,11 @@ export function previewRedaction(
   rects: Rect[],
   standard?: StandardWidths,
 ): { glyphs: number; obstacles: Obstacle[] } {
-  const content = readPageContent(page, standard);
+  /* A page nothing can decode is an obstacle like any other: the person is
+     told before they confirm, rather than after the save has failed. */
+  const content = pageContentOrNothing(page, standard);
+  if (!content) return { glyphs: 0, obstacles: [{ reason: t('this page cannot be read') }] };
+
   let glyphs = 0;
 
   for (const operation of content.operations) {
@@ -216,7 +225,11 @@ export async function applyRedactions(
     const page = pages[pageNumber - 1];
     if (!page) continue;
 
-    const content = readPageContent(page, standard);
+    const content = pageContentOrNothing(page, standard);
+    if (!content) {
+      refused.push({ page: pageNumber, reason: t('this page cannot be read') });
+      continue;
+    }
 
     const blocking = blockingObstacles(content.obstacles, rects);
     if (blocking.length > 0) {

@@ -397,6 +397,7 @@
   "There is no text in that area.": "U tom području nema teksta.",
   "This area cannot be cleared safely: {reason}": "Ovo područje se ne da pouzdano očistiti: {reason}",
   "Could not read the page content: {reason}": "Sadržaj stranice se ne da pročitati: {reason}",
+  "this page cannot be read": "ova stranica se ne može pročitati",
   "Page {n} was left untouched — the text there cannot be removed safely ({reason}).": "Stranica {n} je ostala netaknuta — tekst se ondje ne da pouzdano maknuti ({reason})."
 ,
   "That text is invisible — it is a recognition layer, not the page.": "Taj tekst je nevidljiv — to je sloj iz prepoznavanja, ne sama stranica.",

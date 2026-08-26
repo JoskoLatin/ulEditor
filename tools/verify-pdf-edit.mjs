@@ -218,6 +218,33 @@ check(
   `${line.bounds.width.toFixed(2)} → ${(box.width - TEXT_PADDING * 2).toFixed(2)} pt`,
 );
 
+/* ── a page that cannot be read at all ───────────────────────────────── */
+
+/*
+ * A click on a page whose content stream will not decode. Nothing can be
+ * offered for retyping there, and this function has a refusal channel for
+ * exactly that — but the read underneath it used to throw instead, and the
+ * click reached the interface as an unhandled exception. Five such files turned
+ * up in one folder of four hundred real PDFs.
+ */
+{
+  const { makeUndecodablePdf } = await import('./fixtures.mjs');
+  const blind = await PDFDocument.load(makeUndecodablePdf());
+  let broke = null;
+  let outcome;
+  try {
+    outcome = findEditableLine(blind.getPages()[0], { x: 100, y: 100 }, standard);
+  } catch (error) {
+    broke = error.message;
+  }
+  check('a click on a page nothing can decode does not throw', broke === null, broke ?? 'it refused');
+  check(
+    'it refuses in words rather than offering a line',
+    typeof outcome?.refusal === 'string' && outcome.refusal.length > 0,
+    JSON.stringify(outcome ?? null),
+  );
+}
+
 /* ── outcome ─────────────────────────────────────────────────────────── */
 
 const failed = checks.filter((c) => !c.passed);

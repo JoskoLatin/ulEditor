@@ -859,6 +859,35 @@ function glyphsFrom(
  * glyphs and Form XObjects that may contain text of their own. The caller decides
  * what to do with them, but cannot pretend they are not there.
  */
+/**
+ * The page's content, or nothing — for callers that cannot survive an exception.
+ *
+ * `readPageContent` throws when the content stream itself will not decode. That
+ * happens in the wild: a file written by something that got the compression
+ * header wrong, or repaired by a tool that left a stream behind. pdf.js is
+ * tolerant enough to draw such a page, so it sits on screen looking perfectly
+ * ordinary while nothing here can reach its glyphs — five files in one folder of
+ * four hundred real PDFs.
+ *
+ * Every caller has its own way of saying *not this page*: a redaction refuses
+ * it, a preview reports it as an obstacle, a click finds no line to retype.
+ * None of them has a way of surviving an exception thrown from underneath, and
+ * an exception in the save path costs the person the annotations they made as
+ * well. So the failure is handed back as an absence, and each caller says what
+ * it means in its own words.
+ *
+ * Deliberately **not** an empty page: for redaction, "no text here" reads as
+ * success, and answering that about a page whose text could not be read is the
+ * one answer that must never be given.
+ */
+export function pageContentOrNothing(page: PDFPage, standard?: StandardWidths): PageContent | null {
+  try {
+    return readPageContent(page, standard);
+  } catch {
+    return null;
+  }
+}
+
 export function readPageContent(page: PDFPage, standard?: StandardWidths): PageContent {
   const bytes = contentsOf(page);
   const fonts = readFonts(page.node.Resources(), standard);

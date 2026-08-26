@@ -19,7 +19,7 @@ import type { PDFPage } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import type { Rect, Rgb } from './annotations.js';
-import { boundsOfOperation, readPageContent, textOf, type FontInfo } from './content.js';
+import { boundsOfOperation, pageContentOrNothing, textOf, type FontInfo } from './content.js';
 import {
   gatherLine,
   inventoryOf,
@@ -106,7 +106,11 @@ export function findEditableLine(
   point: { x: number; y: number },
   standard?: StandardWidths,
 ): { line: EditableLine } | { refusal: string } | null {
-  const content = readPageContent(page, standard);
+  /* A page whose stream will not decode has no line to offer, and saying so is
+     the whole point of this function's refusal channel — see
+     `pageContentOrNothing`. */
+  const content = pageContentOrNothing(page, standard);
+  if (!content) return { refusal: t('this page cannot be read') };
 
   for (const operation of content.operations) {
     const bounds = boundsOfOperation(operation);

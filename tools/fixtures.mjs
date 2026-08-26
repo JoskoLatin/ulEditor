@@ -1327,3 +1327,35 @@ export function makeDoc() {
     { name: '1Table', data: Uint8Array.from(table) },
   ]);
 }
+
+/**
+ * A page whose content stream nothing will decode.
+ *
+ * The stream says it is Flate-compressed and is not — the shape of a file
+ * written by something that got the header wrong, or repaired by a tool that
+ * left a stream behind. Five of them turned up in one folder of four hundred
+ * real PDFs, and pdf.js draws such a page perfectly happily, so it is on screen
+ * looking ordinary while its glyphs cannot be reached at all.
+ */
+export function makeUndecodablePdf() {
+  const stream = 'not compressed at all, whatever the dictionary says';
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+    `<</Length ${stream.length}/Filter/FlateDecode>>\nstream\n${stream}\nendstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}

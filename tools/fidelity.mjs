@@ -36,6 +36,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { PDFDocument, PDFArray, PDFName, PDFRawStream } from 'pdf-lib';
 import { join, resolve, dirname, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -57,6 +58,28 @@ const { findOdsCells, applyOdsEdits, writeOds } = await load('packages/editor-of
 const { readXls } = await load('packages/editor-office/src/xls.ts');
 const { parseDoc } = await load('packages/editor-office/src/doc.ts');
 const { saveDocument } = await load('packages/editor-pdf/src/document.ts');
+const { applyRedactions } = await load('packages/editor-pdf/src/redact.ts');
+const { pageContentOrNothing, textOf, boundsOfOperation } = await load(
+  'packages/editor-pdf/src/content.ts',
+);
+const { standardWidths } = await load('packages/editor-pdf/src/text.ts');
+
+/*
+ * The metrics of the fourteen fonts a PDF may name without embedding. Redaction
+ * needs them to know how wide a removed glyph was, and refuses a page it cannot
+ * measure — so a harness that left them out would report the whole corpus as
+ * refused and prove nothing. They are passed here exactly as the editor's own
+ * save path passes them.
+ */
+const requireFrom = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
+const STANDARD_FACES = {
+  sans: 'LiberationSans-Regular.ttf',
+  'sans-bold': 'LiberationSans-Bold.ttf',
+  'sans-italic': 'LiberationSans-Italic.ttf',
+};
+const standard = await standardWidths(async (face) =>
+  new Uint8Array(readFileSync(requireFrom.resolve(`pdfjs-dist/standard_fonts/${STANDARD_FACES[face]}`))),
+);
 
 /* ── the run ─────────────────────────────────────────────────────────── */
 
@@ -449,6 +472,91 @@ function pagesHeld(before, after, map) {
   return null;
 }
 
+/**
+ * How much text is actually **on** this page.
+ *
+ * Counting the text-showing operands out of the raw stream is not enough, and
+ * the corpus said so: a poster in this folder parks the word `art` at x −443
+ * with a font size of 239, four hundred points off the left edge, where it is
+ * never drawn. Redaction quite rightly leaves it — it was never inside the
+ * marked area — and a check that counted it would report a leak that is not one.
+ *
+ * So the page is read the way the editor reads it, with the transformations
+ * applied, and only what lands within the page is counted.
+ */
+function textOnPage(page) {
+  const { width, height } = page.getSize();
+  const content = pageContentOrNothing(page, standard);
+  if (!content) return null;
+
+  let total = 0;
+  for (const operation of content.operations) {
+    const text = textOf(operation);
+    if (!text) continue;
+    const bounds = boundsOfOperation(operation);
+    if (!bounds) continue;
+    const onPage =
+      bounds.x + bounds.width > 0 &&
+      bounds.x < width &&
+      bounds.y + bounds.height > 0 &&
+      bounds.y < height;
+    if (onPage) total += text.length;
+  }
+  return total;
+}
+
+/**
+ * The one promise in this program with something at stake beyond tidiness.
+ *
+ * A black rectangle drawn over a name looks like deletion and survives every
+ * check that looks at the picture. So nothing here looks at the picture: the
+ * whole first page is redacted — which needs no text positions of its own and
+ * therefore works on any document — and then the page is read back and asked
+ * how much text is still on it. After removing everything, the answer has to be
+ * none.
+ *
+ * A refusal is not a failure. The format has corners where removal cannot be
+ * guaranteed, and there the document must be left exactly as it was and the
+ * reason must reach the person — which is the honest outcome and is counted
+ * separately here rather than being quietly folded in with the successes.
+ */
+async function redactionRemoves(bytes) {
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const page = doc.getPage(0);
+
+  const before = textOnPage(page);
+  if (before === null) return { note: 'the page cannot be read at all' };
+  if (before === 0) return { note: 'no text on the first page' };
+
+  /*
+   * An area far larger than the page, and that matters.
+   *
+   * Redaction removes a glyph whose box the marked area **contains**, not one
+   * it merely touches — the conservative rule, and the right one: a person
+   * dragging over a line has not asked for the letter their box clipped the
+   * corner of. Marking exactly the page rectangle therefore asks an unfair
+   * question, because a glyph can straddle the page edge and no user could ever
+   * drag a box that contains it. A rotated poster in this corpus does exactly
+   * that, and reporting it as a leak said more about the harness than the
+   * program. Marked generously, everything visible has to go.
+   */
+  const result = await applyRedactions(
+    bytes,
+    [{ id: 'fidelity', page: 1, rect: { x: -20000, y: -20000, width: 40000, height: 40000 } }],
+    standard,
+  );
+
+  const refused = result.refused.find((entry) => entry.page === 1);
+  if (refused) return { refused: refused.reason };
+
+  const cleaned = await PDFDocument.load(result.bytes, { ignoreEncryption: true });
+  const after = textOnPage(cleaned.getPage(0));
+  if (after !== null && after > 0) {
+    return { fail: `${after} of ${before} characters are still on the page after redaction` };
+  }
+  return { note: `${before} characters removed` };
+}
+
 async function checkPdf(bytes) {
   let before;
   try {
@@ -543,7 +651,14 @@ async function checkPdf(bytes) {
     moved = ' · reordered';
   }
 
-  return { ok: `${before.count} pages · annotated · rotated${cut}${moved} · content held` };
+  /* And the one promise with something at stake — see `redactionRemoves`. */
+  const redaction = await redactionRemoves(bytes);
+  if (redaction.fail) return { fail: `redaction left text behind: ${redaction.fail}` };
+  const redacted = redaction.refused
+    ? ` · redaction refused (${redaction.refused.slice(0, 24)})`
+    : ` · redacted`;
+
+  return { ok: `${before.count} pages · annotated · rotated${cut}${moved}${redacted} · content held` };
 }
 
 /* ── the read-only formats ───────────────────────────────────────────── */
