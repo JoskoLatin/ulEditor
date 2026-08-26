@@ -4054,7 +4054,7 @@ dependencies = [
 
 [[package]]
 name = "ul-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "serde",
  "thiserror 2.0.20",
@@ -4063,7 +4063,7 @@ dependencies = [
 
 [[package]]
 name = "ul-formats"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -4072,7 +4072,7 @@ dependencies = [
 
 [[package]]
 name = "uleditor-desktop"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
