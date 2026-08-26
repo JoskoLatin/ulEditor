@@ -96,14 +96,6 @@ pub struct DocumentCandidate {
     pub format: String,
 }
 
-/// Formats this module cannot read itself, but the shell can.
-fn is_document(format: FormatId) -> bool {
-    matches!(
-        format,
-        FormatId::Pdf | FormatId::Epub | FormatId::Docx | FormatId::Xlsx | FormatId::Odf
-    )
-}
-
 /// A NUL byte almost always means binary content; the same heuristic as in detection.
 fn looks_textual(bytes: &[u8]) -> bool {
     let window = &bytes[..bytes.len().min(PROBE)];
@@ -283,7 +275,7 @@ impl Workspace {
         }
 
         let format = detect_by_name(name).format;
-        if is_document(format) {
+        if FormatId::text_is_inside_a_container(format) {
             if outcome.documents.len() < query.limit {
                 outcome.documents.push(DocumentCandidate {
                     uri: display(path),

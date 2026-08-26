@@ -98,25 +98,6 @@ impl LibraryScan {
     }
 }
 
-/// Formats the library displays.
-///
-/// Documents and images, no code and no archives: on a phone you open what you
-/// read, and a `.ts` or `.zip` in the list would be noise. On desktop the
-/// explorer serves that purpose.
-fn is_library_format(format: FormatId) -> bool {
-    matches!(
-        format,
-        FormatId::Pdf
-            | FormatId::Epub
-            | FormatId::Docx
-            | FormatId::Xlsx
-            | FormatId::Pptx
-            | FormatId::Odf
-            | FormatId::Markdown
-            | FormatId::Image
-    )
-}
-
 /// Where documents are looked for, per platform.
 ///
 /// Paths that do not exist are returned too — the caller skips anything it
@@ -279,8 +260,12 @@ fn walk(root: &Path, dir: &Path, depth: usize, limit: usize, walked: &mut Walked
             continue;
         }
 
+        /* Documents and images, no code and no archives: on a phone you open
+        what you read, and a `.ts` or a `.zip` in the list would be noise. On
+        desktop the explorer serves that purpose. What counts as a document
+        is decided once, on `FormatId` itself — see `is_a_document`. */
         let format = detect_by_name(&name).format;
-        if !is_library_format(format) {
+        if !format.is_a_document() {
             continue;
         }
 
@@ -363,6 +348,55 @@ mod tests {
         formats.sort_unstable();
         assert_eq!(formats, ["image", "markdown", "pdf"]);
         assert_eq!(scan.seen_files, 5);
+    }
+
+    /// Every document format has to reach the library, and the list of them is
+    /// the one place a new `FormatId` is easy to forget. It was forgotten twice:
+    /// the old binary Word and the OpenDocument pair were each given their own
+    /// id and each disappeared from the library the same day.
+    #[test]
+    fn every_document_format_reaches_the_library() {
+        let dir = temp_dir("formats");
+        let names = [
+            "ugovor.pdf",
+            "knjiga.epub",
+            "ponuda.docx",
+            "zapisnik.doc",
+            "prodaja.xlsx",
+            "promet.xls",
+            "izvjestaj.odt",
+            "cjenik.ods",
+            "upitnik.rtf",
+            "prezentacija.pptx",
+            "crtez.odg",
+            "biljeske.md",
+            "slika.png",
+        ];
+        for name in names {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+        // Not documents, and not wanted in a library of them.
+        for name in ["main.rs", "biljeske.txt", "arhiva.zip"] {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let workspace = Workspace::new();
+        let scan = workspace
+            .scan_library(std::slice::from_ref(&dir), None)
+            .unwrap();
+
+        let found: Vec<&str> = scan.entries.iter().map(|e| e.name.as_str()).collect();
+        for name in names {
+            assert!(
+                found.contains(&name),
+                "{name} never reached the library: {found:?}"
+            );
+        }
+        assert_eq!(
+            found.len(),
+            names.len(),
+            "something that is not a document got in: {found:?}"
+        );
     }
 
     #[test]

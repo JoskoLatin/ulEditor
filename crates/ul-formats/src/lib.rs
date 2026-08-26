@@ -51,6 +51,78 @@ pub enum FormatId {
 }
 
 impl FormatId {
+    /// Whether a person would call this a document.
+    ///
+    /// It decides what a library of somebody's files lists, and it says nothing
+    /// about whether this program can open one: a `.pptx` in a folder is still
+    /// theirs, and the shell explains plainly what it cannot do with it. What is
+    /// left out is what nobody browses a library for — code, plain text,
+    /// archives, whatever could not be identified.
+    ///
+    /// **Written as an exhaustive match, not a list of the interesting ones.**
+    /// This classification lived in three separate places as `matches!` lists,
+    /// and every one of them fell out of step the moment a format was given an
+    /// id of its own: splitting the old binary Word out of `Docx`, and
+    /// OpenDocument text and spreadsheets out of `Odf`, quietly emptied a
+    /// library of sixty-nine real files. Spelled this way the compiler refuses
+    /// to build until a new format has been thought about.
+    pub fn is_a_document(self) -> bool {
+        match self {
+            Self::Pdf
+            | Self::Epub
+            | Self::Docx
+            | Self::Doc
+            | Self::Xlsx
+            | Self::Xls
+            | Self::Odt
+            | Self::Ods
+            | Self::Odf
+            | Self::Rtf
+            | Self::Pptx
+            | Self::Markdown
+            | Self::Image => true,
+            Self::Text
+            | Self::Code
+            | Self::Vector
+            | Self::Model
+            | Self::Archive
+            | Self::Binary
+            | Self::Unknown => false,
+        }
+    }
+
+    /// Whether the words are inside a container rather than in the bytes.
+    ///
+    /// A byte scan finds nothing in these — the text is compressed, or encoded,
+    /// or scattered through a piece table — so a search offers the file to be
+    /// opened instead of a line to jump to. `Rtf` is deliberately absent: it is
+    /// markup, and grepping it finds the real words even with control sequences
+    /// around them, which beats offering a reader that does not exist yet.
+    pub fn text_is_inside_a_container(self) -> bool {
+        match self {
+            Self::Pdf
+            | Self::Epub
+            | Self::Docx
+            | Self::Doc
+            | Self::Xlsx
+            | Self::Xls
+            | Self::Odt
+            | Self::Ods
+            | Self::Odf
+            | Self::Pptx => true,
+            Self::Rtf
+            | Self::Text
+            | Self::Code
+            | Self::Markdown
+            | Self::Image
+            | Self::Vector
+            | Self::Model
+            | Self::Archive
+            | Self::Binary
+            | Self::Unknown => false,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",

@@ -319,7 +319,7 @@ async function searchViaVfs(
       }
 
       const format = detectByName(entry.name).format;
-      if (DOCUMENT_FORMATS.has(format)) {
+      if (FORMATS[format].container) {
         if (outcome.documents.length < WEB_DOCUMENT_LIMIT) {
           outcome.documents.push({ uri: entry.uri, name: entry.name, format });
         }
@@ -368,7 +368,6 @@ async function searchViaVfs(
   return outcome;
 }
 
-const DOCUMENT_FORMATS = new Set<FormatId>(['pdf', 'epub', 'docx', 'xlsx', 'odf']);
 const WEB_MAX_FILE_BYTES = 1024 * 1024;
 const WEB_HIT_LIMIT = 300;
 const WEB_DOCUMENT_LIMIT = 40;

@@ -370,7 +370,31 @@ function checkOds(bytes) {
 
   if (readText(reopened, 'content.xml') !== next) return { fail: 'the part written is not the part read back' };
 
-  return { ok: `${edits.length} edits · ${Object.keys(archive).length - 1} parts intact · geometry held` };
+  /*
+   * And the value is in the cell it was meant for.
+   *
+   * This is the assertion ODF exists to be given. A cell there has no address:
+   * its position is wherever the counting has reached, and the counting runs
+   * through repeat attributes, so writing into one means splitting a repeated
+   * group. Split it a column short and the value lands one cell to the left —
+   * geometry that still adds up, an archive whose other parts are untouched, a
+   * file that opens perfectly, and a number in the wrong place.
+   */
+  for (const edit of edits) {
+    const table = after[edit.sheet];
+    const row = table?.rows.find((candidate) => candidate.row === edit.row);
+    const cell = row?.cells.find(
+      (candidate) => edit.col >= candidate.col && edit.col < candidate.col + candidate.repeat,
+    );
+    if (!cell) return { fail: `the cell edited at ${edit.row},${edit.col} is no longer there` };
+    if (!next.slice(cell.start, cell.end).includes(edit.value)) {
+      return { fail: `the value written for ${edit.row},${edit.col} is not in that cell` };
+    }
+  }
+
+  return {
+    ok: `${edits.length} edits · ${Object.keys(archive).length - 1} parts intact · geometry held · values placed`,
+  };
 }
 
 /* ── PDF ─────────────────────────────────────────────────────────────── */
