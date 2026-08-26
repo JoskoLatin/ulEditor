@@ -190,6 +190,24 @@ shell.registry.register(
 shell.registry.register(
   lazyProvider(
     {
+      id: 'org.uleditor.rtf',
+      displayName: 'Rich Text',
+      matches: {
+        extensions: ['rtf'],
+        mimeTypes: ['application/rtf', 'text/rtf'],
+      },
+      /* No `edit`. Writing RTF back would mean deciding what to do with every
+         instruction the reader skipped, and it does not know. */
+      capabilities: ['view', 'search', 'read'],
+      priority: 30,
+    },
+    async () => (await import('@uleditor/editor-office')).rtfPreviewProvider,
+  ),
+);
+
+shell.registry.register(
+  lazyProvider(
+    {
       id: 'org.uleditor.xlsx',
       displayName: 'Excel',
       matches: {

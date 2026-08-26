@@ -44,6 +44,7 @@ import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
 import { applyOdsEdits, writeOds, type OdsEdit } from './ods-edit.js';
 import { readDoc } from './doc.js';
+import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
@@ -1044,7 +1045,37 @@ export const docPreviewProvider: EditorProvider = {
   },
 };
 
+/**
+ * Rich Text — shown, not written.
+ *
+ * The same reading room again, and the third format to land in it from a
+ * completely different direction: a `.docx` is XML in a ZIP, a `.doc` is a
+ * compound file of byte offsets, and an `.rtf` is a stream of instructions with
+ * no structure at all until it has been read from the first byte. All three end
+ * as paragraphs, and one view draws them.
+ *
+ * `.doc` is deliberately absent from `extensions` even though a good number of
+ * files with that name are Rich Text underneath. The bytes decide that, not the
+ * list: detection reads the signature, hands the tab the `rtf` format, and the
+ * shell arrives here having already answered the question.
+ */
+export const rtfPreviewProvider: EditorProvider = {
+  id: 'org.uleditor.rtf',
+  displayName: 'Rich Text',
+  matches: {
+    extensions: ['rtf'],
+    mimeTypes: ['application/rtf', 'text/rtf'],
+  },
+  capabilities: ['view', 'search', 'read'],
+  priority: 30,
+
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new DocxPreviewEditor(host, doc, readRtf(await doc.bytes()));
+  },
+};
+
 export { readXls } from './xls.js';
 export { readDoc, parseDoc } from './doc.js';
+export { readRtf, parseRtf } from './rtf.js';
 export { readOds, readOdt } from './odf.js';
 export { DocxPreviewEditor, XlsxPreviewEditor };

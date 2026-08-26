@@ -74,6 +74,11 @@ jobs:
       # the shared string a CONTINUE record cuts in half.
       - run: pnpm verify:xls
 
+      # Rich Text, where the code page is claimed twice and the two disagree —
+      # and where a picture, a signature and hidden text all have to be read
+      # past without any of them reaching the page.
+      - run: pnpm verify:rtf
+
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed

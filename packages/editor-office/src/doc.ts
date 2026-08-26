@@ -46,21 +46,12 @@
 
 import { t } from '@uleditor/i18n';
 
+/* Word's narrow pieces are CP1252 whatever the machine's locale was, so this
+   is not a guess: `0x9E` is `ž` in a Zagreb document and in a Lisbon one
+   alike. Rich Text is the format that has to choose — see codepages.ts. */
+import { CP1252_HIGH } from './codepages.js';
 import { Cfb } from './cfb.js';
 import type { Preview, PreviewOutline } from './docx.js';
-
-/**
- * The characters CP1252 puts where Latin-1 keeps control codes.
- *
- * Word's narrow pieces are CP1252 whatever the machine's locale was, so this is
- * not a guess: `0x9E` is `ž` in a Zagreb document and in a Lisbon one alike.
- */
-const CP1252_HIGH = [
-  0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
-  0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d, 0x017d, 0x008f,
-  0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
-  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x009d, 0x017e, 0x0178,
-];
 
 /**
  * The two hyphens Word stores as codes rather than as characters: one that a
@@ -720,8 +711,15 @@ function paraNodes(para: Para): Node[] {
  * paragraphs marked as being in a table becomes a table, cut into cells at the
  * `\x07` marks and into rows at the paragraph that says the row ended; and a
  * run of paragraphs sharing a list reference becomes a list.
+ *
+ * Exported because [`rtf.ts`](./rtf.ts) ends up holding exactly this — a list
+ * of paragraphs, each with runs, an alignment, a style and a place in a table —
+ * having got there along a completely different road. Two parsers and one
+ * reading room is the right shape: whatever is true of a heading or a cell here
+ * should be true of it there, and a second renderer is a second set of answers
+ * waiting to disagree with the first.
  */
-function build(paragraphs: Para[], styles: Styles, notes: Set<string>): Preview {
+export function buildPreview(paragraphs: Para[], styles: Styles, notes: Set<string>): Preview {
   const body = document.createElement('div');
   body.className = 'ul-office-doc';
   const outline: PreviewOutline[] = [];
@@ -837,5 +835,5 @@ function build(paragraphs: Para[], styles: Styles, notes: Set<string>): Preview 
 
 export function readDoc(bytes: Uint8Array): Preview {
   const { paragraphs, styles, notes } = parseDoc(bytes);
-  return build(paragraphs, styles, notes);
+  return buildPreview(paragraphs, styles, notes);
 }

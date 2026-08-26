@@ -85,8 +85,10 @@ export const FORMATS: Record<FormatId, FormatDescriptor> = {
      nothing with a `.docx` but the name, and opens in a different editor. */
   doc: { id: 'doc', family: 'document', label: 'Word 97-2003 document', textual: false, document: true, container: true },
   /* Textual, and that is the point: an `.rtf` is markup a person can read, so a
-     text editor opening one is a reasonable thing rather than a mistake. */
-  rtf: { id: 'rtf', family: 'document', label: 'Rich Text', textual: true, document: true, container: false },
+     text editor opening one is a reasonable thing rather than a mistake. A
+     container all the same, since it acquired a reader: searching the raw
+     markup matches `\par` and misses every escaped Croatian letter. */
+  rtf: { id: 'rtf', family: 'document', label: 'Rich Text', textual: true, document: true, container: true },
   xlsx: { id: 'xlsx', family: 'sheet', label: 'Excel spreadsheet', textual: false, document: true, container: true },
   /* Its own id, not a variant of xlsx: when content decides, the format is what
      routes a file to an editor — and the old binary format opens read-only. */

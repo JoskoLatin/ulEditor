@@ -32,6 +32,7 @@ import {
   makeOds,
   makeOdt,
   makePdf,
+  makeRtf,
   makeSplitLinePdf,
   makeToUnicodePdf,
   makeXls,
@@ -1310,6 +1311,54 @@ try {
     'and the bar says this one is shown, not written either',
     !(await docBar.locator('strong').innerText()).includes('retyped'),
     await docBar.locator('strong').innerText(),
+  );
+
+  /* — Rich Text — */
+
+  /*
+   * The format this program could name and would not open. What is checked
+   * here is the half that needs a browser; that the bytes come out as the right
+   * letters at all is verify-rtf.mjs, where the two code pages are.
+   *
+   * The same reading room as the two above, on purpose: three formats that
+   * share nothing — an archive of XML, a compound file of byte offsets, and a
+   * stream of instructions — and one view that draws all of them.
+   */
+  await dropFile(page, 'upitnik.rtf', makeRtf());
+  const rtfView = page.locator('.ul-office-doc:visible').first();
+  await rtfView.locator('h1').first().waitFor({ timeout: 20000 });
+
+  check(
+    'an .rtf opens instead of being recognised and refused',
+    (await rtfView.locator('h1').first().innerText()).trim() === 'Zapisnik',
+    await rtfView.locator('h1').first().innerText(),
+  );
+  check(
+    'the letters of both code pages reach the page',
+    (await rtfView.innerText()).includes('zaključak') && (await rtfView.innerText()).includes('Café'),
+  );
+  check(
+    'a heading that says so only with an outline level is drawn as one',
+    (await rtfView.locator('h2').allInnerTexts()).some((text) => text.trim() === 'Prilozi'),
+    (await rtfView.locator('h2').allInnerTexts()).join('|'),
+  );
+  check(
+    'the table cut out of the cell marks has two rows of two',
+    (await rtfView.locator('table tr').count()) === 2 && (await rtfView.locator('table td').count()) === 4,
+    `${await rtfView.locator('table tr').count()} rows · ${await rtfView.locator('table td').count()} cells`,
+  );
+  check(
+    'and nothing that is not the document came with it',
+    !(await rtfView.innerText()).includes('Riched20') &&
+      !(await rtfView.innerText()).includes('Times New Roman') &&
+      !(await rtfView.innerText()).includes('skriveno'),
+  );
+
+  const rtfBar = page.locator('.ul-office:visible .ul-office-notes').first();
+  check(
+    'the bar names the picture it cannot draw',
+    (await rtfBar.innerText()).includes('Slike') || (await rtfBar.innerText()).includes('Pictures'),
+    await rtfBar.innerText(),
   );
 
   /* — what the platform draws for us — */

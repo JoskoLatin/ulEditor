@@ -1359,3 +1359,74 @@ export function makeUndecodablePdf() {
   pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
   return new TextEncoder().encode(pdf);
 }
+
+/**
+ * A Rich Text document with everything the reader has to survive in it.
+ *
+ * Written with `@` where a backslash belongs, and swapped at the end. RTF is
+ * made almost entirely of backslashes, and a lone one has to pass a shell, a
+ * heredoc and a formatter before it reaches the file — each of which has had
+ * its own opinion about it in this repository already. One substitution at the
+ * end is the only spelling that survives all of them, and it keeps the source
+ * legible into the bargain.
+ *
+ * What is deliberately in here:
+ *
+ * - **Two code pages at once.** The document declares 1252 and the second font
+ *   declares charset 238, which is 1250. `0xE8` therefore has to come out `č`
+ *   in the text set in that font and `è` in the text that is not — the same
+ *   trap the old binary Word sets with its narrow and wide pieces.
+ * - **`\uN` with its replacement**, which an unwary reader prints as a question
+ *   mark after every Croatian letter.
+ * - A heading named in Croatian, and a second heading that has no heading style
+ *   at all and says so only with `\outlinelevel`.
+ * - A field, whose instruction must be dropped and whose result must be kept.
+ * - A picture, a generator signature under `\*`, binary data after `\bin`, and
+ *   hidden text — four different ways of putting bytes in the file that must
+ *   not reach the page.
+ */
+export function makeRtf() {
+  const source =
+    '{@rtf1@ansi@ansicpg1252@uc1@deff0' +
+    '{@fonttbl{@f0@fswiss@fcharset0 Arial;}{@f1@froman@fcharset238 Times New Roman;}}' +
+    '{@colortbl;@red0@green0@blue0;}' +
+    '{@stylesheet{@s0 Normal;}{@s1 Naslov 1;}{@s2 Body Text;}}' +
+    '{@*@generator Riched20 10.0.19041;}' +
+    // A heading recognised by the name its style carries, in Croatian.
+    '@pard@s1@f0@b Zapisnik@b0@par' +
+    // Text in the font that declares CP1250: the bytes below are c-caron and
+    // c-acute there, and something else entirely under the document's own page.
+    "@pard@s0@f1 Sastanak je odr@'9een u Vodicama, zaklju@'e8ak: @'e6emo nastaviti.@par" +
+    // The same byte in the font that does not: this one really is an accented e.
+    "@pard@f0 Café: @'e8@par" +
+    // A character written the modern way, with the old way beside it to be swallowed.
+    '@pard@f0 Ivan Perkovi@u263 ?@par' +
+    // Bold, italic and struck through, each turned off by its own zero.
+    '@pard@f0 Ovo je @b podebljano@b0  i @i ukoseno@i0  i @strike precrtano@strike0 .@par' +
+    // Centred.
+    '@pard@qc@f0 Sredina@par' +
+    // A list of two items.
+    '@pard@ls1@ilvl0@f0 Prva stavka@par' +
+    '@pard@ls1@ilvl0@f0 Druga stavka@par' +
+    // A heading with no heading style, which only the outline level declares.
+    '@pard@s2@outlinelevel1@f0 Prilozi@par' +
+    // A table: two rows of two cells.
+    '@trowd@intbl@pard@intbl@f0 Stavka@cell@pard@intbl Iznos@cell@row' +
+    '@trowd@intbl@pard@intbl@f0 Prijevoz@cell@pard@intbl 120,00@cell@row' +
+    // A field: the instruction is machinery, the result is what Word drew.
+    '@pard@f0 Stranica {@field{@*@fldinst PAGE }{@fldrslt 2}} .@par' +
+    // Hidden text, which is how a table of contents keeps its own workings.
+    '@pard@f0 Vidljivo@v  skriveno@v0 .@par' +
+    // A picture, and binary data, neither of which is text.
+    '{@pict@wmetafile8@picw100@pich100 0102030405060708}' +
+    '@pard@f0 Kraj@bin4 ....@par' +
+    '}';
+
+  const text = source.replaceAll('@', String.fromCharCode(92));
+
+  /* One byte per character: everything above is either ASCII or a `\'hh`
+     escape, which is what makes RTF a format that can be typed. */
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+  return bytes;
+}

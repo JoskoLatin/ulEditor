@@ -109,9 +109,16 @@ impl FormatId {
             | Self::Odt
             | Self::Ods
             | Self::Odf
-            | Self::Pptx => true,
-            Self::Rtf
-            | Self::Text
+            | Self::Pptx
+            /* Rich Text is markup a person can read, and for a while it was
+               searched as text for that reason. It has a reader now, and the
+               reader is the better answer: when the writer escaped them, the
+               letters of `Šibenik` are not in the bytes at all, while the
+               instructions holding the file together are. Grepping it
+               therefore misses what is in the document and matches what is
+               not. */
+            | Self::Rtf => true,
+            Self::Text
             | Self::Code
             | Self::Markdown
             | Self::Image

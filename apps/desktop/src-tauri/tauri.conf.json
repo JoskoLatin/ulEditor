@@ -145,6 +145,15 @@
       },
       {
         "ext": [
+          "rtf"
+        ],
+        "name": "Rich Text document",
+        "description": "Rich Text document",
+        "mimeType": "application/rtf",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
           "odt",
           "ott"
         ],

@@ -57,6 +57,7 @@ const { findCells, applyCellEdits, cellXml, writeXlsx } = await load(
 const { findOdsCells, applyOdsEdits, writeOds } = await load('packages/editor-office/src/ods-edit.ts');
 const { readXls } = await load('packages/editor-office/src/xls.ts');
 const { parseDoc } = await load('packages/editor-office/src/doc.ts');
+const { parseRtf } = await load('packages/editor-office/src/rtf.ts');
 const { saveDocument } = await load('packages/editor-pdf/src/document.ts');
 const { applyRedactions } = await load('packages/editor-pdf/src/redact.ts');
 const { pageContentOrNothing, textOf, boundsOfOperation } = await load(
@@ -702,9 +703,38 @@ function checkDoc(bytes) {
   };
 }
 
+/**
+ * Rich Text, where the mojibake count is the whole point.
+ *
+ * This format claims its code page twice and the two disagree — the document
+ * says one thing and each font says another — so a reader that believes the
+ * wrong one produces text that is not broken enough to look broken. `Kovačić`
+ * comes back as `Kovaèiæ`, which reads as a damaged file rather than as a bug,
+ * and the only way to see it at this scale is to count the characters that have
+ * no business being in a Croatian document.
+ */
+function checkRtf(bytes) {
+  const { paragraphs } = parseRtf(bytes);
+  const text = paragraphs.map((para) => para.runs.map((run) => run.text).join('')).join('\n');
+  const junk = junkIn(text);
+  if (junk > 0) return { fail: `${junk} characters came back as mojibake` };
+  const bold = paragraphs.reduce((n, para) => n + para.runs.filter((run) => run.chp.bold).length, 0);
+  return {
+    ok: `read-only · ${paragraphs.length} paragraphs · ${diacriticsIn(text)} diacritics · ${bold} bold`,
+  };
+}
+
 /* ── walking the corpus ──────────────────────────────────────────────── */
 
-const CHECKS = { docx: checkDocx, xlsx: checkXlsx, ods: checkOds, xls: checkXls, doc: checkDoc, pdf: checkPdf };
+const CHECKS = {
+  docx: checkDocx,
+  xlsx: checkXlsx,
+  ods: checkOds,
+  xls: checkXls,
+  doc: checkDoc,
+  rtf: checkRtf,
+  pdf: checkPdf,
+};
 
 /* Readers whose output is a page of elements rather than a structure. They are
    checked in verify-ui.mjs, in a browser, because that is where a DOM exists. */
@@ -742,6 +772,7 @@ async function corpus() {
     { name: 'prodaja.ods', bytes: made.makeOds() },
     { name: 'promet.xls', bytes: made.makeXls() },
     { name: 'zapisnik.doc', bytes: made.makeDoc() },
+    { name: 'upitnik.rtf', bytes: made.makeRtf() },
     { name: 'izvjestaj.odt', bytes: made.makeOdt() },
     { name: 'dokument.pdf', bytes: asBytes(made.makeMultiPagePdf(3)) },
   ];
