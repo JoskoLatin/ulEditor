@@ -759,42 +759,70 @@ try {
   /* — the menu bar — */
 
   /*
-   * Alt on its own. This is the whole reason the bar exists: everything the
-   * program can do was reachable only by somebody who already knew it was
-   * there, and one key is what turns that around.
+   * Alt belongs to Windows and to Linux. On a Mac the same key is Option, which
+   * is how a person types é and £ and #, and a menu bar that answered to it
+   * would take the third level of the keyboard away from them — so there it is
+   * a bar you click, and `MenuBar.tsx` binds nothing. The runner tells us which
+   * of the two we are, by the same test the component makes.
    */
-  await page.keyboard.press('Alt');
-  const menuOpened = await until(async () => (await page.locator('.menu-panel').count()) === 1);
-  check('Alt on its own opens the menu', menuOpened);
-  check(
-    'and the letters that open the others appear with it',
-    (await page.locator('.menu-title u').count()) === 5,
-    `${await page.locator('.menu-title u').count()} of 5 headings underlined`,
-  );
+  const onMac = await page.evaluate(() => /Mac/i.test(navigator.platform || navigator.userAgent));
 
-  await page.keyboard.press('Escape');
-  check('Escape closes it', await until(async () => (await page.locator('.menu-panel').count()) === 0));
+  if (onMac) {
+    await page.keyboard.press('Alt');
+    await page.waitForTimeout(120);
+    check(
+      'Option is left to the person typing, and opens nothing',
+      (await page.locator('.menu-panel').count()) === 0,
+    );
+  } else {
+    /*
+     * The whole reason the bar exists: everything the program can do was
+     * reachable only by somebody who already knew it was there, and one key is
+     * what turns that around.
+     */
+    await page.keyboard.press('Alt');
+    const menuOpened = await until(async () => (await page.locator('.menu-panel').count()) === 1);
+    check('Alt on its own opens the menu', menuOpened);
+    check(
+      'and the letters that open the others appear with it',
+      (await page.locator('.menu-title u').count()) === 5,
+      `${await page.locator('.menu-title u').count()} of 5 headings underlined`,
+    );
 
-  /*
-   * AltGr is not Alt, and on this keyboard it is how @ and [ and € are typed.
-   * Windows reports it as Ctrl and Alt together, so a menu bar that reads Alt
-   * without looking at Ctrl opens a menu every time somebody types an e-mail
-   * address.
-   */
-  await page.keyboard.press('Control+Alt+v');
-  await page.waitForTimeout(80);
-  check(
-    'AltGr types a character rather than opening a menu',
-    (await page.locator('.menu-panel').count()) === 0,
-  );
+    await page.keyboard.press('Escape');
+    check(
+      'Escape closes it',
+      await until(async () => (await page.locator('.menu-panel').count()) === 0),
+    );
 
-  await page.keyboard.press('Alt+v');
-  const viewOpened = await until(
-    async () => (await page.locator('.menu-panel[aria-label]').count()) === 1,
-  );
-  const openedLabel = await page.locator('.menu-panel').getAttribute('aria-label');
-  check('Alt and a letter open that menu directly', viewOpened && openedLabel === 'View', openedLabel);
+    /*
+     * AltGr is not Alt, and on a Croatian keyboard it is how @ and [ and € are
+     * typed. Windows reports it as Ctrl and Alt together, so a menu bar that
+     * reads Alt without looking at Ctrl opens a menu every time somebody types
+     * an e-mail address.
+     */
+    await page.keyboard.press('Control+Alt+v');
+    await page.waitForTimeout(80);
+    check(
+      'AltGr types a character rather than opening a menu',
+      (await page.locator('.menu-panel').count()) === 0,
+    );
 
+    await page.keyboard.press('Alt+v');
+    const viewOpened = await until(async () => (await page.locator('.menu-panel').count()) === 1);
+    const openedLabel = await page.locator('.menu-panel').getAttribute('aria-label');
+    check(
+      'Alt and a letter open that menu directly',
+      viewOpened && openedLabel === 'View',
+      openedLabel,
+    );
+    await page.keyboard.press('Escape');
+    await until(async () => (await page.locator('.menu-panel').count()) === 0);
+  }
+
+  /* The pointer reaches it everywhere, and the arrows walk it once it is open. */
+  await page.locator('.menu-title', { hasText: 'View' }).click();
+  await page.waitForSelector('.menu-panel', { timeout: 5000 });
   await page.keyboard.press('ArrowDown');
   check(
     'the arrows walk the rows',
