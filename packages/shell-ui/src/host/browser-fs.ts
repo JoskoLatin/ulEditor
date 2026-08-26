@@ -18,7 +18,7 @@ import type {
   VirtualFileSystem,
   WriteOptions,
 } from '@uleditor/plugin-sdk';
-import { t } from '@uleditor/i18n';
+import { getLocale, t } from '@uleditor/i18n';
 
 import { detect, detectByName } from './detect.js';
 
@@ -174,10 +174,15 @@ export class BrowserFileSystem implements VirtualFileSystem {
       });
     }
 
-    // Directories first, then alphabetically — without this the tree is unreadable.
+    /* Directories first, then alphabetically — without this the tree is
+       unreadable. The language of the comparison is the interface's, the same
+       rule as shell/tree-sort.ts, which sorts this again at drawing time: it
+       used to be Croatian whatever the interface was in, which is a decision
+       nobody made for anybody outside Croatia. */
+    const locale = getLocale();
     entries.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-      return a.name.localeCompare(b.name, 'hr');
+      return a.name.localeCompare(b.name, locale);
     });
     return entries;
   }

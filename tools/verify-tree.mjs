@@ -25,6 +25,9 @@ const { refreshRoot, removeRoot, addRoot } = await import(
 const { useWorkspace } = await import(
   pathToFileURL(resolve(ROOT, 'packages/shell-ui/src/state/workspace.ts')).href
 );
+const { setLocale } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/i18n/src/index.ts')).href
+);
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -49,8 +52,16 @@ const names = (nodes) => nodes.map((n) => n.name).join(', ');
 /* ── by name ─────────────────────────────────────────────────────────── */
 
 {
-  const nodes = [node('slika10.png'), node('slika2.png'), node('Album', 'directory'), node('čaj.txt'), node('cvijet.txt')];
-  const sorted = sortTree(nodes, 'name');
+  const folder = () => [
+    node('slika10.png'),
+    node('slika2.png'),
+    node('Album', 'directory'),
+    node('čaj.txt'),
+    node('cvijet.txt'),
+  ];
+
+  setLocale('hr');
+  const sorted = sortTree(folder(), 'name');
 
   check('folders come before files', sorted[0]?.name === 'Album', names(sorted));
   check(
@@ -64,6 +75,35 @@ const names = (nodes) => nodes.map((n) => n.name).join(', ');
     names(sorted) === 'Album, cvijet.txt, čaj.txt, slika2.png, slika10.png',
     names(sorted),
   );
+
+  /*
+   * The same folder, the interface in English, and the answer is allowed to
+   * differ: `č` is a letter of its own in Croatian and a `c` with a mark on it
+   * in English, so `čaj` belongs after `cvijet` in one and before it in the
+   * other. Both are right for their reader.
+   *
+   * What this pins is that the order follows the *interface* and nothing else.
+   * It used to follow the operating system's regional settings, which meant
+   * the check above passed on a Croatian Windows and failed on every build
+   * machine — the same program drawing one folder in two orders, for a reason
+   * nobody had chosen.
+   */
+  setLocale('en');
+  const inEnglish = sortTree(folder(), 'name');
+  check(
+    'and in English it lands where an English reader looks instead',
+    names(inEnglish) === 'Album, čaj.txt, cvijet.txt, slika2.png, slika10.png',
+    names(inEnglish),
+  );
+  check(
+    'so the order is the interface’s decision, not the machine’s',
+    names(inEnglish) !== names(sorted),
+    `${names(sorted)}  /  ${names(inEnglish)}`,
+  );
+
+  /* Back to the default, so nothing below inherits a language it did not ask
+     for — the messages the checks further down read are translated too. */
+  setLocale('en');
 }
 
 /* ── by type ─────────────────────────────────────────────────────────── */

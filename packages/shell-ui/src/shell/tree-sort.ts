@@ -14,16 +14,39 @@
  * No DOM and no React here, so the checks drive it directly.
  */
 
+import { getLocale } from '@uleditor/i18n';
+
 import type { TreeNode, TreeSort } from '../state/workspace.js';
 
 /**
  * Names, compared the way a person reads them.
  *
- * `Intl.Collator` rather than `<`: it puts `č` where Croatian expects it
- * instead of after `z`, and `numeric` keeps `slika2` before `slika10`, which
- * is the order anybody naming files that way meant.
+ * `Intl.Collator` rather than `<`: it puts `č` where a Croatian reader
+ * expects it instead of after `z`, and `numeric` keeps `slika2` before
+ * `slika10`, which is the order anybody naming files that way meant.
+ *
+ * The language is named, and it is the one the interface is in. Passing
+ * `undefined` asks the operating system instead, and the operating system
+ * answers differently on every machine: under `hr` a `č` is its own letter and
+ * `čaj` comes after `cvijet`, under `en` it is a `c` wearing a hat and comes
+ * before it. The same folder then draws in two orders on two computers because
+ * of a regional setting nobody chose for this program — and a check written
+ * against one of those orders fails on the other, which is exactly how this
+ * was found.
+ *
+ * Built on demand and remembered, because the language is set once before the
+ * first render and a collator made while this module loads would remember the
+ * language of the previous run.
  */
-const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+let cached: { locale: string; collator: Intl.Collator } | null = null;
+
+function byName(): Intl.Collator {
+  const locale = getLocale();
+  if (cached?.locale !== locale) {
+    cached = { locale, collator: new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }) };
+  }
+  return cached.collator;
+}
 
 /**
  * The label a file is grouped under when sorting by type.
@@ -56,12 +79,12 @@ function compare(a: TreeNode, b: TreeNode, sort: TreeSort): number {
   }
 
   if (sort === 'type' && a.kind === 'file') {
-    const byType = byName.compare(extensionOf(a.name), extensionOf(b.name));
+    const byType = byName().compare(extensionOf(a.name), extensionOf(b.name));
     if (byType !== 0) return byType;
   }
 
   // The tie-break under every order, and the whole of `name`.
-  return byName.compare(a.name, b.name);
+  return byName().compare(a.name, b.name);
 }
 
 /**
