@@ -101,6 +101,26 @@ export function localName(name: string): string {
   return colon === -1 ? name : name.slice(colon + 1);
 }
 
+/**
+ * An attribute of a scanned tag, **by local name** — the prefix is whatever the
+ * file happens to use.
+ *
+ * OOXML is written with the prefixes everyone writes it with, so `xlsx-edit.ts`
+ * and `ods-edit.ts` ask for `r` and `table:number-columns-repeated` by name. An
+ * OpenDocument text document is the one place that cannot: it is read here and
+ * **written back**, and a producer is free to bind the text namespace to any
+ * prefix it likes. Reading `text:c` from a file that spells it `t:c` would
+ * silently turn four spaces into one.
+ */
+export function tagAttr(xml: string, tag: { start: number; end: number }, local: string): string | null {
+  const body = xml.slice(tag.start, tag.end);
+  const match = new RegExp(
+    `[\\s<]([A-Za-z_][\\w.-]*:)?${local}\\s*=\\s*("([^"]*)"|'([^']*)')`,
+  ).exec(body);
+  if (!match) return null;
+  return match[3] ?? match[4] ?? null;
+}
+
 /* ── runovi ──────────────────────────────────────────────────────────── */
 
 export interface RunSpan {

@@ -21,12 +21,17 @@
  *   counts are the one thing that has to be handled carefully: taken literally
  *   they ask for a million rows of nothing.
  *
- * `.ods` is **editable in place**: a save writes the `.ods` it came from, with
- * only the cells that were retyped changed — see [`ods-edit.ts`](./ods-edit.ts).
- * `.odt` opens **read-only**, and says so. The `.docx` editor rewrites a run by
- * cutting into the bytes it came from; nothing here has been proven to that
- * standard yet, and an editor that cannot say what it will do to the file it
- * saves is the thing this project refuses to ship.
+ * **Both are editable in place**: a save writes the file it came from, with only
+ * what was retyped changed — the cells in [`ods-edit.ts`](./ods-edit.ts), the
+ * text in [`odt-edit.ts`](./odt-edit.ts). The text took longer to arrive than
+ * the cells because it needed an answer to a question a spreadsheet does not
+ * ask: *is the sentence on the screen the sentence in the file?* The page is
+ * built from the parsed tree and the rewrite is made against the raw bytes, and
+ * nothing guarantees on its own that the two are looking at the same words. So
+ * they are paired and then made to agree, letter for letter, before an edit is
+ * offered — see `pairPieces`. Where they disagree the text is still read,
+ * searched and shown; it is simply not offered for retyping, and the cost of a
+ * disagreement is one paragraph rather than the document.
  */
 
 import { t } from '@uleditor/i18n';
@@ -38,12 +43,15 @@ import {
   children,
   imageUrl,
   openArchive,
+  readText,
   readXml,
   tag,
   tags,
   type Archive,
 } from './ooxml.js';
 import type { Preview, PreviewOutline } from './docx.js';
+import { writeOdf } from './odf-package.js';
+import { applyOdtEdits, findOdtPieces, movedPieces, spacesOf, type OdtPiece } from './odt-edit.js';
 import { MAX_COLS, MAX_ROWS, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
 
 /**
@@ -142,7 +150,7 @@ function flatText(node: Node): string {
 
   switch (node.localName) {
     case 's':
-      return ' '.repeat(Math.max(1, attrNum(node, 'c') ?? 1));
+      return spacesOf(attrNum(node, 'c'));
     case 'tab':
       return '\t';
     case 'line-break':
@@ -584,6 +592,8 @@ interface Context {
   ordered: Map<string, boolean>;
   urls: string[];
   notes: Set<string>;
+  /** Node → the piece of `content.xml` it may be rewritten through; empty for a spreadsheet. */
+  pieces: Map<Node, number>;
 }
 
 function textStyles(opened: Opened): Map<string, TextStyle> {
@@ -695,21 +705,142 @@ function wrapStyled(nodes: Node[], style: TextStyle | undefined): Node[] {
   return wrapper ? [wrapper] : nodes;
 }
 
-/** The content of one `text:p` or `text:h`. */
+/* ── pairing the tree with the bytes ─────────────────────────────────── */
+
+/**
+ * Consecutive text and spacing nodes, grouped exactly as `findOdtPieces` groups
+ * the character data they were parsed from.
+ */
+function spacingRuns(element: Element): Node[][] {
+  const runs: Node[][] = [];
+  let run: Node[] | null = null;
+
+  for (const node of element.childNodes) {
+    const belongs =
+      node.nodeType === Node.TEXT_NODE
+        ? (node.nodeValue ?? '') !== ''
+        : node instanceof Element && (node.localName === 's' || node.localName === 'tab');
+
+    if (!belongs) {
+      run = null;
+      continue;
+    }
+    if (!run) {
+      run = [];
+      runs.push(run);
+    }
+    run.push(node);
+  }
+
+  return runs;
+}
+
+function textOfRun(run: Node[]): string {
+  return run
+    .map((node) =>
+      node.nodeType === Node.TEXT_NODE
+        ? (node.nodeValue ?? '')
+        : (node as Element).localName === 's'
+          ? spacesOf(attrNum(node as Element, 'c'))
+          : '\t',
+    )
+    .join('');
+}
+
+/**
+ * Which piece of `content.xml` each node in the tree belongs to.
+ *
+ * The pairing is by **container**: a piece knows which element holds it, counted
+ * over every element in document order, and `querySelectorAll('*')` counts the
+ * same elements in the same order. Inside that element the pieces and the nodes
+ * are matched in order, and then — the part that makes this safe — the text of
+ * each pair has to agree, character for character, before anything is offered.
+ *
+ * A disagreement therefore costs one element's worth of editing rather than the
+ * document's. Whatever the reason for it — a comment inside a paragraph, a
+ * `CDATA` section, line endings a parser normalised — the piece stays readable
+ * and is simply not offered for rewriting.
+ */
+function pairPieces(content: Document, pieces: OdtPiece[]): Map<Node, number> {
+  const map = new Map<Node, number>();
+  const elements = [...content.querySelectorAll('*')];
+
+  const byContainer = new Map<number, OdtPiece[]>();
+  for (const piece of pieces) {
+    const list = byContainer.get(piece.container);
+    if (list) list.push(piece);
+    else byContainer.set(piece.container, [piece]);
+  }
+
+  for (const [ordinal, list] of byContainer) {
+    const element = elements[ordinal];
+    if (!element) continue;
+
+    const runs = spacingRuns(element);
+    if (runs.length !== list.length) continue;
+
+    for (let i = 0; i < runs.length; i++) {
+      const piece = list[i]!;
+      const run = runs[i]!;
+      /* Nothing visible to click on, so nothing to offer: a piece that is only
+         spacing would be an invisible target between two words. */
+      if (piece.refusal || piece.text.trim() === '') continue;
+      if (textOfRun(run) !== piece.text) continue;
+      for (const node of run) map.set(node, piece.index);
+    }
+  }
+
+  return map;
+}
+
+/**
+ * The content of one `text:p` or `text:h`.
+ *
+ * The nodes of a piece that can be rewritten are gathered into a marked wrapper
+ * as they are produced, so a double-click reaches the whole of it — text and the
+ * spacing inside it alike. The marker is the one the Word editor uses, because
+ * the editor above them does not need to know which format it is looking at.
+ */
 function inlineContent(parent: Node, ctx: Context): Node[] {
   const out: Node[] = [];
+  let piece: { index: number; wrapper: HTMLElement } | null = null;
+
+  /** Content that belongs to a piece goes into that piece's wrapper; the rest ends it. */
+  const emit = (source: Node, nodes: Node[]): void => {
+    const index = ctx.pieces.get(source);
+    if (index === undefined) {
+      piece = null;
+      out.push(...nodes);
+      return;
+    }
+    let current = piece;
+    if (!current || current.index !== index) {
+      const wrapper = document.createElement('span');
+      wrapper.className = 'ul-office-run';
+      wrapper.dataset.run = String(index);
+      out.push(wrapper);
+      current = { index, wrapper };
+      piece = current;
+    }
+    current.wrapper.append(...nodes);
+  };
+
+  const plain = (nodes: Node[]): void => {
+    piece = null;
+    out.push(...nodes);
+  };
 
   for (const node of [...parent.childNodes]) {
     if (node.nodeType === Node.TEXT_NODE) {
       const value = node.nodeValue ?? '';
-      if (value) out.push(document.createTextNode(value));
+      if (value) emit(node, [document.createTextNode(value)]);
       continue;
     }
     if (!(node instanceof Element)) continue;
 
     switch (node.localName) {
       case 'span':
-        out.push(...wrapStyled(inlineContent(node, ctx), ctx.text.get(attr(node, 'style-name') ?? '')));
+        plain(wrapStyled(inlineContent(node, ctx), ctx.text.get(attr(node, 'style-name') ?? '')));
         break;
       case 'a': {
         const link = document.createElement('a');
@@ -720,45 +851,54 @@ function inlineContent(parent: Node, ctx: Context): Node[] {
           link.rel = 'noopener noreferrer';
         }
         link.append(...inlineContent(node, ctx));
-        if (link.textContent) out.push(link);
+        plain(link.textContent ? [link] : []);
         break;
       }
       case 's':
-        out.push(document.createTextNode(' '.repeat(Math.max(1, attrNum(node, 'c') ?? 1))));
+        emit(node, [document.createTextNode(spacesOf(attrNum(node, 'c')))]);
         break;
       case 'tab':
-        out.push(document.createTextNode(' '));
+        /* A real tab character, not the space it used to be drawn as: the
+           browser draws the two identically, and the one that comes back out of
+           the box when this text is retyped is the one that was in the file. */
+        emit(node, [document.createTextNode('\t')]);
         break;
       case 'line-break':
-        out.push(document.createElement('br'));
+        plain([document.createElement('br')]);
         break;
       case 'frame': {
         const image = buildImage(node, ctx);
-        if (image) out.push(image);
+        plain(image ? [image] : []);
         break;
       }
       case 'note':
         ctx.notes.add('Footnotes and endnotes are not shown.');
+        plain([]);
         break;
       case 'annotation':
       case 'annotation-end':
         ctx.notes.add('Comments are not shown.');
+        plain([]);
         break;
       case 'change-start':
       case 'change':
       case 'change-end':
         ctx.notes.add('Tracked changes are shown as accepted; deleted text is not visible.');
+        plain([]);
         break;
       case 'bookmark':
       case 'bookmark-start':
       case 'bookmark-end':
       case 'soft-page-break':
       case 'sequence-decls':
+        plain([]);
         break;
       default:
         // Fields — a date, a page number, a cross-reference — carry the text
         // the writing program last drew, and that is the honest thing to show.
-        out.push(...inlineContent(node, ctx));
+        // It is shown and not offered for retyping: it is a result, and the
+        // program that made it writes it again the moment the file is opened.
+        plain(inlineContent(node, ctx));
         break;
     }
   }
@@ -842,15 +982,25 @@ function buildList(node: Element, ctx: Context, level = 0): HTMLElement {
 
 /**
  * `.odt` → the same reading view a `.docx` gets: headings, paragraphs,
- * formatting, lists, tables and images in their places.
+ * formatting, lists, tables and images in their places — and the same editing,
+ * a piece of text at a time, written back into the file it was read from.
  *
- * Read-only, and the returned `Preview` says so by carrying no `source`. That
- * field is what the Word editor cuts into when it rewrites a run; there is no
- * equivalent proven here, and a document offered for editing that cannot be
- * saved is a promise broken at the worst possible moment.
+ * The `Preview` carries a `source` only where at least one piece of the tree
+ * could be paired with the bytes it was parsed from. Where none could, the view
+ * is handed over without one, which is how this codebase says read-only: a
+ * document offered for editing that cannot be saved is a promise broken at the
+ * worst possible moment.
  */
 export function readOdt(bytes: Uint8Array): Preview {
   const opened = open(bytes, 'text');
+
+  /*
+   * The pieces are read from the raw part, and the tree from the same bytes
+   * parsed. Neither is derived from the other — they are paired, and only where
+   * they agree letter for letter is an edit offered.
+   */
+  const xml = readText(opened.archive, 'content.xml') ?? '';
+  const pieces = findOdtPieces(xml);
 
   const ctx: Context = {
     archive: opened.archive,
@@ -858,6 +1008,7 @@ export function readOdt(bytes: Uint8Array): Preview {
     ordered: listStyles(opened),
     urls: [],
     notes: new Set(),
+    pieces: pairPieces(opened.content, pieces),
   };
 
   const body = document.createElement('div');
@@ -929,7 +1080,6 @@ export function readOdt(bytes: Uint8Array): Preview {
   if (opened.styles && (tag(opened.styles, 'header') || tag(opened.styles, 'footer'))) {
     ctx.notes.add('Page headers and footers are not shown.');
   }
-  ctx.notes.add('OpenDocument text is shown, not written — saving is not offered.');
 
   const meta = readXml(opened.archive, 'meta.xml');
   const title = (meta ? tag(meta, 'title')?.textContent : '')?.trim() ?? '';
@@ -943,6 +1093,32 @@ export function readOdt(bytes: Uint8Array): Preview {
     release: () => {
       for (const url of ctx.urls) URL.revokeObjectURL(url);
       ctx.urls.length = 0;
+    },
+    source: ctx.pieces.size > 0 ? odtSource(opened.archive, xml, pieces) : undefined,
+  };
+}
+
+/**
+ * The seam the editor writes through.
+ *
+ * The state is held here rather than in the editor because what a save leaves
+ * behind is a property of the format: after writing, the file on disk is the new
+ * starting point, and the ranges every piece occupies have moved by whatever the
+ * rewrite gained or lost. An editor that kept editing against the ranges of the
+ * file as it was opened would put the next edit in the wrong place.
+ */
+function odtSource(archive: Archive, xml: string, pieces: OdtPiece[]): NonNullable<Preview['source']> {
+  const state = { xml, pieces };
+
+  return {
+    /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
+       the ranges, never the order. */
+    textOf: (index) => state.pieces[index]?.text ?? '',
+    write: (edits) => writeOdf(archive, applyOdtEdits(state.xml, state.pieces, edits)),
+    commit: (edits) => {
+      const next = applyOdtEdits(state.xml, state.pieces, edits);
+      state.pieces = movedPieces(state.xml, state.pieces, edits);
+      state.xml = next;
     },
   };
 }

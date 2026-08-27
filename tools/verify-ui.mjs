@@ -1274,10 +1274,57 @@ try {
 
   const odtBar = page.locator('.ul-office:visible .ul-office-notes').first();
   check(
-    'and the bar says the document is shown, not written',
-    !(await odtBar.locator('strong').innerText()).includes('retyped'),
+    'and the bar offers the text for retyping',
+    (await odtBar.locator('strong').innerText()).includes('retyped'),
     await odtBar.locator('strong').innerText(),
   );
+
+  /*
+   * The pairing, which is the part of this that can only be checked here: the
+   * pieces are read out of the raw `content.xml` and the page is built from the
+   * same bytes parsed, and an edit is offered only where the two agree letter
+   * for letter. What that has to produce on the page is one marked piece per
+   * stretch of text — spacing elements inside it, not beside it.
+   */
+  const odtPieces = odtView.locator('.ul-office-run');
+  check('the rewritable pieces of text are marked', (await odtPieces.count()) > 0, `${await odtPieces.count()}`);
+
+  const markedPiece = await odtView
+    .locator('.ul-office-run', { hasText: 'Prezime' })
+    .first()
+    .evaluate((el) => el.textContent ?? '');
+  check(
+    'a run of spaces is inside one piece rather than splitting it',
+    /^Ime {5}Prezime$/.test(markedPiece),
+    JSON.stringify(markedPiece),
+  );
+
+  const bold = odtView.locator('strong .ul-office-run');
+  check(
+    'the piece inside a span is marked separately, so its formatting survives a rewrite',
+    (await bold.count()) === 1 &&
+      (await bold.first().evaluate((el) => el.textContent ?? '')) === 'Podebljano ',
+    `${await bold.count()} inside bold: ${JSON.stringify(
+      await bold.first().evaluate((el) => el.textContent ?? '').catch(() => ''),
+    )}`,
+  );
+
+  const fieldParagraph = odtView.locator('p', { hasText: '27.08.2026.' }).first();
+  check(
+    "a field is shown but not offered — its text is the writing program's, not the typist's",
+    (await fieldParagraph.innerText()).includes('27.08.2026.') &&
+      !(await fieldParagraph.locator('.ul-office-run').evaluateAll((els) =>
+        els.some((el) => (el.textContent ?? '').includes('27.08')),
+      )),
+  );
+
+  const odtPiece = odtView.locator('.ul-office-run').first();
+  await odtPiece.dblclick();
+  check(
+    'a double-click opens a piece for typing',
+    await odtPiece.evaluate((el) => el.isContentEditable),
+  );
+  await odtPiece.press('Escape');
 
   /* — the old binary Word — */
 
@@ -1416,6 +1463,70 @@ try {
     optionRules.length === 0,
     optionRules.join(', '),
   );
+
+  /*
+   * — the interface language —
+   *
+   * In a browser context of its own, because choosing a language reloads the
+   * window: the documents this suite opened would go with it, and every check
+   * after this one would be reading a shell it never set up. A second context
+   * has its own storage, so the page above keeps its English and its tabs.
+   *
+   * What is read back is a menu heading. It used to be the Folder button in the
+   * title bar, and when the menu bar took that button over the check went on
+   * asking for it — passing nothing, failing quietly, because it lived in the
+   * OCR script and nothing in CI has ever run that. It lives here now, where
+   * all three systems run it on every push.
+   */
+  const second = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const lang = await second.newPage();
+  try {
+    await lang.goto(url, { waitUntil: 'domcontentloaded' });
+    await lang.waitForSelector('.menubar .menu-title', { timeout: 15000 });
+
+    await lang.keyboard.press('Control+Comma');
+    await lang.waitForSelector('.prefs', { timeout: 5000 });
+    check('the preferences open', true);
+
+    const offered = await lang.locator('.prefs-seg button').allInnerTexts();
+    check(
+      'Croatian and English are both offered',
+      offered.includes('Hrvatski') && offered.includes('English'),
+      offered.slice(0, 4).join(', '),
+    );
+    await lang.screenshot({ path: resolve(SHOTS, 'preferences.png') });
+
+    /*
+     * The wait and the check are separate on purpose. Waiting for the word to
+     * appear would report a language that never arrived as a timeout thirty
+     * lines from here; reading the heading afterwards says which word is
+     * actually on the bar, which is the thing somebody debugging needs.
+     */
+    const reads = async (heading) =>
+      await lang
+        .waitForFunction(
+          (want) => document.querySelector('.menubar .menu-title')?.textContent === want,
+          heading,
+          { timeout: 15000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+
+    await lang.locator('.prefs-seg button', { hasText: 'Hrvatski' }).click();
+    const inCroatian = await reads('Datoteka');
+    const croatian = await lang.locator('.menubar .menu-title').first().innerText();
+    check('the interface switched to Croatian', inCroatian && croatian === 'Datoteka', croatian);
+    await lang.screenshot({ path: resolve(SHOTS, 'croatian.png') });
+
+    await lang.keyboard.press('Control+Comma');
+    await lang.waitForSelector('.prefs', { timeout: 5000 });
+    await lang.locator('.prefs-seg button', { hasText: 'English' }).click();
+    const inEnglish = await reads('File');
+    const english = await lang.locator('.menubar .menu-title').first().innerText();
+    check('and switching back to English works', inEnglish && english === 'File', english);
+  } finally {
+    await second.close();
+  }
 
   /*
    * — screenshots —

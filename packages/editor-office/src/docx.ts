@@ -27,7 +27,7 @@ import {
   type Archive,
   type Relationships,
 } from './ooxml.js';
-import { findRuns, type RunSpan } from './docx-edit.js';
+import { applyRunEdits, findRuns, runText, writeDocx, type RunSpan } from './docx-edit.js';
 import { t } from '@uleditor/i18n';
 
 export interface PreviewOutline {
@@ -45,19 +45,38 @@ export interface Preview {
   release(): void;
 
   /**
-   * Everything needed to write an edit back into the file.
+   * The seam an edit is written through.
    *
    * **Absent means read-only**, and the view is expected to say so. The same
-   * reading room serves formats we can only show — OpenDocument text is the
-   * first — and a missing seam is a better way to express that than an `edit`
-   * that throws at the moment of saving.
+   * reading room serves formats that can only be shown — the old binary `.doc`
+   * and Rich Text — and a missing seam is a better way to express that than an
+   * `edit` that throws at the moment of saving.
    */
-  source?: {
-    archive: Archive;
-    /** The raw `word/document.xml`; edits are made against it, not against the DOM. */
-    xml: string;
-    runs: RunSpan[];
-  };
+  source?: PreviewSource;
+}
+
+export interface PreviewEdit {
+  /** The ordinal of the piece of text being rewritten, as the view marked it. */
+  index: number;
+  text: string;
+}
+
+/**
+ * What every in-place text editor here has in common, and no more than that.
+ *
+ * A Word document is rewritten a `w:r` at a time and an OpenDocument text a
+ * stretch of character data at a time; the two agree on nothing below this
+ * interface — not the unit, not the part being written, not even what makes a
+ * piece un-rewritable. They agree on exactly this much, so one editor drives
+ * both without a line that asks which format it is looking at.
+ */
+export interface PreviewSource {
+  /** The text of a piece as the file holds it now — what an undo returns to. */
+  textOf(index: number): string;
+  /** The whole file with those rewrites in it, and nothing else changed. */
+  write(edits: PreviewEdit[]): Uint8Array;
+  /** What was written becomes the starting point the next save works from. */
+  commit(edits: PreviewEdit[]): void;
 }
 
 const HEADING = /^heading\s*([1-6])$/i;
@@ -462,6 +481,34 @@ export function renderDocx(bytes: Uint8Array): Preview {
       for (const url of ctx.urls) URL.revokeObjectURL(url);
       ctx.urls.length = 0;
     },
-    source: { archive, xml, runs },
+    /* No piece could be paired with the text on the page, so there is nothing
+       to offer and the bar says so — the same answer the OpenDocument reader
+       gives, rather than a promise of editing that has no target. */
+    source: ctx.editable.size > 0 ? docxSource(archive, xml, runs) : undefined,
+  };
+}
+
+/**
+ * The seam the editor writes a Word document through.
+ *
+ * After a save the file on disk is the new starting point: the ranges have moved
+ * by what each rewrite gained or lost, so the document is scanned again. The
+ * ordinals survive that because only the content of a `w:t` changes and never
+ * the order of the runs around it — which is exactly what the fidelity harness
+ * checks on every real document it is pointed at.
+ */
+function docxSource(archive: Archive, xml: string, runs: RunSpan[]): PreviewSource {
+  const state = { xml, runs };
+
+  return {
+    textOf: (index) => {
+      const run = state.runs[index];
+      return run ? runText(state.xml, run) : '';
+    },
+    write: (edits) => writeDocx(archive, state.runs, state.xml, edits),
+    commit: (edits) => {
+      state.xml = applyRunEdits(state.xml, state.runs, edits);
+      state.runs = findRuns(state.xml);
+    },
   };
 }

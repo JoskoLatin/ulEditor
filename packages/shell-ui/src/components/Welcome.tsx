@@ -58,7 +58,7 @@ const EDITS: FormatLine[] = [
   {
     format: 'pdf',
     kind: 'Documents',
-    ext: '.pdf .docx .md',
+    ext: '.pdf .docx .odt .md',
     note: 'retype the text, annotate, reorder pages — the layout stays',
   },
   {
@@ -70,7 +70,6 @@ const EDITS: FormatLine[] = [
 ];
 
 const VIEWS: FormatLine[] = [
-  { format: 'odt', kind: 'OpenDocument', ext: '.odt', note: 'headings, tables and pictures in their places' },
   { format: 'doc', kind: 'Older Word', ext: '.doc', note: 'read as written, back to 1997' },
   { format: 'rtf', kind: 'Rich Text', ext: '.rtf', note: 'whatever wrote it — Word, WordPad, a till system' },
   { format: 'epub', kind: 'Books', ext: '.epub', note: 'reading mode, contents, search' },

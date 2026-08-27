@@ -917,6 +917,9 @@ export function makeOdt() {
     `<text:list-item><text:p>prvi zahtjev</text:p></text:list-item>` +
     `<text:list-item><text:p>drugi zahtjev</text:p></text:list-item></text:list>` +
     `<text:p>Ime<text:s text:c="5"/>Prezime</text:p>` +
+    /* A field: the text in it is what LibreOffice last drew, and the reader
+       shows it for that reason and refuses to let it be retyped. */
+    `<text:p>Datum: <text:date text:date-value="2026-08-27">27.08.2026.</text:date></text:p>` +
     `<table:table table:name="Tablica1">` +
     `<table:table-header-rows><table:table-row>` +
     `<table:table-cell><text:p>Format</text:p></table:table-cell>` +

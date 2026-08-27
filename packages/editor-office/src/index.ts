@@ -7,15 +7,22 @@
  *
  * Each editor declares exactly what it can do to the file it opened, and no
  * more. Word text is rewritten a run at a time, straight into the archive it
- * came from; Excel cells and OpenDocument ones are retyped the same way. The
- * old binary `.xls` has no seam to cut into, so its save is a conversion into a
- * new `.xlsx` beside the original — declared as `edit` because the cells
+ * came from; OpenDocument text a stretch of characters at a time, and Excel and
+ * OpenDocument cells one cell at a time, all into the file they were read from.
+ * The old binary `.xls` has no seam to cut into, so its save is a conversion
+ * into a new `.xlsx` beside the original — declared as `edit` because the cells
  * genuinely are editable, with the cost named before the first write. The old
- * binary `.doc` and OpenDocument text have neither a seam nor a conversion, and
- * declare no `edit` at all.
+ * binary `.doc` and Rich Text have neither a seam nor a conversion, and declare
+ * no `edit` at all.
  *
  * The full editors of phase 2 (ProseMirror for Word, Univer for Excel) change
  * how much can be done, not this rule about saying so.
+ *
+ * One editor drives all three document formats and one drives all four
+ * spreadsheet ones. What a save costs is the format's own business, and it is
+ * settled behind [`Preview.source`](./docx.ts) — the editor above it asks for
+ * the file with these rewrites in it and never asks which format it is looking
+ * at.
  */
 
 import {
@@ -38,11 +45,11 @@ import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@ule
 import { t } from '@uleditor/i18n';
 
 import { renderDocx, type Preview } from './docx.js';
-import { applyRunEdits, findRuns, runText, writeDocx } from './docx-edit.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
-import { applyOdsEdits, writeOds, type OdsEdit } from './ods-edit.js';
+import { applyOdsEdits, type OdsEdit } from './ods-edit.js';
+import { writeOdf } from './odf-package.js';
 import { readDoc } from './doc.js';
 import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
@@ -132,7 +139,16 @@ function searchIn(
 
 /* ── Word ────────────────────────────────────────────────────────────── */
 
-class DocxPreviewEditor implements EditorInstance {
+/**
+ * One editor for every document this program can draw as paragraphs.
+ *
+ * It was written for Word and named for it, and then a `.doc`, an `.odt` and an
+ * `.rtf` arrived in it — four formats that agree on nothing below the seam they
+ * are read through. Two of them can be written back into, and the difference
+ * between them lives entirely in `Preview.source`: this class asks for the file
+ * with its rewrites in it and never asks which format that file is.
+ */
+class DocumentPreviewEditor implements EditorInstance {
   #root: HTMLElement | null = null;
   #view: HTMLElement | null = null;
   #flow: PagedFlow | null = null;
@@ -260,7 +276,14 @@ class DocxPreviewEditor implements EditorInstance {
       target.removeEventListener('keydown', onKey);
       target.contentEditable = 'false';
 
-      const after = target.textContent ?? '';
+      /*
+       * A browser writing into a `contenteditable` turns a space it thinks might
+       * collapse into a non-breaking one — U+00A0, a different character, which
+       * would be written into the document as itself. Where the text held none
+       * to begin with, none came from the person typing either.
+       */
+      const typed = target.textContent ?? '';
+      const after = before.includes('\u00A0') ? typed : typed.replace(/\u00A0/g, ' ');
       if (after === before) return;
       this.#record(index, after);
     };
@@ -297,8 +320,7 @@ class DocxPreviewEditor implements EditorInstance {
     // The view returns to whatever the edit list says, including the original text.
     for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run')) {
       const index = Number(el.dataset.run);
-      const run = source.runs[index];
-      el.textContent = edits.get(index) ?? (run ? runText(source.xml, run) : el.textContent);
+      el.textContent = edits.get(index) ?? source.textOf(index);
     }
     this.#emitDirty();
   }
@@ -330,23 +352,17 @@ class DocxPreviewEditor implements EditorInstance {
     if (!source) throw new Error(t('This document is open for reading only.'));
 
     const uri = target?.uri ?? this.doc.uri;
-    const { archive, xml, runs } = source;
-
     const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
-    const nextXml = applyRunEdits(xml, runs, edits);
 
-    await this.host.fs.writeBytes(uri, writeDocx(archive, runs, xml, edits));
+    await this.host.fs.writeBytes(uri, source.write(edits));
 
     /*
      * What was saved becomes the new starting point. Without this the next save
-     * would begin from the original XML with an empty edit list — and quietly
-     * revert the document.
-     *
-     * Run ordinals survive because only the content of `w:t` changes, not their
-     * order; the ranges are recomputed.
+     * would begin from the file as it was opened with an empty edit list — and
+     * quietly revert the document. Which ranges moved, and by how much, is the
+     * format's own business and is settled behind `commit`.
      */
-    source.xml = nextXml;
-    source.runs = findRuns(nextXml);
+    source.commit(edits);
     this.#edits.clear();
     this.#undoStack = [];
     this.#redoStack = [];
@@ -719,7 +735,7 @@ class XlsxPreviewEditor implements EditorInstance {
     this.#redoStack = [];
     this.#emitDirty();
 
-    /* No fidelity warning here for the same reason `DocxPreviewEditor` gives
+    /* No fidelity warning here for the same reason `DocumentPreviewEditor` gives
        none: only the rewritten elements changed. The stale formula caches are
        handled, not lost — the workbook recalculates when Excel opens it. */
     return { uri, lostFidelity: [] };
@@ -749,7 +765,7 @@ class XlsxPreviewEditor implements EditorInstance {
     }
 
     const next = applyOdsEdits(xml, edits);
-    await this.host.fs.writeBytes(uri, writeOds(archive, next));
+    await this.host.fs.writeBytes(uri, writeOdf(archive, next));
 
     /* What was saved becomes the new starting point — the part and the cell
        map the grid draws from. Without this the next save would begin from the
@@ -929,7 +945,7 @@ export const docxPreviewProvider: EditorProvider = {
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new DocxPreviewEditor(host, doc, renderDocx(await doc.bytes()));
+    return new DocumentPreviewEditor(host, doc, renderDocx(await doc.bytes()));
   },
 };
 
@@ -977,11 +993,14 @@ export const xlsPreviewProvider: EditorProvider = {
 };
 
 /**
- * OpenDocument text — shown, not written.
+ * OpenDocument text — in the same reading room, and written back into itself.
  *
- * The same reading room a `.docx` gets: headings, formatting, lists, tables,
- * images, the outline, the search and the reading mode. No `edit`, because the
- * `Preview` it is handed carries no seam to write into — see `readOdt`.
+ * The same view a `.docx` gets, and now the same editor over it: text is
+ * retyped in place, the `.odt` it came from is what a save writes, and every
+ * byte outside the rewritten text is carried across untouched. What it takes to
+ * do that in a format where the formatting is an ancestor rather than a sibling
+ * is in [`odt-edit.ts`](./odt-edit.ts); what it takes to be sure the piece on
+ * screen is the piece in the file is in `pairPieces`.
  */
 export const odtPreviewProvider: EditorProvider = {
   id: 'org.uleditor.odt',
@@ -990,11 +1009,13 @@ export const odtPreviewProvider: EditorProvider = {
     extensions: ['odt', 'ott'],
     mimeTypes: ['application/vnd.oasis.opendocument.text'],
   },
-  capabilities: ['view', 'search', 'read'],
+  /* `read` as well as `edit`, and for the same reason a `.docx` claims both:
+     the reading room is the same room, and it is reached from the same view. */
+  capabilities: ['view', 'search', 'read', 'edit'],
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new DocxPreviewEditor(host, doc, readOdt(await doc.bytes()));
+    return new DocumentPreviewEditor(host, doc, readOdt(await doc.bytes()));
   },
 };
 
@@ -1041,7 +1062,7 @@ export const docPreviewProvider: EditorProvider = {
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new DocxPreviewEditor(host, doc, readDoc(await doc.bytes()));
+    return new DocumentPreviewEditor(host, doc, readDoc(await doc.bytes()));
   },
 };
 
@@ -1070,7 +1091,7 @@ export const rtfPreviewProvider: EditorProvider = {
   priority: 30,
 
   async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new DocxPreviewEditor(host, doc, readRtf(await doc.bytes()));
+    return new DocumentPreviewEditor(host, doc, readRtf(await doc.bytes()));
   },
 };
 
@@ -1078,4 +1099,4 @@ export { readXls } from './xls.js';
 export { readDoc, parseDoc } from './doc.js';
 export { readRtf, parseRtf } from './rtf.js';
 export { readOds, readOdt } from './odf.js';
-export { DocxPreviewEditor, XlsxPreviewEditor };
+export { DocumentPreviewEditor, XlsxPreviewEditor };

@@ -4,10 +4,10 @@
  * The plan asked for a different instrument: open every document, save it,
  * render both to PDF and pixel-diff the pages. That measures a program which
  * re-lays-out what it opened, and this one does not. Nothing here re-serialises
- * an XML tree or reflows a page. A `.docx`, an `.xlsx` and an `.ods` are edited
- * **by byte range**: one part of the archive is rewritten, inside it exactly the
- * elements the person retyped, and every other byte in the file is carried
- * across untouched. Rendering that to PDF and comparing pictures would answer a
+ * an XML tree or reflows a page. A `.docx`, an `.odt`, an `.xlsx` and an `.ods`
+ * are edited **by byte range**: one part of the archive is rewritten, inside it
+ * exactly the elements the person retyped, and every other byte in the file is
+ * carried across untouched. Rendering that to PDF and comparing pictures would answer a
  * question nobody asked while leaving the real one — *did anything else move?* —
  * measured only by eye.
  *
@@ -16,9 +16,10 @@
  * - **every other part of the archive comes back byte for byte**, and the one
  *   part that changed differs only in the ranges that were rewritten;
  * - **the file reopens**, and what was written reads back;
- * - **the shape survives** — the run count for Word, the grid geometry and the
- *   formula cells for a spreadsheet — because the save path re-scans the file it
- *   just wrote and would quietly corrupt the next save if the ordinals moved;
+ * - **the shape survives** — the run count for Word, the pieces and their ranges
+ *   for OpenDocument text, the grid geometry and the formula cells for a
+ *   spreadsheet — because the save path keeps editing the file it just wrote and
+ *   would quietly corrupt the next save if the ordinals moved;
  * - for the read-only formats, **nothing arrives as mojibake**: no replacement
  *   characters, no stray control codes.
  *
@@ -54,7 +55,11 @@ const { findRuns, applyRunEdits, runText, writeDocx, escapeXml } = await load(
 const { findCells, applyCellEdits, cellXml, writeXlsx } = await load(
   'packages/editor-office/src/xlsx-edit.ts',
 );
-const { findOdsCells, applyOdsEdits, writeOds } = await load('packages/editor-office/src/ods-edit.ts');
+const { findOdsCells, applyOdsEdits } = await load('packages/editor-office/src/ods-edit.ts');
+const { findOdtPieces, applyOdtEdits, movedPieces, odtTextXml, textPrefix } = await load(
+  'packages/editor-office/src/odt-edit.ts',
+);
+const { writeOdf } = await load('packages/editor-office/src/odf-package.ts');
 const { readXls } = await load('packages/editor-office/src/xls.ts');
 const { parseDoc } = await load('packages/editor-office/src/doc.ts');
 const { parseRtf } = await load('packages/editor-office/src/rtf.ts');
@@ -372,7 +377,7 @@ function checkOds(bytes) {
   }
   if (formulaCells(tables) !== formulaCells(after)) return { fail: 'a formula cell moved or vanished' };
 
-  const written = writeOds(archive, next);
+  const written = writeOdf(archive, next);
   const reopened = openArchive(written);
 
   const parts = partsSurvive(archive, reopened, ['content.xml']);
@@ -418,6 +423,95 @@ function checkOds(bytes) {
 
   return {
     ok: `${edits.length} edits · ${Object.keys(archive).length - 1} parts intact · geometry held · values placed`,
+  };
+}
+
+/* ── OpenDocument text ───────────────────────────────────────────────── */
+
+/**
+ * A `.odt` measured the way the `.docx` beside it is, plus the two things this
+ * format adds.
+ *
+ * **Spacing is content here.** ODF collapses whitespace as HTML does, so a run
+ * of spaces is `<text:s text:c="3"/>` and a tab is an element — they are decoded
+ * into the text of a piece and written back as elements. A real document is full
+ * of them; a fixture written by the person who wrote the reader is not, which is
+ * the whole reason this harness is pointed at somebody's actual folder.
+ *
+ * **And the ordinals have to survive the save.** The editor keeps working
+ * against the file it has just written, so if a rewrite could add or drop a
+ * piece, the next edit would land in the wrong sentence. Every rewrite here is
+ * checked against a fresh reading of what was written.
+ */
+function checkOdt(bytes) {
+  const archive = openArchive(bytes);
+  const xml = readText(archive, 'content.xml');
+  if (xml === null) return { skip: 'no content.xml' };
+
+  const pieces = findOdtPieces(xml);
+  const editable = pieces.filter((piece) => !piece.refusal && piece.text.trim().length > 0);
+  if (editable.length === 0) return { skip: 'nothing in it can be rewritten' };
+
+  /* Spread across the document rather than the first three: a fault in the
+     offset arithmetic shows up at the end of a long file, not at its start. */
+  const picked = [editable[0], editable[Math.floor(editable.length / 2)], editable[editable.length - 1]]
+    .filter((piece, i, all) => all.indexOf(piece) === i)
+    .slice(0, 3);
+
+  /* Two spaces and a tab in what is typed, because that is what a rewrite has
+     to spell back out as elements rather than as characters. Written once: the
+     edit and the range it is checked against must be the same string. */
+  const typed = (i) => `${MARKER}  ${i}\tkraj`;
+  const edits = picked.map((piece, i) => ({ index: piece.index, text: typed(i) }));
+  const next = applyOdtEdits(xml, pieces, edits);
+  const prefix = textPrefix(xml);
+
+  const replacements = picked.map((piece, i) => ({
+    start: piece.start,
+    end: piece.end,
+    insert: odtTextXml(typed(i), prefix),
+  }));
+  const ranges = onlyTheRangesMoved(xml, next, replacements);
+  if (!ranges.ok) return { fail: `${ranges.why} (near ${ranges.at})` };
+
+  const written = writeOdf(archive, next);
+  const reopened = openArchive(written);
+
+  const parts = partsSurvive(archive, reopened, ['content.xml']);
+  if (!parts.ok) {
+    return { fail: `parts changed: ${[...parts.changed, ...parts.missing, ...parts.added].slice(0, 3).join(', ')}` };
+  }
+
+  const head = new TextDecoder('latin1').decode(written.subarray(0, 64));
+  if (!head.startsWith('PK\u0003\u0004') || !head.includes('mimetype') || written[8] !== 0 || written[9] !== 0) {
+    return { fail: 'mimetype is not the first, uncompressed entry' };
+  }
+
+  const back = readText(reopened, 'content.xml');
+  if (back !== next) return { fail: 'the part written is not the part read back' };
+
+  const after = findOdtPieces(back);
+  if (after.length !== pieces.length) {
+    return { fail: `the piece count moved: ${pieces.length} → ${after.length}` };
+  }
+
+  /* The ranges the editor will keep working from, against the ranges the file
+     actually has now. A drift here is the next save landing in the wrong text. */
+  const moved = movedPieces(xml, pieces, edits);
+  for (let i = 0; i < after.length; i++) {
+    if (moved[i].start !== after[i].start || moved[i].end !== after[i].end) {
+      return { fail: `piece ${i} is not where the save thinks it is` };
+    }
+    const edited = edits.find((edit) => edit.index === after[i].index);
+    if (edited) {
+      if (after[i].text !== edited.text) return { fail: `piece ${i} does not read back as what was typed` };
+      continue;
+    }
+    if (after[i].text !== pieces[i].text) return { fail: `piece ${i} changed and was never edited` };
+  }
+
+  return {
+    ok: `${edits.length} edits · ${Object.keys(archive).length - 1} parts intact · pieces ${pieces.length} · spacing held`,
   };
 }
 
@@ -730,6 +824,7 @@ const CHECKS = {
   docx: checkDocx,
   xlsx: checkXlsx,
   ods: checkOds,
+  odt: checkOdt,
   xls: checkXls,
   doc: checkDoc,
   rtf: checkRtf,
@@ -737,8 +832,11 @@ const CHECKS = {
 };
 
 /* Readers whose output is a page of elements rather than a structure. They are
-   checked in verify-ui.mjs, in a browser, because that is where a DOM exists. */
-const NEEDS_A_BROWSER = new Set(['odt']);
+   checked in verify-ui.mjs, in a browser, because that is where a DOM exists.
+   `.odt` left this set when it became editable: what is measured now is the
+   round trip through its bytes, which needs no DOM at all. Pairing a piece with
+   the text drawn for it still does, and is still checked there. */
+const NEEDS_A_BROWSER = new Set([]);
 
 /**
  * What to measure: a real folder if one was named, and otherwise the fixtures.

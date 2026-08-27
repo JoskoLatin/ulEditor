@@ -145,32 +145,6 @@ try {
     check('the panel closes', (await page.locator('.split').count()) === 0);
   }
 
-  /* ── the interface language ────────────────────────────────────────── */
-
-  await page.keyboard.press('Control+Comma');
-  await page.waitForSelector('.prefs', { timeout: 5000 });
-  check('the preferences open', true);
-
-  const langButtons = await page.locator('.prefs-seg button').allInnerTexts();
-  check('Croatian and English are both offered', langButtons.includes('Hrvatski'), langButtons.slice(0, 3).join(', '));
-
-  await page.screenshot({ path: resolve(SHOTS, 'preferences.png') });
-
-  await page.locator('.prefs-seg button', { hasText: 'Hrvatski' }).click();
-  await page.waitForSelector('.shell', { timeout: 15000 });
-  await page.waitForTimeout(600);
-
-  const folderButton = await page.locator('.titlebar .chrome-btn').first().innerText();
-  check('the interface switched to Croatian', folderButton === 'Mapa', folderButton);
-  await page.screenshot({ path: resolve(SHOTS, 'croatian.png') });
-
-  // Back to English, so the check does not leave a changed setting behind.
-  await page.keyboard.press('Control+Comma');
-  await page.waitForSelector('.prefs', { timeout: 5000 });
-  await page.locator('.prefs-seg button', { hasText: 'English' }).click();
-  await page.waitForTimeout(600);
-  check('switching back to English works', (await page.locator('.titlebar .chrome-btn').first().innerText()) === 'Folder');
-
   const ignorable = (text) =>
     text.includes('Download the React DevTools') || text.includes('[vite]');
   const real = consoleErrors.filter((t) => !ignorable(t));

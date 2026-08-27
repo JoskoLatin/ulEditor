@@ -63,12 +63,26 @@ jobs:
       # deliberate absence and a typo come to look exactly alike.
       - run: pnpm verify:menu
 
+      # A format is declared twice — once by its editor, once by the shell that
+      # registers it before the editor's code is fetched — and the second copy
+      # is the one that decides whether a document can be saved at all. This is
+      # what keeps the two from drifting: `.odt` became editable in the reader
+      # and stayed read-only in the shell, so the program offered the text and
+      # then refused to write it.
+      - run: pnpm verify:providers
+
       # Office editing is byte surgery, and the central claim is what did NOT
       # change: every part of the archive outside the touched ranges, byte for
       # byte. The browser check below proves the seam to the page; these prove
       # the bytes.
       - run: pnpm verify:docx
       - run: pnpm verify:xlsx
+
+      # OpenDocument text, where the same surgery meets a format that keeps its
+      # spacing in elements: two spaces typed after a full stop have to come
+      # back out as two, and a piece emptied of its text has to keep its place
+      # so the next save does not land in the wrong sentence.
+      - run: pnpm verify:odt
 
       # The old binary Excel: a hand-built compound file read back, including
       # the shared string a CONTINUE record cuts in half.

@@ -73,7 +73,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells) | own reader + byte-range editing *(formulas → Univer, phase 2)* |
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
 | **ODS** (OpenDocument) | **works — viewing + cell editing**, written back into the `.ods` itself | own reader + byte-range editing |
-| **ODT** (OpenDocument) | **works — viewing** (headings, formatting, lists, tables, images) | own reader |
+| **ODT** (OpenDocument) | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader + byte-range editing |
 | Images | **works** — viewing, zoom, transparency, **OCR** | Tesseract (wasm) *(editing → image-rs, phase 1)* |
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
@@ -137,11 +137,15 @@ Everything the view does not show — headers, footnotes, comments, charts — i
 
 The format returns the favour in two places. A cell carries **both** the number and the text the writing program drew for it, so the grid shows exactly what LibreOffice showed without a single format code being interpreted here. And empty space is written as a repeat count rather than as cells — which is also the one thing that has to be handled carefully, since a real sheet says its last row repeats a million times and a reader that believes it allocates a million rows to show nothing.
 
-`.ods` is **edited in place**: a save writes the `.ods` it came from, changing only the cells that were retyped, exactly as `.docx` and `.xlsx` are. No conversion, no second file in somebody else's format.
+**Both are edited in place**: a save writes the file it came from, changing only the cells or the words that were retyped, exactly as `.docx` and `.xlsx` are. No conversion, no second file in somebody else's format.
 
 The awkward part is that **a cell there has no address**. A worksheet in OOXML says `<c r="B4">` and can be found by name; in OpenDocument a cell's position is wherever the counting has reached, and the counting is done in repeat attributes — `table:number-columns-repeated="1021"` stands for a thousand cells nobody wrote. Putting a value in one of them means splitting the group: the run before it, the cell itself, the run after, with the counts either side still adding up to what the group stood for. The same again one dimension up for a repeated row. Only rows holding an edit are rebuilt, and inside a rebuilt row every untouched cell is copied across as its original bytes — the verification checks that every other part of the archive comes back byte for byte, and that `mimetype` goes back first and uncompressed, which is what lets any program tell what the file is without unpacking it.
 
-`.odt` opens **read-only** and says so — the Word editor rewrites a run by cutting into the bytes it came from, nothing here has been proven to that standard yet, and an editor that cannot say what it will do to the file it saves is the thing this project refuses to ship.
+**Text in an `.odt` is retyped like text in a Word document** — double-click it — and what is rewritten is a different unit, because the format keeps its formatting somewhere else. Word wraps every piece of text in a `w:r` that carries its own bold and italic, so the run is what can be replaced and a run holding a line break or a picture has to be refused. Here the formatting is an *ancestor* — a `text:span` around the text, or the paragraph itself — so what is replaced is the text, and a break or an image beside it simply ends one piece and begins the next. Nothing has to be refused for carrying foreign content, because a piece carries none.
+
+Except spacing, which **is** content here. OpenDocument collapses runs of whitespace exactly as HTML does, so a run of spaces is written as an element — `<text:s text:c="3"/>` — and so is a tab. Those belong to the piece rather than breaking it: they are read into its text and written back out as elements, so two spaces typed after a full stop are still two spaces when LibreOffice opens the file, and the piece that held them is still one piece afterwards. That last part matters more than it sounds: the ordinals the page was built with have to still mean the same text after a save, or the next edit lands in the wrong sentence.
+
+And one question a spreadsheet never has to ask: **is the sentence on the screen the sentence in the file?** The page is built from the parsed tree while the rewrite cuts into the raw bytes, and nothing guarantees on its own that the two are looking at the same words. So they are paired — each piece knows which element holds it, counted the same way on both sides — and then made to agree, letter for letter, before an edit is offered anywhere. Where they disagree, for whatever reason, the text is still read, searched and shown; it is simply not offered for retyping, and the cost is one paragraph rather than the document.
 
 ### The binary formats of 1997
 
@@ -242,23 +246,28 @@ pnpm dev          # web build at http://localhost:5273
 pnpm desktop      # Tauri desktop application
 
 pnpm verify:i18n      # the Croatian catalogue keeps up (no browser, instant)
-pnpm verify           # runtime check of the shell (needs `pnpm dev` running)
+pnpm verify:providers # a format says the same thing in both places it is declared
+pnpm verify           # runtime check of the shell, the menus and the interface language (needs `pnpm dev` running)
 pnpm verify:reading   # reading room, EPUB, Word and Excel viewing
-pnpm verify:ocr       # OCR, the panel below, interface language switching
+pnpm verify:ocr       # OCR, and the panel below
 pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
+pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm verify:all       # all of the above
 
-pnpm verify:search    # project search, in the REAL desktop application
+pnpm verify:search          # project search, in the REAL desktop application
+pnpm verify:office-editing  # retyping a .docx and an .odt out to disk and back, in the same
 ```
 
-`verify:search` starts the program itself with the WebView2 debug port open and
-attaches to it over CDP. Search lives in Rust and is reachable only through a
+Both of the last two start the program itself with the WebView2 debug port open
+and attach to it over CDP. Search lives in Rust and is reachable only through a
 Tauri command, so checking it in a browser would test the glue instead of the
-work.
+work; and a save has to cross the same boundary before it is a save at all —
+`verify:office-editing` types into a document, presses `Ctrl+S`, and then reads
+the file back off the disk to see what actually landed in it.
 
 `verify:ocr` downloads a language model on first run; with no network it reports
 as skipped, not as passed.
@@ -274,9 +283,10 @@ For an Office document, which is edited by byte range, it retypes three pieces
 spread across the file, writes the result in memory, and checks that every other
 part of the archive comes back byte for byte, that the rewritten part differs
 only inside the elements it was told to rewrite, that the file reopens, and that
-the shape the next save depends on — Word's run ordinals, a spreadsheet's grid
-geometry and formula cells — is unchanged. For the read-only formats it checks
-that nothing arrived as mojibake.
+the shape the next save depends on — Word's run ordinals, an OpenDocument
+document's pieces and their ranges, a spreadsheet's grid geometry and formula
+cells — is unchanged. For the read-only formats it checks that nothing arrived
+as mojibake.
 
 For a PDF it performs the four operations the editor offers and compares the
 **content stream of every page**, which is a stricter question than comparing

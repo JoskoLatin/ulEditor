@@ -1,8 +1,8 @@
 /**
  * Editing cells in an OpenDocument spreadsheet — in the file it came from.
  *
- * The same contract as [`xlsx-edit.ts`](./xlsx-edit.ts) and
- * [`docx-edit.ts`](./docx-edit.ts): the XML is never re-serialised, the
+ * The same contract as [`xlsx-edit.ts`](./xlsx-edit.ts), [`docx-edit.ts`](./docx-edit.ts)
+ * and [`odt-edit.ts`](./odt-edit.ts): the XML is never re-serialised, the
  * replacement is done by byte range, and every part of the archive outside the
  * edited cells passes through character for character identical. Saving an
  * `.ods` therefore produces an `.ods` — not a converted copy in somebody else's
@@ -19,8 +19,6 @@
  * Only rows holding an edit are rebuilt, and inside a rebuilt row every cell
  * the person did not touch is copied across as its original bytes.
  */
-
-import { strToU8, zipSync } from 'fflate';
 
 import type { Archive } from './ooxml.js';
 import { escapeXml, localName, scanTags } from './docx-edit.js';
@@ -334,26 +332,3 @@ export function applyOdsEdits(xml: string, edits: OdsEdit[]): string {
   return out;
 }
 
-/**
- * Assembles the `.ods` back, with the edited `content.xml` in it.
- *
- * `mimetype` goes back **first and uncompressed**. It is not a formality: that
- * is what lets a program tell what the file is from its first bytes without
- * unpacking it, which is how this program's own detection recognises one. A
- * rebuilt archive that deflates it, or writes it second, is a file every other
- * office suite opens and ours does not.
- */
-export function writeOds(archive: Archive, contentXml: string): Uint8Array {
-  const files: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {};
-
-  const mimetype = archive['mimetype'];
-  if (mimetype) files['mimetype'] = [mimetype, { level: 0 }];
-
-  for (const [path, data] of Object.entries(archive)) {
-    if (path === 'mimetype') continue;
-    files[path] = data;
-  }
-  files['content.xml'] = strToU8(contentXml);
-
-  return zipSync(files as Parameters<typeof zipSync>[0]);
-}

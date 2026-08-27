@@ -31,6 +31,15 @@
   background: rgba(120, 160, 200, 0.16);
   cursor: text;
 }
+/*
+ * A piece open for editing is shown exactly as the file holds it. The spaces a
+ * document collapses on the page are the spaces that will be written back, and a
+ * browser that can preserve them has no reason to invent a non-breaking space to
+ * hold the gap open — which would be written into the document as itself.
+ */
+.ul-office-run[contenteditable='plaintext-only'] {
+  white-space: pre-wrap;
+}
 .ul-office-run[contenteditable='plaintext-only']:focus {
   outline: 1px solid var(--accent);
   outline-offset: 1px;

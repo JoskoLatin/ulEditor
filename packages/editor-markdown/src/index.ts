@@ -421,7 +421,7 @@ export const markdownEditorProvider: EditorProvider = {
   id: 'org.uleditor.markdown',
   displayName: 'Markdown editor',
   matches: {
-    extensions: ['md', 'markdown', 'mdx', 'markdown'],
+    extensions: ['md', 'markdown', 'mdx'],
     mimeTypes: ['text/markdown'],
   },
   capabilities: ['view', 'edit', 'search', 'export', 'read'],

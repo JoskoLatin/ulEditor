@@ -31,8 +31,11 @@ const { plainFormula, serialFromDate } = await import(
 const { convertedName } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-office/src/xlsx-write.ts')).href
 );
-const { applyOdsEdits, findOdsCells, writeOds } = await import(
+const { applyOdsEdits, findOdsCells } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-office/src/ods-edit.ts')).href
+);
+const { writeOdf } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odf-package.ts')).href
 );
 
 const checks = [];
@@ -245,7 +248,7 @@ check(
 /* ── the archive that comes back ─────────────────────────────────────── */
 
 const archive = unzipSync(makeOds());
-const saved = writeOds(archive, retyped);
+const saved = writeOdf(archive, retyped);
 const reopened = unzipSync(saved);
 
 check(

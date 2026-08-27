@@ -82,7 +82,7 @@ shell.registry.register(
       id: 'org.uleditor.markdown',
       displayName: 'Markdown editor',
       matches: { extensions: ['md', 'markdown', 'mdx'], mimeTypes: ['text/markdown'] },
-      capabilities: ['view', 'edit', 'search', 'export'],
+      capabilities: ['view', 'edit', 'search', 'export', 'read'],
       priority: 30,
     },
     () => import('@uleditor/editor-markdown'),
@@ -114,7 +114,10 @@ shell.registry.register(
     {
       id: 'org.uleditor.vector',
       displayName: 'Vector graphics viewer',
-      matches: { extensions: ['svg', 'svgz', 'ai', 'eps', 'ps', 'cdr', 'vector'] },
+      matches: {
+        extensions: ['svg', 'svgz', 'ai', 'eps', 'ps', 'cdr', 'vector'],
+        mimeTypes: ['image/svg+xml', 'application/postscript'],
+      },
       capabilities: ['view', 'search'],
       priority: 30,
     },
@@ -127,7 +130,10 @@ shell.registry.register(
     {
       id: 'org.uleditor.model',
       displayName: '3D model viewer',
-      matches: { extensions: ['stl', 'obj', 'ply', 'gltf', 'glb', '3mf', 'model'] },
+      matches: {
+        extensions: ['stl', 'obj', 'ply', 'gltf', 'glb', '3mf', 'model'],
+        mimeTypes: ['model/stl', 'model/obj', 'model/gltf+json', 'model/gltf-binary'],
+      },
       capabilities: ['view'],
       priority: 30,
     },
@@ -250,9 +256,11 @@ shell.registry.register(
         extensions: ['odt', 'ott'],
         mimeTypes: ['application/vnd.oasis.opendocument.text'],
       },
-      /* No `edit`: the reader hands over a view with no seam to write into, and
-         the tab has to know that before the editor is even loaded. */
-      capabilities: ['view', 'search', 'read'],
+      /* `edit`, and written back into the `.odt` itself — only the retyped text
+         changes. The tab has to know this before the editor is even loaded:
+         while this said `read`, the editor offered the text, somebody retyped
+         it, and the save refused the file as read-only. */
+      capabilities: ['view', 'search', 'read', 'edit'],
       priority: 30,
     },
     async () => (await import('@uleditor/editor-office')).odtPreviewProvider,
