@@ -93,11 +93,15 @@ impl FormatId {
 
     /// Whether the words are inside a container rather than in the bytes.
     ///
-    /// A byte scan finds nothing in these — the text is compressed, or encoded,
-    /// or scattered through a piece table — so a search offers the file to be
-    /// opened instead of a line to jump to. `Rtf` is deliberately absent: it is
-    /// markup, and grepping it finds the real words even with control sequences
-    /// around them, which beats offering a reader that does not exist yet.
+    /// A byte scan finds nothing useful in these — the text is compressed, or
+    /// encoded, or scattered through a piece table — so a search offers the file
+    /// to be opened instead of a line to jump to.
+    ///
+    /// `Rtf` was outside this list while it had no reader: grepping the markup
+    /// at least matched the words that happened to be spelled out in it. Now
+    /// that it has one, grepping is the worse answer of the two — the letters a
+    /// writer escaped are not in the bytes at all, and the instructions holding
+    /// the file together are.
     pub fn text_is_inside_a_container(self) -> bool {
         match self {
             Self::Pdf

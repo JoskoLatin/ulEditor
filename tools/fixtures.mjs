@@ -1405,9 +1405,12 @@ export function makeRtf() {
     '@pard@f0 Ovo je @b podebljano@b0  i @i ukoseno@i0  i @strike precrtano@strike0 .@par' +
     // Centred.
     '@pard@qc@f0 Sredina@par' +
-    // A list of two items.
-    '@pard@ls1@ilvl0@f0 Prva stavka@par' +
-    '@pard@ls1@ilvl0@f0 Druga stavka@par' +
+    /* A list of two items, written the way Word actually writes one: the
+       marker is a group of its own in front of the text. Reading that group as
+       text puts the bullet on the page, and then the view draws its own in
+       front of it. */
+    "@pard@ls1@ilvl0{@listtext@pard@plain@f2 @'b7@tab}@f0 Prva stavka@par" +
+    "@pard@ls1@ilvl0{@listtext@pard@plain@f2 @'b7@tab}@f0 Druga stavka@par" +
     // A heading with no heading style, which only the outline level declares.
     '@pard@s2@outlinelevel1@f0 Prilozi@par' +
     // A table: two rows of two cells.
@@ -1417,6 +1420,9 @@ export function makeRtf() {
     '@pard@f0 Stranica {@field{@*@fldinst PAGE }{@fldrslt 2}} .@par' +
     // Hidden text, which is how a table of contents keeps its own workings.
     '@pard@f0 Vidljivo@v  skriveno@v0 .@par' +
+    /* A font in an alphabet this reader does not decode. It says so above the
+       document rather than quietly handing back the wrong letters. */
+    '{@fonttbl{@f3@fnil@fcharset204 Times New Roman Cyr;}}' +
     // A picture, and binary data, neither of which is text.
     '{@pict@wmetafile8@picw100@pich100 0102030405060708}' +
     '@pard@f0 Kraj@bin4 ....@par' +

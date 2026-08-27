@@ -78,7 +78,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
 | **3D models** | **works — viewing** (STL, OBJ, PLY, glTF, GLB, 3MF — turn, zoom, wireframe, triangle count) | three.js *(loaded only when a model is opened)* |
-| **RTF** | recognised by its first bytes, not read yet — and no longer reported as a damaged Word file | — |
+| **RTF** | **works — viewing**, including files named `.doc` that are Rich Text underneath | own reader |
 | Corel `.cdr`, EPS, PostScript | phase 2 — each says so on opening rather than showing a blank page | LibreOffice headless (libcdr) |
 | PPTX, ODP, ODG | phase 5 | Univer Slides |
 

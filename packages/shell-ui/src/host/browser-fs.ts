@@ -176,13 +176,15 @@ export class BrowserFileSystem implements VirtualFileSystem {
 
     /* Directories first, then alphabetically — without this the tree is
        unreadable. The language of the comparison is the interface's, the same
-       rule as shell/tree-sort.ts, which sorts this again at drawing time: it
-       used to be Croatian whatever the interface was in, which is a decision
+       rule as shell/tree-sort.ts, which sorts this again at drawing time — the
+       same options too, or `slika10` sorts before `slika2` here and after it
+       there, and the two disagree about a folder neither of them has changed.
+       It used to be Croatian whatever the interface was in, which is a decision
        nobody made for anybody outside Croatia. */
-    const locale = getLocale();
+    const collator = new Intl.Collator(getLocale(), { numeric: true, sensitivity: 'base' });
     entries.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
-      return a.name.localeCompare(b.name, locale);
+      return collator.compare(a.name, b.name);
     });
     return entries;
   }

@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
+import { useReading } from '../shell/reading.js';
 import { buildMenus, menuForLetter, rowForLetter, type Menu, type MenuItem } from '../shell/menus.js';
+import { activeInstance, useWorkspace } from '../state/workspace.js';
 
 /**
  * The menu bar: File, Edit, View, Preferences, Help.
@@ -53,6 +55,14 @@ export function MenuBar() {
   const barRef = useRef<HTMLDivElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
 
+  /* The global key handler captures, so it has to be told to stand back while a
+     menu has the keyboard — see `handleKey` in commands.ts. */
+  const setMenuOpen = useWorkspace((s) => s.setMenuOpen);
+  useEffect(() => {
+    setMenuOpen(open !== null);
+    return () => setMenuOpen(false);
+  }, [open, setMenuOpen]);
+
   /*
    * Rebuilt on every render rather than remembered. What a row says about
    * itself — whether it can be run, whether it is the theme in use — is true of
@@ -72,6 +82,12 @@ export function MenuBar() {
     setOpen(null);
     setActive(-1);
     setUnderlined(false);
+    /* The panel the keyboard was in is about to be removed, and focus left on a
+       removed element falls to the document body, where no key does anything.
+       It goes back to the document — which is where somebody who has just
+       chosen from a menu is looking. A command that opens a dialog moves it on
+       again from there. */
+    activeInstance()?.focus();
     void shell.commands.execute(row.id).catch((err: unknown) => {
       shell.notify.show('error', err instanceof Error ? err.message : String(err));
     });
@@ -110,6 +126,12 @@ export function MenuBar() {
     let tapped = false;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      /* The reading room hides the whole frame, this bar with it. Alt there
+         opened a menu nobody could see, and left it open behind the reader. */
+      if (useReading.getState().active) {
+        tapped = false;
+        return;
+      }
       if (event.key === 'Alt' && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
         tapped = !event.repeat;
         return;
@@ -136,11 +158,19 @@ export function MenuBar() {
       setOpen((current) => (current === null ? 0 : null));
     };
 
+    /* Alt held while the mouse is used is not a tap. Without this, Alt+click
+       anywhere in the window opened the File menu the moment Alt came back up. */
+    const onMouseDown = () => {
+      tapped = false;
+    };
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousedown', onMouseDown, true);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousedown', onMouseDown, true);
     };
   }, [shell]);
 
@@ -252,6 +282,17 @@ export function MenuBar() {
                   setOpen(index);
                 }
               }}
+              /* A heading is a button, and a button that answers only to the
+                 mouse is a button half the people who reach it cannot press.
+                 Tab lands here; Enter, Space and Down all open it, which is
+                 what they do on every other menu bar. */
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') return;
+                event.preventDefault();
+                setUnderlined(true);
+                setActive(-1);
+                setOpen(isOpen ? null : index);
+              }}
             >
               <Label text={menu.title} mnemonic={underlined ? menu.mnemonic : -1} />
             </button>
@@ -273,7 +314,11 @@ export function MenuBar() {
                     <button
                       type="button"
                       className="menu-row"
-                      role="menuitem"
+                      /* A row that is one of a set says so, and says which one
+                         is chosen. Drawn it is a tick; spoken it is nothing at
+                         all unless the role carries it. */
+                      role={row.checked === null ? 'menuitem' : 'menuitemradio'}
+                      aria-checked={row.checked === null ? undefined : row.checked}
                       key={row.id}
                       disabled={!row.enabled}
                       data-active={position === active}

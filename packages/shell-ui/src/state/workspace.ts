@@ -122,6 +122,11 @@ interface WorkspaceState {
   find: FindQuery;
   preferencesOpen: boolean;
   aboutOpen: boolean;
+  /** A menu is open in the title bar — see MenuBar.tsx. Kept here and not in
+   *  the component because the global key handler has to know: it runs in the
+   *  capture phase, so without this it answers Escape before the menu does and
+   *  one keystroke both closes the menu and leaves reading mode. */
+  menuOpen: boolean;
   quickOpen: boolean;
 
   setTree(tree: TreeNode[]): void;
@@ -145,6 +150,7 @@ interface WorkspaceState {
   setFind(patch: Partial<FindQuery>): void;
   setPreferencesOpen(open: boolean): void;
   setAboutOpen(open: boolean): void;
+  setMenuOpen(open: boolean): void;
   setQuickOpen(open: boolean): void;
 }
 
@@ -217,6 +223,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   find: { query: '', caseSensitive: false, regex: false },
   preferencesOpen: false,
   aboutOpen: false,
+  menuOpen: false,
   quickOpen: false,
 
   setTree: (tree) => set({ tree }),
@@ -305,6 +312,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setFind: (patch) => set((s) => ({ find: { ...s.find, ...patch } })),
   setPreferencesOpen: (preferencesOpen) => set({ preferencesOpen }),
   setAboutOpen: (aboutOpen) => set({ aboutOpen }),
+  setMenuOpen: (menuOpen) => set({ menuOpen }),
   setQuickOpen: (quickOpen) => set({ quickOpen }),
 }));
 

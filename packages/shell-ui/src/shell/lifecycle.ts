@@ -16,6 +16,7 @@ import { isLocale, t, type Locale } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { useWorkspace } from '../state/workspace.js';
+import { useScratch } from './scratch.js';
 import { saveSession } from './session.js';
 
 /**
@@ -35,19 +36,39 @@ export function chooseLocale(shell: Shell, next: Locale): void {
  * Asked, not announced.
  *
  * A window with unsaved work in it is closed by the same gesture as an empty
- * one — the button in the corner, Exit, a keystroke — and the program is the
- * only thing that knows the difference. So the question is asked here, in the
- * one place all three of those routes pass through, rather than left to
- * whatever the platform happens to do on its way out.
+ * one, and the program is the only thing that knows the difference. So the
+ * question is asked here, and both routes this program owns — the button in the
+ * corner of the title bar and Exit in the File menu — go through it.
+ *
+ * **It is not every route.** Alt+F4, the taskbar's Close, a shutdown, and on
+ * macOS the traffic light and Cmd+Q all destroy the window natively; nothing
+ * registers `onCloseRequested`, and the page's `beforeunload` cannot veto a
+ * native destroy. That is not a loss against what came before — until this
+ * function existed no route asked at all — but it is a gap, and a comment
+ * claiming otherwise would be worse than the gap. Closing it means registering
+ * the listener once and calling `destroy()` ourselves, because Tauri prevents
+ * every close as soon as one exists.
  */
-export async function requestExit(shell: Shell): Promise<void> {
-  const dirty = useWorkspace.getState().tabs.filter((tab) => tab.dirty);
+let asking = false;
 
-  if (dirty.length > 0) {
+export async function requestExit(shell: Shell): Promise<void> {
+  /* One question at a time. Two presses of the button in the corner used to
+     stack two identical warnings, and answering one of them left the other
+     standing — with a "Close anyway" that still worked, so cancelling did not
+     mean the window stayed. */
+  if (asking) return;
+
+  const dirty = useWorkspace.getState().tabs.filter((tab) => tab.dirty);
+  /* The panel below the document holds work too — text a plugin produced, an
+     OCR pass over a scan — and it is not a tab, so counting tabs missed it. */
+  const scratchDirty = useScratch.getState().dirty;
+
+  if (dirty.length > 0 || scratchDirty) {
+    asking = true;
     const stay = await new Promise<boolean>((resolve) => {
       const handle = shell.notify.show(
         'warning',
-        dirty.length === 1
+        dirty.length === 1 && !scratchDirty
           ? t('{name} has unsaved changes.', { name: dirty[0]?.name ?? '' })
           : t('Some documents have unsaved changes.'),
         [
@@ -56,6 +77,7 @@ export async function requestExit(shell: Shell): Promise<void> {
         ],
       );
     });
+    asking = false;
     if (stay) return;
   }
 

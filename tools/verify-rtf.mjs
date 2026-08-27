@@ -195,6 +195,91 @@ check(
   [...notes].some((note) => /Numbering is not carried over/.test(note)),
 );
 
+/* ── the list marker, which the writer supplies and the view also draws ── */
+
+/*
+ * Word 97 onwards and LibreOffice put the bullet or the number in a group of
+ * its own in front of the item. Read as text it lands in the paragraph, and
+ * then the view — seeing a paragraph in a list — draws its own marker in front
+ * of that, so every list in every real file came out as "• · Prva stavka"
+ * and a numbered one as "• 1. Prva stavka" beneath a note saying the numbering
+ * had not been carried over. The fixture writes its list the way Word does, and
+ * this is the assertion that keeps it that way.
+ */
+check(
+  'the marker the writer supplied does not reach the text',
+  textOf(paragraphs[6]) === 'Prva stavka' && textOf(paragraphs[7]) === 'Druga stavka',
+  `${textOf(paragraphs[6])} / ${textOf(paragraphs[7])}`,
+);
+check(
+  'and the paragraph is still a list item',
+  paragraphs[6].pap.ilfo === 1 && paragraphs[7].pap.ilfo === 1,
+);
+
+/* ── an alphabet this reader does not have ── */
+
+/*
+ * Two code pages are decoded and the rest are read as Western. For Cyrillic or
+ * Greek that is not a failure the reader can see — the letters come back as
+ * *different* letters, which looks like a document rather than like a fault.
+ * So it is said above the document instead.
+ */
+check(
+  'a font in an alphabet it cannot decode is named, not guessed at silently',
+  [...notes].some((note) => /alphabet this reader does not decode/.test(note)),
+  JSON.stringify([...notes]),
+);
+
+/* ── what a damaged file may not do ── */
+
+/*
+ * Every one of these came out of a fuzz over malformed input, and every one of
+ * them ended the same way: a file that is merely damaged took the whole reader
+ * with it, so the document that was mostly readable showed nothing at all —
+ * and in one case showed the JavaScript engine's own English sentence in place
+ * of the program's.
+ */
+const B = String.fromCharCode(92);
+const rtf = (body) => {
+  const text = ('{@rtf1@ansi ' + body + '}').replaceAll('@', B);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+  return bytes;
+};
+const survives = (name, body, expected) => {
+  let outcome;
+  try {
+    outcome = parseRtf(typeof body === 'string' ? rtf(body) : body)
+      .paragraphs.map(textOf)
+      .join(' | ');
+  } catch (error) {
+    outcome = `THREW ${error.constructor.name}: ${error.message}`;
+  }
+  check(name, outcome === expected, JSON.stringify(outcome));
+};
+
+survives('a code point outside Unicode loses its character, not the file', 'a@u1114112 ?b@par', 'ab');
+survives('a control word three hundred thousand letters long is survivable', '@' + 'x'.repeat(300000) + ' kraj@par', 'kraj');
+survives('the swallow counter does not eat text past the brace it was set in', '{@uc3@u263 }XYZ@par', 'ćXYZ');
+
+{
+  /* Everything after the brace that closes the document is not the document.
+     Reading it added a paragraph of somebody's stray bytes to the end. */
+  const text = ('{@rtf1@ansi unutra@par}IZVAN@par').replaceAll('@', B);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+  survives('bytes after the closing brace are not part of the document', bytes, 'unutra');
+}
+
+{
+  /* A file that ends mid-escape had the byte past its end read as the second
+     hex digit, which turned the last letter into a control character. */
+  const text = ('{@rtf1@ansi abc@' + "'" + 'e').replaceAll('@', B);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+  survives('a hex escape cut in half at the end of the file adds nothing', bytes, 'abc');
+}
+
 /* ── refusals ────────────────────────────────────────────────────────── */
 
 const refusal = (bad) => {

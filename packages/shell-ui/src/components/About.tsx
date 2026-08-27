@@ -69,7 +69,10 @@ export function About() {
             <dt>{t('Licence')}</dt>
             <dd>Apache-2.0</dd>
             <dt>{t('Made in')}</dt>
-            <dd>Vodice</dd>
+            {/* Through t() although it is a place name: Croatian puts the place
+                in the locative after this label, so the answer to "napravljeno
+                u" is "Vodicama" and not "Vodice". */}
+            <dd>{t('Vodice')}</dd>
           </dl>
         </section>
 

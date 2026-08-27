@@ -231,9 +231,29 @@ async function searchDocument(
       break;
     }
 
-    case 'docx': {
-      const { renderDocx } = await import('@uleditor/editor-office');
-      const preview = renderDocx(bytes);
+    /*
+     * Every format whose text is read into a page rather than lying in the
+     * bytes. They are listed together because the alternative is what was here
+     * — one case for Word and nothing for the four formats that arrived after
+     * it, each of them falling through to `default` and reporting no hits at
+     * all. A format that is diverted here and then not read is worse than one
+     * that was never diverted: the search says "no results" about a document it
+     * never opened, and the file it was in is the one nobody thinks to check.
+     */
+    case 'docx':
+    case 'doc':
+    case 'rtf':
+    case 'odt': {
+      const office = await import('@uleditor/editor-office');
+      const read =
+        candidate.format === 'docx'
+          ? office.renderDocx
+          : candidate.format === 'doc'
+            ? office.readDoc
+            : candidate.format === 'rtf'
+              ? office.readRtf
+              : office.readOdt;
+      const preview = read(bytes);
       try {
         scan(t('document'), preview.text, out, 20);
       } finally {
@@ -242,9 +262,13 @@ async function searchDocument(
       break;
     }
 
+    case 'xls':
+    case 'ods':
     case 'xlsx': {
-      const { readXlsx, columnName } = await import('@uleditor/editor-office');
-      const workbook = readXlsx(bytes);
+      const { readXlsx, readXls, readOds, columnName } = await import('@uleditor/editor-office');
+      const open =
+        candidate.format === 'xlsx' ? readXlsx : candidate.format === 'xls' ? readXls : readOds;
+      const workbook = open(bytes);
       for (const sheet of workbook.sheets) {
         for (const [key, cell] of sheet.cells) {
           if (out.length >= 20) break;

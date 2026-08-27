@@ -87,7 +87,23 @@ const SKIP = new Set([
   'annotation',
   'xe',
   'tc',
+  /*
+   * The list marker, in both spellings. `pntext` is how Word 6 wrote it and
+   * `listtext` is how Word 97 onwards and LibreOffice do — a bare, unstarred
+   * group holding the bullet or the number and a tab:
+   *
+   *     \pard\ls1\ilvl0{\listtext\pard\plain\f2 \'b7\tab}Prva stavka\par
+   *
+   * Only `pntext` was here, so the modern spelling fell through to the default
+   * branch and its contents were printed as body text — and then the renderer,
+   * seeing a paragraph in a list, drew its own bullet in front of it. Every
+   * list item in every Word file since 1997 came out as "• · Prva stavka", and
+   * a numbered one as "• 1. Prva stavka" under a note claiming the numbering
+   * had not been carried over. Microsoft's own sdk_license.rtf has ninety of
+   * these groups in it.
+   */
   'pntext',
+  'listtext',
   'fldinst',
 ]);
 
@@ -120,6 +136,14 @@ const NAMED: Record<string, string> = {
   zwnj: '',
 };
 
+/**
+ * The font charsets whose bytes this reader turns into the right letters:
+ * Western, whatever the system default turns out to be, Central European —
+ * and Symbol, which is not an alphabet at all but a font of shapes, read as
+ * Western because that is where its bullet and its arrows land closest.
+ */
+const DECODABLE_CHARSETS = new Set([0, 1, 2, 238]);
+
 const PLAIN: Chp = { bold: false, italic: false, underline: false, strike: false };
 const BLANK_PAP: Pap = { istd: 0, inTable: false, rowEnd: false, jc: 0, ilfo: 0, ilvl: 0 };
 
@@ -135,8 +159,19 @@ interface Frame {
   pap: Pap;
   /** Characters of the `\uN` replacement still to be swallowed. */
   uc: number;
-  /** The code page of the font in force. */
-  page: 1250 | 1252;
+  /**
+   * The font in force, by the number the font table gave it — not the code page
+   * it implies.
+   *
+   * The page was held here once, and the document's own code-page
+   * instruction had to reach back and rewrite
+   * every frame on the stack to change it, which meant a page set inside a
+   * group survived the brace that closed the group. Keeping the font and asking
+   * the table at the moment a byte is decoded has no such seam: whatever the
+   * font table says by then is the answer, and it says it for exactly as long
+   * as the group that named the font.
+   */
+  font: number | null;
   skip: boolean;
   /**
    * Text marked hidden — how a table of contents keeps its own workings, and
@@ -177,15 +212,21 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
   const outlineStyles = new Map<number, number>();
 
   let documentPage: 1250 | 1252 = 1252;
+  /** The font used where no font instruction has named one — `\deffN` in the header. */
+  let defaultFont = 0;
   /** Font index → code page, from the font table. */
   const fontPages = new Map<number, 1250 | 1252>();
+
+  /** The page a byte in this group is written in. */
+  const pageOf = (level: Frame): 1250 | 1252 =>
+    fontPages.get(level.font ?? defaultFont) ?? documentPage;
 
   const stack: Frame[] = [
     {
       chp: { ...PLAIN },
       pap: { ...BLANK_PAP },
       uc: 1,
-      page: 1252,
+      font: null,
       skip: false,
       hidden: false,
       starred: false,
@@ -231,7 +272,15 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
       return;
     }
     if (frame.destination !== 'body') {
-      entryText += text;
+      /*
+       * A font name or a style name. Capped because the cap above counts
+       * characters that reached the *document*, and this branch reaches none —
+       * so a font table that never closes its first entry funnels the rest of
+       * the file into one string, one byte at a time, and a twenty-megabyte
+       * file takes the renderer down with it. Nothing longer than this is a
+       * name.
+       */
+      if (entryText.length < 4096) entryText += text;
       return;
     }
     /* A run holds one set of properties. Comparing them field by field rather
@@ -274,12 +323,34 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
   let i = 1; // past the opening brace, which the header check already saw
 
   while (i < bytes.length) {
+    /*
+     * The cap belongs here and not only in `emit`. `emit` counts characters
+     * that reach the page, and a file can go on producing paragraphs and
+     * frames long after it has stopped producing any: eight megabytes of an
+     * ordinary document ended as a hundred and twenty thousand paragraphs, of
+     * which eighty-eight thousand were empty, each one drawn as a blank line
+     * under a note saying the document had been cut short.
+     */
+    if (characters >= MAX_CHARS) {
+      truncated = true;
+      break;
+    }
+
     const code = at(i);
 
     if (code === 0x7b) {
       // {
+      /* A file made of nothing but opening braces would otherwise be a frame
+         each, and the depth of a real document is single digits. */
+      if (stack.length >= 4096) {
+        i++;
+        continue;
+      }
       stack.push({ ...frame, chp: { ...frame.chp }, pap: { ...frame.pap }, starred: false });
       frame = stack[stack.length - 1]!;
+      /* The understudy of a `\u` belongs to the text it stood in for, and that
+         text ended at the brace. */
+      pendingSkip = 0;
       /* One entry of the font table or the style sheet per group, so whatever
          was gathered belonged to the entry that has just ended. */
       if (frame.destination !== 'body') {
@@ -298,7 +369,13 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
       }
       if (frame.destination === 'fonttbl') entryText = '';
       stack.pop();
-      frame = stack[stack.length - 1] ?? frame;
+      pendingSkip = 0;
+      /* The brace that closes the outermost group closes the document. What
+         follows it is not RTF at all — a file with anything after that point is
+         damaged, and reading it as text adds a paragraph of somebody's stray
+         bytes to the end of their document. */
+      if (stack.length === 0) break;
+      frame = stack[stack.length - 1]!;
       /* The properties in force belong to the group that is now current, and a
          run that was open under the old ones has ended. */
       if (frame.destination === 'body') closeRun();
@@ -315,7 +392,7 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
       }
       i++;
       if (swallow()) continue;
-      emit(fromCodePage(code, frame.page));
+      emit(fromCodePage(code, pageOf(frame)));
       continue;
     }
 
@@ -331,11 +408,15 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
 
     if (next === 0x27) {
       // \'hh — one byte, written in hex because RTF is an ASCII format.
+      /* Both digits have to be there. A file that ends mid-escape used to have
+         the byte past its end read as the second digit, which turned the last
+         letter of a truncated document into a control character. */
+      if (i + 4 > bytes.length) break;
       const hex = String.fromCharCode(at(i + 2), at(i + 3));
       i += 4;
       if (swallow()) continue;
       const value = Number.parseInt(hex, 16);
-      if (!Number.isNaN(value)) emit(fromCodePage(value, frame.page));
+      if (!Number.isNaN(value)) emit(fromCodePage(value, pageOf(frame)));
       continue;
     }
 
@@ -375,9 +456,25 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
 
     /* A control word: letters, then an optional number, then one space that
        belongs to the word rather than to the text. */
+    /*
+     * The format allows a control word thirty-two letters long and a number of
+     * ten digits, and both are gathered here to those limits and no further.
+     * The bytes past the limit are still walked over — they belong to the word,
+     * whatever it turns out to be — but they are not kept.
+     *
+     * That is not tidiness. This was written as
+     * `String.fromCharCode(...bytes.slice(i + 1, j))`, which hands every byte
+     * of the run to the function as a separate argument: three hundred thousand
+     * letters where a control word should be, and a damaged file takes the
+     * whole program down with a stack overflow rather than being called
+     * damaged.
+     */
     let j = i + 1;
-    while (j < bytes.length && isLetter(at(j))) j++;
-    const word = String.fromCharCode(...bytes.slice(i + 1, j));
+    let word = '';
+    while (j < bytes.length && isLetter(at(j))) {
+      if (word.length < 32) word += String.fromCharCode(at(j));
+      j++;
+    }
 
     let digits = '';
     if (at(j) === 0x2d) {
@@ -385,7 +482,7 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
       j++;
     }
     while (j < bytes.length && isDigit(at(j))) {
-      digits += String.fromCharCode(at(j));
+      if (digits.length < 11) digits += String.fromCharCode(at(j));
       j++;
     }
     if (at(j) === 0x20) j++;
@@ -428,7 +525,20 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
 
     if (frame.destination === 'fonttbl') {
       if (word === 'f' && value !== null) entryNumber = value;
-      if (word === 'fcharset' && value !== null) fontPages.set(entryNumber, charsetPage(value));
+      if (word === 'fcharset' && value !== null) {
+        fontPages.set(entryNumber, charsetPage(value));
+        /*
+         * Two code pages are decoded here and the rest are read as Western,
+         * which is right for the Latin ones and wrong for Cyrillic, Greek and
+         * Turkish. Wrong quietly, which is the part worth saying out loud: the
+         * letters come back as *different* letters rather than as anything that
+         * looks like a failure. Said once, above the document, the way every
+         * other thing this view cannot do is said.
+         */
+        if (!DECODABLE_CHARSETS.has(value)) {
+          notes.add('Some of this file is in an alphabet this reader does not decode yet — that text may come out wrong.');
+        }
+      }
       continue;
     }
     if (frame.destination === 'stylesheet') {
@@ -446,25 +556,44 @@ export function parseRtf(bytes: Uint8Array): ParsedRtf {
     switch (word) {
       /* — the document — */
       case 'ansicpg':
-        if (value !== null) {
-          documentPage = value === 1250 ? 1250 : 1252;
-          for (const level of stack) level.page = documentPage;
-        }
+        /* Document-wide and deliberately not scoped to the group it appears in:
+           it is a statement about the file, written once in the header, and a
+           file that moves it is telling us about all of itself either way. What
+           *is* scoped is the font, and the font is what usually disagrees with
+           this. */
+        if (value !== null) documentPage = value === 1250 ? 1250 : 1252;
+        break;
+
+      case 'deff':
+        if (value !== null) defaultFont = value;
         break;
 
       case 'f':
         /* The font decides the code page, and this is the instruction that made
-           the two Croatian files in the corpus readable: the document claims
-           1252 throughout and every word of Croatian in it is set in a font
-           that says 238. */
-        if (value !== null) frame.page = fontPages.get(value) ?? documentPage;
+           the Croatian files in the corpus readable: the document claims 1252
+           throughout and every word of Croatian in it is set in a font that
+           says 238. */
+        if (value !== null) frame.font = value;
         break;
 
       /* — characters — */
       case 'u': {
         if (value === null) break;
+        /*
+         * Negative means the writer stored the value as a signed 16-bit number,
+         * so it wraps — that much is the format. What is not the format is a
+         * value outside Unicode altogether, and a damaged file carries any
+         * number at all. `String.fromCodePoint` throws on one, and the throw
+         * escapes all the way out of the reader: a single bad escape in an
+         * otherwise readable document loses the whole document and shows the
+         * engine's own English sentence in place of it.
+         *
+         * The replacement is still swallowed. The characters after a `\\u` are
+         * its understudy whether or not the value was usable, and leaving them
+         * would put a question mark on the page instead of nothing.
+         */
         const point = value < 0 ? value + 0x10000 : value;
-        emit(String.fromCodePoint(point));
+        if (point >= 0 && point <= 0x10ffff) emit(String.fromCodePoint(point));
         pendingSkip = frame.uc;
         break;
       }

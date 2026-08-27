@@ -415,6 +415,14 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   const inTextField =
     target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
 
+  /*
+   * A menu has the keyboard while it is open, and this handler captures — it
+   * runs before the panel does. Without this, Escape out of a menu also left
+   * reading mode or closed the find panel in the same keystroke, and a letter
+   * meant for a row reached a shortcut instead.
+   */
+  if (store.menuOpen && !store.paletteOpen) return;
+
   // Escape closes search wherever the focus is — the panel, the editor or a tab.
   // Binding it to the panel alone means Escape from the editor does nothing,
   // which is exactly where it is pressed from most often.
@@ -461,6 +469,25 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   }
 
   if (!mod) return;
+
+  /*
+   * AltGr is not Ctrl, whatever Windows reports.
+   *
+   * On a Croatian keyboard the third level of the keys is AltGr, and Windows
+   * sends it as Ctrl **and** Alt together — so every shortcut below was reading
+   * a keystroke meant to type a character. The switch matches on the character
+   * produced, which hides most of the damage: AltGr+W gives `|`, AltGr+F gives
+   * `[`, and neither is bound. Two are. AltGr+Q gives a backslash, which is
+   * bound to moving the tab to the other side, and AltGr+7 gives a backtick,
+   * which is bound to jumping to it — so typing a Windows path or opening a
+   * Markdown code fence split the workspace instead, and the character never
+   * arrived.
+   *
+   * Nothing in this program binds Ctrl+Alt or Cmd+Option, so there is nothing
+   * to lose by refusing the combination outright. It sits below the reading-mode
+   * branch above deliberately: that one asks for no modifier at all.
+   */
+  if (event.altKey) return;
 
   /*
    * Zoom, and before the Shift branch below rather than among the plain Ctrl

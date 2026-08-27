@@ -821,6 +821,27 @@ try {
     await until(async () => (await page.locator('.menu-panel').count()) === 0);
   }
 
+  /*
+   * AltGr again, from the other side. The menu bar refuses it, and so must the
+   * shortcuts underneath: Windows reports AltGr as Ctrl and Alt together, and
+   * the shortcut table matches on the character the key produces. On a Croatian
+   * keyboard AltGr+Q is a backslash and AltGr+7 is a backtick — one of them
+   * moved the tab to the other side of the window and the other jumped to it,
+   * and in both cases the character never reached the document.
+   */
+  {
+    const before = await page.locator('.groups').getAttribute('data-split');
+    await page.keyboard.press('Control+Alt+Backslash');
+    await page.keyboard.press('Control+Alt+Backquote');
+    await page.waitForTimeout(120);
+    check(
+      'AltGr does not reach the shortcuts either',
+      (await page.locator('.groups').getAttribute('data-split')) === before &&
+        (await page.locator('.menu-panel').count()) === 0,
+      `split ${before} -> ${await page.locator('.groups').getAttribute('data-split')}`,
+    );
+  }
+
   /* The pointer reaches it everywhere, and the arrows walk it once it is open. */
   await page.locator('.menu-title', { hasText: 'View' }).click();
   await page.waitForSelector('.menu-panel', { timeout: 5000 });
