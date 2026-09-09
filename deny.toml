@@ -27,6 +27,11 @@ allow = [
   "ISC",
   "Zlib",
   "MPL-2.0",       # LibreOffice and Collabora — copyleft per file, not per project
+  # The Mozilla root certificate bundle, which the updater needs to verify
+  # the TLS connection it fetches over. A data licence rather than a code
+  # one: it is permissive, it carries no copyleft, and what it covers is a
+  # list of certificate authorities — see `webpki-root-certs`.
+  "CDLA-Permissive-2.0",
   "Unicode-3.0",
   "CC0-1.0",
   "Unlicense",

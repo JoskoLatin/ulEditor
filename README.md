@@ -243,6 +243,42 @@ Formats that can be written back: PNG, JPEG, WebP, BMP, TIFF. A GIF or an `.avif
 opens, zooms and goes through OCR, and offers to be saved as PNG — saying so in
 the format box rather than refusing at the end.
 
+## One clipboard across the formats
+
+Copy a range in a spreadsheet, paste it into a Markdown document, and it arrives
+as **a table** — pipes, header rule and all — rather than as the tab-separated
+line the operating system's clipboard carries. That is the part of the thesis
+that only works if the whole program is one program.
+
+**Copying is not intercepted.** The browser's own copy does what it always did,
+and the system clipboard stays its business — so nothing here can break Ctrl+C.
+What the shell does instead is *remember* the structure that went with the text:
+the editor is asked for its payload, and it is held until something matching is
+pasted. The plain text is the key, and it matches by construction, since both
+sides serialise the same selection.
+
+**Pasting is taken over only when an editor asks for it, synchronously.** A
+`paste` event cannot be answered later — by the time a promise resolves the
+browser has already pasted, or not — so the question is `acceptsPaste`, and an
+editor that does not implement it is never interfered with. Markdown answers yes
+to a table and to nothing else: for plain text the native paste is already
+exactly right, and taking the event over would mean reimplementing it, undo
+grouping included.
+
+Two details are the difference between a feature and a nuisance. **A paste that
+does not match what was copied here is left alone**, so a table copied an hour
+ago cannot land in place of the sentence somebody copied out of their browser a
+moment ago. And **the table is built from the cells rather than from the string**
+— `td[data-ref]` is a cell of the sheet and the row-number gutter is not one —
+while the plain text stays exactly what the browser produced, because that is
+the key the two halves are matched by.
+
+Whether the first row is a heading is a guess, and it is made out of what the
+cells *are*: text across the whole first row with something that is not text
+below it is the shape of `Month | Amount` over `January | 1.234,50`. Markdown has
+no headerless table — the delimiter row is part of the syntax — so the
+alternative to guessing is a blank strip above every pasted table.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -337,6 +373,7 @@ pnpm verify:ocr       # OCR, and the panel below
 pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:mermaid   # diagrams in Markdown — and that mermaid is not fetched without one
 pnpm verify:updates   # the updater: key, endpoint, permissions, manifest (no network)
+pnpm verify:clipboard # a spreadsheet range pasted into Markdown, as a table
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)

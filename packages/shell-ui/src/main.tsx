@@ -17,6 +17,7 @@ import { App } from './App.js';
 import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
+import { watchClipboard } from './shell/clipboard.js';
 import { checkOnStart } from './shell/updates.js';
 import { restoreZoom } from './shell/zoom.js';
 import { SIDEBAR_WIDTH, useWorkspace } from './state/workspace.js';
@@ -322,3 +323,11 @@ createRoot(container).render(
  * there is nothing here worth a single frame of that.
  */
 void checkOnStart(shell);
+
+/*
+ * The cross-format clipboard. Both events for the lifetime of the window: the
+ * copy remembers the structure that went with the text, and the paste hands it
+ * to an editor that has said it wants it. Nothing is intercepted otherwise —
+ * see `shell/clipboard.ts`.
+ */
+watchClipboard(shell);

@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Updating the program, which only a desktop build does \u2014 a phone updates through its store. This is a file of its own rather than two more lines in `default`: the Android build compiles neither plugin, and Tauri's build script resolves every permission identifier against the plugins that were actually compiled. A permission naming one that was not is not ignored, it is an error \u2014 which is how the Android job went red on a change that had nothing to do with Android. `platforms` is what keeps this file out of that build.",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "linux",
+    "macOS",
+    "windows"
+  ],
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

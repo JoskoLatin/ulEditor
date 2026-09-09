@@ -429,6 +429,19 @@ class MarkdownEditor implements EditorInstance {
   }
 
   /**
+   * Yes to a table, and to nothing else.
+   *
+   * A table is the one case where this editor can do better than the browser:
+   * it becomes Markdown with pipes and a header rule, rather than the
+   * tab-separated line the native paste would drop in. For plain text the
+   * native paste is already exactly right, and taking the event over would mean
+   * reimplementing it — including the undo grouping CodeMirror does for free.
+   */
+  acceptsPaste(payload: ClipboardPayload): boolean {
+    return payload['application/x-uleditor-table'] !== undefined && this.#view !== null;
+  }
+
+  /**
    * This is where the cross-format clipboard really pays off: a range copied out
    * of a spreadsheet arrives as a Markdown table, not as tab-separated mush.
    */

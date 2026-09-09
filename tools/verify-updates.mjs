@@ -103,13 +103,34 @@ check(
 
 /* ── the permissions ─────────────────────────────────────────────────── */
 
-const capabilities = JSON.parse(read('apps/desktop/src-tauri/capabilities/default.json'));
-const permissions = capabilities.permissions ?? [];
+const capability = JSON.parse(read('apps/desktop/src-tauri/capabilities/desktop.json'));
+const permissions = capability.permissions ?? [];
 check('the window may ask and install', permissions.includes('updater:default'));
 check(
   'and may restart itself afterwards',
   permissions.includes('process:allow-restart'),
   'an update installed but not running is an update nobody sees',
+);
+
+/*
+ * And the file says which platforms it applies to. Without that the Android
+ * build fails in its build script: Tauri resolves every permission identifier
+ * against the plugins actually compiled for the target, the updater is not one
+ * of them there, and an unknown identifier is an error rather than a shrug. It
+ * cost a red Android job on a change that had nothing to do with Android.
+ */
+check(
+  'and the capability is declared desktop-only',
+  Array.isArray(capability.platforms) &&
+    ['linux', 'macOS', 'windows'].every((os) => capability.platforms.includes(os)) &&
+    !capability.platforms.includes('android'),
+  (capability.platforms ?? []).join(', '),
+);
+check(
+  'while the default capability stays free of it',
+  !JSON.parse(read('apps/desktop/src-tauri/capabilities/default.json')).permissions.some((name) =>
+    name.startsWith('updater:') || name.startsWith('process:'),
+  ),
 );
 
 /* ── the Rust side ───────────────────────────────────────────────────── */

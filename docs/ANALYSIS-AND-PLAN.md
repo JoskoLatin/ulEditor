@@ -260,7 +260,7 @@ of the two engines it was designed around has been taken.
 | `ul-convert`: LibreOffice headless | **not started**, and smaller than it was: `.odt` and `.ods` open without it. What is left for it is `.cdr`, EPS and PostScript, whose drawing models nobody else implements |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
-| Cross-format clipboard | not started |
+| Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
 
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:

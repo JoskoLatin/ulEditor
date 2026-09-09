@@ -82,6 +82,25 @@ export interface EditorInstance {
   copySelection(): Promise<ClipboardPayload | null>;
   paste(payload: ClipboardPayload): Promise<boolean>;
 
+  /**
+   * Whether this editor wants the payload, asked **synchronously**.
+   *
+   * It exists because a `paste` event cannot be answered later: by the time a
+   * promise resolves the browser has already pasted, or not. So the shell asks
+   * this first and takes the event over only if the answer is yes.
+   *
+   * Optional, and an editor that does not implement it is never interfered
+   * with — which is the safe default. A `contenteditable` region handles its
+   * own paste perfectly well, and an interception that took the event and then
+   * found the payload unusable would paste nothing at all.
+   *
+   * Answer yes only where the payload beats what the browser would have done.
+   * A spreadsheet range in a Markdown document is worth it: tab-separated text
+   * becomes a real table. The same range in a code editor is not — the plain
+   * text is what was wanted either way.
+   */
+  acceptsPaste?(payload: ClipboardPayload): boolean;
+
   /** Focuses the editing surface — the shell calls it when switching tabs. */
   focus(): void;
 

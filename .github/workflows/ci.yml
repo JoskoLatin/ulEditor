@@ -156,6 +156,11 @@ jobs:
           # a document without a fence must not pay for it. The network is
           # watched for that, so this cannot be checked without a browser either.
           node tools/verify-mermaid.mjs --url http://localhost:5273
+          # The cross-format clipboard, which needs two real editors and the two
+          # events the browser sends between them: a range copied out of a
+          # spreadsheet has to arrive in a Markdown document as a table, and a
+          # sentence copied out of somebody's browser has to arrive as itself.
+          node tools/verify-clipboard.mjs --url http://localhost:5273
           # OCR cannot be faked: an image is drawn with known text in it, put
           # through recognition, and the text has to come back. It runs on one
           # runner rather than three because nothing in it is platform-specific

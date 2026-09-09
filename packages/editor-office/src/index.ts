@@ -907,17 +907,56 @@ class XlsxPreviewEditor implements EditorInstance {
     target.scrollIntoView({ block: 'center', inline: 'center' });
   }
 
+  /**
+   * A range off the grid, in two forms at once.
+   *
+   * **`text/plain` is the browser's own serialisation and has to stay that
+   * way.** It is the key the shell matches a paste against: the system
+   * clipboard holds whatever the browser put there, and a payload whose text
+   * disagreed with it by one character would never be recognised as belonging
+   * to it — the structure would be silently dropped on every paste. So the
+   * string is left exactly as the selection produced it, row numbers and all.
+   *
+   * The **table** is built from the cells instead, which is what makes it worth
+   * having: `td[data-ref]` is a cell of the sheet, the row-number gutter is not
+   * one, and a cell that spans two columns is one value rather than a tab.
+   */
   async copySelection(): Promise<ClipboardPayload | null> {
-    const text = window.getSelection()?.toString() ?? '';
+    const selection = window.getSelection();
+    const text = selection?.toString() ?? '';
     if (!text.trim()) return null;
 
-    // A table on the clipboard carries structure too — the Markdown editor knows
-    // to insert it as a table instead of tab-separated mush.
-    const rows = text.split(/\r?\n/).map((line) => line.split('\t'));
-    return {
-      ...plainPayload(text, { editorId: 'org.uleditor.xlsx', uri: this.doc.uri }),
-      'application/x-uleditor-table': { rows, headerRow: false },
-    };
+    const payload = plainPayload(text, { editorId: 'org.uleditor.xlsx', uri: this.doc.uri });
+    const table = this.#selectedCells(selection);
+    return table ? { ...payload, 'application/x-uleditor-table': table } : payload;
+  }
+
+  /** The selected cells as rows, or nothing if the selection is not in a grid. */
+  #selectedCells(selection: Selection | null): { rows: string[][]; headerRow: boolean } | null {
+    const root = this.#root;
+    if (!selection || selection.rangeCount === 0 || !root) return null;
+
+    const rows: string[][] = [];
+    const kinds: string[][] = [];
+    for (const tr of root.querySelectorAll('table.ul-sheet tbody tr')) {
+      const cells: string[] = [];
+      const cellKinds: string[] = [];
+      for (const cell of tr.querySelectorAll<HTMLElement>('td[data-ref]')) {
+        /* `containsNode` with `partlyContained`, because a selection that
+           starts in the middle of one cell and ends in the middle of another
+           still means every cell between them. */
+        if (!selection.containsNode(cell, true)) continue;
+        cells.push(cell.textContent ?? '');
+        cellKinds.push(cell.dataset.kind ?? '');
+      }
+      if (cells.length > 0) {
+        rows.push(cells);
+        kinds.push(cellKinds);
+      }
+    }
+
+    if (rows.length === 0) return null;
+    return { rows, headerRow: looksLikeHeader(kinds) };
   }
 
   async paste(): Promise<boolean> {
@@ -927,6 +966,30 @@ class XlsxPreviewEditor implements EditorInstance {
   focus(): void {
     this.#root?.focus();
   }
+}
+
+/**
+ * Whether the first of these rows is a heading rather than data.
+ *
+ * A spreadsheet has no such notion — a header row is a convention people keep,
+ * not something the format records — so this is a guess, and it is made out of
+ * what the cells *are* rather than what they say. Text across the whole of the
+ * first row and something that is not text somewhere in the second is the shape
+ * of a table with headings: `Month | Amount` over `January | 1.234,50`.
+ *
+ * Guessing wrong costs one row in the wrong place, and guessing at all is worth
+ * it because the alternative is worse. Markdown has no headerless table: the
+ * delimiter row is part of the syntax, so a table declared to have no heading
+ * arrives with an empty one — a blank strip above the data in every renderer
+ * that draws it.
+ */
+function looksLikeHeader(kinds: string[][]): boolean {
+  const [first, second] = kinds;
+  if (!first || first.length === 0 || !second || second.length === 0) return false;
+
+  const allText = first.every((kind) => kind === 'text' || kind === '');
+  const someNotText = second.some((kind) => kind !== 'text' && kind !== '');
+  return allText && someNotText;
 }
 
 /* ── provideri ───────────────────────────────────────────────────────── */
