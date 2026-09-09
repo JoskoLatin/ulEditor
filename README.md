@@ -14,9 +14,9 @@
   <a href="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JoskoLatin/ulEditor/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
-**Status:** phases 0 and 1 complete, phase 2 begun. The desktop app runs, thirteen editors work, e-books and Office documents open — Word, Excel and OpenDocument alike, back to the binary formats of 1997 — and the window splits in two. The interface is in English; Croatian can be selected in settings.
+**Status:** phases 0 and 1 complete, phase 2 well under way. The desktop app runs, thirteen editors work, e-books and Office documents open — Word, Excel and OpenDocument alike, back to the binary formats of 1997 — and the window splits in two. Since v0.3.3: Markdown draws its diagrams, pictures are turned, cropped and resized, a `.cdr` opens through LibreOffice, a spreadsheet range pastes into a document as a table, and the program looks for its own next version and refuses one that is not signed. The interface is in English; Croatian can be selected in settings.
 
-What phase 1 asked for and did not get: **the installers are not code-signed**, so Windows and macOS both warn on first launch — see [below](#the-warning-you-will-see-and-why). That is a certificate to buy, not code to write, and the Android build is signed.
+What phase 1 asked for and still has not got: **the installers are not code-signed**, so Windows and macOS both warn on first launch — see [below](#the-warning-you-will-see-and-why). That is a certificate to buy, not code to write; the Android build is signed, and the update signature is ours rather than an operating system's, so that part needed no purchase.
 
 ## Download
 
@@ -87,7 +87,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works** | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) |
 | Markdown | **works** — source + live preview + reading mode + **diagrams** | CodeMirror 6 + markdown-it (+ mermaid, fetched only when a diagram is there) |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
-| PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js *(desktop → pdfium, phase 1)* |
+| PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js — the planned swap to pdfium is an optimisation rather than a fix, and is not what any of the editing above waited for |
 | PDF annotations | **works** — highlights, notes, ink | pdf-lib |
 | **PDF text** | **works** — typing text, font, size, colour, moving | pdf-lib + Liberation Sans |
 | **PDF redaction** | **works** — text leaves the content stream, it is not covered up | own content-stream reader |
