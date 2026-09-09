@@ -122,7 +122,7 @@ All of them checked by `cargo-deny` / `license-checker` in CI — licences chang
 | Code / text | CodeMirror 6 | CodeMirror 6 + tree-sitter + an LSP client | MIT | 1 |
 | Markdown | CodeMirror 6 + preview | the same | MIT | 1 |
 | PDF | `pdfium-render` (desktop/mobile), PDF.js (web) | `lopdf`, qpdf, pdf-lib | BSD-3 / Apache-2.0 / MIT | 1 |
-| Images | `image-rs` | crop / rotate / basic | MIT | 1 |
+| Images | `image-rs` | **done** — crop, rotate, mirror, resize, PNG/JPEG/WebP/BMP/TIFF | MIT / Apache-2.0 | 1 |
 | XLSX | **Univer** | Univer + `calamine` (read) / `rust_xlsxwriter` (write) | Apache-2.0 / MIT | 2 |
 | DOCX | ProseMirror | `docx-rs`, mapped onto an OOXML subset | MIT | 2 |
 | ODF / conversions | LibreOffice `--headless` | `soffice` CLI orchestration from Rust | MPL-2.0 | 2 |
@@ -203,6 +203,7 @@ State as of 9 September 2026.
 | **EPUB reader + reading mode** (not in the original plan) | **done** |
 | **OCR over an image + the panel below** (not in the original plan) | **done** |
 | **Text export to txt / md / docx / pdf** (not in the original plan) | **done** |
+| **Image editing** — turn, mirror, crop, resize, change format | **done** — through `image` in `crates/ul-image`, so the pixels are never decoded in the webview and the same code will serve the phone. A plan on screen, written once by the save |
 | **SVG and 3D model viewing** (not in the original plan) | **done** — SVG with a source view, STL/OBJ/PLY/glTF/GLB/3MF through three.js; `.ai` opens as the PDF it contains |
 | **English as the default interface language, Croatian in settings** | **done** |
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |

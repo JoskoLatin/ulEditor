@@ -17,10 +17,12 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 ul-core = { path = "../../../crates/ul-core" }
+ul-image = { path = "../../../crates/ul-image" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
 
 # Windows and Linux start a second copy of the program for every file

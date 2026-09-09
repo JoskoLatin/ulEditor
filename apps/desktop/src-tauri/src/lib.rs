@@ -13,6 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 use ul_core::{
     Detection, DirEntry, LibraryScan, SearchOutcome, SearchQuery, Stat, VfsError, Workspace,
 };
+use ul_image::{ImageError, Info as ImageInfo, Ops as ImageOps, Written};
 
 struct AppState {
     workspace: Mutex<Workspace>,
@@ -305,6 +306,54 @@ fn write_file(state: State<'_, AppState>, path: String, contents: Vec<u8>) -> Re
     with_workspace(&state, |workspace| workspace.write(&path, &contents))
 }
 
+/* ── images ──────────────────────────────────────────────────────────── */
+
+/// Two failures with nothing in common: a path the workspace refuses, and a
+/// picture that cannot be read. Both are one message to the person, and
+/// flattening them into a `String` at the boundary would throw away which of the
+/// two it was — so they are joined rather than merged.
+#[derive(Debug, thiserror::Error)]
+enum ImageCommandError {
+    #[error(transparent)]
+    Vfs(#[from] VfsError),
+    #[error(transparent)]
+    Image(#[from] ImageError),
+}
+
+impl serde::Serialize for ImageCommandError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// What the image is — the size a person sees, the format, and whether this is
+/// one of the formats that can be written back at all.
+#[tauri::command]
+fn image_info(state: State<'_, AppState>, path: String) -> Result<ImageInfo, ImageCommandError> {
+    let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
+    Ok(ul_image::info(&bytes)?)
+}
+
+/// Applies a plan and writes the result.
+///
+/// The bytes are read, transformed and written **without leaving Rust**: a
+/// photograph out of a phone is a hundred and sixty megabytes decoded, and the
+/// webview has no business holding it. What comes back is what the file now
+/// holds — the new size, the format, and whether the encoding itself lost
+/// anything, which the editor says before it says "saved".
+#[tauri::command]
+fn image_write(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+    ops: ImageOps,
+) -> Result<Written, ImageCommandError> {
+    let bytes = with_workspace(&state, |workspace| workspace.read(&source))?;
+    let (out, written) = ul_image::apply(&bytes, &ops)?;
+    with_workspace(&state, |workspace| workspace.write(&target, &out))?;
+    Ok(written)
+}
+
 /* ── files the program was started with ──────────────────────────────── */
 
 /// The paths out of a command line.
@@ -407,6 +456,8 @@ pub fn run() {
             detect_format,
             read_file,
             write_file,
+            image_info,
+            image_write,
             search_workspace,
             list_files,
             scan_library,

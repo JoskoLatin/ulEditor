@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ul-formats", "crates/ul-core", "apps/desktop/src-tauri"]
+members = ["crates/ul-formats", "crates/ul-image", "crates/ul-core", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.3.3"

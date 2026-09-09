@@ -92,6 +92,73 @@ export interface ConversionService {
   convert(source: Uri, target: ConvertFormat): Promise<Uint8Array>;
 }
 
+/* ── images ──────────────────────────────────────────────────────────── */
+
+export type ImageEncoding = 'png' | 'jpeg' | 'webp' | 'bmp' | 'tiff';
+
+/**
+ * A plan for a picture. Every field absent still writes the file, and still
+ * re-encodes it — which is why what that costs comes back from `write`.
+ *
+ * The order is fixed and not the order of the fields: the Exif orientation is
+ * applied first, then the rotation, then the flips, then the crop, then the
+ * resize. That order is what makes `crop` mean what it looks like — the
+ * rectangle is in the pixels of the picture *as shown*, turned and mirrored
+ * included, so the page never has to map a drag back through its own preview.
+ */
+export interface ImageOps {
+  /** Clockwise degrees — 90, 180 or 270. Anything else is no rotation. */
+  rotate?: number;
+  flipHorizontal?: boolean;
+  flipVertical?: boolean;
+  /** In the pixels of the picture as shown — after `rotate` and the flips. */
+  crop?: { x: number; y: number; width: number; height: number };
+  resize?: { width: number; height: number };
+  /** Absent keeps the format the file already had. */
+  encoding?: ImageEncoding;
+  /** 1–100, for the formats that have such a thing. */
+  quality?: number;
+}
+
+export interface ImageInfo {
+  /** The size as a person sees it — after the Exif orientation is applied. */
+  width: number;
+  height: number;
+  encoding: ImageEncoding | null;
+  /** Whether the file is stored sideways with a tag saying which way is up. */
+  reoriented: boolean;
+  /** Whether this format can be written back at all. */
+  editable: boolean;
+}
+
+export interface ImageWritten {
+  width: number;
+  height: number;
+  encoding: ImageEncoding;
+  bytes: number;
+  /** Whether the encoding itself threw information away. */
+  lossy: boolean;
+}
+
+/**
+ * Transforms done where the pixels are rather than in the page.
+ *
+ * A canvas would have been fewer lines and was the wrong instrument twice over:
+ * a photograph out of a phone is forty megapixels, which is a hundred and sixty
+ * megabytes of RGBA in the JS heap before anything is done to it, and every
+ * browser draws the encoder's quality knob differently. So the page sends a plan
+ * and gets dimensions back, and the bytes never enter the webview.
+ *
+ * `available()` is synchronous, unlike the conversion service's: whether
+ * LibreOffice is installed has to be looked for, whereas this is a fact about
+ * the build. The editor draws its tools or does not, at mount, without waiting.
+ */
+export interface ImageService {
+  available(): boolean;
+  info(source: Uri): Promise<ImageInfo>;
+  write(source: Uri, target: Uri, ops: ImageOps): Promise<ImageWritten>;
+}
+
 /* ── host ────────────────────────────────────────────────────────────── */
 
 export interface EditorHost {
@@ -101,6 +168,7 @@ export interface EditorHost {
   readonly settings: SettingsService;
   readonly notify: NotificationService;
   readonly convert: ConversionService;
+  readonly images: ImageService;
   /**
    * Opens a web link in the system browser — outside the application, so
    * nothing of the document travels with it. Optional: a host without a

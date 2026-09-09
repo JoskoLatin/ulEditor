@@ -74,7 +74,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
 | **ODS** (OpenDocument) | **works — viewing + cell editing**, written back into the `.ods` itself | own reader + byte-range editing |
 | **ODT** (OpenDocument) | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader + byte-range editing |
-| Images | **works** — viewing, zoom, transparency, **OCR** | Tesseract (wasm) *(editing → image-rs, phase 1)* |
+| Images | **works** — viewing, zoom, transparency, **OCR**, and **editing**: turn, mirror, crop, resize, change format | Tesseract (wasm) + `image` in the Rust core |
 | **SVG** | **works — viewing** (zoom, fit, and the markup one button away) | own viewer — the drawing is loaded as an image, so it cannot run anything |
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
 | **3D models** | **works — viewing** (STL, OBJ, PLY, glTF, GLB, 3MF — turn, zoom, wireframe, triangle count) | three.js *(loaded only when a model is opened)* |
@@ -181,6 +181,43 @@ have taken, with mermaid's own message and the source kept in front of the
 person who has to correct it. A preview that swallowed the error would leave a
 blank space, which looks exactly like a diagram that drew nothing.
 
+### Editing a picture
+
+Turning, mirroring, cropping, resizing and a change of format — and **nothing is
+written until a save**. Until then there is a *plan*: the browser turns the
+picture with a CSS transform for nothing, the pending crop is a rectangle drawn
+over it, and the bar says what the file will be — `1200 × 800 px · will be saved
+as 600 × 400 JPEG · recompressed`. It is the same rule the PDF page operations
+follow, for the same reason.
+
+**The pixels are touched once, in Rust.** A photograph out of a phone is forty
+megapixels, which is a hundred and sixty megabytes of RGBA — decoding that in
+the webview to preview a rotation would be absurd, and every browser's encoder
+draws its quality knob differently. So [crates/ul-image/](crates/ul-image/) reads
+the file, applies the plan and writes the result; what crosses the boundary is
+five numbers and two flags. The same code will serve the phone.
+
+Three details are worth naming:
+
+- **The turn happens before the crop.** A crop arrives as a rectangle somebody
+  dragged over what was on their screen, and what was on their screen was
+  already turned — so cropping first would mean mapping that rectangle back
+  through the preview, which is arithmetic in the one place a mistake is
+  invisible: the picture would simply come out cropped somewhere else.
+- **A phone photograph is stored sideways**, with an Exif tag saying which way is
+  up, and every viewer obeys the tag. Nothing here writes Exif back, so the
+  rotation the tag asks for is applied to the pixels instead — otherwise the
+  first save would turn every phone photograph on its side. The bar says so
+  before it happens.
+- **A change of format writes a new file beside the original.** JPEG bytes in a
+  file called `.png` is a file that lies about itself, and everything downstream
+  believes the name first. The old `.xls` already behaves this way, and the tab
+  follows the file it wrote.
+
+Formats that can be written back: PNG, JPEG, WebP, BMP, TIFF. A GIF or an `.avif`
+opens, zooms and goes through OCR, and offers to be saved as PNG — saying so in
+the format box rather than refusing at the end.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -285,9 +322,10 @@ pnpm verify:search           # project search, in the REAL desktop application
 pnpm verify:office-editing   # retyping a .docx and an .odt out to disk and back, in the same
 pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
+pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
 ```
 
-Those four start the program itself with the WebView2 debug port open and attach
+Those five start the program itself with the WebView2 debug port open and attach
 to it over CDP, because each asks something a browser cannot answer. Search lives
 in Rust and is reachable only through a Tauri command, so checking it in a
 browser would test the glue instead of the work; a save has to cross the same

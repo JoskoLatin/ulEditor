@@ -11,8 +11,17 @@ import { isLocale, type Locale } from '@uleditor/i18n';
 
 import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
+import { TauriImages } from './tauri-images.js';
 import { EditorRegistry } from './registry.js';
-import { Commands, NoConversion, Notifications, Settings, Themes, type ThemePreference } from './services.js';
+import {
+  Commands,
+  NoConversion,
+  NoImageEditing,
+  Notifications,
+  Settings,
+  Themes,
+  type ThemePreference,
+} from './services.js';
 
 /**
  * The VFS plus taking in dropped content. The web gets `File` objects, desktop
@@ -66,6 +75,9 @@ export function createShell(): Shell {
     settings,
     notify: new Notifications(),
     convert: new NoConversion(),
+    /* The transforms are in Rust, so they exist where Rust does. The web build
+       keeps the viewer and is told to say so. */
+    images: desktop ? new TauriImages() : new NoImageEditing(),
     registry: new EditorRegistry(),
     platform: desktop ? 'desktop' : 'web',
     canPersist: desktop || hasFileSystemAccess(),

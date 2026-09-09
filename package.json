@@ -48,6 +48,7 @@
     "verify:office-editing": "node tools/verify-office-editing.mjs",
     "verify:desktop-ocr": "node tools/verify-desktop-ocr.mjs",
     "verify:desktop-diagram": "node tools/verify-desktop-diagram.mjs",
+    "verify:desktop-image": "node tools/verify-desktop-image.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"
   },

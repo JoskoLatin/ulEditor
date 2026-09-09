@@ -288,3 +288,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Proof the same core also goes into a browser — phase 3 depends on it.
       - run: cargo build -p ul-formats --target wasm32-unknown-unknown --release
+      # And the image transforms with it. They are only reachable through a Tauri
+      # command today, so nothing would notice a dependency that cannot be built
+      # for the web — until phase 3, when it would be a rewrite rather than a
+      # fix. `image` was chosen with its features cut down for this reason.
+      - run: cargo build -p ul-image --target wasm32-unknown-unknown --release

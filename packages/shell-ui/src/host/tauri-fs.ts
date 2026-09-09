@@ -25,7 +25,7 @@ type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 let invokeFn: Invoke | null = null;
 
 /** A dynamic import: the web build must not pull the Tauri API into the bundle. */
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!invokeFn) {
     const core = await import('@tauri-apps/api/core');
     invokeFn = core.invoke as Invoke;

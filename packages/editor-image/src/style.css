@@ -80,6 +80,7 @@
 }
 
 .ul-img-frame {
+  position: relative;
   /* The transparency chequerboard — two shades from the palette, no fixed colours. */
   background-image:
     linear-gradient(45deg, var(--rule-soft) 25%, transparent 25%),
@@ -98,6 +99,15 @@
   display: block;
   /* Enlarged images must show pixels, not blur. */
   image-rendering: pixelated;
+  /*
+   * Centred inside the frame and turned about its own middle. The frame is the
+   * picture as shown — a quarter turn swaps its sides — while the picture keeps
+   * its own, so the two cannot be the same box.
+   */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center;
 }
 
 .ul-img-frame[data-smooth='true'] img {
@@ -215,4 +225,44 @@
     padding: 0 2px;
     font-size: 10px;
   }
+}
+
+/* Dragging a rectangle: the cursor says so before anything is dragged. */
+.ul-img-frame[data-cropping='true'] {
+  cursor: crosshair;
+}
+
+/*
+ * The pending crop. One element and a shadow with no blur and an enormous
+ * spread — that is what dims everything outside the rectangle without four more
+ * elements to keep in step with it. The stage clips the shadow, so it stops at
+ * the window rather than crossing the toolbar.
+ */
+.ul-img-selection {
+  position: absolute;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+.ul-img-number {
+  width: 54px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.ul-img-number:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ul-img-icon {
+  display: block;
+  flex: none;
 }

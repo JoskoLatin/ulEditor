@@ -93,11 +93,11 @@ shell.registry.register(
   lazyProvider(
     {
       id: 'org.uleditor.image',
-      displayName: 'Image viewer',
+      displayName: 'Image editor',
       matches: {
         extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
       },
-      capabilities: ['view'],
+      capabilities: ['view', 'edit', 'export'],
       priority: 30,
     },
     () => import('@uleditor/editor-image'),
