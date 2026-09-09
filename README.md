@@ -535,6 +535,7 @@ pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
+pnpm readback         # …and then opened by LibreOffice, which shares no code with us
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application
@@ -561,6 +562,42 @@ in the browser and would not have worked in the application, because Tesseract
 was fetching its worker off a CDN. Both checks therefore count what leaves the
 window — for a feature that is bundled, the answer has to be nothing — and fail
 on any console message about a refused request.
+
+### The one reader that is not ours
+
+`pnpm fidelity` proves a great deal about a save — that no other part of the
+archive moved, that nothing outside the rewritten ranges changed, that the
+ordinals still mean the same text. It proves all of it with **the same
+namespace-blind tag scanners that wrote the file**, and a writer and a reader
+that share a mistake agree with each other perfectly. The run reports `ok`.
+
+So `pnpm readback` asks a program that shares nothing with this one. LibreOffice
+is a real OOXML and ODF implementation, it is already a dependency of the
+conversion feature, and it can answer the two questions no scanner of ours can:
+
+- **does the file open at all** — which is to say, is the XML well-formed, is
+  every namespace prefix declared, does the schema hold, is the ZIP container
+  acceptable. Nothing here checked that before: not one harness ran an XML
+  parser over a written part.
+- **is the text we typed the text a reader shows** — bytes in the right place
+  prove the write landed; a word in the converted output proves it landed
+  *where somebody looks*.
+
+The marker it types carries **Croatian diacritics on purpose**: `č` is two bytes
+and one character, and our writer, the ZIP, LibreOffice's parser and its
+exporter all have to agree about that. Nothing else here checks a round trip
+through a foreign reader, and mojibake is the failure that looks like success
+from the inside.
+
+**The original is converted too**, and that control is not a formality. A real
+folder holds files that were already broken before this program saw them — the
+first run of this found one, and without the control it would have been reported
+as damage we did. A file is held against us only when LibreOffice opened what we
+read and refused what we wrote.
+
+It **refuses to pass without LibreOffice** rather than skipping quietly, for the
+same reason the live language-server test is `#[ignore]` rather than
+self-skipping: a check whose only failure mode is a pass is a check that lies.
 
 `verify:ocr` needs no network, and that is the first thing it checks. The
 worker, the wasm core and both language models are served by the application

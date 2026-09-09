@@ -376,8 +376,63 @@ of the two engines it was designed around has been taken.
 | `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time. ProseMirror arrives for structural editing — inserting a paragraph, splitting a table |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
+| **A reader that is not ours** | **done** — [tools/verify-office-readback.mjs](../tools/verify-office-readback.mjs). Every "it reopens" claim above went back through the same namespace-blind scanners that wrote the file, and a writer and a reader sharing a mistake agree perfectly. LibreOffice shares no code with us: **64 of 64 files we wrote opened in it**, and where it shows the spot we edited at all, **46 of 46 show the text we typed, diacritics and all** |
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
+
+**An independent reader was the missing instrument, and building it took an
+afternoon.** Everything the fidelity harness proves about a save, it proved with
+the same tag scanners that wrote the file — so a writer and a reader sharing a
+mistake agree with each other and the run reports `ok`. Nothing here had ever run
+an XML parser, let alone a word processor, over a written part. `pnpm readback`
+hands the file to LibreOffice, which answers the two questions no scanner of ours
+can: does it open at all — the XML well-formed, every prefix declared, the
+container acceptable — and is the text we typed the text a reader shows. The
+answer over one real folder is **64 of 64 opened** and **46 of 46 showed the
+marker**, which is the first outside confirmation this project's byte-range
+writers have ever had.
+
+**Its first version measured itself**, which by now is less a surprise than a
+pattern. It reported eight failures — every one of them a table-layout schedule
+or a workbook whose edited sheet was not the first — and not one of them a bug: a
+`.csv` holds one sheet and a `.txt` export leaves out what its filter leaves out,
+so "is the marker in the output?" was measuring the converter. The question it
+asks now controls for that: the text that was in that spot **before** has to be
+visible in the original's conversion, and only then is the marker required in
+ours. A spot the reader never showed is a spot the instrument cannot ask about,
+and it says so — eighteen of them — rather than counting them against the writer.
+The same rule caught three files LibreOffice will not open **in their original
+form**, which without the control would have been reported as damage this program
+did.
+
+**And structural editing was designed three ways and refuted three times.** The
+next item in this phase is a new paragraph, and three independent designs — keep
+the edit map and add an operation list, apply to the XML and re-render, refuse
+everything that cannot be guaranteed — were each attacked by two critics and each
+found fatal, on measured rather than argued grounds:
+
+- **A paragraph's properties are not in the paragraph.** Numbering, frames and
+  outline levels live in `word/styles.xml` at least as often as in the
+  paragraph's own `w:pPr`, so copying those bytes verbatim does not reproduce
+  what the paragraph is. Over 37 real documents, 33% of paragraphs are inside a
+  `w:tc` and 21% of body paragraphs carry `numPr`; five of the 37 offer no
+  candidate paragraph anywhere.
+- **A field spans runs.** A complex field's result run is editable today, and
+  splitting it puts `<w:fldChar w:fldCharType="end"/>` into the new paragraph
+  with the field straddling both.
+- **The dirty flag is text-only.** `#emitDirty` computes `this.#edits.size > 0`,
+  so a structural step alone would never mark the document changed — press
+  Enter, close the window, and the paragraph goes with no question asked.
+- **Undo has no structural inverse.** `#restore` walks the existing spans and
+  sets `textContent`; it cannot create or remove a paragraph.
+
+None of that says the feature is out of reach. It says the byte-range model
+reaches exactly as far as a substitution, and that the step beyond it is three
+pieces of work rather than one: properties resolved rather than copied, a
+structural step model of the shape `editor-pdf` already proved — *"page
+operations change nothing until a save; until then there is only a plan"* — and
+an assertion that an insert is correct rather than merely performed. `pnpm
+readback` is that assertion, built first on purpose.
 
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:
