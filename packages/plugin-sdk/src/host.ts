@@ -159,6 +159,84 @@ export interface ImageService {
   write(source: Uri, target: Uri, ops: ImageOps): Promise<ImageWritten>;
 }
 
+/* ── language servers ────────────────────────────────────────────────── */
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
+
+/**
+ * One thing a language server has to say about a line of code.
+ *
+ * **Lines and columns are one-based**, and the columns are counted in UTF-16
+ * code units, which is what both the protocol and a JavaScript string use — so
+ * a column here is an index into the line as the page holds it, and no
+ * conversion is needed on this side.
+ */
+export interface CodeDiagnostic {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  severity: DiagnosticSeverity;
+  message: string;
+  /** `E0308`, `unused_variables` — what the server calls this, when it does. */
+  code?: string | null;
+  /** `rustc`, `clippy`, `typescript` — which tool inside the server said it. */
+  source?: string | null;
+}
+
+/**
+ * What a server said about one document, at one moment.
+ *
+ * A publication **replaces** what was said before about that document, and an
+ * empty list is how a server says "fixed". An editor that merged instead of
+ * replacing would leave every corrected mistake underlined until the file was
+ * closed.
+ */
+export interface DiagnosticsPublished {
+  uri: Uri;
+  language: string;
+  diagnostics: CodeDiagnostic[];
+  /**
+   * Which version of the document this is about, when the server says.
+   *
+   * A server's own analysis answers about the text it was told and gives the
+   * number back; a compiler run answers about the file on disk and has no idea
+   * which keystroke the editor is on, so it gives none. An editor drops an
+   * answer that is older than what it has sent since — a stale underline under
+   * a line somebody has already corrected is worse than a moment with none.
+   */
+  version?: number | null;
+}
+
+/**
+ * The half of an editor that knows what the code *means*.
+ *
+ * Diagnostics only, for now: the underline under a mistake, with the compiler's
+ * own words. Hover, definition and completion are the same plumbing asked
+ * different questions.
+ *
+ * **Nothing is bundled.** A language server is somebody else's program and
+ * installing one is a decision about the machine rather than about this editor.
+ * `open` therefore answers whether anything is listening at all, and `false` is
+ * the ordinary answer rather than a failure — an editor that got it stops
+ * expecting underlines instead of reporting a problem nobody has.
+ */
+export interface LanguageService {
+  /** Which languages this machine can serve. Asked, never assumed. */
+  languages(): Promise<string[]>;
+  /** Returns whether a server took the document. */
+  open(uri: Uri, language: string, text: string): Promise<boolean>;
+  change(uri: Uri, language: string, version: number, text: string): Promise<void>;
+  /**
+   * A save, which for some languages is what makes the real diagnostics
+   * arrive: rust-analyzer runs `cargo check` on this and publishes what the
+   * compiler says, which its own parser never reports.
+   */
+  save(uri: Uri, language: string): Promise<void>;
+  close(uri: Uri, language: string): Promise<void>;
+  readonly onDiagnostics: Event<DiagnosticsPublished>;
+}
+
 /* ── host ────────────────────────────────────────────────────────────── */
 
 export interface EditorHost {
@@ -169,6 +247,7 @@ export interface EditorHost {
   readonly notify: NotificationService;
   readonly convert: ConversionService;
   readonly images: ImageService;
+  readonly language: LanguageService;
   /**
    * Opens a web link in the system browser — outside the application, so
    * nothing of the document travels with it. Optional: a host without a

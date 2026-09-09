@@ -15,9 +15,22 @@ use ul_core::{
     Detection, DirEntry, LibraryScan, SearchOutcome, SearchQuery, Stat, VfsError, Workspace,
 };
 use ul_image::{ImageError, Info as ImageInfo, Ops as ImageOps, Written};
+use ul_lsp::{Event as LspEvent, LspError, Servers};
 
 struct AppState {
     workspace: Mutex<Workspace>,
+}
+
+/// The language servers, and the way their news reaches the window.
+///
+/// One registry for the whole application: a server exists per language per
+/// project, not per document, and three copies of rust-analyzer indexing one
+/// workspace is three times the memory for one answer.
+struct LspState {
+    servers: Mutex<Servers>,
+    /// Handed to every server as it starts; the receiving end is read by a
+    /// thread that turns each message into an event for the window.
+    sink: std::sync::mpsc::Sender<LspEvent>,
 }
 
 /// Files the program was asked to open when it started.
@@ -430,6 +443,150 @@ fn digest_of(path: &str) -> String {
     format!("{hash:016x}")
 }
 
+/* ── language servers ────────────────────────────────────────────────── */
+
+#[derive(Debug, thiserror::Error)]
+enum LspCommandError {
+    #[error(transparent)]
+    Vfs(#[from] VfsError),
+    #[error(transparent)]
+    Lsp(#[from] LspError),
+}
+
+impl serde::Serialize for LspCommandError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// The workspace root a path belongs to.
+///
+/// A person can have several folders open, and a language server belongs to one
+/// of them — the one the file is actually in. Falling back to the first root
+/// would start a server for a project the file has nothing to do with.
+fn root_of(workspace: &Workspace, file: &std::path::Path) -> Option<std::path::PathBuf> {
+    workspace
+        .roots()
+        .iter()
+        .filter_map(|root| workspace.resolve(root).ok())
+        .filter(|root| file.starts_with(root))
+        /* The longest match, for nested roots: a folder opened inside another
+        folder is the more specific answer about where a file lives. */
+        .max_by_key(|root| root.components().count())
+}
+
+/// Which languages this machine can serve. Asked, never assumed.
+///
+/// A person can install rust-analyzer while the program is open — usually
+/// *because* the program said the code was not being checked — so this is a
+/// question rather than a fact settled at startup.
+#[tauri::command]
+fn lsp_languages() -> Vec<String> {
+    ["rust", "typescript", "javascript", "python"]
+        .iter()
+        .filter(|language| ul_lsp::find_server(language).is_some())
+        .map(|language| (*language).to_string())
+        .collect()
+}
+
+/// A document is open: start a server if one is installed, and tell it.
+///
+/// Returns whether anything is listening. `false` is not a failure — it is the
+/// ordinary answer on a machine without that server installed, and the editor
+/// uses it to stop expecting underlines rather than to report a problem.
+#[tauri::command]
+async fn lsp_open(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+    text: String,
+) -> Result<bool, LspCommandError> {
+    if ul_lsp::find_server(&language).is_none() {
+        return Ok(false);
+    }
+
+    let (file, root) = with_workspace(&state, |workspace| {
+        let file = workspace.resolve(&path)?;
+        let root = root_of(workspace, &file).unwrap_or_else(|| {
+            file.parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| file.clone())
+        });
+        Ok((file, root))
+    })?;
+
+    /* The project rather than the folder that was opened: `C:\dev` may hold
+    fifty crates, and rust-analyzer pointed at it would index all of them. */
+    let project = ul_lsp::project_root_for(&language, &file, &root);
+
+    let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
+    let server = servers.ensure(
+        &language,
+        &project,
+        &lsp.sink,
+        /* A minute for the handshake. rust-analyzer answers `initialize` at
+        once and does its indexing afterwards, so this is generous rather
+        than a limit anybody will meet. */
+        std::time::Duration::from_secs(60),
+    )?;
+    server.open(&file, &language, &text)?;
+    Ok(true)
+}
+
+#[tauri::command]
+async fn lsp_change(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+    version: i64,
+    text: String,
+) -> Result<(), LspCommandError> {
+    let file = with_workspace(&state, |workspace| workspace.resolve(&path))?;
+    let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
+    for server in servers.serving(&language) {
+        server.change(&file, version, &text)?;
+    }
+    Ok(())
+}
+
+/// A save is what makes the compiler's own diagnostics arrive.
+///
+/// rust-analyzer runs `cargo check` on this notification and publishes what it
+/// says — the type errors and borrow errors its own parser does not report. An
+/// editor that never mentioned a save would show syntax errors and nothing
+/// else, which is indistinguishable from a compiler with nothing to say.
+#[tauri::command]
+async fn lsp_save(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+) -> Result<(), LspCommandError> {
+    let file = with_workspace(&state, |workspace| workspace.resolve(&path))?;
+    let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
+    for server in servers.serving(&language) {
+        server.save(&file)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn lsp_close(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+) -> Result<(), LspCommandError> {
+    let file = with_workspace(&state, |workspace| workspace.resolve(&path))?;
+    let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
+    for server in servers.serving(&language) {
+        server.close(&file)?;
+    }
+    Ok(())
+}
+
 /* ── files the program was started with ──────────────────────────────── */
 
 /// The paths out of a command line.
@@ -533,6 +690,61 @@ pub fn run() {
                 workspace: Mutex::new(Workspace::new()),
             });
             app.manage(LaunchPaths(Mutex::new(paths_from(std::env::args()))));
+
+            /*
+             * The language servers, and one thread that carries what they say
+             * into the window.
+             *
+             * A channel rather than the servers holding a handle to the app:
+             * `ul-lsp` knows nothing about Tauri, which is what lets it be
+             * tested against a real rust-analyzer from `cargo test` with no
+             * window anywhere. This is the only place the two meet.
+             */
+            let (sink, news) = std::sync::mpsc::channel::<LspEvent>();
+            app.manage(LspState {
+                servers: Mutex::new(Servers::new()),
+                sink,
+            });
+
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                use tauri::Emitter;
+                while let Ok(event) = news.recv() {
+                    /* Turned into a path here rather than in the page. A server
+                    answers with `file:///c:/dev/x.rs` for a file the editor
+                    calls `C:\dev\x.rs`, and the difference — three slashes, a
+                    lowercased drive letter, percent-encoded spaces — is the
+                    platform's, so it is dealt with on the side that has one. */
+                    let payload = match event {
+                        LspEvent::Diagnostics {
+                            language,
+                            published,
+                        } => {
+                            let path = ul_lsp::path_of_url(&published.uri)
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| published.uri.clone());
+                            serde_json::json!({
+                                "kind": "diagnostics",
+                                "language": language,
+                                "uri": path,
+                                "version": published.version,
+                                "diagnostics": published.diagnostics,
+                            })
+                        }
+                        LspEvent::Stopped { language, detail } => serde_json::json!({
+                            "kind": "stopped",
+                            "language": language,
+                            "detail": detail,
+                        }),
+                    };
+
+                    /* An emit that fails means the window has gone, and there is
+                    nothing to do about it here — the process is ending, and
+                    the servers are stopped by the exit handler below. */
+                    let _ = handle.emit("uleditor://language", payload);
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -551,6 +763,11 @@ pub fn run() {
             image_write,
             convert_backend,
             convert_to_pdf,
+            lsp_languages,
+            lsp_open,
+            lsp_change,
+            lsp_save,
+            lsp_close,
             search_workspace,
             list_files,
             scan_library,
@@ -561,6 +778,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("starting ulEditor failed")
         .run(|_app, _event| {
+            /*
+             * The language servers are stopped by hand on the way out.
+             *
+             * They are somebody else's processes, and rust-analyzer with a
+             * large project is a core and a gigabyte: left running after the
+             * window closed, it is a process in a task manager with no window
+             * to explain it. Tauri's state is not dropped on every route out,
+             * so the shutdown cannot be left to `Drop`.
+             */
+            if matches!(_event, tauri::RunEvent::Exit) {
+                if let Some(lsp) = _app.try_state::<LspState>() {
+                    if let Ok(mut servers) = lsp.servers.lock() {
+                        servers.stop_all();
+                    }
+                }
+            }
+
             /*
              * macOS does not put the file on the command line. It sends the
              * running application an event, which only exists on this path —

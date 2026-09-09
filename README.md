@@ -84,7 +84,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 
 | Format | State | Engine |
 |---|---|---|
-| Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works** | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) |
+| Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works**, and **diagnostics from a language server** where one is installed | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) + `crates/ul-lsp` |
 | Markdown | **works** — source + live preview + reading mode + **diagrams** | CodeMirror 6 + markdown-it (+ mermaid, fetched only when a diagram is there) |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
 | PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js — the planned swap to pdfium is an optimisation rather than a fix, and is not what any of the editing above waited for |
@@ -317,6 +317,55 @@ each one is a conversion that silently does nothing:
   a filter it does not have, and for the case above. So the output file is what
   is waited for, and a process that ends without one is the refusal it is.
 
+### What the compiler says, in the margin
+
+Where a language server is installed, a mistake is underlined with the
+compiler's own words and counted in the status bar — `Line 12, column 8 · 2 ✕`.
+Rust through rust-analyzer, TypeScript and JavaScript through
+`typescript-language-server`, Python through pyright.
+
+**Nothing is bundled and nothing is downloaded.** A language server is somebody
+else's program, often a large one, and installing it is a decision about the
+machine rather than about this editor:
+
+```
+rustup component add rust-analyzer
+npm install -g typescript-language-server typescript
+pip install pyright
+```
+
+Where one is not installed the editor colours the code as it always did and
+says nothing further — a person who has not installed rust-analyzer has not
+asked for it, and an editor that complained about that on every file would be
+telling them off for their own choice.
+
+**A server is started for the project, not for the file**, and which directory
+that is matters: point rust-analyzer at a folder holding fifty crates and it
+indexes fifty crates. So the search walks up from the file to the folder that
+was opened, and the choice between what it finds is per language — Rust takes
+the **topmost** `Cargo.toml`, because a cargo workspace is one project and a
+server started inside `crates/ul-core` would call every reference to the crate
+next door an error; TypeScript takes the **nearest** `tsconfig.json`, because
+the packages of a monorepo genuinely are separate compilations.
+
+Only diagnostics for now. Hover, go-to-definition and completion are the same
+plumbing asked different questions, and the plumbing was the work — three
+separate silences, each of which is written down where it happened:
+
+- **stderr sent to nowhere.** `rust-analyzer` on the PATH turned out to be a
+  rustup shim with the component not installed: it printed one line and exited,
+  and the client could only report that the output had closed;
+- **a change the server threw away.** A `didChange` with no range means "replace
+  everything" and may only be sent to a server that declared it accepts that.
+  rust-analyzer declares incremental sync, so it discarded every change —
+  silently, and no diagnostic ever arrived again for that file;
+- **a question nobody answered.** A server also asks: rust-analyzer sends
+  `workspace/diagnostic/refresh` with an id, and an unanswered request left it
+  waiting and publishing nothing at all.
+
+`UL_LSP_TRACE=1` prints the conversation in both directions, which is how two of
+the three were found.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -426,9 +475,10 @@ pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
 pnpm verify:desktop-updates  # the update check, in the program, where the plugin exists
 pnpm verify:desktop-convert  # an .eps through LibreOffice and onto the screen
+pnpm verify:desktop-lsp      # a mistake underlined by rust-analyzer, and unmarked when fixed
 ```
 
-Those seven start the program itself with the WebView2 debug port open and attach
+Those eight start the program itself with the WebView2 debug port open and attach
 to it over CDP, because each asks something a browser cannot answer. Search lives
 in Rust and is reachable only through a Tauri command, so checking it in a
 browser would test the glue instead of the work; a save has to cross the same

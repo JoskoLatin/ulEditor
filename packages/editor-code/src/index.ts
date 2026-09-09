@@ -27,6 +27,7 @@ import {
   indentOnInput,
   indentUnit,
 } from '@codemirror/language';
+import { lintGutter } from '@codemirror/lint';
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
@@ -47,6 +48,7 @@ import {
 import { t } from '@uleditor/i18n';
 
 import { loadLanguage } from './languages.js';
+import { showDiagnostics, summarise } from './diagnostics.js';
 import { ulTheme } from './theme.js';
 
 const CODE_EXTENSIONS = [
@@ -70,6 +72,20 @@ class CodeEditor implements EditorInstance {
   readonly onDirtyChange = this.#dirtyEmitter.event;
   readonly onStatusChange = this.#statusEmitter.event;
 
+  /* ── the language server, where there is one ─────────────────────────
+   *
+   * All of this is idle on a machine with no server installed, which is the
+   * ordinary case rather than a failure: `open` answers whether anything is
+   * listening, and if nothing is, nothing else here ever runs.
+   */
+  /** The language as the detector named it — `rust`, `typescript`. */
+  #languageId: string | null;
+  #served = false;
+  #version = 1;
+  #diagnosticsSub: { dispose: () => void } | null = null;
+  #changeTimer: ReturnType<typeof setTimeout> | null = null;
+  #lastSummary: string | null = null;
+
   constructor(
     private readonly host: EditorHost,
     private readonly doc: DocumentHandle,
@@ -79,6 +95,7 @@ class CodeEditor implements EditorInstance {
     this.#initial = text;
     this.#savedText = text;
     this.#extensions = language ? [language] : [];
+    this.#languageId = doc.detection.language ?? null;
   }
 
   mount(container: HTMLElement): void {
@@ -114,8 +131,14 @@ class CodeEditor implements EditorInstance {
         ]),
         EditorView.lineWrapping,
         ulTheme,
+        /* The marks in the margin. Empty until a server says otherwise, and on
+           a machine without one it stays empty and costs nothing. */
+        lintGutter(),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) this.#recomputeDirty();
+          if (update.docChanged) {
+            this.#recomputeDirty();
+            this.#tellTheServer();
+          }
           if (update.docChanged || update.selectionSet) this.#emitStatus();
         }),
         ...this.#extensions,
@@ -124,9 +147,110 @@ class CodeEditor implements EditorInstance {
 
     this.#view = new EditorView({ state, parent: container });
     this.#emitStatus();
+    void this.#startServer();
+  }
+
+  /* ── the language server ───────────────────────────────────────────── */
+
+  /**
+   * Offers the document to a server, and listens if one took it.
+   *
+   * Nothing is reported when nothing is listening. A person who has not
+   * installed rust-analyzer has not asked for it, and an editor that announced
+   * "no language server found" every time a file was opened would be telling
+   * them off for a choice they made.
+   */
+  async #startServer(): Promise<void> {
+    const language = this.#languageId;
+    if (!language) return;
+
+    try {
+      this.#served = await this.host.language.open(this.doc.uri, language, this.#text());
+    } catch {
+      /* A server that would not start has already said why on its own output;
+         the editor's part is to keep colouring the code. */
+      this.#served = false;
+    }
+    if (!this.#served) return;
+
+    this.#diagnosticsSub = this.host.language.onDiagnostics((published) => {
+      if (!this.#isThisDocument(published.uri)) return;
+
+      /* An answer about text that has since changed is not an answer about this
+         text. Servers that name a version get held to it; a compiler run names
+         none, because it read the file from disk, and those are shown — they
+         are the ones worth waiting for. */
+      if (
+        published.version !== undefined &&
+        published.version !== null &&
+        published.version < this.#version
+      ) {
+        return;
+      }
+
+      const view = this.#view;
+      if (!view) return;
+
+      showDiagnostics(view, published.diagnostics);
+      this.#lastSummary = summarise(published.diagnostics);
+      this.#emitStatus();
+    });
+  }
+
+  /**
+   * Whether a publication is about this document.
+   *
+   * Compared case-insensitively with the separators normalised: a server
+   * answers about `c:/dev/x.rs` for a file this editor calls `C:\dev\x.rs`,
+   * and the Rust side has already turned the URL into a path — what is left is
+   * the drive letter, which Windows does not care about and a string comparison
+   * does.
+   */
+  #isThisDocument(uri: string): boolean {
+    const normalise = (text: string) => text.toLowerCase().replace(/\\/g, '/');
+    return normalise(uri) === normalise(this.doc.uri);
+  }
+
+  /**
+   * Tells the server what the document says now, once the typing stops.
+   *
+   * Two hundred milliseconds, and the debounce is the whole point: a
+   * notification per keystroke is a re-analysis per keystroke, and the answers
+   * would be about text three characters old by the time they arrived. The
+   * version number goes up regardless, because a server tracks it and a gap is
+   * fine while going backwards is not.
+   */
+  #tellTheServer(): void {
+    if (!this.#served || !this.#languageId) return;
+
+    if (this.#changeTimer !== null) clearTimeout(this.#changeTimer);
+    this.#changeTimer = setTimeout(() => {
+      this.#changeTimer = null;
+      const language = this.#languageId;
+      if (!language) return;
+      void this.host.language
+        .change(this.doc.uri, language, ++this.#version, this.#text())
+        .catch(() => {
+          /* The server has gone. The underlines stop updating, which is the
+             honest consequence, and the next save will find out for certain. */
+        });
+    }, 200);
   }
 
   unmount(): void {
+    if (this.#changeTimer !== null) clearTimeout(this.#changeTimer);
+    this.#changeTimer = null;
+    this.#diagnosticsSub?.dispose();
+    this.#diagnosticsSub = null;
+
+    /* The server is told the document is closed, so it can stop analysing it
+       and forget its diagnostics. Not awaited: the tab is going now, and a
+       notification down a pipe needs nobody to wait for it. */
+    if (this.#served && this.#languageId) {
+      void this.host.language.close(this.doc.uri, this.#languageId).catch(() => {});
+    }
+    this.#served = false;
+
     this.#view?.destroy();
     this.#view = null;
   }
@@ -153,7 +277,14 @@ class CodeEditor implements EditorInstance {
     const column = head - line.from + 1;
     const selected = state.selection.ranges.reduce((sum, r) => sum + (r.to - r.from), 0);
     const suffix = selected > 0 ? `  ·  ${t('{n} selected', { n: selected })}` : '';
-    this.#statusEmitter.fire(`${t('Line {line}, column {column}', { line: line.number, column })}${suffix}`);
+    /* What the server found, after the position rather than instead of it: the
+       cursor is why anybody looks at this line, and a count of errors is what
+       they look for second. Absent entirely when there is nothing to say, which
+       includes every machine without a server installed. */
+    const found = this.#lastSummary ? `  ·  ${this.#lastSummary}` : '';
+    this.#statusEmitter.fire(
+      `${t('Line {line}, column {column}', { line: line.number, column })}${suffix}${found}`,
+    );
   }
 
   isDirty(): boolean {
@@ -166,6 +297,22 @@ class CodeEditor implements EditorInstance {
     await this.host.fs.writeText(uri, text);
     this.#savedText = text;
     this.#recomputeDirty();
+
+    /*
+     * And the server is told, because for some languages this is the moment the
+     * real diagnostics arrive: rust-analyzer runs `cargo check` on a save and
+     * publishes what the compiler says — the type errors and borrow errors its
+     * own parser never reports. An editor that never mentioned a save would
+     * show syntax errors and nothing else, which looks exactly like a compiler
+     * with nothing to complain about.
+     *
+     * Sent after the write and not awaited: the file is already on disk, which
+     * is what the server will read.
+     */
+    if (this.#served && this.#languageId) {
+      void this.host.language.save(uri, this.#languageId).catch(() => {});
+    }
+
     // Plain text has nothing to lose — the round trip is always complete.
     return { uri, lostFidelity: [] };
   }

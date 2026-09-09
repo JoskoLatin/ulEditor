@@ -20,11 +20,13 @@ import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
 import { TauriImages } from './tauri-images.js';
 import { TauriConversion } from './tauri-convert.js';
+import { TauriLanguageServers } from './tauri-lsp.js';
 import { EditorRegistry } from './registry.js';
 import {
   Commands,
   NoConversion,
   NoImageEditing,
+  NoLanguageServers,
   Notifications,
   Settings,
   Themes,
@@ -95,6 +97,8 @@ export function createShell(): Shell {
     /* The transforms are in Rust, so they exist where Rust does. The web build
        keeps the viewer and is told to say so. */
     images: desktop ? new TauriImages() : new NoImageEditing(),
+    /* A language server is a process; a browser starts none, and says so. */
+    language: desktop ? new TauriLanguageServers() : new NoLanguageServers(),
     registry: new EditorRegistry(),
     platform: desktop ? 'desktop' : 'web',
     canPersist: desktop || hasFileSystemAccess(),

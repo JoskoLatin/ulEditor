@@ -168,6 +168,15 @@ pub struct Diagnostic {
 pub struct Published {
     pub uri: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// Which version of the document this is about, when the server says.
+    ///
+    /// A server's own analysis answers about the text it was told; a
+    /// `cargo check` answers about the file on disk minutes ago and says
+    /// nothing about versions. So this is `Some` for the first and `None` for
+    /// the second, and an editor uses it to drop an answer about text the
+    /// person has already changed — a stale underline under a corrected line
+    /// is worse than a moment with no underline at all.
+    pub version: Option<i64>,
 }
 
 /// Reads a `textDocument/publishDiagnostics` notification.
@@ -221,7 +230,11 @@ pub fn published_diagnostics(message: &str) -> Option<Published> {
         });
     }
 
-    Some(Published { uri, diagnostics })
+    Some(Published {
+        uri,
+        diagnostics,
+        version: params.get("version").and_then(|v| v.as_i64()),
+    })
 }
 
 /// A path as the protocol wants it: a `file://` URL.
@@ -410,6 +423,17 @@ mod tests {
         assert_eq!(one.severity, Severity::Error);
         assert_eq!(one.code.as_deref(), Some("E0308"));
         assert_eq!(one.source.as_deref(), Some("rustc"));
+    }
+
+    #[test]
+    fn the_version_is_kept_when_a_server_gives_one() {
+        let with = r#"{"method":"textDocument/publishDiagnostics","params":{"uri":"file:///x","version":7,"diagnostics":[]}}"#;
+        assert_eq!(published_diagnostics(with).unwrap().version, Some(7));
+
+        /* And absent when it does not: `cargo check` answers about the file on
+        disk and has no idea which keystroke the editor is on. */
+        let without = r#"{"method":"textDocument/publishDiagnostics","params":{"uri":"file:///x","diagnostics":[]}}"#;
+        assert_eq!(published_diagnostics(without).unwrap().version, None);
     }
 
     #[test]

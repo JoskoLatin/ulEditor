@@ -242,6 +242,64 @@ fn end_of(text: &str) -> (u32, u32) {
     (line, column)
 }
 
+/// The file that marks the root of a project, per language.
+///
+/// A language server is started for a project rather than for a file, and which
+/// directory that is matters more than it sounds: point rust-analyzer at
+/// `C:\dev` and it will index every crate under it, which is a gigabyte of
+/// memory and ten minutes to answer a question about one file.
+fn project_marker(language: &str) -> &'static [&'static str] {
+    match language {
+        "rust" => &["Cargo.toml"],
+        "typescript" | "javascript" => &["tsconfig.json", "jsconfig.json", "package.json"],
+        "python" => &["pyproject.toml", "setup.py", "requirements.txt"],
+        _ => &[],
+    }
+}
+
+/// The directory a server should be started in for this file.
+///
+/// Walks up from the file to the workspace root, and the choice between the
+/// candidates it finds is per language rather than uniform:
+///
+/// - **Rust takes the topmost.** A cargo workspace is the normal shape of a
+///   Rust project, and its members are not separate projects: starting a server
+///   in `crates/ul-core` would give an analyzer that cannot see the crate next
+///   door, and every cross-crate reference would be an error that is not one.
+/// - **TypeScript takes the nearest.** A monorepo is a set of packages with
+///   their own `tsconfig.json`, and each is genuinely its own compilation.
+///
+/// Nothing found means the workspace root, which is what a person opened and
+/// the only honest answer when there is no project to speak of.
+pub fn project_root_for(language: &str, file: &Path, workspace_root: &Path) -> PathBuf {
+    let markers = project_marker(language);
+    if markers.is_empty() {
+        return workspace_root.to_path_buf();
+    }
+
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut at = file.parent();
+
+    while let Some(directory) = at {
+        if markers
+            .iter()
+            .any(|marker| directory.join(marker).is_file())
+        {
+            found.push(directory.to_path_buf());
+        }
+        if directory == workspace_root {
+            break;
+        }
+        at = directory.parent();
+    }
+
+    let topmost = language == "rust";
+    let chosen = if topmost { found.last() } else { found.first() };
+    chosen
+        .cloned()
+        .unwrap_or_else(|| workspace_root.to_path_buf())
+}
+
 /// What the editor hears from a server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
@@ -760,6 +818,20 @@ impl Servers {
         Ok(self.running.get_mut(&key).expect("just inserted"))
     }
 
+    /// Every running server for a language, whatever project it belongs to.
+    ///
+    /// A change to a file has to reach the server that was told about it, and
+    /// the caller knows the language and the path but not which project root a
+    /// server was started in. There is at most a handful of them, so the
+    /// question is answered by looking rather than by another index.
+    pub fn serving(&mut self, language: &str) -> Vec<&mut Server> {
+        self.running
+            .iter_mut()
+            .filter(|((_, lang), _)| lang == language)
+            .map(|(_, server)| server)
+            .collect()
+    }
+
     /// Whether anything is running for this language and root.
     pub fn is_running(&self, language: &str, root: &Path) -> bool {
         self.running
@@ -827,6 +899,73 @@ mod tests {
         } else {
             assert_eq!(names, vec!["rust-analyzer".to_string()]);
         }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ul-lsp-root-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn rust_starts_at_the_workspace_and_not_at_the_crate() {
+        /* The shape of this very repository: a cargo workspace with the crates
+        under it. A server started in `crates/ul-core` sees one crate and
+        calls every reference to the one beside it an error. */
+        let root = scratch("cargo");
+        touch(&root.join("Cargo.toml"));
+        touch(&root.join("crates").join("ul-core").join("Cargo.toml"));
+        let file = root
+            .join("crates")
+            .join("ul-core")
+            .join("src")
+            .join("vfs.rs");
+        touch(&file);
+
+        assert_eq!(project_root_for("rust", &file, &root), root);
+    }
+
+    #[test]
+    fn typescript_starts_at_the_package_it_belongs_to() {
+        /* And the other way, for the same reason reversed: the packages of a
+        monorepo are separate compilations, and one server over all of them
+        would answer about the wrong `tsconfig`. */
+        let root = scratch("mono");
+        touch(&root.join("package.json"));
+        let package = root.join("packages").join("shell-ui");
+        touch(&package.join("tsconfig.json"));
+        let file = package.join("src").join("main.ts");
+        touch(&file);
+
+        assert_eq!(project_root_for("typescript", &file, &root), package);
+    }
+
+    #[test]
+    fn a_file_with_no_project_belongs_to_the_folder_that_was_opened() {
+        let root = scratch("bare");
+        let file = root.join("scratch.rs");
+        touch(&file);
+        assert_eq!(project_root_for("rust", &file, &root), root);
+    }
+
+    #[test]
+    fn the_search_never_climbs_above_what_was_opened() {
+        /* The workspace root is a boundary, not a hint: a `Cargo.toml` in the
+        person's home directory is not the project they opened, and reading
+        it would put a server outside the sandbox everything else here
+        respects. */
+        let outer = scratch("outer");
+        touch(&outer.join("Cargo.toml"));
+        let inner = outer.join("inner");
+        let file = inner.join("src").join("main.rs");
+        touch(&file);
+
+        assert_eq!(project_root_for("rust", &file, &inner), inner);
     }
 
     #[test]

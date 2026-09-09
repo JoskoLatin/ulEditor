@@ -10,11 +10,13 @@ import {
   type CommandRegistry,
   type ConversionService,
   type ConvertFormat,
+  type DiagnosticsPublished,
   type Disposable,
   type ImageInfo,
   type ImageOps,
   type ImageService,
   type ImageWritten,
+  type LanguageService,
   type NotificationAction,
   type NotificationLevel,
   type NotificationService,
@@ -259,6 +261,33 @@ export class Notifications implements NotificationService {
 }
 
 /* ── conversion ──────────────────────────────────────────────────────── */
+
+/**
+ * A language server is a process, and a browser starts none.
+ *
+ * So on the web the service exists and answers "nothing is listening", which is
+ * the same answer a desktop without rust-analyzer installed gives — and the
+ * editors already handle it, because that answer is the ordinary one rather
+ * than a failure.
+ */
+export class NoLanguageServers implements LanguageService {
+  #emitter = new Emitter<DiagnosticsPublished>();
+  readonly onDiagnostics = this.#emitter.event;
+
+  async languages(): Promise<string[]> {
+    return [];
+  }
+
+  async open(): Promise<boolean> {
+    return false;
+  }
+
+  async change(): Promise<void> {}
+
+  async save(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
 
 /**
  * Image transforms live in `crates/ul-image`, which the web build has no route

@@ -119,7 +119,7 @@ All of them checked by `cargo-deny` / `license-checker` in CI — licences chang
 
 | Format | Render | I/O + edit | Licence | Phase |
 |---|---|---|---|---|
-| Code / text | CodeMirror 6 | CodeMirror 6 + tree-sitter + an LSP client | MIT | 1 |
+| Code / text | CodeMirror 6 | CodeMirror 6 + **an LSP client of our own** (`crates/ul-lsp`); tree-sitter not taken | MIT | 1 |
 | Markdown | CodeMirror 6 + preview | the same | MIT | 1 |
 | PDF | `pdfium-render` (desktop/mobile), PDF.js (web) | `lopdf`, qpdf, pdf-lib | BSD-3 / Apache-2.0 / MIT | 1 |
 | Images | `image-rs` | **done** — crop, rotate, mirror, resize, PNG/JPEG/WebP/BMP/TIFF | MIT / Apache-2.0 | 1 |
@@ -146,11 +146,14 @@ ulEditor/
 │  ├─ web/                  # Vite SPA, core-rs as WASM         (phase 3)
 │  └─ mobile/               # Tauri v2 iOS/Android              (phase 4)
 ├─ crates/
-│  ├─ ul-core/              # VFS, document registry, plugin host, event bus
+│  ├─ ul-core/              # VFS, document registry, search, library
 │  ├─ ul-formats/           # FormatCodec trait + detection by magic bytes
-│  ├─ ul-convert/           # LibreOffice headless orchestration (phase 2)
-│  ├─ ul-index/             # full-text search (tantivy)
-│  └─ ul-ffi/               # Tauri commands + wasm-bindgen exports
+│  ├─ ul-image/             # crop, rotate, mirror, resize, re-encode
+│  ├─ ul-convert/           # LibreOffice headless, for .cdr / EPS / PostScript
+│  ├─ ul-lsp/               # a Language Server Protocol client (diagnostics)
+│  └─ (no ul-index)         # tantivy is still not taken — see the search table
+│  #  and no ul-ffi: the Tauri commands live in apps/desktop/src-tauri, since
+│  #  a second crate between them and ul-core would have nothing to add
 ├─ packages/
 │  ├─ plugin-sdk/           # TS types + host API — THE PUBLIC CONTRACT, semver
 │  ├─ shell-ui/             # tabs, explorer, command palette, themes
@@ -158,11 +161,20 @@ ulEditor/
 │  ├─ editor-markdown/
 │  ├─ editor-pdf/
 │  ├─ editor-image/
-│  ├─ editor-sheet/         # Univer                             (phase 2)
-│  └─ editor-doc/           # ProseMirror                        (phase 2)
+│  ├─ editor-office/        # docx, doc, rtf, xlsx, xls, odt, ods — own readers
+│  ├─ editor-book/          # EPUB
+│  ├─ editor-vector/        # SVG, and .cdr / EPS through ul-convert
+│  ├─ editor-3d/            # STL, OBJ, PLY, glTF, GLB, 3MF
+│  ├─ reader-core/          # the reading room, shared by four editors
+│  ├─ text-export/          # txt / md / docx / pdf out of anything textual
+│  ├─ i18n/                 # the catalogues, and `t()`
+│  ├─ (no editor-sheet)     # Univer not taken; the office package reads sheets
+│  └─ (no editor-doc)       # ProseMirror not taken; byte-range editing instead
 ├─ plugins/                 # optional, other licences, opt-in
-├─ tools/
-│  └─ fidelity-harness/     # a document corpus + round-trip pixel diff
+├─ tools/                   # every check, as a script that says what it proves
+│  ├─ fidelity.mjs          # a real document corpus, edited and compared
+│  ├─ verify-*.mjs          # one per claim; the desktop ones drive the app
+│  └─ updater-manifest.mjs  # latest.json, written after every builder
 └─ docs/
    ├─ ARCHITECTURE.md
    ├─ PLUGIN-API.md
@@ -207,7 +219,7 @@ State as of 9 September 2026.
 | **SVG and 3D model viewing** (not in the original plan) | **done** — SVG with a source view, STL/OBJ/PLY/glTF/GLB/3MF through three.js; `.ai` opens as the PDF it contains |
 | **English as the default interface language, Croatian in settings** | **done** |
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
-| `editor-code`: tree-sitter, LSP client | deferred to phase 1.1 |
+| `editor-code`: tree-sitter, LSP client | **LSP client done** for diagnostics — `crates/ul-lsp`, and the underline in the margin with the compiler's own words. Hover, definition and completion are the same plumbing asked different questions. **tree-sitter is not taken and is not planned**: CodeMirror's Lezer already parses incrementally per language, and swapping it for wasm grammars would be a large change for nothing a person could see |
 | `editor-markdown`: mermaid | **done** — a fence is drawn, and the library is imported the first time one appears rather than when the editor mounts. Two thirds of a megabyte gzipped is not a cost a document without a diagram should carry |
 | Global project-wide search | **done** — scanning in Rust. `tantivy` still deferred, now on a measured basis rather than an assumed one: see the table below |
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
@@ -228,8 +240,15 @@ conversion that produces something not yet a file on disk later takes the same
 route. Along with it came the optional `EditorInstance.plainText()`, which was
 needed for indexing in phase 1.1 anyway.
 
-**Why LSP was deferred:** external processes with their own lifecycle, a large
-piece of infrastructure that does not change the project's thesis.
+**LSP was deferred for the right reason and it turned out to be the right size
+of job.** External processes with their own lifecycle is exactly what it was:
+the protocol is a header, a blank line and some JSON, and every hour of the work
+went on the lifecycle and on three failures that were completely silent — a
+discarded stderr hiding a binary that could not run, a `didChange` a server
+threw away because the client had declared the wrong synchronisation, and a
+request from the server that nobody answered, after which it published nothing
+at all. All three are written down in `crates/ul-lsp`, and the live test against
+a real rust-analyzer is what found two of them.
 
 **Why `tantivy` was not taken:** an index pays off when the corpus is large and
 queries frequent, but it carries invalidation — and invalidation has no halfway

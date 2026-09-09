@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 ul-core = { path = "../../../crates/ul-core" }
 ul-image = { path = "../../../crates/ul-image" }
 ul-convert = { path = "../../../crates/ul-convert" }
+ul-lsp = { path = "../../../crates/ul-lsp" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }

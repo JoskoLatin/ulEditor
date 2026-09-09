@@ -4579,6 +4579,7 @@ dependencies = [
  "ul-convert",
  "ul-core",
  "ul-image",
+ "ul-lsp",
 ]
 
 [[package]]
