@@ -19,12 +19,19 @@
 //! server's own questions are answered — leave one unanswered and it stops
 //! publishing anything at all — and that what comes back lands on the line the
 //! mistake is on, and stops coming back once the mistake is gone.
+//!
+//! And then the three questions, which prove the one thing the parsing tests
+//! cannot: that an answer finds its way back to the thread that asked. Every
+//! shape a reply can take is checked in `protocol.rs` against a fixture; what
+//! no fixture can check is the correlation — a real server answering three
+//! questions out of order while publishing diagnostics between them, and each
+//! answer reaching the right waiting caller.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use ul_lsp::{Event, Server, Severity};
+use ul_lsp::{Asked, Event, LspError, Server, Severity};
 
 fn project() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ul-lsp-live-{}", std::process::id()));
@@ -139,7 +146,19 @@ fn a_mistake_is_reported_where_it_is_and_cleared_when_it_goes() {
     *replaces* what was said before, and an empty list is how a server says
     "fixed". A client that merged instead would leave every corrected error on
     the screen for as long as the file stayed open. */
-    let fixed = "fn main() {\n    let fixed = 1;\n    println!(\"{fixed}\");\n}\n";
+    /* Richer than a line, because the three questions below need something to
+    ask about: a function to hover over, a definition to jump to on a line
+    that is not its own, and a prefix to complete. */
+    let fixed = concat!(
+        "fn broj() -> i32 {\n",
+        "    42\n",
+        "}\n",
+        "\n",
+        "fn main() {\n",
+        "    let x = broj();\n",
+        "    println!(\"{x}\");\n",
+        "}\n",
+    );
     std::fs::write(&file, fixed).unwrap();
     server.change(&file, 2, fixed).unwrap();
     /* Saved, because that is the notification that makes `cargo check` run
@@ -152,6 +171,130 @@ fn a_mistake_is_reported_where_it_is_and_cleared_when_it_goes() {
     assert!(
         !cleared.iter().any(|d| d.severity == Severity::Error),
         "{cleared:?}"
+    );
+
+    /* ── and now the questions ────────────────────────────────────────────
+     *
+     * Thirty seconds each. The server has been indexing for a minute by this
+     * point and answers these in milliseconds; the timeout is there so a
+     * failure is a failure rather than a test that hangs.
+     *
+     * And asked twice, where the second attempt is not padding: it is what the
+     * real client does, and this test is what found out that it had to.
+     *
+     * The first run of this failed on the very first hover with
+     * `content modified`: rust-analyzer had the `didChange` from three lines
+     * above still in hand and dropped the question rather than answering about
+     * text it no longer had. That is `ContentModified`, the protocol's own "ask
+     * again", and it is the ordinary case rather than a rare one — every one of
+     * these questions is asked while somebody is typing. The desktop client
+     * retries once for exactly this reason; so does this.
+     */
+    type Question = fn(&mut Server, &std::path::Path, u32, u32) -> Result<Asked, LspError>;
+    fn ask(
+        server: &mut Server,
+        question: Question,
+        file: &std::path::Path,
+        line: u32,
+        column: u32,
+        what: &str,
+    ) -> serde_json::Value {
+        for attempt in 0..2 {
+            let asked = question(server, file, line, column).expect("the question has to go out");
+            match asked.wait(Duration::from_secs(30)) {
+                Ok(value) => return value,
+                Err(err) if attempt == 0 => println!("{what}: asking again after {err}"),
+                Err(err) => panic!("{what}: {err}"),
+            }
+        }
+        unreachable!("two attempts either answer or panic")
+    }
+
+    /* `broj` on the sixth line, `    let x = broj();` — the call, not the
+    declaration. Column 14 is inside the word. */
+    let hover = ask(&mut server, Server::hover_at, &file, 6, 14, "hover");
+    let hover = ul_lsp::parse_hover(&hover).expect("there is a function under that column");
+    println!("hover: {}", hover.markdown.replace('\n', " ⏎ "));
+    assert!(hover.markdown.contains("broj"), "{hover:?}");
+    assert!(
+        hover.markdown.contains("i32"),
+        "the signature is the whole point of a hover: {hover:?}"
+    );
+
+    let jumped = ask(
+        &mut server,
+        Server::definition_at,
+        &file,
+        6,
+        14,
+        "definition",
+    );
+    let jumped = ul_lsp::parse_locations(&jumped);
+    println!("definition: {jumped:?}");
+    let first = jumped
+        .first()
+        .expect("the function is defined in this file");
+    assert!(same(&first.uri), "{first:?}");
+    assert_eq!(first.span.line, 1, "`fn broj` is on the first line");
+    /*
+     * And this is what `linkSupport` bought. The declaration spans lines 1 to
+     * 3; the *name* is on line 1 alone. A client that took `targetRange` would
+     * select the whole function and scroll its first line off the top, which
+     * is not what anybody means by "go to the definition".
+     */
+    assert_eq!(
+        first.span.end_line, 1,
+        "the name and not the body: {first:?}"
+    );
+
+    /* A half-typed word, which is the only state a completion is ever asked
+    in — and one that does not compile, which is also normal. */
+    let typing = concat!(
+        "fn broj() -> i32 {\n",
+        "    42\n",
+        "}\n",
+        "\n",
+        "fn main() {\n",
+        "    let x = broj();\n",
+        "    let y = br\n",
+        "}\n",
+    );
+    std::fs::write(&file, typing).unwrap();
+    server.change(&file, 3, typing).unwrap();
+
+    /* Line 7, after the `br`: four spaces, `let y = `, then two letters. */
+    let offered = ask(
+        &mut server,
+        Server::completion_at,
+        &file,
+        7,
+        15,
+        "completion",
+    );
+    let (offered, incomplete) = ul_lsp::parse_completions(&offered);
+    println!("{} completion(s), incomplete: {incomplete}", offered.len());
+    assert!(
+        !offered.is_empty(),
+        "a list with nothing in it is not a list"
+    );
+    assert!(
+        offered.iter().any(|item| item.label.starts_with("broj")),
+        "the function defined three lines up has to be in the list: {:?}",
+        offered
+            .iter()
+            .take(20)
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>()
+    );
+    /*
+     * And nothing in it is a snippet, because the client said it could not
+     * take one. This is the assertion that catches a capability quietly
+     * dropped from the handshake: without it, `println!("$1")` would go into
+     * somebody's file and the only sign would be a stray dollar.
+     */
+    assert!(
+        !offered.iter().any(|item| item.snippet),
+        "snippetSupport is declared false, so nothing may come back as one"
     );
 
     server.stop();

@@ -30,12 +30,15 @@ import {
 import { lintGutter } from '@codemirror/lint';
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from '@codemirror/commands';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
+import { closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 
 import {
   Emitter,
   plainPayload,
   type ClipboardPayload,
+  type CodeCompletion,
+  type CodeHover,
+  type CodeLocation,
   type DocumentHandle,
   type EditorHost,
   type EditorInstance,
@@ -49,6 +52,7 @@ import { t } from '@uleditor/i18n';
 
 import { loadLanguage } from './languages.js';
 import { showDiagnostics, summarise } from './diagnostics.js';
+import { goToDefinition, intelligence, type CodeIntel } from './intel.js';
 import { ulTheme } from './theme.js';
 
 const CODE_EXTENSIONS = [
@@ -60,7 +64,7 @@ const CODE_EXTENSIONS = [
   'txt', 'log', 'csv', 'tsv', 'ini', 'cfg', 'conf', 'env',
 ];
 
-class CodeEditor implements EditorInstance {
+class CodeEditor implements EditorInstance, CodeIntel {
   #view: EditorView | null = null;
   #extensions: Extension[];
   #initial: string;
@@ -115,7 +119,6 @@ class CodeEditor implements EditorInstance {
         indentUnit.of('  '),
         bracketMatching(),
         closeBrackets(),
-        autocompletion(),
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),
@@ -134,6 +137,18 @@ class CodeEditor implements EditorInstance {
         /* The marks in the margin. Empty until a server says otherwise, and on
            a machine without one it stays empty and costs nothing. */
         lintGutter(),
+        /*
+         * The tooltip, the completion list and `F12`, all of which ask this
+         * instance and get nothing until a server has taken the document.
+         *
+         * Mounted unconditionally, which is the point: whether anything is
+         * listening is only known one round trip after the editor is on the
+         * screen, and an editor that reconfigured itself when the answer came
+         * back would be rebuilding the state under somebody who has already
+         * started typing. Idle extensions cost nothing; a state swap costs the
+         * undo history.
+         */
+        ...intelligence(this),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             this.#recomputeDirty();
@@ -195,6 +210,76 @@ class CodeEditor implements EditorInstance {
       this.#lastSummary = summarise(published.diagnostics);
       this.#emitStatus();
     });
+  }
+
+  /* ── what the tooltip, the list and `F12` ask ─────────────────────── */
+
+  served(): boolean {
+    return this.#served && this.#languageId !== null;
+  }
+
+  async hover(line: number, column: number): Promise<CodeHover | null> {
+    if (!this.#languageId) return null;
+    return this.host.language.hover(this.doc.uri, this.#languageId, line, column);
+  }
+
+  async definition(line: number, column: number): Promise<CodeLocation[]> {
+    if (!this.#languageId) return [];
+    return this.host.language.definition(this.doc.uri, this.#languageId, line, column);
+  }
+
+  async completions(line: number, column: number): Promise<CodeCompletion[]> {
+    if (!this.#languageId) return [];
+    return this.host.language.completions(this.doc.uri, this.#languageId, line, column);
+  }
+
+  /**
+   * A definition somewhere else — handed to the shell, which owns tabs.
+   *
+   * The editor knows nothing about how a file is opened, and it stays that way:
+   * this is the same seam OCR uses to put text in the panel below. A command
+   * id and a payload, and the editor does not learn what a tab is.
+   */
+  jump(location: CodeLocation): void {
+    void this.host.commands.execute('editor.goToLocation', location);
+  }
+
+  report(message: string): void {
+    this.host.notify.show('info', message);
+  }
+
+  readonly nothingFound = t('No definition found.');
+
+  /**
+   * The same thing `F12` does, for the menu and the palette.
+   *
+   * A shortcut is not a place: somebody who has never used one has no way to
+   * find out that this exists, and the menu is where they would look.
+   */
+  goToDefinition(): void {
+    if (this.#view) void goToDefinition(this.#view, this);
+  }
+
+  /**
+   * Puts the cursor somewhere and shows it — what a jump arrives at.
+   *
+   * Scrolled to the middle rather than to the top edge: a definition on the
+   * first visible line has its context above it off the screen, and the
+   * context is half of why anybody went there.
+   */
+  revealPosition(line: number, column: number): void {
+    const view = this.#view;
+    if (!view) return;
+
+    const which = Math.min(Math.max(line, 1), view.state.doc.lines);
+    const at = view.state.doc.line(which);
+    const offset = Math.min(at.from + Math.max(column - 1, 0), at.to);
+
+    view.dispatch({
+      selection: { anchor: offset },
+      effects: EditorView.scrollIntoView(offset, { y: 'center' }),
+    });
+    view.focus();
   }
 
   /**

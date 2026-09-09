@@ -97,6 +97,53 @@ const base = EditorView.theme({
     backgroundColor: 'var(--accent-wash)',
     color: 'var(--accent-ink)',
   },
+  /* The type or the signature beside the name — dimmer, because it is the
+     answer to a question somebody asks second. */
+  '.cm-completionDetail': {
+    color: 'var(--ink-soft)',
+    fontStyle: 'normal',
+    marginLeft: '0.75em',
+  },
+
+  /*
+   * What a server has to say, in a box that has to stay a box.
+   *
+   * A doc comment can be a paragraph or a page — `Iterator::fold` is a screen
+   * and a half — so both dimensions are capped and the overflow scrolls. An
+   * uncapped tooltip covers the code it is explaining, which is the one thing a
+   * tooltip must not do.
+   */
+  '.cm-ul-hover, .cm-completionInfo': {
+    maxWidth: '46em',
+    maxHeight: '22em',
+    overflow: 'auto',
+    padding: '6px 9px',
+    lineHeight: '1.5',
+  },
+  '.cm-ul-doc p': { margin: '0 0 0.5em' },
+  '.cm-ul-doc p:last-child': { marginBottom: '0' },
+  '.cm-ul-doc code': {
+    fontFamily: 'var(--mono)',
+    fontSize: '0.92em',
+    color: 'var(--syn-type)',
+  },
+  '.cm-ul-doc pre': {
+    fontFamily: 'var(--mono)',
+    fontSize: '0.92em',
+    margin: '0 0 0.5em',
+    /* The signature is why the tooltip was opened; it wraps rather than
+       scrolling sideways, because a signature read half at a time is not
+       read. */
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  },
+  '.cm-ul-doc pre:last-child': { marginBottom: '0' },
+  '.cm-ul-doc pre code': { color: 'var(--ink)' },
+  '.cm-ul-doc hr': {
+    border: 'none',
+    borderTop: '1px solid var(--rule)',
+    margin: '0.5em 0',
+  },
 });
 
 const highlight = HighlightStyle.define([

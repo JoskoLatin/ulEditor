@@ -39,7 +39,11 @@ export async function startDesktop(opts = {}) {
          open lands in the real recent list and the real session. */
       WEBVIEW2_USER_DATA_FOLDER: await mkdtemp(join(tmpdir(), 'ul-profile-')),
     },
-    stdio: 'ignore',
+    /* Silent, unless somebody is trying to find out why a check fails.
+       `UL_DESKTOP_LOG=1` lets the application's own output through, which is
+       the only way to read `UL_LSP_TRACE` — a check that swallows the program's
+       stderr is a check that can only be debugged by guessing. */
+    stdio: process.env.UL_DESKTOP_LOG ? 'inherit' : 'ignore',
   });
 
   const until = Date.now() + timeoutMs;

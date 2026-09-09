@@ -119,6 +119,31 @@ export interface EditorInstance {
    */
   beginReading?(options: ReadingOptions): ReadingSession;
 
+  /**
+   * Follows the name under the cursor to where it was defined.
+   *
+   * The editor does the asking, because only it knows where the cursor is and
+   * which server has the document; the shell offers it as a command so that it
+   * has a place in the menu rather than only under a key nobody was told
+   * about. Optional, and absent wherever a "name" means nothing — a picture, a
+   * spreadsheet, a PDF.
+   */
+  goToDefinition?(): void;
+
+  /**
+   * Puts the cursor at a line and column, and scrolls it into view.
+   *
+   * It exists for go-to-definition, which is the first thing in this program to
+   * name a place in a document that is not open yet — `find()` reaches a
+   * *string*, and "the definition" is not a string anybody typed.
+   *
+   * One-based, both of them, matching every other position in the contract.
+   * Optional, because a position means nothing in a picture or a spreadsheet;
+   * an editor that does not implement it is simply opened, which is still most
+   * of what was asked for.
+   */
+  revealPosition?(line: number, column: number): void;
+
   readonly onDirtyChange: Event<boolean>;
   /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */
   readonly onStatusChange: Event<string>;

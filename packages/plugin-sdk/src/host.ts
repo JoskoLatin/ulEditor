@@ -209,11 +209,124 @@ export interface DiagnosticsPublished {
 }
 
 /**
+ * A range in a document, one-based, the way an editor counts.
+ *
+ * Zero-based on the wire; the conversion happens once, in Rust, at the boundary
+ * — so a line here is a line, and nothing on this side has to remember which
+ * convention it is holding.
+ */
+export interface CodeSpan {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+/** What a server has to say about the thing under the pointer. */
+export interface CodeHover {
+  /** One block of Markdown. Servers answer in four shapes; Rust flattens them. */
+  markdown: string;
+  /**
+   * What the answer is about, when the server says.
+   *
+   * Absent from many answers, and an editor that required it would show
+   * nothing at all for a server that is entirely within its rights.
+   */
+  span?: CodeSpan | null;
+}
+
+/**
+ * Somewhere else in the project — where a name was defined.
+ *
+ * **A path, not a URL.** The server answers `file:///c:/dev/x.rs`; three
+ * slashes and a percent-encoded space are the platform's business, and it has
+ * one, so the conversion has already happened by the time this arrives.
+ */
+export interface CodeLocation {
+  path: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+/**
+ * What kind of thing a completion offers.
+ *
+ * The protocol's twenty-five, named. What an editor does with them is draw an
+ * icon, and a name is the only form of that a person can read in a stack trace.
+ */
+export type CodeCompletionKind =
+  | 'text'
+  | 'method'
+  | 'function'
+  | 'constructor'
+  | 'field'
+  | 'variable'
+  | 'class'
+  | 'interface'
+  | 'module'
+  | 'property'
+  | 'unit'
+  | 'value'
+  | 'enum'
+  | 'keyword'
+  | 'snippet'
+  | 'color'
+  | 'file'
+  | 'reference'
+  | 'folder'
+  | 'enumMember'
+  | 'constant'
+  | 'struct'
+  | 'event'
+  | 'operator'
+  | 'typeParameter';
+
+/** One thing a server offers to finish the word with. */
+export interface CodeCompletion {
+  /** What is shown in the list. */
+  label: string;
+  kind: CodeCompletionKind;
+  /** The type, the signature, the module it came from — a short line. */
+  detail?: string | null;
+  documentation?: string | null;
+  /**
+   * What is actually put into the document, which is not always the label:
+   * rust-analyzer labels a method `push(…)` and inserts `push`.
+   */
+  insert: string;
+  /**
+   * What the insertion replaces, when the server says.
+   *
+   * Better informed than the editor's own guess at where the word began: a
+   * server knows `::` is part of a path and `-` part of a CSS property.
+   */
+  replace?: CodeSpan | null;
+  /** The order the server wants, which is not alphabetical. */
+  sortText?: string | null;
+  /**
+   * Whether the text is a snippet — placeholders and tab stops.
+   *
+   * The client declares it cannot expand one, so this should never be true. It
+   * is carried because a server may ignore that, and an editor that pasted
+   * `println!("$1")` into somebody's code would be writing a bug on their
+   * behalf.
+   */
+  snippet: boolean;
+}
+
+/**
  * The half of an editor that knows what the code *means*.
  *
- * Diagnostics only, for now: the underline under a mistake, with the compiler's
- * own words. Hover, definition and completion are the same plumbing asked
- * different questions.
+ * The underline under a mistake with the compiler's own words, and the three
+ * questions: what is this, where was it defined, what could this word become.
+ *
+ * **Diagnostics arrive; the rest are asked for**, and the difference shows in
+ * the signatures — a publication is an event, a question is a promise that can
+ * come back empty. Empty is the ordinary answer rather than a failure: a
+ * pointer over whitespace, a keyword with no definition, a server still
+ * indexing. Each of them shows nothing, which is what nothing looks like.
  *
  * **Nothing is bundled.** A language server is somebody else's program and
  * installing one is a decision about the machine rather than about this editor.
@@ -235,6 +348,24 @@ export interface LanguageService {
   save(uri: Uri, language: string): Promise<void>;
   close(uri: Uri, language: string): Promise<void>;
   readonly onDiagnostics: Event<DiagnosticsPublished>;
+
+  /** What is this thing? `null` where the server has nothing to say. */
+  hover(uri: Uri, language: string, line: number, column: number): Promise<CodeHover | null>;
+  /**
+   * Where was it defined?
+   *
+   * A list, because a definition genuinely can be in several places — a trait
+   * method with implementations, a symbol declared twice behind a `cfg`. Empty
+   * is "nowhere", which is a real answer over a keyword or a literal.
+   */
+  definition(uri: Uri, language: string, line: number, column: number): Promise<CodeLocation[]>;
+  /** What could this word become? */
+  completions(
+    uri: Uri,
+    language: string,
+    line: number,
+    column: number,
+  ): Promise<CodeCompletion[]>;
 }
 
 /* ── host ────────────────────────────────────────────────────────────── */

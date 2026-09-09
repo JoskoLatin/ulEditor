@@ -219,7 +219,7 @@ State as of 9 September 2026.
 | **SVG and 3D model viewing** (not in the original plan) | **done** — SVG with a source view, STL/OBJ/PLY/glTF/GLB/3MF through three.js; `.ai` opens as the PDF it contains |
 | **English as the default interface language, Croatian in settings** | **done** |
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
-| `editor-code`: tree-sitter, LSP client | **LSP client done** for diagnostics — `crates/ul-lsp`, and the underline in the margin with the compiler's own words. Hover, definition and completion are the same plumbing asked different questions. **tree-sitter is not taken and is not planned**: CodeMirror's Lezer already parses incrementally per language, and swapping it for wasm grammars would be a large change for nothing a person could see |
+| `editor-code`: tree-sitter, LSP client | **LSP client done** — `crates/ul-lsp`: the underline in the margin with the compiler's own words, and the three questions beside it. What is this (a hover with the signature and the doc comment), what could this word become (completion), where was it defined (`F12`, `Ctrl+Click`, and the file opens even when it is outside every folder anybody opened). **tree-sitter is not taken and is not planned**: CodeMirror's Lezer already parses incrementally per language, and swapping it for wasm grammars would be a large change for nothing a person could see |
 | `editor-markdown`: mermaid | **done** — a fence is drawn, and the library is imported the first time one appears rather than when the editor mounts. Two thirds of a megabyte gzipped is not a cost a document without a diagram should carry |
 | Global project-wide search | **done** — scanning in Rust. `tantivy` still deferred, now on a measured basis rather than an assumed one: see the table below |
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
@@ -249,6 +249,53 @@ threw away because the client had declared the wrong synchronisation, and a
 request from the server that nobody answered, after which it published nothing
 at all. All three are written down in `crates/ul-lsp`, and the live test against
 a real rust-analyzer is what found two of them.
+
+**And asking was the same plumbing, minus one thing it did not have.** A
+notification is finished when it has been written; a request is finished when a
+message with the same id comes back, on a thread that is not the one waiting for
+it. So a question leaves a channel under its id, the reading thread posts the
+answer into whichever channel matches, and the question removes itself from the
+register when it is dropped — without which every unanswered question would
+leave a channel behind, one per keystroke that asked for a completion and was
+overtaken by the next.
+
+**The fourth silence is the one worth keeping.** Every path in this program has
+been through the workspace's `resolve`, which canonicalises, and
+`fs::canonicalize` on Windows returns `\\?\C:\dev\x`. That made the URL
+`file:////?/C:/dev/x`, which no language server can parse — and **the underlines
+went on appearing anyway**, because rust-analyzer walks a project itself and
+publishes about files nobody opened. So the `didOpen` was ignored without a
+word, every question was about a document the server had never heard of, and
+every answer came back empty: indistinguishable from a server with nothing to
+say. The unit tests passed, the live test passed, and only asking the question
+inside the real application showed it — because that is the only place a path
+has been canonicalised. Every one of the five failures in this crate has had the
+same shape, which is the finding underneath the findings: **a language server
+client fails by continuing to look like it works.**
+
+**The fifth was `content modified`** — error `-32801`, the document having
+changed while the server was thinking. It is not a failure and
+it is not rare: every one of these questions is asked *while somebody is
+typing*, so a `didChange` overtaking a request in flight is the ordinary case. A
+client that read it as a refusal would have a tooltip that stops working for
+exactly as long as anybody is working. It is named in `LspError` and the
+question is asked once more.
+
+**Two capability declarations did more than the code around them.**
+`snippetSupport: false` makes rust-analyzer offer `push` where it would have
+offered `push(${1:value})` — a completion that compiles, from a client that
+cannot expand a tab stop and says so. `linkSupport: true` makes a server answer
+with the *name* of a function beside the whole body of it, which is the
+difference between landing on a declaration and selecting forty lines. Both are
+promises, and the live test asserts both are kept.
+
+**F12 had to be taken off the developer tools**, which is a smaller decision
+than it sounds: it is what F12 means in a browser, and going to a definition is
+what it means in every code editor. `Ctrl+Shift+I` is still the developer tools,
+and over a PDF or a picture — where there is no name to follow — F12 does what
+it always did. Finding that out was worth an hour: the shell listens for keys on
+the window with `capture: true`, so a binding put inside CodeMirror would never
+have fired, and would have looked exactly like a server with nothing to say.
 
 **And why pdfium was not taken either.** The same instrument-before-opinion
 rule as above, and the same outcome: measured with
@@ -404,6 +451,8 @@ pnpm fidelity      # round-trip pixel diff, threshold < 2% difference  (from pha
 1. `pnpm tauri dev` — the application comes up
 2. Open a repository directory → the explorer shows the tree
 3. Open a `.ts` file → highlighting, autocomplete and go-to-definition work
+   (`npm install -g typescript-language-server typescript` first — nothing is
+   bundled, and without a server the file simply opens and is coloured)
 4. Open a PDF → scrolling, text selection, add a highlight, delete a page, save, check in another reader
 5. Open a `.md` → the live preview follows typing
 6. Open a `.docx` and an `.xlsx` → the read-only preview renders

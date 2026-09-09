@@ -10,7 +10,14 @@ import { LOCALES, t } from '@uleditor/i18n';
 
 import type { Shell, ThemePreference } from '../host/index.js';
 import { activeInstance, activeTabId, useWorkspace } from '../state/workspace.js';
-import { closeTab, openFiles, openFolder, openThroughLibreOffice, saveActive } from './actions.js';
+import {
+  closeTab,
+  openFiles,
+  openFolder,
+  openThroughLibreOffice,
+  openUri,
+  saveActive,
+} from './actions.js';
 import { chooseLocale, requestExit } from './lifecycle.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
@@ -32,6 +39,41 @@ const REPOSITORY = 'https://github.com/JoskoLatin/ulEditor';
 function setTheme(shell: Shell, preference: ThemePreference): void {
   shell.theme.setPreference(preference);
   shell.settings.set('theme', preference);
+}
+
+/**
+ * Opens a file and puts the cursor on a line in it.
+ *
+ * `openUri` rather than a direct open, for the reason it exists: a definition
+ * is very often **outside every folder that was opened** — the standard
+ * library, a crate under `~/.cargo/registry`, a package in `node_modules` — and
+ * the desktop sandbox has never been told about those. `openUri` re-adopts the
+ * path the way the file picker would, which is the same explicit gesture with
+ * a different origin.
+ *
+ * **And it opens even a file that is already open**, rather than looking for
+ * its tab first. A definition arrives as `C:/dev/x.rs` — a path made out of the
+ * server's URL — while every tab is named the way the file system hands paths
+ * out, `C:\dev\x.rs`. Those are one file and two strings, and comparing them
+ * here would mean this function keeping its own opinion about what makes two
+ * paths the same. `openUri` goes through the VFS, which resolves, and
+ * `openDocument` then finds the tab under the name it gave it — one place
+ * deciding, which is the only number of places that ever works.
+ *
+ * The wait is for the mount. An instance is created asynchronously, and a jump
+ * that arrived before it would land in an editor that does not exist yet; the
+ * same hundred and twenty milliseconds the search panel waits for the same
+ * reason.
+ */
+async function goToLocation(
+  shell: Shell,
+  path: string,
+  line: number,
+  column: number,
+): Promise<void> {
+  await openUri(shell, path);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  activeInstance()?.revealPosition?.(line, column);
 }
 
 export function registerCommands(shell: Shell): () => void {
@@ -165,6 +207,35 @@ export function registerCommands(shell: Shell): () => void {
         const options = payload as { name?: string; text?: string } | undefined;
         if (!options?.text) return;
         return openScratch(shell, { name: options.name ?? t('Untitled'), text: options.text });
+      },
+    }),
+    /*
+     * Following a name to where it was defined, in two halves — because the two
+     * halves are genuinely different jobs. The editor knows where the cursor is
+     * and which server has the file; the shell knows what a tab is. Neither
+     * learns the other's half.
+     */
+    shell.commands.register({
+      id: 'edit.goToDefinition',
+      title: t('Go to definition'),
+      category: t('Edit'),
+      keybinding: ['F12'],
+      when: () => activeInstance()?.goToDefinition !== undefined,
+      run: () => activeInstance()?.goToDefinition?.(),
+    }),
+    shell.commands.register({
+      id: 'editor.goToLocation',
+      title: t('Go to a place in a file'),
+      category: t('Edit'),
+      /* A seam rather than an action: it is meaningless without somewhere to
+         go, so it is never offered in the palette. */
+      when: () => false,
+      run: (payload) => {
+        const target = payload as
+          | { path?: string; line?: number; column?: number }
+          | undefined;
+        if (!target?.path) return;
+        return goToLocation(shell, target.path, target.line ?? 1, target.column ?? 1);
       },
     }),
     shell.commands.register({
@@ -474,12 +545,30 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     return;
   }
 
-  /* F12 carries no modifier, so it is read before the guard below sends every
-     unmodified key away. */
-  if (event.key === 'F12' && devtoolsAvailable) {
-    event.preventDefault();
-    void openDevtools();
-    return;
+  /*
+   * F12 carries no modifier, so it is read before the guard below sends every
+   * unmodified key away.
+   *
+   * **It follows a name where an editor can follow one, and opens the developer
+   * tools where none can.** Those are the two things F12 means — the second in
+   * a browser, the first in every code editor — and this program is a code
+   * editor that happens to be drawn in a browser. Nothing is lost by preferring
+   * the editor: `Ctrl+Shift+I` below is the developer tools either way, and
+   * over a PDF, a picture or the welcome screen there is no name to follow and
+   * F12 does exactly what it always did.
+   */
+  if (event.key === 'F12') {
+    const instance = activeInstance();
+    if (instance?.goToDefinition) {
+      event.preventDefault();
+      instance.goToDefinition();
+      return;
+    }
+    if (devtoolsAvailable) {
+      event.preventDefault();
+      void openDevtools();
+      return;
+    }
   }
 
   const mod = event.ctrlKey || event.metaKey;

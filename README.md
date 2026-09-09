@@ -84,7 +84,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 
 | Format | State | Engine |
 |---|---|---|
-| Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works**, and **diagnostics from a language server** where one is installed | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) + `crates/ul-lsp` |
+| Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works**, and where a language server is installed: **diagnostics, hover, completion and go-to-definition** | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) + `crates/ul-lsp` |
 | Markdown | **works** — source + live preview + reading mode + **diagrams** | CodeMirror 6 + markdown-it (+ mermaid, fetched only when a diagram is there) |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
 | PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js. The planned swap to pdfium is **not taken**: measured over 457 real documents, the first page is on the screen in half a second |
@@ -324,6 +324,16 @@ compiler's own words and counted in the status bar — `Line 12, column 8 · 2 �
 Rust through rust-analyzer, TypeScript and JavaScript through
 `typescript-language-server`, Python through pyright.
 
+And three things it is asked rather than told:
+
+- **What is this?** The pointer resting on a name brings up its signature and
+  its doc comment.
+- **What could this word become?** The completion list, while typing.
+- **Where was it defined?** `F12`, `Ctrl+Click`, or **Edit → Go to definition**
+  — and it opens the file it lands in, even when that file is somewhere nobody
+  opened: the standard library, a crate under `~/.cargo`, a package inside
+  `node_modules`.
+
 **Nothing is bundled and nothing is downloaded.** A language server is somebody
 else's program, often a large one, and installing it is a decision about the
 machine rather than about this editor:
@@ -348,9 +358,8 @@ server started inside `crates/ul-core` would call every reference to the crate
 next door an error; TypeScript takes the **nearest** `tsconfig.json`, because
 the packages of a monorepo genuinely are separate compilations.
 
-Only diagnostics for now. Hover, go-to-definition and completion are the same
-plumbing asked different questions, and the plumbing was the work — three
-separate silences, each of which is written down where it happened:
+**The plumbing was the work**, and it was written for diagnostics first —
+three separate silences, each of which is written down where it happened:
 
 - **stderr sent to nowhere.** `rust-analyzer` on the PATH turned out to be a
   rustup shim with the component not installed: it printed one line and exited,
@@ -365,6 +374,66 @@ separate silences, each of which is written down where it happened:
 
 `UL_LSP_TRACE=1` prints the conversation in both directions, which is how two of
 the three were found.
+
+**Then asking turned out to need one thing publishing does not**: a way to know
+which answer belongs to which question. A notification is finished when it has
+been written; a request is finished when a message with the same id comes back,
+on a thread that is not the one waiting for it. So a question leaves a channel
+behind under its id, the thread that reads posts the answer into whichever
+channel matches, and the question takes itself out of the register when it is
+dropped — answered or not. Without that last part, every question a server never
+got round to would leave a channel behind, one per keystroke.
+
+**And two more silences, both of which needed a real server to show.**
+
+The first was `\\?\`. Every path in this program goes through the workspace's
+`resolve`, which canonicalises — and `fs::canonicalize` on Windows returns
+`\\?\C:\dev\x`. Left on, that made the URL `file:////?/C:/dev/x`, which no
+language server can parse. **And the underlines went on appearing**, because
+rust-analyzer walks the project itself and publishes about files nobody opened:
+the `didOpen` was ignored without a word, every question was about a document
+the server had never heard of, and every answer came back empty — which looks
+exactly like a server with nothing to say. It was found by asking the question
+in the real application after it had passed against the same server in a test,
+where the paths had never been canonicalised. There is a test for it now, and
+what it asserts is that the two spellings of one path are one document.
+
+The second was `content modified` — error `-32801`, and not a failure at all: it
+is the server saying the document changed while it was thinking, so the answer
+would have been about the previous keystroke. It is the *ordinary* case, since
+every one of these questions is asked while somebody is typing, and a client
+that read it as a refusal would have a tooltip that stops working for exactly as
+long as anybody is working. So it has a name of its own in `LspError`, and the
+question is asked once more against the document as it now is.
+
+Three smaller decisions, each of which is a promise being kept rather than a
+preference:
+
+- **`snippetSupport: false`, and it is not a shortcut.** A snippet is
+  `${1:name}` with tab stops, and claiming it means being able to expand one.
+  Told no, rust-analyzer offers `push` where it would have offered
+  `push(${1:value})` — a completion that compiles. Anything that arrives as a
+  snippet anyway is flagged and refused, because a client that trusted its own
+  capability declaration would write `println!("$1")` into somebody's file.
+- **`linkSupport: true`, because it changes where the cursor lands.** It makes a
+  server answer with the *name* of a function beside the whole body of it.
+  Jumping to the first puts the cursor on the declaration; jumping to the second
+  selects forty lines and scrolls the top of them off the screen.
+- **The tooltip is built, not parsed.** The text is a doc comment out of
+  somebody's dependencies, and `innerHTML` would mean a Markdown library and a
+  sanitiser beside it. Every node is created and every string goes in as
+  `textContent`, so there is no parser to get wrong — and `markdown-it` stays in
+  the Markdown editor, which depends on this one and could not lend it back.
+
+**`F12` used to open the developer tools**, and now it follows a name where an
+editor can follow one. Those are the two things F12 means — the second in a
+browser, the first in every code editor — and this is a code editor that happens
+to be drawn in a browser. `Ctrl+Shift+I` is the developer tools either way, so
+nothing was lost; over a PDF or a picture, where there is no name to follow, F12
+does what it always did. **`Ctrl+Click` follows a name too, and multiple cursors
+move to `Alt+Click`** — CodeMirror's own default puts them on the same modifier,
+so one of the two had to move, and that is the same swap VS Code made for the
+same reason.
 
 ## Reading mode
 
@@ -475,7 +544,7 @@ pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
 pnpm verify:desktop-updates  # the update check, in the program, where the plugin exists
 pnpm verify:desktop-convert  # an .eps through LibreOffice and onto the screen
-pnpm verify:desktop-lsp      # a mistake underlined by rust-analyzer, and unmarked when fixed
+pnpm verify:desktop-lsp      # rust-analyzer: a mistake underlined and unmarked, then hover, completion and F12
 ```
 
 Those eight start the program itself with the WebView2 debug port open and attach

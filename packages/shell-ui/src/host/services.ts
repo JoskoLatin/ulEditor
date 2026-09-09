@@ -287,6 +287,18 @@ export class NoLanguageServers implements LanguageService {
   async save(): Promise<void> {}
 
   async close(): Promise<void> {}
+
+  async hover(): Promise<null> {
+    return null;
+  }
+
+  async definition(): Promise<[]> {
+    return [];
+  }
+
+  async completions(): Promise<[]> {
+    return [];
+  }
 }
 
 /**

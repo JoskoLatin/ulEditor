@@ -587,6 +587,217 @@ async fn lsp_close(
     Ok(())
 }
 
+/* ── asking a server a question ──────────────────────────────────────── */
+
+/// Where a name was defined, as the editor wants it: a path, not a URL.
+///
+/// The server answers `file:///c:/dev/x.rs`; the shell opens `C:\dev\x.rs`.
+/// The conversion belongs on this side for the same reason it does for
+/// diagnostics — three slashes and a percent-encoded space are the platform's
+/// business, and the platform is here.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Jump {
+    path: String,
+    line: u32,
+    column: u32,
+    end_line: u32,
+    end_column: u32,
+}
+
+/// How long a question is worth waiting for.
+///
+/// **Not "how late is too late to show" — the editor decides that, and it
+/// already does.** CodeMirror drops a hover whose pointer has moved on and a
+/// completion whose context is stale, so a slow answer is discarded rather than
+/// arriving as a surprise. What this bounds is the other thing: a thread held
+/// for a question nobody is still asking.
+///
+/// Ten seconds because a language server is not always idle when it is asked.
+/// rust-analyzer runs `cargo check` on every save and answers slowly or not at
+/// all while it does, which is exactly when somebody is looking at the code
+/// they just saved. Three seconds — the first value here — was short enough
+/// that the desktop check failed all three questions in a row while `F12`,
+/// asked half a minute later through the same command, went through.
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What a question is about: which file, in which language, and where in it.
+///
+/// Four arguments that always travel together and are never meaningful apart —
+/// a line without the file it is a line of is not an address.
+struct At<'a> {
+    path: &'a str,
+    language: &'a str,
+    line: u32,
+    column: u32,
+}
+
+/// Sends one question to the server that has the file open, and waits off the lock.
+///
+/// **Two halves, and the seam is the point.** The registry is behind a mutex
+/// that every other document's `didChange` also needs; a command that held it
+/// while a server thought would stop the underlines updating anywhere else for
+/// as long as one tooltip took. So the lock is taken to write the question and
+/// dropped, and the waiting happens on a thread that is allowed to block.
+///
+/// `Ok(None)` means no server has this document — which happens legitimately,
+/// between a tab appearing and a handshake finishing, and is not a failure to
+/// report to anybody.
+///
+/// **Asked twice, at most.** Every one of these questions is asked while
+/// somebody is typing, and a `didChange` that overtakes a request in flight
+/// makes the server drop it with `ContentModified` — correctly, since the
+/// answer would have been about the previous keystroke. That is the protocol
+/// saying "ask again", and it happens often enough that a client which did not
+/// would have a hover that stops working for as long as anybody is typing. The
+/// second attempt is against the document as it now is, so a third would be
+/// answering a question nobody is still asking.
+async fn asked(
+    state: &State<'_, AppState>,
+    lsp: &State<'_, LspState>,
+    at: At<'_>,
+    question: fn(
+        &mut ul_lsp::Server,
+        &std::path::Path,
+        u32,
+        u32,
+    ) -> Result<ul_lsp::Asked, LspError>,
+) -> Result<Option<serde_json::Value>, LspCommandError> {
+    let file = with_workspace(state, |workspace| workspace.resolve(at.path))?;
+
+    for attempt in 0..2 {
+        let waiting = {
+            let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
+            let Some(server) = servers.serving_file(at.language, &file) else {
+                return Ok(None);
+            };
+            question(server, &file, at.line, at.column)?
+        };
+
+        /*
+         * On a thread that may block, rather than on the async runtime's. Tauri
+         * runs commands on a small pool of worker threads, and a `recv_timeout`
+         * there is a worker held for the whole timeout — three of those and the
+         * pool is gone, along with every other command the window wanted.
+         */
+        match tauri::async_runtime::spawn_blocking(move || waiting.wait(PATIENCE)).await {
+            Ok(Ok(value)) => return Ok(Some(value)),
+            Ok(Err(LspError::Stale(_))) if attempt == 0 => continue,
+            /* A server that refused the question, said nothing in time, or is
+            still behind after a second attempt. None of those is worth
+            interrupting anybody over: there is no tooltip, no jump and no
+            list, which is exactly what "it does not know" looks like. */
+            Ok(Err(_)) | Err(_) => return Ok(None),
+        }
+    }
+
+    Ok(None)
+}
+
+/// What is this thing? — one block of Markdown, or nothing.
+#[tauri::command]
+async fn lsp_hover(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+    line: u32,
+    column: u32,
+) -> Result<Option<ul_lsp::Hover>, LspCommandError> {
+    let answer = asked(
+        &state,
+        &lsp,
+        At {
+            path: &path,
+            language: &language,
+            line,
+            column,
+        },
+        ul_lsp::Server::hover_at,
+    )
+    .await?;
+    Ok(answer.as_ref().and_then(ul_lsp::parse_hover))
+}
+
+/// Where was it defined? — nowhere, one place, or several.
+#[tauri::command]
+async fn lsp_definition(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+    line: u32,
+    column: u32,
+) -> Result<Vec<Jump>, LspCommandError> {
+    let answer = asked(
+        &state,
+        &lsp,
+        At {
+            path: &path,
+            language: &language,
+            line,
+            column,
+        },
+        ul_lsp::Server::definition_at,
+    )
+    .await?;
+    let Some(answer) = answer else {
+        return Ok(Vec::new());
+    };
+
+    Ok(ul_lsp::parse_locations(&answer)
+        .into_iter()
+        /* A location this side cannot turn into a path is dropped rather than
+        passed on: rust-analyzer answers about the standard library with a
+        real file, but a server can also answer with `untitled:` or a URL of
+        its own invention, and a tab that cannot be opened is worse than a
+        jump that did not happen. */
+        .filter_map(|found| {
+            let path = ul_lsp::path_of_url(&found.uri)?;
+            Some(Jump {
+                path: path.to_string_lossy().into_owned(),
+                line: found.span.line,
+                column: found.span.column,
+                end_line: found.span.end_line,
+                end_column: found.span.end_column,
+            })
+        })
+        .collect())
+}
+
+/// What could this word become? — the list, and whether it is the whole list.
+#[tauri::command]
+async fn lsp_completion(
+    state: State<'_, AppState>,
+    lsp: State<'_, LspState>,
+    path: String,
+    language: String,
+    line: u32,
+    column: u32,
+) -> Result<Vec<ul_lsp::Completion>, LspCommandError> {
+    let answer = asked(
+        &state,
+        &lsp,
+        At {
+            path: &path,
+            language: &language,
+            line,
+            column,
+        },
+        ul_lsp::Server::completion_at,
+    )
+    .await?;
+    let Some(answer) = answer else {
+        return Ok(Vec::new());
+    };
+
+    /* `isIncomplete` is dropped here, and deliberately: this client asks again
+    on every keystroke regardless, so there is nothing the flag would change.
+    It is parsed and named in `ul-lsp` for the day that stops being true. */
+    let (items, _incomplete) = ul_lsp::parse_completions(&answer);
+    Ok(items)
+}
+
 /* ── files the program was started with ──────────────────────────────── */
 
 /// The paths out of a command line.
@@ -768,6 +979,9 @@ pub fn run() {
             lsp_change,
             lsp_save,
             lsp_close,
+            lsp_hover,
+            lsp_definition,
+            lsp_completion,
             search_workspace,
             list_files,
             scan_library,

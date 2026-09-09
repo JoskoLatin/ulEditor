@@ -4,10 +4,11 @@
 //! **What this does and does not do.** It starts a language server, tells it
 //! which files are open and what is in them, and passes on what the server says
 //! about them. That is diagnostics: the underline under a mistake, with the
-//! compiler's own words. Hover, go-to-definition and completion are the same
-//! plumbing asked different questions, and they are not here yet — the plumbing
-//! was the work, and one answer arriving correctly is worth more than four
-//! arriving nearly.
+//! compiler's own words. It also **asks**: what is this thing, where was it
+//! defined, what could this word become. Those were the same plumbing asked
+//! different questions, and the plumbing was the work — but asking needs one
+//! thing publishing does not, which is a way to know which answer belongs to
+//! which question. See `Asked`.
 //!
 //! **Nothing is bundled.** A language server is somebody else's program, often
 //! a large one, and installing it is a decision about the machine rather than
@@ -56,7 +57,10 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use protocol::{file_url, path_of_url, published_diagnostics, Diagnostic, Published, Severity};
+pub use protocol::{
+    file_url, parse_completions, parse_hover, parse_locations, path_of_url, published_diagnostics,
+    Completion, CompletionKind, Diagnostic, Hover, Location, Published, Severity, Span,
+};
 use protocol::{frame, take_message, Taken};
 
 #[derive(Debug, Error)]
@@ -71,6 +75,33 @@ pub enum LspError {
     Broken(String, String),
     #[error("input/output error: {0}")]
     Io(#[from] std::io::Error),
+    /// A question the server answered with an error rather than a result.
+    ///
+    /// Not a failure of this client: `textDocument/definition` over a keyword
+    /// is a perfectly ordinary thing to ask and a perfectly ordinary thing to
+    /// refuse. The caller shows nothing, which is what nothing looks like.
+    #[error("{0} refused the question: {1}")]
+    Refused(String, String),
+    /// The document moved while the server was answering.
+    ///
+    /// **The protocol's own "ask again"** — error `-32801`, `ContentModified` —
+    /// and the only refusal that is not an answer. A server drops the question
+    /// rather than replying about text nobody has any more, which is correct of
+    /// it: a hover about the previous keystroke would point at the wrong word.
+    ///
+    /// It is common rather than exceptional. Every one of these questions is
+    /// asked *while somebody is typing*, and a `didChange` that overtakes a
+    /// request in flight is the ordinary case, not a rare one — which is why it
+    /// has a name here instead of being one more thing that failed.
+    #[error("{0} was still reading a newer version of the file")]
+    Stale(String),
+    /// A question that got no answer at all within the time allowed.
+    ///
+    /// A server that is indexing answers nothing for a while, and a tooltip
+    /// that arrives after the pointer has moved is worse than no tooltip. So
+    /// the wait has an end, and the end is reported rather than hidden.
+    #[error("{0} did not answer {1} in time")]
+    Silent(String, String),
 }
 
 impl Serialize for LspError {
@@ -231,6 +262,47 @@ fn answer_request(stdin: &Arc<Mutex<ChildStdin>>, id: &serde_json::Value, method
 /// counted characters would be right about Croatian and wrong about an emoji.
 /// Counted properly here, because this position is the end of a replacement
 /// range — get it short and the tail of the file survives the edit twice.
+/// Hands one answer to whoever asked the question.
+///
+/// The reading thread sees every message and knows nothing about who wanted
+/// what; this is the whole of what it does with an answer. An id nobody is
+/// waiting for is dropped without comment, and that is the ordinary case rather
+/// than an error: a completion overtaken by the next keystroke is abandoned on
+/// purpose, and the answer to it arrives anyway.
+fn deliver(pending: &Pending, id: u64, value: &serde_json::Value) {
+    let Ok(mut waiting) = pending.lock() else {
+        return;
+    };
+    let Some(sender) = waiting.remove(&id) else {
+        return;
+    };
+
+    /*
+     * `result: null` is an answer and not an absence — "no definition here",
+     * "nothing to say about this". Only an `error` member is a refusal, and it
+     * is passed on with the server's own words in it for the same reason
+     * stderr is kept: a client that reports "it did not work" has thrown away
+     * the only sentence that said why.
+     */
+    let answer = match value.get("error") {
+        Some(error) => Answer::Refused {
+            code: error.get("code").and_then(|c| c.as_i64()).unwrap_or(0),
+            message: error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("no reason given")
+                .to_string(),
+        },
+        None => Answer::Result(
+            value
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        ),
+    };
+    let _ = sender.send(answer);
+}
+
 fn end_of(text: &str) -> (u32, u32) {
     let mut line = 0u32;
     let mut last = "";
@@ -300,6 +372,91 @@ pub fn project_root_for(language: &str, file: &Path, workspace_root: &Path) -> P
         .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
+/// Questions that have been asked and not yet answered.
+///
+/// **This is the one thing a client that only listens does not need.** A
+/// notification is finished when it has been written; a request is finished
+/// when a message with the same id comes back, and between those two moments
+/// the answer belongs to a thread that is not the one waiting for it. So the
+/// asking thread leaves a channel here under its id, and the reading thread —
+/// which sees every message and knows nothing about who wanted what — posts the
+/// answer into whichever channel matches.
+///
+/// The ids never repeat, so nothing here is ever ambiguous; what it can be is
+/// abandoned, which is what `Asked`'s `Drop` is for.
+type Pending = Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Answer>>>>;
+
+/// What came back for one question.
+///
+/// Not a `Result`, because neither arm is an error at this level — a server
+/// declining a question is as ordinary as answering one, and `null` is a real
+/// result meaning "nothing here". The refusal carries its code as well as its
+/// sentence, and the code is not decoration: one of them — `-32801` — means
+/// "ask me again", and a client that kept only the message would have thrown
+/// away the difference between a question worth repeating and one that is
+/// simply not answerable.
+enum Answer {
+    /// What the server said, which may legitimately be `null`.
+    Result(serde_json::Value),
+    /// The server saying no, in its own words and with its own number.
+    Refused { code: i64, message: String },
+}
+
+/// `ContentModified` — the document changed under the question.
+const CONTENT_MODIFIED: i64 = -32801;
+
+/// A question that has been sent, waiting for its answer.
+///
+/// It is a value rather than a blocking call for one reason, and it is not
+/// tidiness: **the registry of servers is behind a mutex**, and a call that
+/// held that mutex while it waited would stop every other document being
+/// synchronised for as long as one tooltip took to arrive. So the lock is held
+/// long enough to write the question and no longer, and this is what is carried
+/// out of it.
+pub struct Asked {
+    id: u64,
+    program: String,
+    method: String,
+    answer: std::sync::mpsc::Receiver<Answer>,
+    pending: Pending,
+}
+
+impl Asked {
+    /// Waits for the answer, or gives up.
+    ///
+    /// Giving up is a real outcome and not an error to be retried: a server
+    /// that is still indexing has nothing to say about a symbol yet, and it
+    /// will say so by not saying anything. The caller shows nothing.
+    pub fn wait(self, timeout: Duration) -> Result<serde_json::Value, LspError> {
+        match self.answer.recv_timeout(timeout) {
+            Ok(Answer::Result(value)) => Ok(value),
+            Ok(Answer::Refused { code, .. }) if code == CONTENT_MODIFIED => {
+                Err(LspError::Stale(self.program.clone()))
+            }
+            Ok(Answer::Refused { message, .. }) => {
+                Err(LspError::Refused(self.program.clone(), message))
+            }
+            /* Timed out, or the reading thread has gone — which means the
+            server has, and the next notification will report that properly. */
+            Err(_) => Err(LspError::Silent(self.program.clone(), self.method.clone())),
+        }
+    }
+}
+
+impl Drop for Asked {
+    /// Takes the question out of the register, answered or not.
+    ///
+    /// Without this, every question a server never answered would leave a
+    /// channel behind, and a session of a few hours would be holding thousands
+    /// of them — one per keystroke that asked for a completion and was
+    /// overtaken by the next.
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&self.id);
+        }
+    }
+}
+
 /// What the editor hears from a server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
@@ -334,6 +491,10 @@ pub struct Server {
     /// Documents this server has been told about, and where each one ended when
     /// it was last told. The end is what the next change replaces up to.
     open: HashMap<PathBuf, (u32, u32)>,
+    /// Questions asked and not yet answered, shared with the reading thread.
+    pending: Pending,
+    /// What to call this server in an error message.
+    program: String,
 }
 
 impl Server {
@@ -467,9 +628,10 @@ impl Server {
                     "name": root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                 }],
                 /* Asked for narrowly, because a capability is a promise to
-                   handle what comes back. Diagnostics are what this client
-                   understands today, and a server told otherwise would send
-                   things nobody reads. */
+                   handle what comes back — a server told the client
+                   understands something sends it, and what nobody reads is
+                   bandwidth spent on a silence. Four things are read: what a
+                   server says unasked, and the three questions below. */
                 "capabilities": {
                     "textDocument": {
                         /*
@@ -487,6 +649,48 @@ impl Server {
                          */
                         "synchronization": { "didSave": true, "dynamicRegistration": false },
                         "publishDiagnostics": { "relatedInformation": false },
+                        /* Markdown first, plain text as the fallback, and the
+                           order is the preference: a server that can only do
+                           one of them picks from this list. Both are handled —
+                           see `hover_text`, which flattens four shapes into
+                           one — so both can honestly be claimed. */
+                        "hover": {
+                            "dynamicRegistration": false,
+                            "contentFormat": ["markdown", "plaintext"],
+                        },
+                        /*
+                         * `linkSupport` changes the shape of the answer, and it
+                         * is worth asking for: a `LocationLink` carries
+                         * `targetSelectionRange` — the name of the function —
+                         * beside `targetRange`, which is the whole body of it.
+                         * Jumping to the first puts the cursor on the
+                         * declaration; jumping to the second selects forty
+                         * lines and scrolls the top of them off the screen.
+                         */
+                        "definition": { "dynamicRegistration": false, "linkSupport": true },
+                        "completion": {
+                            "dynamicRegistration": false,
+                            "completionItem": {
+                                /*
+                                 * **False, and it is not a shortcut.** A
+                                 * snippet is `${1:name}` with tab stops, and
+                                 * claiming it means being able to expand one —
+                                 * a client that declared support and then
+                                 * inserted the text literally would put
+                                 * `println!("$1")` into somebody's file. Told
+                                 * no, rust-analyzer offers `push` where it
+                                 * would have offered `push(${1:value})`, which
+                                 * is a completion that compiles.
+                                 */
+                                "snippetSupport": false,
+                                "documentationFormat": ["markdown", "plaintext"],
+                                "insertReplaceSupport": true,
+                            },
+                            /* A `CompletionList` rather than a bare array, so a
+                               server can say the list is partial. Both shapes
+                               are read either way. */
+                            "contextSupport": true,
+                        },
                     },
                     "workspace": { "workspaceFolders": true },
                 },
@@ -570,6 +774,8 @@ impl Server {
         let language_owned = language.to_string();
         let program = launch.program.clone();
         let answering = Arc::clone(&stdin);
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let waiting = Arc::clone(&pending);
         std::thread::spawn(move || {
             let mut buffer = buffer;
             let mut reader = reader;
@@ -602,14 +808,21 @@ impl Server {
                             /* A message with both an id and a method is a
                             question, and every question gets an answer —
                             see `answer_request`. A message with an id and no
-                            method is an answer to one of ours, and nothing
-                            here has asked anything worth waiting for yet. */
+                            method is an answer to one of *ours*, and it goes
+                            to whoever is waiting for that id. */
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
                                 if let (Some(id), Some(method)) = (
                                     value.get("id"),
                                     value.get("method").and_then(|m| m.as_str()),
                                 ) {
                                     answer_request(&answering, id, method);
+                                    continue;
+                                }
+
+                                if let Some(id) =
+                                    value.get("id").and_then(serde_json::Value::as_u64)
+                                {
+                                    deliver(&waiting, id, &value);
                                     continue;
                                 }
                             }
@@ -646,6 +859,8 @@ impl Server {
             stdin,
             next_id: 2,
             open: HashMap::new(),
+            pending,
+            program: launch.program.clone(),
         })
     }
 
@@ -762,6 +977,108 @@ impl Server {
         )
     }
 
+    /// Whether this server was told about this file.
+    ///
+    /// A notification can be broadcast to every server of a language and the
+    /// wrong ones will ignore it. A *question* cannot: it has to go to the
+    /// server that has the document open, or the answer is about a file it has
+    /// never read.
+    pub fn knows(&self, path: &Path) -> bool {
+        self.open.contains_key(path)
+    }
+
+    /// Sends a question and hands back the means of waiting for it.
+    ///
+    /// Two halves rather than one call, and the seam is deliberate: the caller
+    /// holds a lock over every running server, and holding it through the wait
+    /// would stop every other document being synchronised while one tooltip
+    /// was being drawn. See `Asked`.
+    pub fn ask(&mut self, method: &str, params: serde_json::Value) -> Result<Asked, LspError> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let (sender, answer) = std::sync::mpsc::channel();
+        /*
+         * Registered *before* the question is written. The other order is a
+         * race that would fire perhaps one time in a thousand — a server on the
+         * same machine can answer inside a microsecond, and an answer that
+         * arrives before anybody is registered for it is dropped as an id
+         * nobody wanted. A tooltip that fails once a week is a bug nobody can
+         * reproduce.
+         */
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.insert(id, sender);
+        }
+
+        let message = serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": params
+        });
+        if let Err(err) = write_message(&self.stdin, &message.to_string()) {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&id);
+            }
+            return Err(err);
+        }
+
+        Ok(Asked {
+            id,
+            program: self.program.clone(),
+            method: method.to_string(),
+            answer,
+            pending: Arc::clone(&self.pending),
+        })
+    }
+
+    /// A position in a document, as the protocol wants it.
+    ///
+    /// **One-based coming in, zero-based going out**, which is the same
+    /// conversion a diagnostic makes on the way back and the same reason for
+    /// doing it in one place: an answer about the wrong line looks like a
+    /// broken editor rather than like arithmetic.
+    fn at(path: &Path, line: u32, column: u32) -> serde_json::Value {
+        serde_json::json!({
+            "textDocument": { "uri": file_url(path) },
+            "position": {
+                "line": line.saturating_sub(1),
+                "character": column.saturating_sub(1),
+            },
+        })
+    }
+
+    /// What is this thing? Read the answer with `parse_hover`.
+    pub fn hover_at(&mut self, path: &Path, line: u32, column: u32) -> Result<Asked, LspError> {
+        self.ask("textDocument/hover", Self::at(path, line, column))
+    }
+
+    /// Where was it defined? Read the answer with `parse_locations`.
+    pub fn definition_at(
+        &mut self,
+        path: &Path,
+        line: u32,
+        column: u32,
+    ) -> Result<Asked, LspError> {
+        self.ask("textDocument/definition", Self::at(path, line, column))
+    }
+
+    /// What could this word become? Read the answer with `parse_completions`.
+    ///
+    /// The `context` says why the list was asked for, and the distinction is
+    /// one servers act on: `1` is a person pressing the key for it, `2` is a
+    /// character that triggers one by itself — a `.` in Rust, a `<` in HTML.
+    /// Asked as `1`, because in this editor it is always the person: the list
+    /// opens on typing, and a list that opened itself on every dot would be
+    /// a list in the way.
+    pub fn completion_at(
+        &mut self,
+        path: &Path,
+        line: u32,
+        column: u32,
+    ) -> Result<Asked, LspError> {
+        let mut params = Self::at(path, line, column);
+        params["context"] = serde_json::json!({ "triggerKind": 1 });
+        self.ask("textDocument/completion", params)
+    }
+
     /// Asks the server to stop, and makes sure it did.
     ///
     /// The protocol's way out is a `shutdown` request and then an `exit`
@@ -830,6 +1147,22 @@ impl Servers {
             .filter(|((_, lang), _)| lang == language)
             .map(|(_, server)| server)
             .collect()
+    }
+
+    /// The server that was told about this file, if one was.
+    ///
+    /// `serving` is the right question for a notification, which every server
+    /// of the language may as well hear. A question needs this one: the answer
+    /// has to come from the server that has the document open, and asking any
+    /// other is asking about a file it has never read. `None` where the file
+    /// was never opened — which happens legitimately, between the tab
+    /// appearing and the handshake finishing.
+    pub fn serving_file(&mut self, language: &str, path: &Path) -> Option<&mut Server> {
+        self.running
+            .iter_mut()
+            .filter(|((_, lang), _)| lang == language)
+            .map(|(_, server)| server)
+            .find(|server| server.knows(path))
     }
 
     /// Whether anything is running for this language and root.

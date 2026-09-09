@@ -11,9 +11,24 @@
  * `file:///c:/dev/x.rs` for a file the editor calls `C:\dev\x.rs`, and the Rust
  * side converts it before emitting — three slashes, a lowercased drive letter
  * and percent-encoded spaces are the platform's business, and it has one.
+ *
+ * The three questions below go the other way, and they are the reason the Rust
+ * client had to learn to correlate a reply with a request at all. **None of
+ * them rejects**: a server with nothing to say, a server that refused the
+ * question and a server still indexing are all answered here as nothing, on
+ * purpose. There is no tooltip, no jump and no list — which is exactly what
+ * "it does not know" looks like, and is not a thing to interrupt anybody over.
  */
 
-import { Emitter, type DiagnosticsPublished, type LanguageService, type Uri } from '@uleditor/plugin-sdk';
+import {
+  Emitter,
+  type CodeCompletion,
+  type CodeHover,
+  type CodeLocation,
+  type DiagnosticsPublished,
+  type LanguageService,
+  type Uri,
+} from '@uleditor/plugin-sdk';
 
 import { invoke } from './tauri-fs.js';
 
@@ -47,6 +62,40 @@ export class TauriLanguageServers implements LanguageService {
 
   async close(uri: Uri, language: string): Promise<void> {
     await invoke('lsp_close', { path: uri, language });
+  }
+
+  async hover(uri: Uri, language: string, line: number, column: number): Promise<CodeHover | null> {
+    try {
+      return await invoke<CodeHover | null>('lsp_hover', { path: uri, language, line, column });
+    } catch {
+      return null;
+    }
+  }
+
+  async definition(
+    uri: Uri,
+    language: string,
+    line: number,
+    column: number,
+  ): Promise<CodeLocation[]> {
+    try {
+      return await invoke<CodeLocation[]>('lsp_definition', { path: uri, language, line, column });
+    } catch {
+      return [];
+    }
+  }
+
+  async completions(
+    uri: Uri,
+    language: string,
+    line: number,
+    column: number,
+  ): Promise<CodeCompletion[]> {
+    try {
+      return await invoke<CodeCompletion[]>('lsp_completion', { path: uri, language, line, column });
+    } catch {
+      return [];
+    }
   }
 
   /**
