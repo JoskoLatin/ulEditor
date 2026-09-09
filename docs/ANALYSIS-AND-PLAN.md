@@ -226,7 +226,7 @@ State as of 9 September 2026.
 | **Quick open by file name (`Ctrl+P`)** | **done** |
 | **A menu bar, and `Alt` to reach it** (not in the plan) | **done** — everything the program can do has a place a person can find it in, without knowing a shortcut first. `AltGr` is told apart from `Ctrl` whatever Windows reports, which is what a Croatian keyboard requires: `AltGr+Q` is a backslash, and it belongs in the document |
 | Auto-update, crash reporting, opt-in telemetry | **auto-update done** — `tauri-plugin-updater`, artefacts signed with a minisign key of our own, one manifest written after every builder. It needed no certificate and no backend: the release page is the backend, and the signature is what makes it safe. Crash reporting and telemetry are not started, and telemetry stays opt-in |
-| `editor-pdf` on pdfium instead of pdf.js | deferred — pdf.js suffices, the swap is an optimisation |
+| `editor-pdf` on pdfium instead of pdf.js | **not taken, and now on a measured basis.** `pnpm pdf:timing` over 457 real PDFs, sampled by size, in the application: **median 536 ms to the first page, worst 1051 ms**, and no relationship to file size — a 4.9 MB document opens as fast as a 2 kB one. The swap would cost a native library per platform in every installer and a rewrite of the text layer, the annotations, the redaction and the retyping, all of which are built on pdf.js. Half a second is not worth that |
 
 **Reading mode was not in the plan, and it made it into the contract.** It turned
 out to be the item that best defends the project's whole thesis:
@@ -249,6 +249,22 @@ threw away because the client had declared the wrong synchronisation, and a
 request from the server that nobody answered, after which it published nothing
 at all. All three are written down in `crates/ul-lsp`, and the live test against
 a real rust-analyzer is what found two of them.
+
+**And why pdfium was not taken either.** The same instrument-before-opinion
+rule as above, and the same outcome: measured with
+[pdf-timing](../tools/pdf-timing.mjs) over 457 real PDFs, pdf.js puts the first
+page on the screen in **half a second**, worst case one second, with no
+relationship to how large the file is.
+
+The first version of that instrument reported **sixteen seconds** for a
+one-page 4.9 MB document, and the shape of the curve followed the file size
+rather than the page count — which is the signature of a harness rather than of
+a renderer. It was dropping each document into a browser by handing the bytes to
+`page.evaluate`, which serialises five megabytes as an array of five million
+numbers over the debugging protocol. It runs in the real application now,
+opening files from disk the way a person does, and nothing but a path crosses
+any boundary. A measurement that has not been checked against its own
+instrument is an opinion with a number in it.
 
 **Why `tantivy` was not taken:** an index pays off when the corpus is large and
 queries frequent, but it carries invalidation — and invalidation has no halfway

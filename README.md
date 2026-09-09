@@ -87,7 +87,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works**, and **diagnostics from a language server** where one is installed | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) + `crates/ul-lsp` |
 | Markdown | **works** — source + live preview + reading mode + **diagrams** | CodeMirror 6 + markdown-it (+ mermaid, fetched only when a diagram is there) |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
-| PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js — the planned swap to pdfium is an optimisation rather than a fix, and is not what any of the editing above waited for |
+| PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js. The planned swap to pdfium is **not taken**: measured over 457 real documents, the first page is on the screen in half a second |
 | PDF annotations | **works** — highlights, notes, ink | pdf-lib |
 | **PDF text** | **works** — typing text, font, size, colour, moving | pdf-lib + Liberation Sans |
 | **PDF redaction** | **works** — text leaves the content stream, it is not covered up | own content-stream reader |

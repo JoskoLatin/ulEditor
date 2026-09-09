@@ -47,6 +47,7 @@
     "verify:doc": "node tools/verify-doc.mjs",
     "verify:rtf": "node tools/verify-rtf.mjs",
     "fidelity": "node tools/fidelity.mjs",
+    "pdf:timing": "node tools/pdf-timing.mjs",
     "verify:office-editing": "node tools/verify-office-editing.mjs",
     "verify:desktop-ocr": "node tools/verify-desktop-ocr.mjs",
     "verify:desktop-diagram": "node tools/verify-desktop-diagram.mjs",
