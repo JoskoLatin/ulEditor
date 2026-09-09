@@ -81,6 +81,11 @@ pub const FORMATS: [&str; 4] = ["cdr", "eps", "ps", "ai"];
 /// distribution package gives. The rest are the defaults of the three
 /// installers, which is where it is on a machine nobody has configured.
 pub fn candidates() -> Vec<PathBuf> {
+    /* On a platform with no office suite to find — Android, iOS — every block
+       below is compiled out and nothing ever pushes. `-D warnings` in CI turns
+       that into a build failure, which is how this was found: the Android job
+       went red on a crate the phone build has no use for. */
+    #[allow(unused_mut)]
     let mut found = Vec::new();
 
     #[cfg(target_os = "windows")]
