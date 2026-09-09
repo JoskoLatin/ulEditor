@@ -60,7 +60,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | Format | State | Engine |
 |---|---|---|
 | Code, text (**24 languages**, incl. `.bat`, `.ps1`, shell, YAML, TOML, Go, Ruby, Swift, Lua) | **works** | CodeMirror 6 (+ a batch mode of our own — nothing anywhere had one) |
-| Markdown | **works** — source + live preview + reading mode | CodeMirror 6 + markdown-it |
+| Markdown | **works** — source + live preview + reading mode + **diagrams** | CodeMirror 6 + markdown-it (+ mermaid, fetched only when a diagram is there) |
 | **EPUB** | **works** — chapters, pages, table of contents, remembered position | own reader (fflate + DOMPurify) |
 | PDF | **works** — viewing, zoom, text layer, search, reading | pdf.js *(desktop → pdfium, phase 1)* |
 | PDF annotations | **works** — highlights, notes, ink | pdf-lib |
@@ -159,6 +159,28 @@ And a table is not an element but **punctuation**: a paragraph ending in a cell 
 
 Both open **read-only**, and that is a judgement rather than a shortfall. Everything in these formats is positional — the piece table, the property pages and the field boundaries all point at byte offsets — so inserting one character means rewriting every index that points past it. There is no seam to cut along, so no `edit` is claimed: the reader hands the view over without one, which is how this codebase says read-only, and the bar above the document says it in words.
 
+### Diagrams in Markdown
+
+A ```` ```mermaid ```` fence is drawn instead of printed — flowcharts, sequence
+diagrams, state machines, everything mermaid knows.
+
+**The library is not fetched until a diagram is on the page.** Mermaid is two
+thirds of a megabyte gzipped and almost no Markdown holds a diagram, so it is
+imported the first time a fence appears and not when the editor mounts; the
+check watches the network to make sure that stays true. Nothing is loaded from
+anywhere else either — it is bundled, like everything here.
+
+A drawn diagram is **kept**, keyed by its own source and by the theme it was
+drawn in, because the colours are baked into the SVG: typing in the paragraph
+below redraws nothing, and switching to the dark theme redraws everything. The
+labels are written as `<text>` rather than as HTML in a `foreignObject`, which
+is what lets the sanitiser keep them and the reading room paginate around them.
+
+And **a diagram that will not parse says so**, in the place the picture would
+have taken, with mermaid's own message and the source kept in front of the
+person who has to correct it. A preview that swallowed the error would leave a
+blank space, which looks exactly like a diagram that drew nothing.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -251,6 +273,7 @@ pnpm verify           # runtime check of the shell, the menus and the interface 
 pnpm verify:reading   # reading room, EPUB, Word and Excel viewing
 pnpm verify:ocr       # OCR, and the panel below
 pnpm verify:export    # text export to txt / md / docx / pdf
+pnpm verify:mermaid   # diagrams in Markdown — and that mermaid is not fetched without one
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
@@ -258,16 +281,26 @@ pnpm verify:doc       # the old binary Word, read off a hand-built file (no brow
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm verify:all       # all of the above
 
-pnpm verify:search          # project search, in the REAL desktop application
-pnpm verify:office-editing  # retyping a .docx and an .odt out to disk and back, in the same
+pnpm verify:search           # project search, in the REAL desktop application
+pnpm verify:office-editing   # retyping a .docx and an .odt out to disk and back, in the same
+pnpm verify:desktop-ocr      # OCR under the application's own CSP
+pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 ```
 
-Both of the last two start the program itself with the WebView2 debug port open
-and attach to it over CDP. Search lives in Rust and is reachable only through a
-Tauri command, so checking it in a browser would test the glue instead of the
-work; and a save has to cross the same boundary before it is a save at all —
-`verify:office-editing` types into a document, presses `Ctrl+S`, and then reads
-the file back off the disk to see what actually landed in it.
+Those four start the program itself with the WebView2 debug port open and attach
+to it over CDP, because each asks something a browser cannot answer. Search lives
+in Rust and is reachable only through a Tauri command, so checking it in a
+browser would test the glue instead of the work; a save has to cross the same
+boundary before it is a save at all — `verify:office-editing` types into a
+document, presses `Ctrl+S`, and then reads the file back off the disk to see what
+actually landed in it.
+
+The last two are there for the **CSP**, which the application has and a dev
+server does not. That difference has already cost this project once: OCR worked
+in the browser and would not have worked in the application, because Tesseract
+was fetching its worker off a CDN. Both checks therefore count what leaves the
+window — for a feature that is bundled, the answer has to be nothing — and fail
+on any console message about a refused request.
 
 `verify:ocr` needs no network, and that is the first thing it checks. The
 worker, the wasm core and both language models are served by the application

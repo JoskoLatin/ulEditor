@@ -70,3 +70,19 @@ export async function stopDesktop(session) {
   spawn('taskkill', ['/F', '/IM', 'uleditor-desktop.exe'], { shell: true, stdio: 'ignore' });
   await new Promise((r) => setTimeout(r, 1500));
 }
+
+/**
+ * Whether a URL the window asked for stayed inside the application.
+ *
+ * The checks that count outgoing requests need this, and getting it wrong is
+ * quiet in both directions: too narrow and the application's own IPC reads as an
+ * escape, too wide and a CDN fetch reads as local. Tauri's bridge is
+ * `http://ipc.localhost` — declared in the CSP's `connect-src` — and every
+ * command invoked from the page goes through it, so opening a document at all
+ * produces a handful.
+ */
+export function isLocal(url) {
+  return /^(https?:\/\/(localhost|127\.0\.0\.1|192\.168\.|ipc\.localhost|tauri\.localhost)|data:|blob:|ipc:)/.test(
+    url,
+  );
+}

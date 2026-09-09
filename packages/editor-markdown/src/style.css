@@ -197,3 +197,47 @@
   flex-direction: column;
   background: var(--book-bg);
 }
+
+/*
+ * A drawn diagram. Mermaid sizes its own SVG, and left alone that size wins
+ * over the column it sits in — so the width is handed back to the page and the
+ * height told to follow it.
+ */
+.ul-md-diagram {
+  margin: 1.2em 0;
+  text-align: center;
+}
+
+.ul-md-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/*
+ * A diagram that would not parse. The source is kept in front of the person who
+ * typed it, since that is what has to be corrected — and mermaid's own message,
+ * which names the line it stopped on.
+ */
+.ul-md-diagram-error {
+  margin: 1.2em 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  background: var(--warn-wash);
+}
+
+.ul-md-diagram-error .title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ul-md-diagram-error .why {
+  margin: 4px 0 8px;
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+
+.ul-md-diagram-error pre {
+  margin: 0;
+  overflow-x: auto;
+}

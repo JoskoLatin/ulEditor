@@ -38,6 +38,8 @@ import {
 import { PagedFlow, headingOutline, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
+import { drawDiagrams, hasDiagram } from './mermaid.js';
+
 export type MarkdownViewMode = 'split' | 'source' | 'preview';
 
 const md = new MarkdownIt({
@@ -90,6 +92,15 @@ class MarkdownEditor implements EditorInstance {
   #readingLayer: HTMLElement | null = null;
   #readingDoc: HTMLElement | null = null;
   #paged: PagedFlow | null = null;
+
+  /**
+   * Which pass of the preview a diagram belongs to. Drawing is asynchronous and
+   * the text keeps moving, so a pass that finishes after the next one started
+   * has drawn into nodes nobody can see any more — it must not then relayout the
+   * reading flow around them.
+   */
+  #pass = 0;
+  #themeSub: { dispose: () => void } | null = null;
 
   #dirtyEmitter = new Emitter<boolean>();
   #statusEmitter = new Emitter<string>();
@@ -155,6 +166,10 @@ class MarkdownEditor implements EditorInstance {
     });
 
     this.#wireScrollSync(preview);
+    // A diagram is drawn with the colours of the theme it was drawn in, so it
+    // has to be drawn again when the theme changes. Nothing else in the preview
+    // does, since the rest is styled by the application's own CSS variables.
+    this.#themeSub = this.host.theme.onDidChange(() => this.#renderPreview());
     this.#renderPreview();
     this.#emitStatus();
   }
@@ -189,6 +204,8 @@ class MarkdownEditor implements EditorInstance {
   }
 
   unmount(): void {
+    this.#themeSub?.dispose();
+    this.#themeSub = null;
     this.#paged?.destroy();
     this.#paged = null;
     this.#readingLayer = null;
@@ -205,12 +222,34 @@ class MarkdownEditor implements EditorInstance {
   }
 
   #renderPreview(): void {
-    if (this.#preview) this.#preview.innerHTML = render(this.#text());
+    const html = render(this.#text());
+    if (this.#preview) this.#preview.innerHTML = html;
     // While reading, the source stays editable underneath — the preview must follow.
     if (this.#readingDoc) {
-      this.#readingDoc.innerHTML = render(this.#text());
+      this.#readingDoc.innerHTML = html;
       this.#paged?.relayout();
     }
+    this.#drawDiagrams();
+  }
+
+  /**
+   * Mermaid fences, if there are any. The question is asked of the page rather
+   * than of the text, and asked first: a document with no diagram in it must not
+   * pay for the library, and most documents have none.
+   */
+  #drawDiagrams(): void {
+    const roots = [this.#preview, this.#readingDoc].filter(
+      (el): el is HTMLElement => el !== null,
+    );
+    if (!roots.some(hasDiagram)) return;
+
+    const pass = ++this.#pass;
+    void drawDiagrams(roots, this.host.theme.current.kind).then(() => {
+      if (pass !== this.#pass) return;
+      // A picture is taller than the three lines of source it replaced, and the
+      // reading flow paginates by height.
+      this.#paged?.relayout();
+    });
   }
 
   /* ── reading mode ──────────────────────────────────────────────────── */
@@ -269,6 +308,8 @@ class MarkdownEditor implements EditorInstance {
     });
     this.#paged = paged;
     paged.apply(options, layer);
+    // The layer was filled from the same rendered Markdown, fences and all.
+    this.#drawDiagrams();
 
     return {
       apply: (next) => paged.apply(next, layer),

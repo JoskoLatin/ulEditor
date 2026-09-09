@@ -493,5 +493,6 @@
   "Drag to turn · right-drag to move · wheel to zoom": "Povuci za okretanje · desnom tipkom za pomicanje · kotačićem za zum",
   "{triangles} triangles · {vertices} vertices · {x} × {y} × {z}": "{triangles} trokuta · {vertices} vrhova · {x} × {y} × {z}",
   "{name} could not be read: {reason}": "{name} se nije moglo pročitati: {reason}",
+  "This diagram could not be drawn.": "Ovaj se dijagram nije mogao nacrtati.",
   "3D models open read-only — ulEditor does not edit them.": "3D modeli se otvaraju samo za pregled — ulEditor ih ne uređuje."
 }

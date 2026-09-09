@@ -17,7 +17,7 @@
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { isLocal, startDesktop, stopDesktop } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PHRASE = 'ULEDITOR OFFLINE OCR';
@@ -39,9 +39,7 @@ try {
   const external = [];
   page.on('request', (request) => {
     const url = request.url();
-    if (!/^(http:\/\/(localhost|127\.0\.0\.1|192\.168\.|tauri\.localhost)|https:\/\/tauri\.localhost|data:|blob:|ipc:)/.test(url)) {
-      external.push(url);
-    }
+    if (!isLocal(url)) external.push(url);
   });
 
   const violations = [];

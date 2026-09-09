@@ -207,7 +207,7 @@ State as of 9 September 2026.
 | **English as the default interface language, Croatian in settings** | **done** |
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
 | `editor-code`: tree-sitter, LSP client | deferred to phase 1.1 |
-| `editor-markdown`: mermaid | deferred to phase 1.1 |
+| `editor-markdown`: mermaid | **done** — a fence is drawn, and the library is imported the first time one appears rather than when the editor mounts. Two thirds of a megabyte gzipped is not a cost a document without a diagram should carry |
 | Global project-wide search | **done** — scanning in Rust; `tantivy` deferred while scanning suffices |
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
 | **Quick open by file name (`Ctrl+P`)** | **done** |

@@ -143,6 +143,11 @@ jobs:
           # WebGL context that will not start on a runner is worth telling apart
           # from an editor that will not mount.
           node tools/verify-viewers.mjs --url http://localhost:5273
+          # Diagrams in Markdown, where the claim worth checking is as much about
+          # what is not fetched: mermaid is two thirds of a megabyte gzipped, and
+          # a document without a fence must not pay for it. The network is
+          # watched for that, so this cannot be checked without a browser either.
+          node tools/verify-mermaid.mjs --url http://localhost:5273
           # OCR cannot be faked: an image is drawn with known text in it, put
           # through recognition, and the text has to come back. It runs on one
           # runner rather than three because nothing in it is platform-specific
