@@ -18,6 +18,7 @@
 
 import { LOCALES, t } from '@uleditor/i18n';
 
+import { checksOnStart } from './updates.js';
 import type { Shell } from '../host/index.js';
 
 export interface EntryDefinition {
@@ -123,6 +124,12 @@ export function menuDefinitions(): MenuDefinition[] {
         'rule',
         { command: 'help.source' },
         { command: 'help.report' },
+        'rule',
+        { command: 'help.updates' },
+        {
+          command: 'help.updatesOnStart',
+          checked: (shell: Shell) => checksOnStart(shell),
+        },
         'rule',
         { command: 'help.about' },
       ],

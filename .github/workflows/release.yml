@@ -105,6 +105,10 @@ jobs:
     needs: create-release
     if: inputs.platforms != 'android'
     runs-on: ${{ matrix.os }}
+    env:
+      # A secret cannot be read in an `if:` directly, so its presence becomes a
+      # string here and the steps below branch on that.
+      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -152,13 +156,69 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Updater artifacts are signed, and signing needs a key. Without one the
+      # installers are still built and the release is still complete — only the
+      # `.sig` files and the manifest are missing, so the program on somebody's
+      # machine simply never offers this version. That is a much better failure
+      # than a release that does not happen, which is what enabling this in
+      # `tauri.conf.json` unconditionally would produce: `tauri build` refuses
+      # to create updater artifacts it cannot sign.
+      - name: Ask for updater artifacts, if there is a key to sign them with
+        if: env.HAS_SIGNING_KEY == 'true'
+        run: |
+          node -e "const f='apps/desktop/src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f,'utf8'));c.bundle.createUpdaterArtifacts=true;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
+          node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json');if(!c.bundle.createUpdaterArtifacts)process.exit(1);console.log('updater artifacts: on')"
+        shell: bash
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The private half of the update key. It never touches the repository
+          # and never reaches a developer machine; the public half is compiled
+          # into the application, which is what makes an update refusable.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          # The manifest is written by a job of its own once every builder has
+          # finished — see `updater-manifest` below.
+          includeUpdaterJson: false
+
+  updater-manifest:
+    name: The update manifest
+    needs: [create-release, desktop]
+    if: inputs.platforms != 'android'
+    runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # One manifest, written out of what is actually attached to the release.
+      # Four builders each writing their own would leave whichever finished last
+      # on the page, and the other three platforms would stop seeing updates
+      # with no error anywhere — see the comment in the script.
+      - name: latest.json
+        if: env.HAS_SIGNING_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: node tools/updater-manifest.mjs "$TAG"
+        shell: bash
+
+      - name: Say why there is no manifest
+        if: env.HAS_SIGNING_KEY != 'true'
+        run: |
+          echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so nothing was signed and no latest.json was written. The installers in this release are complete; they simply will not be offered as an update. See docs/RELEASE.md."
+        shell: bash
 
   android:
     name: Android (APK + AAB)

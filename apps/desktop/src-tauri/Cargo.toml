@@ -25,6 +25,13 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
 
+# The updater, and the restart that follows an install. Desktop only: a phone
+# updates through its store, and Tauri's own updater refuses to build for
+# Android and iOS anyway.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
 # Windows and Linux start a second copy of the program for every file
 # double-clicked. macOS does not: it hands the file to the running application
 # itself, and the plugin's own documentation says not to use it there.

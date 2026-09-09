@@ -416,6 +416,21 @@ pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
 
     /*
+     * The updater, and the restart that follows it.
+     *
+     * Desktop only, in both directions: a phone updates through its store, and
+     * Tauri's updater will not build for Android at all. The endpoint and the
+     * public key live in `tauri.conf.json` — the key is what makes this safe to
+     * have, since an update is only installed if it was signed by the private
+     * half, which never leaves GitHub Secrets. Without that, "download and run
+     * an executable from the internet" is exactly what it sounds like.
+     */
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    /*
      * A second double-click has to reach the window that is already open. Without
      * this, every file opened from Explorer starts another copy of the program,
      * each with its own tabs and its own idea of what is unsaved — and the second

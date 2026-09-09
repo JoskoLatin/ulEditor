@@ -219,8 +219,16 @@
         "name": "Image",
         "description": "Image",
         "mimeType": "image/png",
-        "role": "Viewer"
+        "role": "Editor"
       }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/JoskoLatin/ulEditor/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcxMEJGQTFGQjI3NDFFRTAKUldUZ0huU3lIL29MY1U4MEFVU2FpWnMyQzNIaEV5bmFyL1VoVm5PNGZXRi9IaEs1cGlad283NmUK"
+    }
   }
 }

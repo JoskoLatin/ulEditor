@@ -213,7 +213,7 @@ State as of 9 September 2026.
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
 | **Quick open by file name (`Ctrl+P`)** | **done** |
 | **A menu bar, and `Alt` to reach it** (not in the plan) | **done** — everything the program can do has a place a person can find it in, without knowing a shortcut first. `AltGr` is told apart from `Ctrl` whatever Windows reports, which is what a Croatian keyboard requires: `AltGr+Q` is a backslash, and it belongs in the document |
-| Auto-update, crash reporting, opt-in telemetry | needs signing and a backend; ships with the release itself |
+| Auto-update, crash reporting, opt-in telemetry | **auto-update done** — `tauri-plugin-updater`, artefacts signed with a minisign key of our own, one manifest written after every builder. It needed no certificate and no backend: the release page is the backend, and the signature is what makes it safe. Crash reporting and telemetry are not started, and telemetry stays opt-in |
 | `editor-pdf` on pdfium instead of pdf.js | deferred — pdf.js suffices, the swap is an optimisation |
 
 **Reading mode was not in the plan, and it made it into the contract.** It turned

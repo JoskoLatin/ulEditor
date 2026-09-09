@@ -17,6 +17,7 @@ import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
 import { clearRecent, hasRecent } from './recent.js';
 import { devtoolsAvailable, openDevtools, watchDevtools } from './devtools.js';
+import { canUpdate, checkForUpdates, checksOnStart, setChecksOnStart } from './updates.js';
 
 /** Where the program comes from. The Help menu is the only thing that asks. */
 const REPOSITORY = 'https://github.com/JoskoLatin/ulEditor';
@@ -350,6 +351,24 @@ export function registerCommands(shell: Shell): () => void {
       when: () => !!shell.openExternal,
       run: () => shell.openExternal?.(`${REPOSITORY}/issues`),
     }),
+    /* The updater, where a person can find it. Both rows are hidden in the web
+       build rather than shown and refused: a browser tab does not update
+       itself, and offering to would be a promise made to the wrong platform. */
+    shell.commands.register({
+      id: 'help.updates',
+      title: t('Check for updates…'),
+      category: t('Help'),
+      when: () => canUpdate(shell),
+      run: () => void checkForUpdates(shell),
+    }),
+    shell.commands.register({
+      id: 'help.updatesOnStart',
+      title: t('Check for updates on start'),
+      category: t('Help'),
+      when: () => canUpdate(shell),
+      run: () => setChecksOnStart(shell, !checksOnStart(shell)),
+    }),
+
     shell.commands.register({
       id: 'help.about',
       title: t('About ulEditor'),

@@ -51,6 +51,31 @@ The Android APK **is** signed, with a key that never leaves GitHub Secrets, so
 updates install over the top. Since it does not come from the Play Store,
 Android still asks you to permit installation from this source once.
 
+## Updates
+
+The program looks for a new version **once a day, silently**, and says something
+only when there is something to say. `Help → Check for updates…` asks
+immediately; `Help → Check for updates on start` is a tick beside it and turns
+the automatic one off.
+
+**What it sends: one GET for a static file.** No identifier, no telemetry,
+nothing about the documents open — not even the version being run, since the
+comparison happens on this side, on what came back. Only if you say yes does it
+fetch anything else, and that is the installer.
+
+**What makes it safe.** "Download an executable from the internet and run it" is
+the shape of the worst thing a program can do to somebody. Every artefact is
+signed at build time with a key whose private half never leaves GitHub Secrets,
+and the public half is compiled into the application: an update that does not
+verify against it is refused before a byte of it is executed. The request is
+made by the Rust side rather than by the window, so the page's own sandbox is
+not widened by one host for this feature.
+
+The installers are still **not code-signed** for the operating system — that is
+the certificate mentioned above, a purchase rather than a piece of work. So an
+update installs the way the first download did, warning included, and on macOS a
+new copy needs the same right-click → *Open* the first time.
+
 ## The thesis
 
 No editor works seriously with code *and* Office documents *and* PDF. VS Code has no Office. LibreOffice has no code editor. Acrobat does PDF only. ulEditor fills that gap — **not by writing its own engines, but as a shell that orchestrates existing mature projects** behind a single UX, a shared search and a cross-format clipboard.
@@ -311,6 +336,7 @@ pnpm verify:reading   # reading room, EPUB, Word and Excel viewing
 pnpm verify:ocr       # OCR, and the panel below
 pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:mermaid   # diagrams in Markdown — and that mermaid is not fetched without one
+pnpm verify:updates   # the updater: key, endpoint, permissions, manifest (no network)
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
@@ -323,9 +349,10 @@ pnpm verify:office-editing   # retyping a .docx and an .odt out to disk and back
 pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
+pnpm verify:desktop-updates  # the update check, in the program, where the plugin exists
 ```
 
-Those five start the program itself with the WebView2 debug port open and attach
+Those six start the program itself with the WebView2 debug port open and attach
 to it over CDP, because each asks something a browser cannot answer. Search lives
 in Rust and is reachable only through a Tauri command, so checking it in a
 browser would test the glue instead of the work; a save has to cross the same

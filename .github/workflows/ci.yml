@@ -63,6 +63,14 @@ jobs:
       # deliberate absence and a typo come to look exactly alike.
       - run: pnpm verify:menu
 
+      # A self-updating program has a long list of ways to fail in silence: a
+      # public key that no longer matches the private one, a permission never
+      # granted, a manifest naming an artefact nobody builds. Every one of them
+      # ends the same way — no update ever arrives, and nothing is logged
+      # anywhere. So the pieces are compared against each other, including the
+      # rule that the page's own sandbox is not widened for a request Rust makes.
+      - run: pnpm verify:updates
+
       # A format is declared twice — once by its editor, once by the shell that
       # registers it before the editor's code is fetched — and the second copy
       # is the one that decides whether a document can be saved at all. This is

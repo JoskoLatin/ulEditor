@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the main window. File system access does NOT go through the fs plugin but through our own commands in ul-core, which enforce a sandbox rooted at the workspace. The window permissions are the ones the frame in the interface needs: the window has no system title bar, so minimising, maximising, closing and dragging are ours to do.",
+  "description": "Default permissions for the main window. File system access does NOT go through the fs plugin but through our own commands in ul-core, which enforce a sandbox rooted at the workspace. The window permissions are the ones the frame in the interface needs: the window has no system title bar, so minimising, maximising, closing and dragging are ours to do. The updater may check and install, and the process may be restarted once it has — an update that needs the person to find the program again is an update half done.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -11,6 +11,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
     "core:window:allow-close",
-    "core:webview:allow-set-webview-zoom"
+    "core:webview:allow-set-webview-zoom",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

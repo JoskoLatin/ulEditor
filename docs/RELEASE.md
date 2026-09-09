@@ -58,6 +58,60 @@ Without `ANDROID_KEYSTORE_BASE64` the Android job stops immediately and says why
 The desktop installers are still built — a release does not fail because of the
 phone.
 
+## The update key
+
+The program looks for a new version by itself, and installs one only if it was
+signed with this key. That is the whole security model: the public half is
+compiled into the application, the private half never leaves GitHub Secrets, and
+an artefact that does not verify is refused before a byte of it runs. A hijacked
+release page, a proxy rewriting the download, a DNS answer from somewhere else —
+all of them end the same way.
+
+The key is created once and serves every future release:
+
+```powershell
+pnpm --filter @uleditor/desktop exec tauri signer generate -w "$HOME/.tauri/uleditor-updater.key"
+```
+
+**One already exists** at `~/.tauri/uleditor-updater.key`, and its public half is
+in [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) under
+`plugins.updater.pubkey`. It has no passphrase; `-p "a passphrase"` on the
+command above makes one that does, and then the second secret below is needed
+too.
+
+Two values under **Settings → Secrets and variables → Actions**:
+
+| Secret | Contents |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | the whole contents of `~/.tauri/uleditor-updater.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the passphrase, or nothing at all for a key without one |
+
+Keep the file **outside the repository** and back it up. This is not a
+formality, and it is the same warning as for the Android key with a different
+shape: lose the private half and every copy already installed stops seeing
+updates, because each of them verifies against the public half compiled into
+the build it is running. The only way out is a release with a new key, which
+every existing installation has to be replaced by hand.
+
+**Without the secret a release still happens.** The installers are built and
+attached as always; only the `.sig` files and `latest.json` are missing, so the
+program on somebody's machine simply never offers that version. A warning says
+so in the log of the `The update manifest` job. That is deliberate: enabling
+updater artifacts in `tauri.conf.json` unconditionally would make `tauri build`
+refuse to build at all without a key, and a release that does not happen is a
+much worse failure than one that is not offered as an update.
+
+`latest.json` is written by one job after every builder has finished, out of
+what is actually attached to the release — see
+[tools/updater-manifest.mjs](../tools/updater-manifest.mjs). Four builders each
+writing their own would leave whichever finished last on the page, and the other
+three platforms would stop seeing updates with nothing logged anywhere.
+
+Which artefact serves which platform is not a free choice: Windows updates
+through the NSIS `-setup.exe` because an MSI cannot replace a running program,
+macOS through the `.app.tar.gz` because a `.dmg` cannot be installed silently,
+and Linux through the AppImage because a `.deb` needs root.
+
 ## Publishing
 
 The version is decided in

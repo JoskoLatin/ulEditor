@@ -507,6 +507,18 @@
   "will be saved as {width} × {height} {format}": "sprema se kao {width} × {height} {format}",
   "stored sideways; a save writes it upright": "zapisana bočno; spremanje je zapisuje uspravno",
   "recompressed": "ponovno komprimirano",
+  "Check for updates…": "Provjeri ima li nadogradnje…",
+  "Check for updates on start": "Provjeri nadogradnje pri pokretanju",
+  "This build cannot update itself — it updates where it was installed from.": "Ova se verzija ne nadograđuje sama — nadograđuje se tamo odakle je instalirana.",
+  "Looking for a new version…": "Tražim novu verziju…",
+  "ulEditor {version} is the newest version.": "ulEditor {version} je najnovija verzija.",
+  "The check for updates failed: {reason}": "Provjera nadogradnji nije uspjela: {reason}",
+  "Version {version} is available. This one is {current}.": "Dostupna je verzija {version}. Ova je {current}.",
+  "Not now": "Ne sada",
+  "Install and restart": "Instaliraj i ponovno pokreni",
+  "Downloading {version}…": "Preuzimam {version}…",
+  "Downloading {version}… {percent}%": "Preuzimam {version}… {percent}%",
+  "The update could not be installed: {reason}": "Nadogradnja se nije mogla instalirati: {reason}",
   "This diagram could not be drawn.": "Ovaj se dijagram nije mogao nacrtati.",
   "3D models open read-only — ulEditor does not edit them.": "3D modeli se otvaraju samo za pregled — ulEditor ih ne uređuje."
 }

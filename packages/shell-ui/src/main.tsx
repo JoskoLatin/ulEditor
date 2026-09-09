@@ -17,6 +17,7 @@ import { App } from './App.js';
 import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
+import { checkOnStart } from './shell/updates.js';
 import { restoreZoom } from './shell/zoom.js';
 import { SIDEBAR_WIDTH, useWorkspace } from './state/workspace.js';
 
@@ -310,3 +311,14 @@ createRoot(container).render(
     <App shell={shell} />
   </StrictMode>,
 );
+
+/*
+ * The check for a new version, after the interface exists rather than before it.
+ *
+ * It is silent unless there is something to say, at most once a day, and only
+ * on the desktop — see `shell/updates.ts` for what it sends, which is one GET
+ * for a static file. Deliberately not awaited: a program that waited on the
+ * network before drawing itself would open slowly on a bad connection, and
+ * there is nothing here worth a single frame of that.
+ */
+void checkOnStart(shell);
