@@ -282,9 +282,9 @@ export class NoImageEditing implements ImageService {
 }
 
 /**
- * Conversion needs LibreOffice headless, which arrives in phase 2 through
- * `crates/ul-convert`. Until then the service exists but honestly declares
- * itself unavailable rather than leaving editors to guess.
+ * Conversion runs LibreOffice, which a browser cannot start. The desktop build
+ * uses `TauriConversion`; here the service exists and says no, rather than
+ * leaving an editor to guess from the platform.
  */
 export class NoConversion implements ConversionService {
   async available(): Promise<boolean> {
@@ -293,7 +293,7 @@ export class NoConversion implements ConversionService {
 
   async convert(_source: Uri, target: ConvertFormat): Promise<Uint8Array> {
     throw new Error(
-      t('Converting to {format} needs the LibreOffice backend, which arrives in phase 2.', {
+      t('Converting to {format} needs LibreOffice, which this build cannot start.', {
         format: target,
       }),
     );

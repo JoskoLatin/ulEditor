@@ -104,7 +104,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **Illustrator** `.ai` | **works — viewing**, because an `.ai` holds a whole PDF and is detected as one | the PDF viewer |
 | **3D models** | **works — viewing** (STL, OBJ, PLY, glTF, GLB, 3MF — turn, zoom, wireframe, triangle count) | three.js *(loaded only when a model is opened)* |
 | **RTF** | **works — viewing**, including files named `.doc` that are Rich Text underneath | own reader |
-| Corel `.cdr`, EPS, PostScript | phase 2 — each says so on opening rather than showing a blank page | LibreOffice headless (libcdr) |
+| Corel `.cdr`, EPS, PostScript, PostScript-only `.ai` | **works — viewing**, as the PDF LibreOffice makes of them; without it installed, the page says which formats that costs | LibreOffice headless (libcdr), through `crates/ul-convert` |
 | PPTX, ODP, ODG | phase 5 | Univer Slides |
 
 Formats that have no editor yet open with **a clear explanation of what is missing and when it arrives**, not with a blank screen.
@@ -279,6 +279,44 @@ below it is the shape of `Month | Amount` over `January | 1.234,50`. Markdown ha
 no headerless table — the delimiter row is part of the syntax — so the
 alternative to guessing is a blank strip above every pasted table.
 
+### The three formats that need LibreOffice
+
+`.cdr` is CorelDRAW's own and libcdr is the only thing that reads it. `.eps` and
+`.ps` are PostScript — a programming language rather than a drawing, so showing
+one means running an interpreter. An `.ai` saved without PDF compatibility is
+PostScript inside. All three open here as **the PDF LibreOffice makes of them**,
+through [crates/ul-convert/](crates/ul-convert/).
+
+**This is the one place a four-hundred-megabyte office suite is the right
+instrument**, and the contrast with `.odt` is the whole argument: an OpenDocument
+file is a ZIP of XML, so requiring an installation before a spreadsheet would
+open was a bigger imposition than writing the reader. These three hold drawing
+models nobody has reimplemented, and there is no honest way to show one without
+the code that understands it.
+
+So LibreOffice is **optional and asked for by name**. Where it is installed, the
+page offers a button; where it is not, it says which formats that costs and links
+to the download. Nothing is bundled, nothing is downloaded, and no other format
+is affected.
+
+The conversion writes **into the temporary folder, never beside the original** —
+the folder a `.cdr` lives in is usually somebody's work — and the notice says
+that the PDF on screen is a copy.
+
+Three things about driving LibreOffice from a command line are not obvious, and
+each one is a conversion that silently does nothing:
+
+- **a running LibreOffice takes the job and drops it.** The command talks to
+  whichever instance already owns the user profile, and that one is busy showing
+  somebody a document — so it exits 0 having produced no file. A profile of its
+  own per run is the fix;
+- **on Windows `soffice.exe` returns immediately.** It is a launcher; the process
+  that does the work is another one. `soffice.com` is the console wrapper that
+  waits, so it is preferred when present;
+- **the exit code is not the answer.** It is 0 for a file it could not read, for
+  a filter it does not have, and for the case above. So the output file is what
+  is waited for, and a process that ends without one is the refusal it is.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -387,9 +425,10 @@ pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
 pnpm verify:desktop-updates  # the update check, in the program, where the plugin exists
+pnpm verify:desktop-convert  # an .eps through LibreOffice and onto the screen
 ```
 
-Those six start the program itself with the WebView2 debug port open and attach
+Those seven start the program itself with the WebView2 debug port open and attach
 to it over CDP, because each asks something a browser cannot answer. Search lives
 in Rust and is reachable only through a Tauri command, so checking it in a
 browser would test the glue instead of the work; a save has to cross the same

@@ -1,0 +1,12 @@
+[package]
+name = "ul-convert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "LibreOffice, run headless, for the formats nobody else implements."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

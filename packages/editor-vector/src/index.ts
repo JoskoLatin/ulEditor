@@ -28,9 +28,12 @@
  * - **`.cdr`** is CorelDRAW's own format, and the only thing that reads it is
  *   libcdr, inside LibreOffice.
  *
- * All three therefore wait for `ul-convert` in phase 2, which brings LibreOffice
- * headless for its own reasons. Until then they say so, rather than opening
- * blank.
+ * All three therefore go through `ul-convert`, which runs LibreOffice headless
+ * and hands back a PDF. It is the one place in this program where a
+ * four-hundred-megabyte office suite is the right instrument — these formats
+ * hold drawing models nobody has reimplemented — and it is asked for by name:
+ * where it is not installed, the page says which formats that costs and offers
+ * a link, rather than opening blank or promising a phase.
  */
 
 import {
@@ -56,10 +59,10 @@ const DRAWABLE = new Set(['svg', 'svgz']);
 
 /** What a file needs before LibreOffice arrives, keyed by extension. */
 const NEEDS_CONVERSION: Record<string, string> = {
-  ai: 'This Illustrator file was saved without PDF compatibility, so it is PostScript inside. Reading it needs the LibreOffice conversion that arrives in phase 2.',
-  eps: 'EPS and PostScript are a programming language rather than a drawing, so showing one means running an interpreter. That arrives with the LibreOffice conversion in phase 2.',
-  ps: 'EPS and PostScript are a programming language rather than a drawing, so showing one means running an interpreter. That arrives with the LibreOffice conversion in phase 2.',
-  cdr: 'CorelDRAW files are read by libcdr, which comes with the LibreOffice conversion in phase 2. Nothing outside it can open the format.',
+  ai: 'This Illustrator file was saved without PDF compatibility, so it is PostScript inside. LibreOffice can turn it into a PDF this program shows.',
+  eps: 'EPS and PostScript are a programming language rather than a drawing, so showing one means running an interpreter. LibreOffice has one.',
+  ps: 'EPS and PostScript are a programming language rather than a drawing, so showing one means running an interpreter. LibreOffice has one.',
+  cdr: 'CorelDRAW files are read by libcdr, and nothing outside LibreOffice implements the format. LibreOffice can turn one into a PDF this program shows.',
 };
 
 function extensionOf(name: string): string {
@@ -101,6 +104,7 @@ class VectorViewer implements EditorInstance {
   readonly onDirtyChange = this.#dirtyEmitter.event;
 
   constructor(
+    private readonly host: EditorHost,
     private readonly doc: DocumentHandle,
     private readonly bytes: Uint8Array,
   ) {}
@@ -196,13 +200,58 @@ class VectorViewer implements EditorInstance {
     const box = document.createElement('div');
     box.className = 'ul-vec-error';
     const title = document.createElement('strong');
-    title.textContent = t('{name} cannot be shown yet', { name: this.doc.name });
+    title.textContent = t('{name} is not drawn here', { name: this.doc.name });
     const body = document.createElement('p');
     body.textContent = t(
       NEEDS_CONVERSION[extension] ?? 'No viewer is registered for this vector format yet.',
     );
     box.append(title, body);
+
+    if (NEEDS_CONVERSION[extension]) this.#offerConversion(box);
     return box;
+  }
+
+  /**
+   * The button, if there is anything behind it.
+   *
+   * Asked asynchronously and added afterwards rather than drawn and then
+   * disabled: a button that cannot be pressed still says the program could do
+   * this if you found the right way, and there is no right way without the
+   * suite installed. What appears instead is the sentence saying so, with a
+   * link — which is the actual next step.
+   */
+  #offerConversion(box: HTMLElement): void {
+    void this.host.convert
+      .available()
+      .then((available: boolean) => {
+        if (!box.isConnected) return;
+
+        if (!available) {
+          const missing = document.createElement('p');
+          missing.className = 'ul-vec-note';
+          missing.textContent = t('LibreOffice is not installed, so nothing here can read this format.');
+          box.appendChild(missing);
+          return;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ul-vec-convert';
+        button.textContent = t('Open through LibreOffice');
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          /* Through a command, so this editor needs to know nothing about tabs
+             or about where a converted file goes — the same seam OCR uses to
+             publish a result that is not a file on disk yet. */
+          void this.host.commands.execute('convert.openAsPdf', this.doc.uri);
+        });
+        box.appendChild(button);
+      })
+      .catch(() => {
+        /* Whether LibreOffice is installed is a question that cannot fail in a
+           way worth reporting: the page already says the format is not drawn
+           here, and a second error about the asking would add nothing. */
+      });
   }
 
   #fail(stage: HTMLElement, message: string): void {
@@ -423,8 +472,8 @@ export const vectorEditorProvider: EditorProvider = {
   capabilities: ['view', 'search'],
   priority: 30,
 
-  async createInstance(_host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
-    return new VectorViewer(doc, await doc.bytes());
+  async createInstance(host: EditorHost, doc: DocumentHandle): Promise<EditorInstance> {
+    return new VectorViewer(host, doc, await doc.bytes());
   },
 };
 

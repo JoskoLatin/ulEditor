@@ -4519,6 +4519,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ul-convert"
+version = "0.3.3"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ul-core"
 version = "0.3.3"
 dependencies = [
@@ -4559,6 +4567,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.20",
  "tokio",
+ "ul-convert",
  "ul-core",
  "ul-image",
 ]

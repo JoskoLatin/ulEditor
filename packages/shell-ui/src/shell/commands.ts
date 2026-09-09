@@ -10,7 +10,7 @@ import { LOCALES, t } from '@uleditor/i18n';
 
 import type { Shell, ThemePreference } from '../host/index.js';
 import { activeInstance, activeTabId, useWorkspace } from '../state/workspace.js';
-import { closeTab, openFiles, openFolder, saveActive } from './actions.js';
+import { closeTab, openFiles, openFolder, openThroughLibreOffice, saveActive } from './actions.js';
 import { chooseLocale, requestExit } from './lifecycle.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
@@ -354,6 +354,21 @@ export function registerCommands(shell: Shell): () => void {
     /* The updater, where a person can find it. Both rows are hidden in the web
        build rather than shown and refused: a browser tab does not update
        itself, and offering to would be a promise made to the wrong platform. */
+    /*
+     * The conversion, as a command, because the editor that needs it must not
+     * have to know what a shell is. `editor-vector` draws a button that runs
+     * this — the same seam OCR uses to publish its result.
+     */
+    shell.commands.register({
+      id: 'convert.openAsPdf',
+      title: t('Open through LibreOffice'),
+      category: t('File'),
+      run: (uri) => {
+        const target = typeof uri === 'string' ? uri : useWorkspace.getState().tabs.find((tab) => tab.id === activeTabId())?.uri;
+        if (target) void openThroughLibreOffice(shell, target);
+      },
+    }),
+
     shell.commands.register({
       id: 'help.updates',
       title: t('Check for updates…'),

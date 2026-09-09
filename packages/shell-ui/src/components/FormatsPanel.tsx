@@ -23,10 +23,11 @@ interface Row {
 const ROADMAP: Row[] = [
   { format: 'code', note: 'CodeMirror 6, 23 languages', phase: '' },
   { format: 'text', note: 'plain text', phase: '' },
-  { format: 'markdown', note: 'source + live preview', phase: '' },
+  { format: 'markdown', note: 'source + live preview + diagrams', phase: '' },
   { format: 'pdf', note: 'view, annotate, pages', phase: '' },
   { format: 'epub', note: 'reading, contents, search', phase: '' },
-  { format: 'image', note: 'view, OCR', phase: 'phase 1' },
+  { format: 'image', note: 'view, OCR, edit — turn, crop, resize', phase: '' },
+  { format: 'vector', note: 'SVG; .cdr and PostScript through LibreOffice', phase: '' },
   { format: 'docx', note: 'view, retype text', phase: 'phase 2' },
   { format: 'doc', note: 'view, read', phase: 'phase 2' },
   { format: 'rtf', note: 'view, read', phase: 'later' },

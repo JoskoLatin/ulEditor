@@ -6,12 +6,20 @@
  * and the editors above notice no difference.
  */
 
-import type { DirectoryEntry, DocumentHandle, EditorHost, VirtualFileSystem } from '@uleditor/plugin-sdk';
+import type {
+  ConversionService,
+  DirectoryEntry,
+  DocumentHandle,
+  EditorHost,
+  Uri,
+  VirtualFileSystem,
+} from '@uleditor/plugin-sdk';
 import { isLocale, type Locale } from '@uleditor/i18n';
 
 import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
 import { TauriImages } from './tauri-images.js';
+import { TauriConversion } from './tauri-convert.js';
 import { EditorRegistry } from './registry.js';
 import {
   Commands,
@@ -40,6 +48,13 @@ export type Platform = 'desktop' | 'web';
 
 export interface Shell extends EditorHost {
   readonly fs: ShellFileSystem;
+  /**
+   * The SDK's conversion service, plus the one thing the shell needs and a
+   * plugin does not: where the converted file *is*. A document is a path, and
+   * sending twenty megabytes of PDF through the bridge for the page to hand
+   * straight back would be the same work done twice.
+   */
+  readonly convert: ConversionService & { toPdfFile?(source: Uri): Promise<string> };
   readonly commands: Commands;
   readonly theme: Themes;
   readonly settings: Settings;
@@ -74,7 +89,9 @@ export function createShell(): Shell {
     theme: new Themes(preference),
     settings,
     notify: new Notifications(),
-    convert: new NoConversion(),
+    /* LibreOffice, and only for the drawings nothing else reads. On the web
+       there is nothing to reach, and `NoConversion` says so. */
+    convert: desktop ? new TauriConversion() : new NoConversion(),
     /* The transforms are in Rust, so they exist where Rust does. The web build
        keeps the viewer and is told to say so. */
     images: desktop ? new TauriImages() : new NoImageEditing(),

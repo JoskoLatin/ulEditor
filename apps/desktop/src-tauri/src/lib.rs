@@ -10,6 +10,7 @@ use tauri::ipc::Response;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use ul_convert::{Backend, ConvertError};
 use ul_core::{
     Detection, DirEntry, LibraryScan, SearchOutcome, SearchQuery, Stat, VfsError, Workspace,
 };
@@ -354,6 +355,81 @@ fn image_write(
     Ok(written)
 }
 
+/* ── conversions ─────────────────────────────────────────────────────── */
+
+/// The same shape as the image errors: a path the workspace refuses and a
+/// conversion that failed are one message to the person and two different
+/// things to whoever is reading a bug report.
+#[derive(Debug, thiserror::Error)]
+enum ConvertCommandError {
+    #[error(transparent)]
+    Vfs(#[from] VfsError),
+    #[error(transparent)]
+    Convert(#[from] ConvertError),
+}
+
+impl serde::Serialize for ConvertCommandError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// Whether this machine has LibreOffice, and where.
+///
+/// Asked rather than assumed, every time the question matters: somebody can
+/// install it while the program is open, and a program that decided at startup
+/// would tell them to install what they have just installed.
+#[tauri::command]
+fn convert_backend() -> Option<Backend> {
+    ul_convert::backend()
+}
+
+/// Converts one drawing to PDF and says where the PDF is.
+///
+/// The output goes into a directory of this program's own under the system
+/// temporary folder — never beside the original. A program that leaves a PDF
+/// next to somebody's drawing without being asked is a program that litters,
+/// and the folder a `.cdr` lives in is usually somebody's work.
+#[tauri::command]
+async fn convert_to_pdf(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, ConvertCommandError> {
+    let source = with_workspace(&state, |workspace| workspace.resolve(&path))?;
+    let backend = ul_convert::backend().ok_or(ConvertError::NotInstalled)?;
+
+    /* One directory per document, named after the document rather than at
+    random: a second conversion of the same file reuses it, and a person
+    looking at the temporary folder can tell what is in there. */
+    let outdir = std::env::temp_dir()
+        .join("uleditor-converted")
+        .join(digest_of(&path));
+
+    /* Two minutes. LibreOffice takes a few seconds for a drawing and can take
+    twenty on a cold start, since the first run of a fresh profile builds it;
+    a minute would time out on exactly the machine where it was slowest. */
+    let output = ul_convert::to_pdf(
+        &backend,
+        &source,
+        &outdir,
+        std::time::Duration::from_secs(120),
+    )?;
+    Ok(output.to_string_lossy().into_owned())
+}
+
+/// A short, stable, filesystem-safe name for a path.
+///
+/// Not a hash for security — for a directory name. The point is that the same
+/// document lands in the same place twice and two documents do not collide.
+fn digest_of(path: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 /* ── files the program was started with ──────────────────────────────── */
 
 /// The paths out of a command line.
@@ -473,6 +549,8 @@ pub fn run() {
             write_file,
             image_info,
             image_write,
+            convert_backend,
+            convert_to_pdf,
             search_workspace,
             list_files,
             scan_library,

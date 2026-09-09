@@ -137,6 +137,72 @@ export async function openFiles(shell: Shell): Promise<void> {
   }
 }
 
+/**
+ * A drawing nothing here reads, shown as the PDF LibreOffice makes of it.
+ *
+ * `.cdr` is CorelDRAW's own format and libcdr is the only thing that reads it;
+ * `.eps` and `.ps` are PostScript, which means an interpreter rather than a
+ * parser. This is the one place in the program where a four-hundred-megabyte
+ * office suite is the right instrument, and it is asked for by name rather than
+ * assumed: without it the person is told which formats that costs.
+ *
+ * The result is **a copy in the temporary folder**, and the notice says so. The
+ * drawing itself is never touched and nothing is ever written beside it — the
+ * folder a `.cdr` lives in is usually somebody's work.
+ */
+export async function openThroughLibreOffice(shell: Shell, uri: Uri): Promise<void> {
+  const name = uri.split(/[\\/]/).pop() ?? uri;
+
+  if (!shell.convert.toPdfFile || !(await shell.convert.available())) {
+    shell.notify.show(
+      'warning',
+      t('{name} needs LibreOffice, which is not installed. Install it and open the file again.', {
+        name,
+      }),
+      shell.openExternal
+        ? [
+            {
+              label: t('Get LibreOffice'),
+              run: () => shell.openExternal?.('https://www.libreoffice.org/download/download-libreoffice/'),
+            },
+          ]
+        : [],
+    );
+    return;
+  }
+
+  /* Sticky: a cold LibreOffice profile takes its time on the first run, and a
+     notice that vanished after four seconds would leave somebody looking at an
+     unchanged window wondering whether anything was happening. */
+  const working = shell.notify.show('info', t('Converting {name} through LibreOffice…', { name }));
+
+  try {
+    const path = await shell.convert.toPdfFile(uri);
+    working.dispose();
+
+    const adopted = await shell.fs.adoptPaths?.([path]);
+    const document = adopted?.documents[0];
+    if (!document) {
+      shell.notify.show('error', t('The conversion produced a file this program could not open.'));
+      return;
+    }
+
+    await openDocument(shell, document);
+    shell.notify.show(
+      'info',
+      t('{name} was converted to PDF. This is a copy in the temporary folder — the original is untouched.', {
+        name,
+      }),
+    );
+  } catch (err) {
+    working.dispose();
+    shell.notify.show(
+      'error',
+      t('{name} could not be converted: {reason}', { name, reason: describe(err) }),
+    );
+  }
+}
+
 export async function openFolder(shell: Shell): Promise<void> {
   try {
     const root = await shell.fs.pickDirectory();

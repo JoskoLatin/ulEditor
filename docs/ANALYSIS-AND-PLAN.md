@@ -125,7 +125,7 @@ All of them checked by `cargo-deny` / `license-checker` in CI — licences chang
 | Images | `image-rs` | **done** — crop, rotate, mirror, resize, PNG/JPEG/WebP/BMP/TIFF | MIT / Apache-2.0 | 1 |
 | XLSX | **Univer** | Univer + `calamine` (read) / `rust_xlsxwriter` (write) | Apache-2.0 / MIT | 2 |
 | DOCX | ProseMirror | `docx-rs`, mapped onto an OOXML subset | MIT | 2 |
-| ODF / conversions | LibreOffice `--headless` | `soffice` CLI orchestration from Rust | MPL-2.0 | 2 |
+| `.cdr` / EPS / PostScript | LibreOffice `--headless` | **done** — `soffice` CLI orchestration from Rust, in `crates/ul-convert` | MPL-2.0 | 2 |
 | PPTX | Univer Slides | — | Apache-2.0 | 5 |
 | OCR | — | OCRmyPDF / Tesseract | MPL-2.0 / Apache-2.0 | 5 |
 
@@ -257,7 +257,7 @@ of the two engines it was designed around has been taken.
 |---|---|
 | `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
 | `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time. ProseMirror arrives for structural editing — inserting a paragraph, splitting a table |
-| `ul-convert`: LibreOffice headless | **not started**, and smaller than it was: `.odt` and `.ods` open without it. What is left for it is `.cdr`, EPS and PostScript, whose drawing models nobody else implements |
+| `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
