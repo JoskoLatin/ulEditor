@@ -189,7 +189,7 @@ Output: `docs/adr/0001-runtime.md` with the go/no-go decision.
 
 ### Phase 1 — Desktop MVP (months 1–4)
 
-State as of 15 August 2026.
+State as of 9 September 2026.
 
 | Item | State |
 |---|---|
@@ -211,6 +211,7 @@ State as of 15 August 2026.
 | Global project-wide search | **done** — scanning in Rust; `tantivy` deferred while scanning suffices |
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
 | **Quick open by file name (`Ctrl+P`)** | **done** |
+| **A menu bar, and `Alt` to reach it** (not in the plan) | **done** — everything the program can do has a place a person can find it in, without knowing a shortcut first. `AltGr` is told apart from `Ctrl` whatever Windows reports, which is what a Croatian keyboard requires: `AltGr+Q` is a backslash, and it belongs in the document |
 | Auto-update, crash reporting, opt-in telemetry | needs signing and a backend; ships with the release itself |
 | `editor-pdf` on pdfium instead of pdf.js | deferred — pdf.js suffices, the swap is an optimisation |
 
@@ -247,14 +248,27 @@ auto-update has no meaning without a signature to check.
 
 ### Phase 2 — Office (months 4–10)
 
-The project's biggest risk, which is why it comes only once the shell stands and contributors exist.
+The project's biggest risk, which is why it comes only once the shell stands and
+contributors exist. State as of 9 September 2026 — it started early, and neither
+of the two engines it was designed around has been taken.
 
-- `editor-sheet`: Univer integration, XLSX I/O, formulas, cell formatting, basic charts, virtualisation at 100k+ rows
-- `editor-doc`: a ProseMirror schema mapped onto an OOXML subset — paragraphs, styles, lists, tables, images, header/footer, comments
-- `ul-convert`: LibreOffice headless — DOCX ↔ PDF ↔ ODF ↔ HTML, batch conversion
-- **Fidelity harness (critical, built on day one of phase 2):** a corpus of 500+ real documents; each one opened → saved → rendered to PDF → pixel-diffed against the original. Without this you have no idea whether you are losing formatting.
-- **"Fidelity mode":** if a document uses an unsupported feature, it opens **read-only through the LibreOffice renderer with a clear warning** — a silently broken version is never saved. This is the most important rule in the entire project; quietly losing a user's formatting destroys trust for good.
-- Cross-format clipboard
+| Item | State |
+|---|---|
+| `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
+| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time. ProseMirror arrives for structural editing — inserting a paragraph, splitting a table |
+| `ul-convert`: LibreOffice headless | **not started**, and smaller than it was: `.odt` and `.ods` open without it. What is left for it is `.cdr`, EPS and PostScript, whose drawing models nobody else implements |
+| **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
+| **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
+| Cross-format clipboard | not started |
+
+**Why neither engine was taken.** Both were chosen to make documents editable,
+and byte-range editing turned out to make a stronger promise than either could:
+what is not touched is not rewritten — not re-serialised, not reflowed, not
+re-kerned — so styles, numbering, images and metadata come back byte for byte
+rather than approximately. A re-serialising editor cannot claim that, and the
+harness would have nothing to measure. They become necessary at the point where
+the unit of change stops being a run or a cell — a new paragraph, a merged row,
+a recalculated total — and that is what phase 2 has left to do.
 
 Output: **v0.5**
 

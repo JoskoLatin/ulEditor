@@ -84,6 +84,20 @@ jobs:
       # so the next save does not land in the wrong sentence.
       - run: pnpm verify:odt
 
+      # And the two OpenDocument routines the page cannot see into. A date is
+      # written `2026-06-15` there and as a count of days in a converted `.xlsx`
+      # — one out and the invoice is simply dated yesterday, with nothing
+      # looking broken; a formula is turned into something readable by
+      # substitution over somebody else's string.
+      - run: pnpm verify:odf
+
+      # The old binary Word: a file assembled byte by byte and read back — the
+      # piece table, the property pages keyed by byte position, the table
+      # punctuation. The pair of encodings is the part that matters here, since
+      # `č` does not exist in CP1252 and Word therefore writes a Croatian
+      # document narrow and wide in turn, in the one file.
+      - run: pnpm verify:doc
+
       # The old binary Excel: a hand-built compound file read back, including
       # the shared string a CONTINUE record cuts in half.
       - run: pnpm verify:xls
@@ -93,11 +107,23 @@ jobs:
       # past without any of them reaching the page.
       - run: pnpm verify:rtf
 
+      # The OCR worker, wasm core and language models are copied out of
+      # node_modules and are not in the repository, so a plain `vite build`
+      # leaves them out. Tesseract then reaches for a CDN, which the desktop CSP
+      # blocks and a plane has no answer to either — so they are put in place
+      # here, and the check below runs against the same files the installer
+      # ships.
+      - run: node tools/ocr-assets.mjs
       - run: pnpm --filter @uleditor/shell-ui build
 
       # Annotations are checked without a browser: the written PDF is parsed
       # again and inspected for real annotation objects.
       - run: pnpm verify:pdf
+
+      # The same standard applied to the export: the saved file is opened again
+      # and the text taken back out of it, which is where the difference between
+      # "some bytes were written" and "Word and Acrobat can open this" shows.
+      - run: pnpm verify:export
 
       # The runtime check is driven by a real browser — static analysis does
       # not catch an editor that fails to mount.
@@ -117,6 +143,14 @@ jobs:
           # WebGL context that will not start on a runner is worth telling apart
           # from an editor that will not mount.
           node tools/verify-viewers.mjs --url http://localhost:5273
+          # OCR cannot be faked: an image is drawn with known text in it, put
+          # through recognition, and the text has to come back. It runs on one
+          # runner rather than three because nothing in it is platform-specific
+          # — the same wasm, the same model, the same Chromium — while it costs
+          # a minute of recognition each time.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            node tools/verify-ocr.mjs --url http://localhost:5273
+          fi
         shell: bash
 
       - uses: actions/upload-artifact@v7
