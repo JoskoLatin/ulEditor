@@ -269,8 +269,11 @@ work; and a save has to cross the same boundary before it is a save at all —
 `verify:office-editing` types into a document, presses `Ctrl+S`, and then reads
 the file back off the disk to see what actually landed in it.
 
-`verify:ocr` downloads a language model on first run; with no network it reports
-as skipped, not as passed.
+`verify:ocr` needs no network, and that is the first thing it checks. The
+worker, the wasm core and both language models are served by the application
+itself out of `/ocr/`, copied there by `tools/ocr-assets.mjs` on every build —
+so a build that skipped that step **fails** this check, where it used to report
+a network problem and pass.
 
 `fidelity` is the harness the plan called for, built to measure what this
 program actually promises rather than what the plan assumed it would. The plan

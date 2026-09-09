@@ -2,9 +2,17 @@
  * Runtime check of OCR and the panel below.
  *
  * OCR cannot be faked: the script draws an image with known text in it, runs
- * recognition and looks for that text coming back. The language model is fetched
- * on first use, so this check **needs the network**; without it the result is
- * reported as skipped, not as a pass.
+ * recognition and looks for that text coming back.
+ *
+ * **It needs no network, and that is checked first.** Tesseract's own default is
+ * to pull its worker, wasm core and language models off a CDN;
+ * `tools/ocr-assets.mjs` copies them into `public/ocr/` instead, so the
+ * application serves them itself — which is what the desktop CSP requires and
+ * what makes the feature work on a plane. A build that skipped that step used to
+ * make this check report a network problem and **pass**, which is the one
+ * outcome a check must never have. So the assets are confirmed to be served
+ * before anything is recognised, and a recognition that does not finish is a
+ * failure.
  *
  *   node tools/verify-ocr.mjs [--url http://localhost:5273] [--headed]
  */
@@ -43,6 +51,41 @@ try {
   await mkdir(SHOTS, { recursive: true });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.shell', { timeout: 15000 });
+
+  /* ── the assets are the application's own ──────────────────────────── */
+
+  // A missing path is not a 404 here: a single-page application answers one
+  // with its own index.html and a 200, so the status alone would call every
+  // absent file present. The content type is what tells them apart — the
+  // manifest comes back as JSON, the worker as JavaScript, a model with none at
+  // all, and the fallback as HTML.
+  const served = async (path) => {
+    const res = await fetch(new URL(path, url), { method: 'HEAD' }).catch(() => null);
+    const type = res?.headers.get('content-type') ?? '';
+    return Boolean(res?.ok) && !type.startsWith('text/html');
+  };
+
+  const manifest = await fetch(new URL('/ocr/manifest.json', url))
+    .then((r) => (r.ok && r.headers.get('content-type')?.includes('json') ? r.json() : null))
+    .catch(() => null);
+
+  check(
+    'the application serves the OCR assets itself',
+    manifest !== null,
+    manifest
+      ? `${manifest.files.length} files · ${manifest.languages.join(', ')}`
+      : 'no /ocr/manifest.json — run `node tools/ocr-assets.mjs`, then build again',
+  );
+
+  if (manifest) {
+    const missing = [];
+    for (const file of manifest.files) if (!(await served(`/ocr/${file}`))) missing.push(file);
+    check(
+      'every file the manifest names is there',
+      missing.length === 0,
+      missing.length ? `missing: ${missing.join(', ')}` : manifest.files.join(' · '),
+    );
+  }
 
   /* ── an image with known text ──────────────────────────────────────── */
 
@@ -90,20 +133,22 @@ try {
   await page.locator('.ul-img-select').selectOption('eng');
   await ocrButton.click();
 
+  // Recognition is given three minutes, because a runner is slow and the model
+  // is a few megabytes to load. With the assets missing it is given fifteen
+  // seconds: there is nothing for it to succeed with, and the check above has
+  // already said why.
   let recognised = true;
   try {
-    await page.waitForSelector('.split', { timeout: 180000 });
+    await page.waitForSelector('.split', { timeout: manifest ? 180000 : 15000 });
   } catch {
     recognised = false;
   }
 
   if (!recognised) {
+    // Nothing is fetched from outside, so there is no longer an excuse to
+    // accept: whatever the program said while failing is the whole report.
     const toast = await page.locator('.toast p').first().innerText().catch(() => '');
-    check(
-      'OCR skipped (no network for the language model)',
-      true,
-      toast.slice(0, 90) || 'no message',
-    );
+    check('recognition finished', false, toast.slice(0, 90) || 'no message, and no panel');
   } else {
     check('the panel below opened with the result', true);
 
