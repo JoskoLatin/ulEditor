@@ -57,14 +57,43 @@ pub struct DirEntry {
 }
 
 /// Directories that never deserve a place in the tree.
+///
+/// This list is the difference between a search that answers and one that
+/// hangs, and the second half of it was added after measuring rather than
+/// guessing. `crates/ul-core/examples/search-timing.rs` over one real
+/// `Documents` folder: **114,722 files, of which 90,998 were under
+/// `site-packages` and 18,721 under `__pycache__`** — a portable ComfyUI
+/// installation living in the same folder as somebody's contracts and
+/// photographs. A search took **seventeen seconds in a release build**, and
+/// almost all of it was spent reading somebody else's Python.
+///
+/// The first half of the list covers the JavaScript and Rust worlds, which is
+/// where this project's own noise comes from, and it covered nothing where the
+/// person using it actually works. The lesson is worth more than the entries:
+/// before an index is worth its invalidation, the work has to be worth doing at
+/// all. Seventeen seconds of reading `site-packages` is not a case for
+/// `tantivy` — it is a case for not reading `site-packages`.
+///
+/// Every name here has to be unambiguous. `dist`, `target` and `venv` are
+/// conventions strong enough to bet on; `build`, `lib` and `env` are not, and a
+/// person whose own folder is called `build` would lose it from their own tree.
 const NOISE: &[&str] = &[
+    // JavaScript, Rust, and this project's own output.
     "node_modules",
     ".git",
     "target",
     "dist",
     ".next",
     ".turbo",
+    // Python, which is where the seventeen seconds went.
     ".venv",
+    "venv",
+    "site-packages",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
 ];
 
 /// A directory that is never walked — neither in the tree nor in search.

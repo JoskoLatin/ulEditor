@@ -50,7 +50,11 @@ fn main() {
             outcome.scanned,
             outcome.documents.len(),
             started.elapsed(),
-            if outcome.truncated { " (truncated at the limit)" } else { "" },
+            if outcome.truncated {
+                " (truncated at the limit)"
+            } else {
+                ""
+            },
         );
     }
 }

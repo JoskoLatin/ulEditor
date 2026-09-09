@@ -209,7 +209,7 @@ State as of 9 September 2026.
 | Split view | **done** — two tab groups side by side, each with its own document in front; the horizontal panel below is separate and holds the program's own output |
 | `editor-code`: tree-sitter, LSP client | deferred to phase 1.1 |
 | `editor-markdown`: mermaid | **done** — a fence is drawn, and the library is imported the first time one appears rather than when the editor mounts. Two thirds of a megabyte gzipped is not a cost a document without a diagram should carry |
-| Global project-wide search | **done** — scanning in Rust; `tantivy` deferred while scanning suffices |
+| Global project-wide search | **done** — scanning in Rust. `tantivy` still deferred, now on a measured basis rather than an assumed one: see the table below |
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
 | **Quick open by file name (`Ctrl+P`)** | **done** |
 | **A menu bar, and `Alt` to reach it** (not in the plan) | **done** — everything the program can do has a place a person can find it in, without knowing a shortcut first. `AltGr` is told apart from `Ctrl` whatever Windows reports, which is what a Croatian keyboard requires: `AltGr+Q` is a backslash, and it belongs in the document |
@@ -233,10 +233,37 @@ piece of infrastructure that does not change the project's thesis.
 
 **Why `tantivy` was not taken:** an index pays off when the corpus is large and
 queries frequent, but it carries invalidation — and invalidation has no halfway
-solution. Scanning cannot go stale because it holds no state, and for a workspace
-of a few thousand files it answers in tenths of a second. The index stays in the
-plan for the moment that stops being true, and by then it will have a defined job
-instead of being the first assumption.
+solution. Scanning cannot go stale because it holds no state. The index stays in
+the plan for the moment that stops being true.
+
+That sentence used to end "and for a workspace of a few thousand files it answers
+in tenths of a second", which nobody had measured. It has now been measured, over
+one real `Documents` folder, with
+[search-timing](../crates/ul-core/examples/search-timing.rs):
+
+| | files walked | read as text | one search (release) |
+|---|---|---|---|
+| As it was | 100 000+ (the cap) | 72 236 | **17.2 s** |
+| With the noise list corrected | 19 575 | 8 371 | **4.7 s** |
+
+**Almost all of it was somebody else's Python.** 90 998 of those files were under
+`site-packages` and 18 721 under `__pycache__` — a portable ComfyUI installed
+into the same folder as the contracts and the photographs. The noise list covered
+`node_modules`, `.git`, `target` and `dist`: the JavaScript and Rust worlds, which
+is where *this project's* own noise comes from, and nothing where the person using
+it actually works.
+
+So the measurement did not make the case for an index. It made the case for not
+reading `site-packages`, which is a dozen lines and no invalidation. Seventeen
+seconds is the sort of number that would have justified any amount of machinery,
+and the machinery would have indexed the same ninety thousand files nobody wanted
+searched.
+
+**What is left is 4.7 seconds, and that is still not tenths.** It is spent on
+per-file overhead — eight thousand opens, probes and reads, one after another, on
+one thread. Parallelism is the next lever and it is a smaller change than an
+index: no state, nothing to invalidate, and the same answer. The index comes after
+that, if it still has a job.
 
 Output: **v0.2** — installers for Windows, macOS and Linux, plus a signed
 Android APK, built by one tag in CI.

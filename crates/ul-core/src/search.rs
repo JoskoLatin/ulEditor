@@ -421,6 +421,14 @@ mod tests {
         write(&root, "src/a.ts", "needle\n");
         write(&root, "node_modules/pkg/b.ts", "needle\n");
         write(&root, "target/c.ts", "needle\n");
+        /* The Python half of the list, and the reason it is there: a portable
+        ComfyUI in somebody's Documents put ninety-one thousand files under
+        `site-packages` and eighteen thousand under `__pycache__`, and a
+        search over that folder took seventeen seconds. */
+        write(&root, "site-packages/pkg/d.py", "needle\n");
+        write(&root, "__pycache__/e.pyc", "needle\n");
+        write(&root, "venv/lib/f.py", "needle\n");
+        write(&root, ".mypy_cache/g.json", "needle\n");
 
         let mut ws = Workspace::new();
         ws.add_root(&root).unwrap();
