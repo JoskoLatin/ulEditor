@@ -245,6 +245,8 @@ one real `Documents` folder, with
 |---|---|---|---|
 | As it was | 100 000+ (the cap) | 72 236 | **17.2 s** |
 | With the noise list corrected | 19 575 | 8 371 | **4.7 s** |
+| And the reading done on eight threads | 19 575 | 8 371 | **2.2 s** |
+| This repository, for comparison | 1 895 | 816 | **171 ms** |
 
 **Almost all of it was somebody else's Python.** 90 998 of those files were under
 `site-packages` and 18 721 under `__pycache__` — a portable ComfyUI installed
@@ -259,11 +261,17 @@ seconds is the sort of number that would have justified any amount of machinery,
 and the machinery would have indexed the same ninety thousand files nobody wanted
 searched.
 
-**What is left is 4.7 seconds, and that is still not tenths.** It is spent on
-per-file overhead — eight thousand opens, probes and reads, one after another, on
-one thread. Parallelism is the next lever and it is a smaller change than an
-index: no state, nothing to invalidate, and the same answer. The index comes after
-that, if it still has a job.
+**Then the reading was parallelised**, which is a smaller change than an index
+and holds no state either: the walk hands out blocks of files, each block is read
+on up to eight threads, and the findings are merged in the order the paths were
+in — so two runs of one search still agree, and a search for a common word still
+stops as soon as it has its five hundred hits. 4.7 s became 2.2 s.
+
+**And the original claim turned out to be true where it mattered.** This
+repository — an ordinary project folder, which is what somebody opens — answers
+in **171 ms**. "Tenths of a second for a few thousand files" was right; what was
+wrong was assuming a `Documents` folder is a few thousand files. The index still
+has no job.
 
 Output: **v0.2** — installers for Windows, macOS and Linux, plus a signed
 Android APK, built by one tag in CI.

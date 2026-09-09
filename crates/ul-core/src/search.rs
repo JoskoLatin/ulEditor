@@ -7,10 +7,24 @@
 //! removed — every one of those has to update the index by agreement, or search
 //! quietly lies. Scanning cannot go stale because it holds no state at all.
 //!
-//! For a workspace of a few thousand files the answer arrives in tenths of a
-//! second. An index becomes justified only once that stops being true, and by
-//! then it will have a clearly defined job instead of being the first
-//! assumption.
+//! **Measured, since the claim used to be asserted.** With
+//! `examples/search-timing.rs`, release build, one search:
+//!
+//! | Workspace | files walked | read as text | one search |
+//! |---|---|---|---|
+//! | This repository | 1 895 | 816 | **171 ms** (truncated at 500 hits) |
+//! | A `Documents` folder with a portable ComfyUI in it | 19 575 | 8 371 | **2.2 s** |
+//!
+//! The second row was **17.2 s** before two changes. The first was not clever
+//! at all: 90 998 of those files were under `site-packages` and 18 721 under
+//! `__pycache__`, and the noise list in `vfs.rs` knew about `node_modules` and
+//! `target` but nothing about Python. The second was reading the files a block
+//! at a time on several threads instead of one after another, which took what
+//! remained from 4.7 s to 2.2 s.
+//!
+//! An index becomes justified only once *that* stops being true. It has not: a
+//! project folder answers in a sixth of a second, and the pathological case is
+//! two seconds without holding any state that could go stale.
 //!
 //! Everything goes through `Workspace::resolve`, so search cannot leave the
 //! sandbox, not even via a symlink.
@@ -30,6 +44,22 @@ const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// How many bytes from the start we look at to decide whether content is binary.
 const PROBE: usize = 8 * 1024;
+
+/// How many threads read files at once.
+///
+/// Capped rather than "as many as the machine has": this is bound by the disk,
+/// not by the processor — eight thousand files of a few kilobytes each is almost
+/// all waiting. Past a handful of readers the queue forms in the drive instead
+/// of in the program, and on a spinning disk it gets slower rather than faster.
+const MAX_READERS: usize = 8;
+
+/// How many files one reader takes at a time.
+///
+/// The block is the unit of both parallelism and stopping. Larger blocks spend
+/// less on coordination; smaller ones stop sooner once the limit is reached.
+/// Thirty-two files each is a few milliseconds of work per thread and a
+/// granularity nobody can perceive.
+const PER_READER: usize = 32;
 
 /// Length of the excerpt around a hit in the results view.
 const PREVIEW_BEFORE: usize = 40;
@@ -216,115 +246,63 @@ impl Workspace {
             whole_word: query.whole_word,
         };
 
+        let readers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(MAX_READERS);
+        let block = readers * PER_READER;
+
         for root in self.roots() {
             // The root was already checked when added, but `resolve` is the only
             // place allowed to confirm a path is inside the sandbox.
             let start = self.resolve(root)?;
-            self.walk(&start, &needle, query, &mut outcome);
+
+            /*
+             * Walked in blocks, and each block read on several threads at once.
+             * Two properties had to survive that, and they are the reason the
+             * block exists at all rather than a thread per file:
+             *
+             * - **the order.** Results are reported in the order the tree is
+             *   walked, and that order is what makes two runs of one search
+             *   agree. The walk still produces paths depth-first in sorted
+             *   order, a block is a slice of that sequence, and the findings are
+             *   merged in the order the paths were in. Which thread finished
+             *   first changes nothing.
+             * - **stopping early.** A search for a common word used to stop as
+             *   soon as it had its five hundred hits, and walking the whole tree
+             *   before reading anything would have thrown that away. So the walk
+             *   pauses at every block boundary for the reading to catch up, and
+             *   either side can end it.
+             */
+            each_block(&start, block, |paths| {
+                let findings = scan_block(paths, &needle, query, readers);
+
+                for finding in findings {
+                    if finding.scanned {
+                        outcome.scanned += 1;
+                    }
+                    if let Some(document) = finding.document {
+                        if outcome.documents.len() < query.limit {
+                            outcome.documents.push(document);
+                        }
+                    }
+                    for hit in finding.hits {
+                        if outcome.hits.len() >= query.limit {
+                            outcome.truncated = true;
+                            return false;
+                        }
+                        outcome.hits.push(hit);
+                    }
+                }
+                true
+            });
+
             if outcome.truncated {
                 break;
             }
         }
 
         Ok(outcome)
-    }
-
-    fn walk(&self, dir: &Path, needle: &Needle, query: &SearchQuery, outcome: &mut SearchOutcome) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-
-        // Sorted so results are stable between runs; `read_dir` guarantees no order.
-        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-
-        for path in paths {
-            if outcome.truncated {
-                return;
-            }
-
-            let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-                continue;
-            };
-
-            if path.is_dir() {
-                if crate::vfs::is_noise(&name) {
-                    continue;
-                }
-                self.walk(&path, needle, query, outcome);
-                continue;
-            }
-
-            self.scan_file(&path, &name, needle, query, outcome);
-        }
-    }
-
-    fn scan_file(
-        &self,
-        path: &Path,
-        name: &str,
-        needle: &Needle,
-        query: &SearchQuery,
-        outcome: &mut SearchOutcome,
-    ) {
-        let Ok(meta) = fs::metadata(path) else {
-            return;
-        };
-        if meta.len() > MAX_FILE_BYTES {
-            return;
-        }
-
-        let format = detect_by_name(name).format;
-        if FormatId::text_is_inside_a_container(format) {
-            if outcome.documents.len() < query.limit {
-                outcome.documents.push(DocumentCandidate {
-                    uri: display(path),
-                    name: name.to_owned(),
-                    format: format.as_str().to_owned(),
-                });
-            }
-            return;
-        }
-
-        let Ok(bytes) = fs::read(path) else {
-            return;
-        };
-        if !looks_textual(&bytes) {
-            return;
-        }
-        let Ok(text) = String::from_utf8(bytes) else {
-            return;
-        };
-
-        outcome.scanned += 1;
-
-        let uri = display(path);
-        let mut in_file = 0usize;
-        let mut positions = Vec::new();
-
-        for (index, line) in text.lines().enumerate() {
-            if in_file >= query.per_file {
-                break;
-            }
-
-            positions.clear();
-            needle.find_in(line, &mut positions, query.per_file - in_file);
-
-            for &(start, end) in &positions {
-                if outcome.hits.len() >= query.limit {
-                    outcome.truncated = true;
-                    return;
-                }
-                outcome.hits.push(SearchHit {
-                    uri: uri.clone(),
-                    name: name.to_owned(),
-                    line: index as u32 + 1,
-                    column: line[..start].chars().count() as u32 + 1,
-                    preview: preview_of(line, start, end),
-                });
-                in_file += 1;
-            }
-        }
     }
 
     /// A list of every file in the workspace — for quick open by name.
@@ -336,6 +314,196 @@ impl Workspace {
         }
         Ok(out)
     }
+}
+
+/* ── one file, and a block of them ───────────────────────────────────── */
+
+/// What one file contributed.
+///
+/// A value rather than a mutation, and that is the change that made the reading
+/// parallel: a function of a path and a needle can run on any thread, while one
+/// that pushed into the outcome could only ever run on the thread that owned it.
+#[derive(Debug, Default)]
+struct Finding {
+    /// Whether the file was read as text at all — the "searched N files" count.
+    scanned: bool,
+    hits: Vec<SearchHit>,
+    /// A document whose text is inside a container, for the readers to search.
+    document: Option<DocumentCandidate>,
+}
+
+/// Walks depth-first in sorted order, handing out blocks of files.
+///
+/// The order is the one a person sees in the tree, and the one two runs of the
+/// same search have to agree on. `read_dir` promises no order at all, so every
+/// directory is sorted; the stack holds files and directories together so that a
+/// directory is descended exactly where it appears, which is what the recursive
+/// version did.
+///
+/// `sink` returns `false` to stop — the search has what it asked for, and the
+/// rest of the tree is nobody's business.
+fn each_block(start: &Path, block: usize, mut sink: impl FnMut(&[PathBuf]) -> bool) {
+    enum Item {
+        File(PathBuf),
+        Dir(PathBuf),
+    }
+
+    let mut stack = vec![Item::Dir(start.to_path_buf())];
+    let mut pending: Vec<PathBuf> = Vec::with_capacity(block);
+
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::File(path) => {
+                pending.push(path);
+                if pending.len() >= block {
+                    if !sink(&pending) {
+                        return;
+                    }
+                    pending.clear();
+                }
+            }
+            Item::Dir(dir) => {
+                let Ok(entries) = fs::read_dir(&dir) else {
+                    continue;
+                };
+                let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+                paths.sort();
+
+                /* Pushed in reverse, because a stack hands back what went on
+                last: that is what turns "sorted" into "walked in order". */
+                for path in paths.into_iter().rev() {
+                    let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
+                    else {
+                        continue;
+                    };
+                    if path.is_dir() {
+                        if !crate::vfs::is_noise(&name) {
+                            stack.push(Item::Dir(path));
+                        }
+                    } else {
+                        stack.push(Item::File(path));
+                    }
+                }
+            }
+        }
+    }
+
+    if !pending.is_empty() {
+        sink(&pending);
+    }
+}
+
+/// Reads one block of files, on as many threads as it is worth.
+///
+/// The findings come back in the order the paths were in, whichever thread
+/// produced them: the slices are joined in order rather than as they finish.
+fn scan_block(
+    paths: &[PathBuf],
+    needle: &Needle,
+    query: &SearchQuery,
+    readers: usize,
+) -> Vec<Finding> {
+    if readers <= 1 || paths.len() < 2 {
+        return paths
+            .iter()
+            .map(|path| scan_one(path, needle, query))
+            .collect();
+    }
+
+    let per = paths.len().div_ceil(readers);
+    let mut findings = Vec::with_capacity(paths.len());
+
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .chunks(per)
+            .map(|slice| {
+                scope.spawn(move || {
+                    slice
+                        .iter()
+                        .map(|path| scan_one(path, needle, query))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            /* A panic in here is a bug in the text scanning rather than a
+            condition to absorb: swallowing it would drop a slice of the
+            workspace out of the results with nothing said anywhere, which is
+            the failure this project likes least. */
+            findings.extend(handle.join().expect("a file scan panicked"));
+        }
+    });
+
+    findings
+}
+
+/// One file: read it, and find what is in it.
+fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
+    let mut finding = Finding::default();
+
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return finding;
+    };
+    let Ok(meta) = fs::metadata(path) else {
+        return finding;
+    };
+    if meta.len() > MAX_FILE_BYTES {
+        return finding;
+    }
+
+    let format = detect_by_name(&name).format;
+    if FormatId::text_is_inside_a_container(format) {
+        /* Not read here at all: the text of a `.docx` is inside a ZIP, and the
+        reader that understands it lives in the frontend. What goes back is
+        the offer — the shell asks whether to search them too, which is the
+        difference between this and a grep. The cap is applied by the caller,
+        which is the only place that knows how many there already are. */
+        finding.document = Some(DocumentCandidate {
+            uri: display(path),
+            name: name.clone(),
+            format: format.as_str().to_owned(),
+        });
+        return finding;
+    }
+
+    let Ok(bytes) = fs::read(path) else {
+        return finding;
+    };
+    if !looks_textual(&bytes) {
+        return finding;
+    }
+    let Ok(text) = String::from_utf8(bytes) else {
+        return finding;
+    };
+
+    finding.scanned = true;
+
+    let uri = display(path);
+    let mut in_file = 0usize;
+    let mut positions = Vec::new();
+
+    for (index, line) in text.lines().enumerate() {
+        if in_file >= query.per_file {
+            break;
+        }
+
+        positions.clear();
+        needle.find_in(line, &mut positions, query.per_file - in_file);
+
+        for &(start, end) in &positions {
+            finding.hits.push(SearchHit {
+                uri: uri.clone(),
+                name: name.clone(),
+                line: index as u32 + 1,
+                column: line[..start].chars().count() as u32 + 1,
+                preview: preview_of(line, start, end),
+            });
+            in_file += 1;
+        }
+    }
+
+    finding
 }
 
 use crate::vfs::{stat_of, Stat};
@@ -388,6 +556,127 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, body).unwrap();
+    }
+
+    /// Enough files, deep enough, that the reading is genuinely spread across
+    /// threads — a block is thirty-two files per reader, so a couple of hundred
+    /// crosses several blocks on any machine.
+    fn many_files(root: &Path, count: usize) -> Vec<String> {
+        let mut written = Vec::new();
+        for i in 0..count {
+            let rel = format!("d{:02}/f{:03}.txt", i % 7, i);
+            write(
+                root,
+                &rel,
+                "needle here
+",
+            );
+            written.push(rel);
+        }
+        written.sort();
+        written
+    }
+
+    #[test]
+    fn reading_in_parallel_does_not_reorder_the_results() {
+        /* The order is the one the tree is walked in, and it has to be the same
+        whichever thread finished first — it is what makes two runs of one
+        search agree, and what keeps a result list still while somebody reads
+        it.
+
+        For this fixture, depth-first in sorted order is the same as sorted
+        by path, so "in order" can be asked of the answer directly rather
+        than by rebuilding the expected list with the platform's separator. */
+        let root = temp_root("order");
+        let expected = many_files(&root, 200);
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let out = ws.search(&query("needle")).unwrap();
+        assert_eq!(out.hits.len(), expected.len());
+
+        let uris: Vec<&str> = out.hits.iter().map(|hit| hit.uri.as_str()).collect();
+        let mut sorted = uris.clone();
+        sorted.sort_unstable();
+        assert_eq!(uris, sorted, "walked out of order");
+    }
+
+    #[test]
+    fn the_same_search_twice_gives_the_same_answer() {
+        let root = temp_root("stable");
+        many_files(&root, 200);
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let first = ws.search(&query("needle")).unwrap();
+        let second = ws.search(&query("needle")).unwrap();
+
+        let uris = |out: &SearchOutcome| out.hits.iter().map(|h| h.uri.clone()).collect::<Vec<_>>();
+        assert_eq!(uris(&first), uris(&second));
+        assert_eq!(first.scanned, second.scanned);
+    }
+
+    #[test]
+    fn it_still_stops_as_soon_as_it_has_enough() {
+        /* The whole reason the walk hands out blocks instead of a file list:
+        walking two hundred files before reading any of them would have
+        thrown away the early exit a common word depends on. The limit here
+        is smaller than one block, so the walk must stop inside the first. */
+        let root = temp_root("enough");
+        many_files(&root, 200);
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let mut wanted = query("needle");
+        wanted.limit = 10;
+
+        let out = ws.search(&wanted).unwrap();
+        assert!(out.truncated, "should have said it stopped early");
+        assert_eq!(out.hits.len(), 10);
+        /* And it did not read the whole tree to find them: one block is at
+        most eight readers of thirty-two files. */
+        assert!(
+            out.scanned <= MAX_READERS * PER_READER,
+            "read {} files",
+            out.scanned
+        );
+    }
+
+    #[test]
+    fn a_deep_tree_is_walked_in_the_order_a_person_sees_it() {
+        /* A directory is descended where it appears, not after every file in
+        its parent — the stack in `each_block` exists to reproduce exactly
+        the order the recursive walk had. */
+        let root = temp_root("deep");
+        write(
+            &root, "a.txt", "needle
+",
+        );
+        write(
+            &root,
+            "b/inner.txt",
+            "needle
+",
+        );
+        write(
+            &root, "c.txt", "needle
+",
+        );
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let names: Vec<String> = ws
+            .search(&query("needle"))
+            .unwrap()
+            .hits
+            .iter()
+            .map(|hit| hit.name.clone())
+            .collect();
+        assert_eq!(names, vec!["a.txt", "inner.txt", "c.txt"]);
     }
 
     fn query(text: &str) -> SearchQuery {
