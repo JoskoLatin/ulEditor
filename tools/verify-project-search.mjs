@@ -181,7 +181,16 @@ try {
   await browser?.close().catch(() => {});
   app.kill();
   // Tauri leaves child processes behind; the port has to be free for the next run.
-  spawn('taskkill', ['/F', '/IM', 'uleditor-desktop.exe'], { shell: true, stdio: 'ignore' });
+  /*
+   * By process tree, not by name.
+   *
+   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
+   * machine — including the one the person running this check has open, with
+   * whatever is unsaved in it. The dev build and the installed build share a
+   * name and nothing else, so the only safe handle is the process this harness
+   * started itself; `/T` takes the children Tauri leaves behind with it.
+   */
+  if (app.pid) spawn('taskkill', ['/F', '/T', '/PID', String(app.pid)], { shell: true, stdio: 'ignore' });
   await rm(workspace, { recursive: true, force: true }).catch(() => {});
 }
 

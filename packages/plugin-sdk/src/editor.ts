@@ -144,6 +144,19 @@ export interface EditorInstance {
    */
   revealPosition?(line: number, column: number): void;
 
+  /**
+   * Adds a paragraph after the one the cursor is in.
+   *
+   * Optional twice over, and the second one matters: an editor may implement it
+   * and still be unable to do it *here* — a Word document can take a new
+   * paragraph and an OpenDocument text opened in the same editor cannot, and
+   * inside a table cell neither can. So `canInsertParagraph` is asked before the
+   * command is offered, the way `canUndo` is, rather than the shell reading a
+   * method's existence as a promise about a particular document.
+   */
+  insertParagraph?(): void;
+  canInsertParagraph?(): boolean;
+
   readonly onDirtyChange: Event<boolean>;
   /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */
   readonly onStatusChange: Event<string>;

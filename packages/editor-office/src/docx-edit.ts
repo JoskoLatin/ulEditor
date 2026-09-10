@@ -258,27 +258,12 @@ export interface RunEdit {
 /**
  * Writes the new texts into the document, changing only their ranges.
  *
- * It works from the end backwards so the offsets do not shift underfoot. The new
- * element always gets `xml:space="preserve"`: without it Word discards leading
- * and trailing spaces, so "name " would quietly become "name".
+ * The rewriting itself lives in `applyDocxEdits`, which does this and the new
+ * paragraphs in one pass — two passes over the same offsets would be two chances
+ * to move them under each other.
  */
 export function applyRunEdits(xml: string, runs: RunSpan[], edits: RunEdit[]): string {
-  const byIndex = new Map(runs.map((run) => [run.index, run]));
-
-  const ordered = [...edits]
-    .map((edit) => ({ edit, run: byIndex.get(edit.index) }))
-    .filter((pair): pair is { edit: RunEdit; run: RunSpan } => !!pair.run?.text && !pair.run.refusal)
-    .sort((a, b) => b.run.text!.start - a.run.text!.start);
-
-  let out = xml;
-  for (const { edit, run } of ordered) {
-    const span = run.text!;
-    out =
-      out.slice(0, span.start) +
-      `<w:t xml:space="preserve">${escapeXml(edit.text)}</w:t>` +
-      out.slice(span.end);
-  }
-  return out;
+  return applyDocxEdits(xml, runs, edits);
 }
 
 /**
@@ -286,11 +271,458 @@ export function applyRunEdits(xml: string, runs: RunSpan[], edits: RunEdit[]): s
  *
  * Every other part of the archive passes through **untouched**: styles,
  * numbering, images, headers, metadata. Exactly one part changes, and inside it
- * exactly the ranges the user rewrote.
+ * exactly the ranges the user rewrote and the paragraphs they added.
  */
-export function writeDocx(archive: Archive, runs: RunSpan[], xml: string, edits: RunEdit[]): Uint8Array {
+export function writeDocx(
+  archive: Archive,
+  runs: RunSpan[],
+  xml: string,
+  edits: RunEdit[],
+  inserting?: Inserting,
+): Uint8Array {
   const next: Record<string, Uint8Array> = {};
   for (const [path, data] of Object.entries(archive)) next[path] = data;
-  next['word/document.xml'] = strToU8(applyRunEdits(xml, runs, edits));
+  next['word/document.xml'] = strToU8(applyDocxEdits(xml, runs, edits, inserting));
   return zipSync(next);
+}
+
+/* ── odlomci ─────────────────────────────────────────────────────────── */
+
+export interface ParagraphSpan {
+  /** The ordinal among all `w:p` in the part, in document order. */
+  index: number;
+  start: number;
+  end: number;
+  /** The `w:pPr` element's range, when the paragraph carries one of its own. */
+  props: { start: number; end: number } | null;
+  /** The paragraph ends a section: its `w:pPr` holds a `w:sectPr`. */
+  section: boolean;
+  /** Why nothing may be inserted after this paragraph; `null` when it may. */
+  refusal: string | null;
+}
+
+/**
+ * The regions a paragraph can sit in.
+ *
+ * Only a direct child of `w:body` is offered, and the reason is not timidity: a
+ * paragraph inside a table cell belongs to a grid whose row and column counts
+ * are declared elsewhere, one inside a text box belongs to a drawing with its
+ * own extents, and one inside `w:sdtContent` belongs to a content control whose
+ * boundary a new sibling would cross. Each is a different problem with a
+ * different answer, and answering them all at once is how a program comes to
+ * corrupt a file it did not understand.
+ */
+const REGION = new Set([
+  'body',
+  'tc',
+  'txbxContent',
+  'sdtContent',
+  'hdr',
+  'ftr',
+  'footnote',
+  'endnote',
+  'comment',
+  'p',
+]);
+
+/**
+ * Finds every `w:p` in the part, with the range of its own properties.
+ *
+ * The ordinals count **every** paragraph, nested ones included, so an index is a
+ * stable name for a paragraph regardless of what may be inserted after it. Which
+ * of them a new paragraph may follow is a separate question, and `refusal`
+ * answers it.
+ */
+export function findParagraphs(xml: string): ParagraphSpan[] {
+  const paragraphs: ParagraphSpan[] = [];
+  /** Every open element, so nesting is read rather than guessed. */
+  const stack: { local: string; start: number }[] = [];
+  /** The paragraphs currently open; the innermost is last. */
+  const open: ParagraphSpan[] = [];
+
+  const region = (): string => {
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const local = stack[i]!.local;
+      if (REGION.has(local)) return local;
+    }
+    return '';
+  };
+
+  const begin = (start: number, end: number): ParagraphSpan => {
+    const where = region();
+    const span: ParagraphSpan = {
+      index: paragraphs.length,
+      start,
+      end,
+      props: null,
+      section: false,
+      refusal: where === 'body' ? null : 'the paragraph is not in the body of the document',
+    };
+    paragraphs.push(span);
+    return span;
+  };
+
+  for (const tag of scanTags(xml)) {
+    const local = localName(tag.name);
+
+    if (tag.closing) {
+      const popped = stack.pop();
+      if (!popped) continue;
+      if (popped.local === 'p') {
+        const span = open.pop();
+        if (span) span.end = tag.end;
+      } else if (popped.local === 'pPr' && stack[stack.length - 1]?.local === 'p') {
+        // `w:pPr` is the paragraph's own only when the paragraph is its parent.
+        const span = open[open.length - 1];
+        if (span) span.props = { start: popped.start, end: tag.end };
+      }
+      continue;
+    }
+
+    if (tag.selfClosing) {
+      // `<w:p/>` is a complete empty paragraph, and `<w:sectPr/>` a section with defaults.
+      if (local === 'p') begin(tag.start, tag.end);
+      else if (local === 'sectPr' && stack[stack.length - 1]?.local === 'pPr') {
+        const span = open[open.length - 1];
+        if (span) span.section = true;
+      }
+      continue;
+    }
+
+    if (local === 'p') open.push(begin(tag.start, tag.end));
+    else if (local === 'sectPr' && stack[stack.length - 1]?.local === 'pPr') {
+      const span = open[open.length - 1];
+      if (span) span.section = true;
+    }
+    stack.push({ local, start: tag.start });
+  }
+
+  return paragraphs;
+}
+
+/** The paragraph a run sits in, by containment; `null` for a run outside every paragraph. */
+export function paragraphOfRun(paragraphs: ParagraphSpan[], run: RunSpan): ParagraphSpan | null {
+  let innermost: ParagraphSpan | null = null;
+  for (const span of paragraphs) {
+    if (span.start > run.start) break;
+    if (span.end >= run.end) innermost = span;
+  }
+  return innermost;
+}
+
+/* ── a new paragraph ─────────────────────────────────────────────────── */
+
+/**
+ * A paragraph that is not in the file yet.
+ *
+ * It is **a plan, not a write** — the shape [`editor-pdf`](../../editor-pdf/src/document.ts)
+ * proved: *"page operations change nothing until a save — until then there is
+ * only a plan."* Every step names a paragraph of the **original** part and is
+ * applied to that original on every save, so saving twice writes the same file,
+ * and changing your mind after a save is still possible. Nothing here shifts an
+ * ordinal, because nothing here ever advances the document the ordinals count.
+ */
+export interface ParagraphInsert {
+  /** The paragraph the new one follows, by its ordinal in the original part. */
+  after: number;
+  /** The text. A step with nothing in it is not written — see `applyDocxEdits`. */
+  text: string;
+}
+
+/**
+ * What a style hands on to the paragraph after it.
+ *
+ * This is the whole of "properties resolved rather than copied". A heading is
+ * not a heading because of the bytes in its `w:pPr` — it is a heading because
+ * its `w:pStyle` names a style in `word/styles.xml`, and that style says what
+ * the **next** paragraph should be. Copying the bytes gives a second heading;
+ * reading `w:next` gives what Word gives, which is body text.
+ *
+ * Over the 49 real documents this was measured on, 9 declare `w:next` at all —
+ * 90 declarations, and every heading style among them hands on to body text:
+ * `Naslov1 → Normal`, and in one file `Heading → Tijeloteksta`.
+ */
+export interface Succession {
+  /** `styleId` to the style the following paragraph takes. */
+  next: Map<string, string>;
+  /** The default paragraph style; a `w:pStyle` naming it is dropped instead. */
+  fallback: string;
+}
+
+export function readStyleSuccession(stylesXml: string | null): Succession {
+  const next = new Map<string, string>();
+  let fallback = '';
+  if (!stylesXml) return { next, fallback };
+
+  /* One pass over the styles, tracking the `w:style` currently open. Its own
+     `w:styleId` is an attribute, and `w:next` and `w:default` are children. */
+  let open: { id: string } | null = null;
+  for (const tag of scanTags(stylesXml)) {
+    const local = localName(tag.name);
+
+    if (local === 'style') {
+      if (tag.closing) {
+        open = null;
+        continue;
+      }
+      const type = tagAttr(stylesXml, tag, 'type');
+      const id = tagAttr(stylesXml, tag, 'styleId');
+      const paragraph = id && (type === 'paragraph' || type === null);
+      /* The default is an attribute, so it is known before the element is —
+         a `w:style` that closes itself still declares one. */
+      if (paragraph && tagAttr(stylesXml, tag, 'default') === '1') fallback = id;
+      open = paragraph && !tag.selfClosing ? { id } : null;
+      continue;
+    }
+
+    if (!open || tag.closing) continue;
+    if (local === 'next') {
+      const val = tagAttr(stylesXml, tag, 'val');
+      // A style that follows itself — a list item, a quote — says nothing new.
+      if (val && val !== open.id) next.set(open.id, val);
+    }
+  }
+
+  return { next, fallback };
+}
+
+/** The direct children of an element's range, by their own ranges. */
+function childRanges(xml: string, outer: { start: number; end: number }): Tag[] {
+  const found: Tag[] = [];
+  let depth = 0;
+  let opened: Tag | null = null;
+
+  for (const tag of scanTags(xml.slice(outer.start, outer.end))) {
+    const shifted = { ...tag, start: tag.start + outer.start, end: tag.end + outer.start };
+    if (shifted.selfClosing) {
+      if (depth === 1) found.push(shifted);
+      continue;
+    }
+    if (shifted.closing) {
+      depth--;
+      if (depth === 1 && opened) {
+        found.push({ ...opened, end: shifted.end });
+        opened = null;
+      }
+      continue;
+    }
+    depth++;
+    if (depth === 2 && !opened) opened = shifted;
+  }
+
+  return found;
+}
+
+/**
+ * Children of a `w:pPr` that must not be carried into a new paragraph.
+ *
+ * A `w:sectPr` says "the section ends here", and two paragraphs in a row saying
+ * it is a section break nobody asked for. The other three are tracked-change
+ * marks: copying them claims the reviewer who edited this document also made
+ * this insertion, which is a lie about a person.
+ *
+ * Over 49 real documents `w:sectPr` appears inside a `w:pPr` three times, in one
+ * file, and all three of those paragraphs are empty section markers with no text
+ * — so this rule defends a rare case. The tracked-change names appear zero
+ * times, which is a reason to keep the rule and not a reason to trust it.
+ */
+const NOT_INHERITED = new Set(['sectPr', 'pPrChange', 'ins', 'del']);
+
+/**
+ * And the same marks one level down, on the paragraph mark's own run properties.
+ *
+ * This is where a tracked insertion of a paragraph actually lives —
+ * `w:pPr > w:rPr > w:ins` — so a rule that only swept the `w:pPr` would have
+ * carried the record across while believing it had not.
+ */
+const TRACKED = new Set(['ins', 'del', 'rPrChange', 'moveFrom', 'moveTo']);
+
+/** The prefix the file binds the WordprocessingML namespace to — usually `w`. */
+function prefixOf(xml: string, at: { start: number }): string {
+  const name = /^<\s*([A-Za-z_][\w.-]*):/.exec(xml.slice(at.start, at.start + 40));
+  return name ? `${name[1]}:` : '';
+}
+
+/**
+ * The last `w:r` of a paragraph — the formatting a person is continuing.
+ *
+ * Its **own** last run, not the last one anywhere inside it. A paragraph can
+ * hold a drawing, and a drawing holds a text box with runs of its own; the
+ * innermost of those is the formatting of a caption in a picture, which is not
+ * the formatting of the line the cursor is on.
+ */
+function lastRunOf(xml: string, paragraph: ParagraphSpan, runs: RunSpan[]): RunSpan | null {
+  const direct = childRanges(xml, paragraph).filter((child) => localName(child.name) === 'r');
+  const own = direct[direct.length - 1];
+  if (!own) return null;
+  return runs.find((run) => run.start === own.start) ?? null;
+}
+
+/** An element's text with some of its direct children removed. */
+function cutChildren(xml: string, outer: { start: number; end: number }, drop: Set<string>): string {
+  const cuts = childRanges(xml, outer).filter((child) => drop.has(localName(child.name)));
+  let text = xml.slice(outer.start, outer.end);
+  for (const cut of [...cuts].sort((a, b) => b.start - a.start)) {
+    text = text.slice(0, cut.start - outer.start) + text.slice(cut.end - outer.start);
+  }
+  return text;
+}
+
+/** The `w:rPr` of a run, as text, with a tracked-change record stripped out. */
+function runProperties(xml: string, run: RunSpan | null): string {
+  if (!run) return '';
+  const first = childRanges(xml, run).find((child) => localName(child.name) === 'rPr');
+  if (!first) return '';
+  return cutChildren(xml, first, TRACKED);
+}
+
+/**
+ * The markup for one new paragraph, resolved from the one it follows.
+ *
+ * Three things are taken from three different places, because a paragraph's
+ * appearance genuinely lives in three places:
+ *
+ * - **the paragraph properties**, copied byte for byte from the source's own
+ *   `w:pPr` — so indentation, alignment, spacing and list membership carry over
+ *   exactly, which is what pressing Enter in Word does;
+ * - **the style**, resolved through `w:next` rather than copied, so a new
+ *   paragraph after a heading is body text and not a second heading;
+ * - **the run formatting**, taken from the source's **last run**, because that
+ *   is the formatting at the point the person is typing from. A heading whose
+ *   size is direct formatting on its runs rather than in its style is the case
+ *   that makes this necessary: copy only the `w:pPr` and the new text arrives at
+ *   the document default, sitting under the title at half its size.
+ */
+export function paragraphMarkup(
+  xml: string,
+  paragraph: ParagraphSpan,
+  runs: RunSpan[],
+  succession: Succession,
+  text: string,
+): string {
+  const w = prefixOf(xml, paragraph);
+
+  let props = '';
+  if (paragraph.props) {
+    const outer = paragraph.props;
+
+    /* Every change to the properties is collected first and applied from the
+       end backwards, the same discipline the document itself is edited with.
+       Doing it in two passes would mean relying on the schema's ordering to
+       keep the offsets of one pass valid under the other — true today, and a
+       thing to be right about rather than lucky about. */
+    const cuts: { start: number; end: number; text: string }[] = [];
+
+    for (const child of childRanges(xml, outer)) {
+      const local = localName(child.name);
+
+      if (NOT_INHERITED.has(local)) {
+        cuts.push({ start: child.start, end: child.end, text: '' });
+        continue;
+      }
+
+      if (local === 'rPr') {
+        for (const mark of childRanges(xml, child)) {
+          if (TRACKED.has(localName(mark.name))) {
+            cuts.push({ start: mark.start, end: mark.end, text: '' });
+          }
+        }
+        continue;
+      }
+
+      if (local === 'pStyle') {
+        // The style the source hands on, rather than the style the source is.
+        const heir = succession.next.get(tagAttr(xml, child, 'val') ?? '');
+        if (heir === undefined) continue;
+        cuts.push({
+          start: child.start,
+          end: child.end,
+          text:
+            heir === '' || heir === succession.fallback
+              ? ''
+              : xml
+                  .slice(child.start, child.end)
+                  .replace(/(\s[A-Za-z_][\w.-]*:val\s*=\s*)("[^"]*"|[^"\s>]*)/, `$1"${heir}"`),
+        });
+      }
+    }
+
+    props = xml.slice(outer.start, outer.end);
+    for (const cut of cuts.sort((a, b) => b.start - a.start)) {
+      props = props.slice(0, cut.start - outer.start) + cut.text + props.slice(cut.end - outer.start);
+    }
+
+    // A `w:pPr` emptied of everything is noise; leave it out entirely.
+    if (/^<[^>]*>\s*<\/[^>]*>$/.test(props)) props = '';
+  }
+
+  const rPr = runProperties(xml, lastRunOf(xml, paragraph, runs));
+  const body = `<${w}r>${rPr}<${w}t xml:space="preserve">${escapeXml(text)}</${w}t></${w}r>`;
+  return `<${w}p>${props}${body}</${w}p>`;
+}
+
+/** Everything a save needs to know about paragraphs that are not in the file yet. */
+export interface Inserting {
+  paragraphs: ParagraphSpan[];
+  succession: Succession;
+  inserts: ParagraphInsert[];
+}
+
+/**
+ * Every rewrite and every new paragraph, written into the original in one pass.
+ *
+ * Back to front, so no offset moves under the next operation. Two new
+ * paragraphs after the same one keep the order they were added in: at an equal
+ * offset the later step is written first, which leaves it second on the page.
+ *
+ * **A step with no text is not written.** An empty new paragraph is one the
+ * person could never click into again — it draws as a blank line with no run
+ * inside it, and the way back into editing is a run. Rather than leave that trap
+ * in somebody's document, a paragraph nobody typed into is a paragraph nobody
+ * added.
+ */
+export function applyDocxEdits(
+  xml: string,
+  runs: RunSpan[],
+  edits: RunEdit[],
+  inserting?: Inserting,
+): string {
+  const byIndex = new Map(runs.map((run) => [run.index, run]));
+
+  const operations: { at: number; end: number; text: string; order: number }[] = [];
+
+  for (const edit of edits) {
+    const run = byIndex.get(edit.index);
+    if (!run?.text || run.refusal) continue;
+    operations.push({
+      at: run.text.start,
+      end: run.text.end,
+      /* Without `xml:space="preserve"` Word discards leading and trailing
+         spaces, so "name " would quietly become "name". */
+      text: `<w:t xml:space="preserve">${escapeXml(edit.text)}</w:t>`,
+      order: 0,
+    });
+  }
+
+  if (inserting) {
+    const paragraphs = new Map(inserting.paragraphs.map((span) => [span.index, span]));
+    inserting.inserts.forEach((insert, order) => {
+      const paragraph = paragraphs.get(insert.after);
+      if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
+      operations.push({
+        at: paragraph.end,
+        end: paragraph.end,
+        text: paragraphMarkup(xml, paragraph, runs, inserting.succession, insert.text),
+        order,
+      });
+    });
+  }
+
+  operations.sort((a, b) => b.at - a.at || b.order - a.order);
+
+  let out = xml;
+  for (const operation of operations) {
+    out = out.slice(0, operation.at) + operation.text + out.slice(operation.end);
+  }
+  return out;
 }

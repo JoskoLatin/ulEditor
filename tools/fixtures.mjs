@@ -19,6 +19,43 @@ const CONTENT_TYPES =
 
 const EMPTY_RELS = `<?xml version="1.0"?><Relationships xmlns="${PKG_REL_NS}"/>`;
 
+/*
+ * What makes a folder of XML a package somebody else will open.
+ *
+ * Our own readers find `word/document.xml` by its path, so for a long time the
+ * DOCX fixture had neither a `_rels/.rels` nor a content type naming the main
+ * part — and every check built on it passed, because every check was ours.
+ * Word finds the main part by **following the package relationship**, and
+ * without one it refuses the file outright; `tools/verify-docx-word.mjs` asked
+ * it and that is how this was found. A fixture a real word processor will not
+ * open proves less than it looks like it proves.
+ *
+ * The workbook fixture below still uses the older `CONTENT_TYPES`, which has the
+ * same shape of gap. It is left alone on purpose rather than changed on a
+ * hunch: nothing here has asked Excel yet, and the way this one was found was by
+ * asking, not by reasoning about it.
+ */
+const OOXML = 'http://schemas.openxmlformats.org/officeDocument/2006';
+const WORD_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml';
+
+const DOCX_CONTENT_TYPES =
+  `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+  `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+  `<Default Extension="xml" ContentType="application/xml"/>` +
+  `<Override PartName="/word/document.xml" ContentType="${WORD_TYPE}.document.main+xml"/>` +
+  `<Override PartName="/word/numbering.xml" ContentType="${WORD_TYPE}.numbering+xml"/>` +
+  `</Types>`;
+
+const DOCX_PACKAGE_RELS =
+  `<?xml version="1.0"?><Relationships xmlns="${PKG_REL_NS}">` +
+  `<Relationship Id="rId1" Type="${OOXML}/relationships/officeDocument" Target="word/document.xml"/>` +
+  `</Relationships>`;
+
+const DOCX_DOCUMENT_RELS =
+  `<?xml version="1.0"?><Relationships xmlns="${PKG_REL_NS}">` +
+  `<Relationship Id="rId1" Type="${OOXML}/relationships/numbering" Target="numbering.xml"/>` +
+  `</Relationships>`;
+
 export const TS_SOURCE = `import { createShell } from './host';
 
 /** A check of syntax colouring and line wrapping. */
@@ -589,10 +626,11 @@ export function makeDocx() {
     `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
 
   return zipSync({
-    '[Content_Types].xml': strToU8(CONTENT_TYPES),
+    '[Content_Types].xml': strToU8(DOCX_CONTENT_TYPES),
+    '_rels/.rels': strToU8(DOCX_PACKAGE_RELS),
     'word/document.xml': strToU8(document),
     'word/numbering.xml': strToU8(numbering),
-    'word/_rels/document.xml.rels': strToU8(EMPTY_RELS),
+    'word/_rels/document.xml.rels': strToU8(DOCX_DOCUMENT_RELS),
   });
 }
 

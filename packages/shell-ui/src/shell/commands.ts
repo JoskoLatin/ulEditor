@@ -223,6 +223,19 @@ export function registerCommands(shell: Shell): () => void {
       when: () => activeInstance()?.goToDefinition !== undefined,
       run: () => activeInstance()?.goToDefinition?.(),
     }),
+    /*
+     * A new paragraph. The shell offers it and the editor decides where it goes
+     * — it is the editor that knows where the cursor is, and the document's own
+     * seam that knows whether this format can take one at all.
+     */
+    shell.commands.register({
+      id: 'edit.insertParagraph',
+      title: t('Insert paragraph below'),
+      category: t('Edit'),
+      keybinding: ['Ctrl', 'Enter'],
+      when: () => activeInstance()?.canInsertParagraph?.() === true,
+      run: () => activeInstance()?.insertParagraph?.(),
+    }),
     shell.commands.register({
       id: 'editor.goToLocation',
       title: t('Go to a place in a file'),
@@ -671,6 +684,22 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   }
 
   switch (key) {
+    /*
+     * Ctrl+Enter — a paragraph after the one the cursor is in.
+     *
+     * Deliberately not plain Enter: Enter has always meant "done typing" in the
+     * Office view, a run at a time, and every check written against that still
+     * relies on it. And deliberately allowed to fire with the focus inside the
+     * text being typed, because that is precisely where a person stands when
+     * they want the next paragraph. An editor that cannot take one lets the key
+     * through untouched rather than swallowing it.
+     */
+    case 'enter':
+      if (activeInstance()?.canInsertParagraph?.()) {
+        event.preventDefault();
+        activeInstance()?.insertParagraph?.();
+      }
+      break;
     case 's':
       event.preventDefault();
       // Focus inside the panel below means it is what gets saved, not the tab above.

@@ -44,7 +44,7 @@ import {
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
-import { renderDocx, type Preview } from './docx.js';
+import { renderDocx, type NewParagraph, type Preview } from './docx.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
@@ -139,6 +139,12 @@ function searchIn(
 
 /* ── Word ────────────────────────────────────────────────────────────── */
 
+/** Everything an undo has to put back: the rewrites and the plan, together. */
+interface Snapshot {
+  edits: Map<number, string>;
+  steps: NewParagraph[];
+}
+
 /**
  * One editor for every document this program can draw as paragraphs.
  *
@@ -157,8 +163,19 @@ class DocumentPreviewEditor implements EditorInstance {
 
   /** The rewritten runs: ordinal in the document → new text. */
   #edits = new Map<number, string>();
-  #undoStack: Map<number, string>[] = [];
-  #redoStack: Map<number, string>[] = [];
+  /**
+   * The paragraphs that are not in the file yet.
+   *
+   * A plan, in the sense [`editor-pdf`](../../editor-pdf/src/document.ts) means
+   * it: nothing is applied until a save, and a save applies the whole of it to
+   * the file as it was opened. So it outlives the save it was written by, and a
+   * person can still take back a paragraph they added ten minutes ago.
+   */
+  #steps: NewParagraph[] = [];
+  #undoStack: Snapshot[] = [];
+  #redoStack: Snapshot[] = [];
+  /** The plan as the file on disk holds it; anything else means unsaved. */
+  #saved: string;
   #dirty = false;
 
   #dirtyEmitter = new Emitter<boolean>();
@@ -173,6 +190,40 @@ class DocumentPreviewEditor implements EditorInstance {
     private readonly preview: Preview,
   ) {
     this.#words = wordCount(preview.text);
+    this.#saved = this.#key();
+  }
+
+  /* ── what is changed, and what is saved ──────────────────────────── */
+
+  /**
+   * The whole plan as one comparable string.
+   *
+   * The document is dirty when this differs from what was last written, which
+   * is a different question from "has anything been typed": undoing back to the
+   * state that was saved makes the document clean again, and saving does not
+   * throw away the history that got there.
+   *
+   * A step with no text is left out, because a step with no text is never
+   * written — an empty paragraph nobody typed into is not a change to the file.
+   */
+  #key(): string {
+    const edits = [...this.#edits].sort((a, b) => a[0] - b[0]);
+    return JSON.stringify([edits, this.#steps.filter((step) => step.text.length > 0)]);
+  }
+
+  /**
+   * The state to come back to.
+   *
+   * A step with nothing typed into it is left out on purpose. It is never
+   * written, so it is not part of what an undo is undoing — and restoring one
+   * would leave the person a one-character box on the page to find and dismiss,
+   * when what they meant by undoing an insertion was the insertion.
+   */
+  #capture(): Snapshot {
+    return {
+      edits: new Map(this.#edits),
+      steps: this.#steps.filter((step) => step.text.length > 0).map((step) => ({ ...step })),
+    };
   }
 
   mount(container: HTMLElement): void {
@@ -187,7 +238,11 @@ class DocumentPreviewEditor implements EditorInstance {
         /* No seam to write into means no promise of writing. The reading room,
            the outline and the search are the same either way. */
         this.preview.source
-          ? t('Text can be retyped — double-click it. Layout and styles stay as they are.')
+          ? this.preview.source.paragraphs
+            ? t(
+                'Text can be retyped — double-click it. Ctrl+Enter adds a paragraph below. Layout and styles stay as they are.',
+              )
+            : t('Text can be retyped — double-click it. Layout and styles stay as they are.')
           : t('This document is shown, not edited — it opens for reading and searching.'),
       ),
     );
@@ -264,7 +319,21 @@ class DocumentPreviewEditor implements EditorInstance {
     if (!(target instanceof HTMLElement) || target.isContentEditable) return;
 
     event.preventDefault();
-    const index = Number(target.dataset.run);
+    /* Which step this is, resolved now while the numbering on the page is
+       fresh — not at the moment the caret leaves, by which time an undo may
+       have rebuilt every node of the plan under it. */
+    const added = target.closest<HTMLElement>('[data-new]');
+    this.#openForTyping(target, added ? this.#steps[Number(added.dataset.new)] : undefined);
+  };
+
+  /**
+   * Opens one piece of text for typing, whether it is in the file or only in the
+   * plan.
+   *
+   * The two cases differ in exactly one place — where the typed text is written
+   * down when the caret leaves — and that difference is the last two lines.
+   */
+  #openForTyping(target: HTMLElement, step?: NewParagraph): void {
     const before = target.textContent ?? '';
 
     target.contentEditable = 'plaintext-only';
@@ -284,8 +353,9 @@ class DocumentPreviewEditor implements EditorInstance {
        */
       const typed = target.textContent ?? '';
       const after = before.includes('\u00A0') ? typed : typed.replace(/\u00A0/g, ' ');
-      if (after === before) return;
-      this.#record(index, after);
+
+      if (step) this.#recordStep(step, after);
+      else if (after !== before) this.#record(Number(target.dataset.run), after);
     };
 
     const onKey = (key: KeyboardEvent) => {
@@ -295,7 +365,10 @@ class DocumentPreviewEditor implements EditorInstance {
         target.blur();
         return;
       }
-      // A new line in Word is an element of its own, not a character in the text.
+      /* A new line in Word is an element of its own, not a character in the
+         text — and adding one is a command of its own, not this key. Enter here
+         means "done", which is what it has always meant in this editor and what
+         the browser check at tools/verify-office-editing.mjs relies on. */
       if (key.key === 'Enter') {
         key.preventDefault();
         target.blur();
@@ -304,36 +377,227 @@ class DocumentPreviewEditor implements EditorInstance {
 
     target.addEventListener('blur', finish);
     target.addEventListener('keydown', onKey);
-  };
+  }
 
   #record(index: number, text: string): void {
-    this.#undoStack.push(new Map(this.#edits));
+    this.#undoStack.push(this.#capture());
     this.#redoStack = [];
     this.#edits.set(index, text);
     this.#emitDirty();
   }
 
-  #restore(edits: Map<number, string>): void {
+  /* ── a paragraph that is not in the file yet ─────────────────────── */
+
+  /**
+   * Adds a paragraph after the one the cursor is in.
+   *
+   * The command is offered only where the seam offers it, and refuses out loud
+   * rather than quietly: a table cell is a different problem — the grid around
+   * it declares row and column counts this program does not maintain — and a
+   * command that appears to do nothing teaches people the program is unreliable.
+   */
+  insertParagraph(): void {
     const source = this.preview.source;
-    this.#edits = edits;
-    if (!source) return;
-    // The view returns to whatever the edit list says, including the original text.
-    for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run')) {
-      const index = Number(el.dataset.run);
-      el.textContent = edits.get(index) ?? source.textOf(index);
+    if (!source?.paragraphs) return;
+
+    /* Read where the cursor is BEFORE anything moves, because the two lines
+       after this move a great deal. */
+    const at = this.#insertionPoint();
+
+    /*
+     * Then finish whatever is being typed, and finish it now.
+     *
+     * The redraw below replaces every node of the plan, and a node taken out
+     * from under a caret blurs into a handler whose element is already gone —
+     * and, if the text was left empty, into a handler that removes a step and
+     * renumbers the ones after it. Letting that happen first, and then asking
+     * again where the step it anchored to has ended up, is the difference
+     * between a paragraph landing where the person was looking and landing
+     * somewhere else entirely.
+     */
+    const typing = document.activeElement;
+    if (typing instanceof HTMLElement && typing.isContentEditable) typing.blur();
+
+    if ('refusal' in at) {
+      this.#statusEmitter.fire(at.refusal);
+      return;
     }
+
+    /*
+     * No undo entry yet, deliberately. An empty paragraph is not a change to the
+     * file, and one that is abandoned without a word typed into it disappears on
+     * its own — an undo step that restores the same state is a keystroke that
+     * appears not to work. The history is written when there is something in it.
+     */
+    const position = this.#positionFor(at);
+    const step: NewParagraph = { after: at.after, text: '' };
+    this.#steps.splice(position, 0, step);
+    this.#syncSteps();
+    this.#emitDirty();
+
+    const fresh = this.preview.body.querySelector<HTMLElement>(
+      `[data-new="${position}"] .ul-office-run`,
+    );
+    if (fresh) {
+      this.#flow?.scrollTo(fresh);
+      this.#openForTyping(fresh, step);
+    }
+  }
+
+  /** Where a new paragraph would go, or why it would not. */
+  #insertionPoint(): { after: number; behind: NewParagraph | null } | { refusal: string } {
+    const body = this.preview.body;
+    const anchor = document.getSelection()?.anchorNode ?? null;
+    const inside = anchor && body.contains(anchor) ? anchor : null;
+    const element = inside instanceof Element ? inside : (inside?.parentElement ?? null);
+
+    /* Inside a paragraph that is itself only a plan: the new one follows the
+       same paragraph of the file, and sits immediately behind this one. */
+    const added = element?.closest<HTMLElement>('[data-new]');
+    if (added) {
+      const step = this.#steps[Number(added.dataset.new)];
+      if (step) return { after: step.after, behind: step };
+    }
+
+    const paragraph = element?.closest<HTMLElement>('[data-paragraph]');
+    if (paragraph) return { after: Number(paragraph.dataset.paragraph), behind: null };
+
+    /* A cell is the one refusal the view can answer by itself, and the only one
+       the real corpus ever produces — every nested paragraph in those 49
+       documents is in a `w:tc`. Asking the seam covers the rest, and reaching
+       it needs an editable run to ask about. */
+    if (element?.closest('td, th')) {
+      return {
+        refusal: t('A new paragraph can only go into the body of the document — not into a table cell or a text box.'),
+      };
+    }
+
+    const run = element?.closest<HTMLElement>('.ul-office-run[data-run]');
+    const refusal = run ? this.preview.source?.paragraphs?.refusalNear(Number(run.dataset.run)) : null;
+    return { refusal: refusal ?? t('Put the cursor in a paragraph of the document first.') };
+  }
+
+  /**
+   * The place in the list that puts the new paragraph where the eye expects it.
+   *
+   * Steps sharing a source paragraph are drawn in list order, so a paragraph
+   * added from the source itself belongs **before** the ones already following
+   * it, and one added from inside a step belongs directly behind that step. The
+   * step is looked up by identity rather than by the position it had a moment
+   * ago, because finishing the typing above may have removed it.
+   */
+  #positionFor(at: { after: number; behind: NewParagraph | null }): number {
+    if (at.behind) {
+      const found = this.#steps.indexOf(at.behind);
+      if (found !== -1) return found + 1;
+    }
+    const first = this.#steps.findIndex((step) => step.after === at.after);
+    return first === -1 ? this.#steps.length : first;
+  }
+
+  /**
+   * What was typed into a paragraph of the plan.
+   *
+   * The step is passed by identity rather than by the position it held when the
+   * typing began, because between those two moments an undo may have rebuilt the
+   * list; a step that is no longer in it is one this typing has nothing to say
+   * about.
+   *
+   * Left empty, it goes. An empty new paragraph is one nobody typed into: it is
+   * never written, so leaving it on the page would be showing a line the file
+   * will not have — and it would be a line with no run in it, which is a line
+   * nobody could ever click into again.
+   */
+  #recordStep(step: NewParagraph, text: string): void {
+    const position = this.#steps.indexOf(step);
+    if (position === -1) return;
+
+    if (text.length === 0) {
+      /* Nothing was ever typed into it, so there is nothing to undo back to —
+         it leaves as quietly as it arrived. */
+      if (step.text.length === 0) {
+        this.#steps.splice(position, 1);
+        this.#syncSteps();
+        this.#emitDirty();
+        return;
+      }
+    } else if (step.text === text) {
+      return;
+    }
+
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    if (text.length === 0) this.#steps.splice(position, 1);
+    else step.text = text;
+
+    this.#syncSteps();
+    this.#emitDirty();
+  }
+
+  /**
+   * Draws the plan onto the page.
+   *
+   * Rebuilt whole rather than patched, because an undo can change the list in
+   * any way at all and a redraw of a handful of nodes is cheaper than being
+   * wrong about which ones moved. The tag is taken from what the new paragraph
+   * follows, so a paragraph added inside a numbered list is a list item and the
+   * browser renumbers the list exactly as the reopened file will.
+   */
+  #syncSteps(): void {
+    const body = this.preview.body;
+    for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
+
+    const last = new Map<number, HTMLElement>();
+    this.#steps.forEach((step, position) => {
+      const anchor =
+        last.get(step.after) ?? body.querySelector<HTMLElement>(`[data-paragraph="${step.after}"]`);
+      if (!anchor) return;
+
+      const element = document.createElement(anchor.tagName === 'LI' ? 'li' : 'p');
+      element.dataset.new = String(position);
+      if (anchor.style.textAlign) element.style.textAlign = anchor.style.textAlign;
+
+      const piece = document.createElement('span');
+      piece.className = 'ul-office-run is-new';
+      piece.textContent = step.text;
+      element.appendChild(piece);
+
+      anchor.after(element);
+      last.set(step.after, element);
+    });
+
+    /* The flow measures the document once and keeps the number; a document that
+       grew and did not say so has a last page nobody can reach. */
+    this.#flow?.relayout();
+  }
+
+  #restore(snapshot: Snapshot): void {
+    const source = this.preview.source;
+    this.#edits = snapshot.edits;
+    this.#steps = snapshot.steps;
+    if (!source) return;
+
+    /* Only the pieces that stand for something in the file — a piece that is
+       only in the plan has no ordinal there, and asking for one would answer
+       with the empty string and blank the paragraph. */
+    for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
+      const index = Number(el.dataset.run);
+      el.textContent = snapshot.edits.get(index) ?? source.textOf(index);
+    }
+    this.#syncSteps();
     this.#emitDirty();
   }
 
   #emitDirty(): void {
-    const dirty = this.#edits.size > 0;
+    const dirty = this.#key() !== this.#saved;
     if (dirty !== this.#dirty) {
       this.#dirty = dirty;
       this.#dirtyEmitter.fire(dirty);
     }
+    const changes = this.#edits.size + this.#steps.filter((step) => step.text.length > 0).length;
     this.#statusEmitter.fire(
       dirty
-        ? t('{words} words · {n} edits', { words: this.#words, n: this.#edits.size })
+        ? t('{words} words · {n} edits', { words: this.#words, n: changes })
         : this.preview.source
           ? t('{n} words · double-click text to edit', { n: this.#words })
           : t('{n} words · read-only', { n: this.#words }),
@@ -353,19 +617,18 @@ class DocumentPreviewEditor implements EditorInstance {
 
     const uri = target?.uri ?? this.doc.uri;
     const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
+    const added = this.#steps.filter((step) => step.text.length > 0);
 
-    await this.host.fs.writeBytes(uri, source.write(edits));
+    await this.host.fs.writeBytes(uri, source.write(edits, added));
 
     /*
-     * What was saved becomes the new starting point. Without this the next save
-     * would begin from the file as it was opened with an empty edit list — and
-     * quietly revert the document. Which ranges moved, and by how much, is the
-     * format's own business and is settled behind `commit`.
+     * Nothing is cleared and nothing is committed. Every save writes the file as
+     * it was opened with the whole plan applied to it, so saving twice writes
+     * the same bytes — and the history stays, which is the only way changing
+     * your mind about a paragraph you added is something a person can do. What
+     * is recorded is simply which plan the file on disk now holds.
      */
-    source.commit(edits);
-    this.#edits.clear();
-    this.#undoStack = [];
-    this.#redoStack = [];
+    this.#saved = this.#key();
     this.#emitDirty();
 
     /*
@@ -380,14 +643,14 @@ class DocumentPreviewEditor implements EditorInstance {
   undo(): void {
     const previous = this.#undoStack.pop();
     if (!previous) return;
-    this.#redoStack.push(new Map(this.#edits));
+    this.#redoStack.push(this.#capture());
     this.#restore(previous);
   }
 
   redo(): void {
     const next = this.#redoStack.pop();
     if (!next) return;
-    this.#undoStack.push(new Map(this.#edits));
+    this.#undoStack.push(this.#capture());
     this.#restore(next);
   }
 
@@ -397,6 +660,20 @@ class DocumentPreviewEditor implements EditorInstance {
 
   canRedo(): boolean {
     return this.#redoStack.length > 0;
+  }
+
+  /**
+   * Whether this document can take a new paragraph at all.
+   *
+   * Not whether the cursor is somewhere one may go — that is answered out loud,
+   * with a reason, when the command runs. This is the coarser question the shell
+   * needs to decide whether the entry belongs in this document's menu: a Word
+   * document says yes, and the OpenDocument text, the old binary `.doc` and the
+   * Rich Text driven by this same class all say no, because their seams offer
+   * nothing to say it with.
+   */
+  canInsertParagraph(): boolean {
+    return this.preview.source?.paragraphs !== undefined;
   }
 
   async find(query: FindQuery): Promise<FindResult[]> {
@@ -451,7 +728,9 @@ class DocumentPreviewEditor implements EditorInstance {
         this.#root.dataset.reading = 'false';
         // Outside reading mode the document returns to a scroll in the application colours.
         this.#flow?.apply({ ...(this.#flow.options ?? options), flow: 'scroll' }, this.#root);
-        this.#statusEmitter.fire(t('{n} words · read-only', { n: this.#words }));
+        /* Whatever the status was before reading began, not a flat claim of
+           read-only — a document with unsaved changes is neither. */
+        this.#emitDirty();
       },
     };
   }

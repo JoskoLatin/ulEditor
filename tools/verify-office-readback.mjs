@@ -75,9 +75,15 @@ const load = (path) => import(pathToFileURL(resolve(ROOT, path)).href);
 
 const { detect } = await load('packages/shell-ui/src/host/detect.ts');
 const { openArchive, readText } = await load('packages/editor-office/src/ooxml.ts');
-const { findRuns, applyRunEdits, runText, writeDocx } = await load(
-  'packages/editor-office/src/docx-edit.ts',
-);
+const {
+  findRuns,
+  findParagraphs,
+  paragraphOfRun,
+  readStyleSuccession,
+  applyRunEdits,
+  runText,
+  writeDocx,
+} = await load('packages/editor-office/src/docx-edit.ts');
 const { findCells, applyCellEdits, writeXlsx } = await load(
   'packages/editor-office/src/xlsx-edit.ts',
 );
@@ -156,10 +162,30 @@ function edited(format, bytes) {
     if (open.length === 0) return { skip: 'nothing in it can be rewritten' };
     const picked = spread(open);
     const edits = picked.map((run, i) => ({ index: run.index, text: `${MARKER}${i}` }));
+    const was = picked.map((run) => runText(xml, run).trim());
+
+    /*
+     * And one paragraph that is not in the file at all.
+     *
+     * A rewrite can be checked by looking at the bytes; a paragraph that did not
+     * exist cannot be told apart from a paragraph the writer bungled without a
+     * reader saying whether it is there. So it goes in after a run we already
+     * know the position of — which means it inherits that run's visibility for
+     * free, and the control below can ask about it on exactly the same terms:
+     * only where this reader showed that spot to begin with.
+     */
+    const paragraphs = findParagraphs(xml);
+    const anchor = picked
+      .map((run, i) => ({ at: i, paragraph: paragraphOfRun(paragraphs, run) }))
+      .find((one) => one.paragraph && !one.paragraph.refusal);
+
+    const inserts = anchor ? [{ after: anchor.paragraph.index, text: `${MARKER}p` }] : [];
+    const succession = readStyleSuccession(readText(archive, 'word/styles.xml'));
+
     return {
-      bytes: writeDocx(archive, runs, xml, edits),
-      typed: edits.map((e) => e.text),
-      was: picked.map((run) => runText(xml, run).trim()),
+      bytes: writeDocx(archive, runs, xml, edits, { paragraphs, succession, inserts }),
+      typed: [...edits.map((e) => e.text), ...inserts.map((one) => one.text)],
+      was: anchor ? [...was, was[anchor.at]] : was,
     };
   }
 
@@ -357,6 +383,7 @@ const opened = [];
 const showed = [];
 const skipped = [];
 const invisible = [];
+const added = [];
 const broke = [];
 
 for (const file of sampled) {
@@ -421,6 +448,12 @@ for (const file of sampled) {
     continue;
   }
 
+  /* How often the harder question actually got asked. A paragraph that was not
+     in the file is the one thing here no scanner of ours can confirm, so a run
+     that quietly never asked about one would be reporting the easy half and
+     calling it the whole. */
+  if (asked.some((one) => one.typed.endsWith(`${MARKER}p`))) added.push(name);
+
   const missing = asked.filter((one) => !text.includes(one.typed));
   if (missing.length === 0) showed.push(name);
   else {
@@ -442,6 +475,12 @@ check(
   'and the text we typed is the text it shows, diacritics and all',
   asked > 0 && showed.length === asked,
   `${showed.length}/${asked} documents, of ${opened.length} opened`,
+);
+
+check(
+  'and a paragraph that was not in the file at all is there when it is reopened',
+  added.length > 0,
+  `${added.length} documents were given one and asked about it`,
 );
 
 if (invisible.length > 0) {

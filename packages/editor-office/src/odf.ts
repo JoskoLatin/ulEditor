@@ -51,7 +51,7 @@ import {
 } from './ooxml.js';
 import type { Preview, PreviewOutline } from './docx.js';
 import { writeOdf } from './odf-package.js';
-import { applyOdtEdits, findOdtPieces, movedPieces, spacesOf, type OdtPiece } from './odt-edit.js';
+import { applyOdtEdits, findOdtPieces, spacesOf, type OdtPiece } from './odt-edit.js';
 import { MAX_COLS, MAX_ROWS, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
 
 /**
@@ -1101,24 +1101,17 @@ export function readOdt(bytes: Uint8Array): Preview {
 /**
  * The seam the editor writes through.
  *
- * The state is held here rather than in the editor because what a save leaves
- * behind is a property of the format: after writing, the file on disk is the new
- * starting point, and the ranges every piece occupies have moved by whatever the
- * rewrite gained or lost. An editor that kept editing against the ranges of the
- * file as it was opened would put the next edit in the wrong place.
+ * Every save applies the whole edit list to the file **as it was opened**, so
+ * the ranges never move underneath the ordinals and writing twice writes the
+ * same bytes. Nothing is offered for `paragraphs`: an OpenDocument text can have
+ * its text rewritten here and cannot yet have anything added to it, and the
+ * editor above reads that absence rather than being told which format it holds.
  */
 function odtSource(archive: Archive, xml: string, pieces: OdtPiece[]): NonNullable<Preview['source']> {
-  const state = { xml, pieces };
-
   return {
     /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
        the ranges, never the order. */
-    textOf: (index) => state.pieces[index]?.text ?? '',
-    write: (edits) => writeOdf(archive, applyOdtEdits(state.xml, state.pieces, edits)),
-    commit: (edits) => {
-      const next = applyOdtEdits(state.xml, state.pieces, edits);
-      state.pieces = movedPieces(state.xml, state.pieces, edits);
-      state.xml = next;
-    },
+    textOf: (index) => pieces[index]?.text ?? '',
+    write: (edits) => writeOdf(archive, applyOdtEdits(xml, pieces, edits)),
   };
 }

@@ -337,3 +337,18 @@
   color: var(--ink);
   font-weight: 600;
 }
+
+/*
+ * A paragraph that is only a plan.
+ *
+ * It is drawn like any other, because it will be one — the point of showing it
+ * is that what stands on the page is what the file will hold. The one
+ * difference is a box with a floor under it: a piece with nothing typed into it
+ * yet is zero pixels wide, and a caret in a box nobody can see is a caret
+ * nobody can find.
+ */
+.ul-office-run.is-new {
+  display: inline-block;
+  min-width: 1ch;
+  min-height: 1em;
+}

@@ -150,6 +150,16 @@ Page operations do not change the document until it is saved — until then ther
 
 The XML is **not re-serialised**; only the byte ranges the user touched are changed, and every other part of the archive — styles, numbering, images, metadata — passes through untouched. The verification measures exactly that: after saving, every other part must be **byte for byte identical**. Runs holding a line break, a tab, a drawing or split text are not offered for editing, because there more than the text would change.
 
+**And a paragraph can be added** — `Ctrl+Enter`, or *Edit ▸ Insert paragraph below*. It is the first change here that is not a substitution: until now something was replaced by something else the same shape, and now something exists that did not before. Three things follow from that, and not one of them was reasoned out in advance — each is what was left after a design had been written and refuted. Four were, in the end.
+
+*It is a plan, not a write.* Nothing is applied until a save, and a save applies the whole plan to the file **as it was opened** — which is the shape the PDF editor already settled on for pages. So saving twice writes the same bytes, no ordinal ever shifts under a paragraph you are pointing at, and a paragraph added ten minutes and two saves ago can still be taken back. An editor that applied the insertion and then built on the result would have had to renumber everything after it, clear the history to stay consistent, and leave the person with a paragraph only Word could remove.
+
+*The properties are resolved, not copied.* A heading is not a heading because of the bytes in its `w:pPr` — it is a heading because its `w:pStyle` names a style, and that style says in `w:next` what the paragraph after it should be. Copying the bytes gives a second heading, complete with a new entry in the contents panel; reading `w:next` gives what Word gives, which is body text. Of the 49 real documents this was measured on, nine declare `w:next` at all — 90 declarations, and every heading style among them hands on to body text (`Naslov1 → Normal`, `Heading → Tijeloteksta`). The indentation, the alignment, the spacing and the list membership *are* copied byte for byte, because they are what continuing a paragraph means. A section break and a tracked-change mark are never copied — one would split the document where nobody asked, the other would sign somebody else's name to your edit. And the text takes the formatting of the run it follows rather than the document default, because a title whose size is direct formatting on its runs would otherwise hand the new line a 12pt sentence to sit under a 48pt heading.
+
+*Where it may not go, it says so.* A paragraph inside a table cell is refused out loud, because the grid around it declares row and column counts this program does not maintain. That is not a rare corner: across those 49 documents 999 of 2235 paragraphs are inside a `w:tc`, and five of them are schedules with nowhere at all to put a new paragraph — `pnpm verify:insert` names those five rather than counting them as passes. A command that appeared to do nothing there would teach people the program is unreliable, rather than that a table is a different problem.
+
+An OpenDocument text opened in the very same editor is offered none of this, and not by a check on the file's extension: the capability lives on the seam the editor writes through, so a format with nothing to say about structure offers nothing, and the editor above never learns which format it is holding.
+
 **Cells in a spreadsheet are retyped the same way** — double-click one. A cell holding a formula does not open, and says which formula it holds: the number on screen is a *result*, and overwriting a result with a literal is the quietest way there is to destroy a workbook. When an edited workbook does contain formulas, it is marked for full recalculation, so Excel works the totals out again on opening instead of showing stale ones.
 
 A date typed the way a person writes one — `15.6.2026.` — is stored as a date rather than as those characters, so the cell's own format keeps drawing it the way the sheet already drew it. Excel stores a date as a count of days, and counts a 29 February 1900 that never happened; the offset every library uses is right from 1 March 1900 onward and one day out below it. That is the quietest sort of wrong there is — an archival record dated 1898 simply arrives on the wrong day and nothing looks broken — so the arithmetic follows Excel's, bug included, and a date older than the first one it can store is refused rather than moved a century.
@@ -533,13 +543,15 @@ pnpm verify:clipboard # a spreadsheet range pasted into Markdown, as a table
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
+pnpm verify:insert    # a new paragraph in a .docx: what it inherits, and what stays untouched
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm readback         # …and then opened by LibreOffice, which shares no code with us
+pnpm verify:word      # …and by Word itself, which is the reader that refuses (Windows)
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application
-pnpm verify:office-editing   # retyping a .docx and an .odt out to disk and back, in the same
+pnpm verify:office-editing   # retyping a .docx and adding a paragraph, out to disk and back
 pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
@@ -547,6 +559,11 @@ pnpm verify:desktop-updates  # the update check, in the program, where the plugi
 pnpm verify:desktop-convert  # an .eps through LibreOffice and onto the screen
 pnpm verify:desktop-lsp      # rust-analyzer: a mistake underlined and unmarked, then hover, completion and F12
 ```
+
+**Close ulEditor before running any of those.** The application uses
+`tauri-plugin-single-instance`, so a second copy hands its arguments to the first
+and exits — the check then waits four minutes for a debugging port that will
+never open. Each of them now says that in one line instead.
 
 Those eight start the program itself with the WebView2 debug port open and attach
 to it over CDP, because each asks something a browser cannot answer. Search lives
@@ -598,6 +615,24 @@ read and refused what we wrote.
 It **refuses to pass without LibreOffice** rather than skipping quietly, for the
 same reason the live language-server test is `#[ignore]` rather than
 self-skipping: a check whose only failure mode is a pass is a check that lies.
+
+And for one question LibreOffice is the wrong instrument, because it is
+**lenient**. Handed a document with a child the body may not have, it opens the
+file, drops the part it did not understand, and the conversion comes back looking
+like a success. Word is the reader that refuses. Adding a paragraph is the first
+change this program makes that can produce that kind of mistake — everything
+before it was a substitution inside an element that already existed — so
+`pnpm verify:word` drives Word itself over COM and asks three things per
+document: that Word opens what we wrote, that it holds **exactly one paragraph
+more** than the original it also opened (a silent repair announces itself by
+throwing content away), and that our text is in it. Windows and Word only, and it
+says so and fails rather than skipping where there is neither.
+
+The first thing it found was **our own fixture**. `makeDocx()` had no
+`_rels/.rels` and no content type naming the main part, so it was not a package
+Word would open at all — and every check built on it had passed, because every
+check was ours. Our readers find `word/document.xml` by its path; Word finds it
+by following the package relationship. The fixture is a real package now.
 
 `verify:ocr` needs no network, and that is the first thing it checks. The
 worker, the wasm core and both language models are served by the application

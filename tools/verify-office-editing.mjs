@@ -25,10 +25,12 @@ import { fileURLToPath } from 'node:url';
 import { unzipSync, strFromU8 } from 'fflate';
 
 import { makeDocx, makeOdt } from './fixtures.mjs';
+import { alreadyRunning, ALREADY_RUNNING } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9336;
 const REPLACEMENT = 'Rewritten in ulEditor — čćžšđ';
+const ADDED = 'A paragraph that was not there — čćžšđ ČĆŽŠĐ';
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -36,11 +38,25 @@ function check(name, passed, detail = '') {
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
-/** The two ways this program writes text into a document it did not create. */
+/**
+ * The two ways this program writes text into a document it did not create.
+ *
+ * `adds` is not a preference: a Word document can be given a paragraph it did
+ * not have and an OpenDocument text cannot, and the difference lives entirely in
+ * the seam behind `Preview.source`. Checking both sides of it here is how we
+ * know the editor is reading that seam rather than knowing which format it holds
+ * — the same class drives both.
+ */
 const DOCUMENTS = [
-  { label: 'docx', file: 'report.docx', bytes: makeDocx(), part: 'word/document.xml' },
-  { label: 'odt', file: 'izvjestaj.odt', bytes: makeOdt(), part: 'content.xml' },
+  { label: 'docx', file: 'report.docx', bytes: makeDocx(), part: 'word/document.xml', adds: true },
+  { label: 'odt', file: 'izvjestaj.odt', bytes: makeOdt(), part: 'content.xml', adds: false },
 ];
+
+if (alreadyRunning()) {
+  check('no other ulEditor is holding the single-instance lock', false, ALREADY_RUNNING);
+  console.log(`\n0/1 checks passed`);
+  process.exit(1);
+}
 
 const workspace = await mkdtemp(join(tmpdir(), 'ul-office-'));
 for (const document of DOCUMENTS) {
@@ -181,6 +197,108 @@ try {
     check(say('the rewritten text reads back'), reopened.includes(REPLACEMENT));
     check(say('the original text is not in the view either'), !reopened.includes(originalText));
 
+    /* ── a paragraph that was not there ──────────────────────────────── */
+
+    const paragraphsBefore = (strFromU8(after[document.part]).match(/<(w:p|text:p)[\s>]/g) ?? []).length;
+
+    // The cursor has to be somewhere: the command inserts after the paragraph
+    // it is in, and refuses out loud when it is nowhere.
+    await page.locator('.ul-office-run').first().click();
+    await page.keyboard.press('Control+Enter');
+    await page.waitForTimeout(300);
+
+    const fresh = await page.locator('.ul-office-doc [data-new]').count();
+
+    if (!document.adds) {
+      /* The whole point of the seam: a format with nothing to say about
+         structure is offered nothing, and the keystroke passes through without
+         doing something invisible. */
+      check(say('a format that cannot take a paragraph is given no way to add one'), fresh === 0);
+      check(
+        say('and the document is not marked as changed by a key that did nothing'),
+        (await page.locator('.tab[data-dirty="true"]').count()) === 0,
+      );
+      await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
+      await page.locator('.tab .close').first().click();
+      await page.waitForTimeout(400);
+      continue;
+    }
+
+    check(say('the new paragraph appears in the view'), fresh === 1, `${fresh}`);
+    check(
+      say('and it is open for typing straight away'),
+      await page.evaluate(() => document.querySelector('[data-new] .ul-office-run')?.isContentEditable ?? false),
+    );
+
+    await page.keyboard.type(ADDED);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+
+    check(
+      say('what was typed stands in the document'),
+      (await page.locator('.ul-office-doc [data-new]').innerText()).includes(ADDED),
+    );
+    check(
+      say('and the document says it has unsaved changes'),
+      (await page.locator('.tab[data-dirty="true"]').count()) === 1,
+    );
+
+    await page.keyboard.press('Control+S');
+    let added = true;
+    try {
+      await page.waitForFunction(
+        () => document.querySelectorAll('.tab[data-dirty="true"]').length === 0,
+        { timeout: 30000 },
+      );
+    } catch {
+      added = false;
+    }
+    check(say('the paragraph was saved'), added);
+
+    const grown = unzipSync(await readFile(document.path));
+    const grownPart = strFromU8(grown[document.part]);
+    const paragraphsAfter = (grownPart.match(/<(w:p|text:p)[\s>]/g) ?? []).length;
+
+    check(say('the new paragraph is in the file'), grownPart.includes(ADDED));
+    check(
+      say('exactly one paragraph more than before, and not two'),
+      paragraphsAfter === paragraphsBefore + 1,
+      `${paragraphsBefore} → ${paragraphsAfter}`,
+    );
+    check(
+      say('the text rewritten earlier is still there, not reverted by the second save'),
+      grownPart.includes('Rewritten in ulEditor'),
+    );
+
+    const stillDrifted = document.otherParts.filter((path) => {
+      const a = document.before[path];
+      const b = grown[path];
+      return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
+    });
+    check(
+      say('adding a paragraph touched no other part of the file'),
+      stillDrifted.length === 0,
+      stillDrifted.join(', ') || `${document.otherParts.length} parts unchanged`,
+    );
+
+    /* Saving again must write the same file: the plan is applied to the
+       original every time, so a second save is not a second insertion. */
+    await page.keyboard.press('Control+S');
+    await page.waitForTimeout(1200);
+    const twice = strFromU8(unzipSync(await readFile(document.path))[document.part]);
+    check(
+      say('saving a second time does not add it a second time'),
+      (twice.match(/<(w:p|text:p)[\s>]/g) ?? []).length === paragraphsAfter,
+    );
+
+    await page.locator('.tab .close').first().click();
+    await page.waitForTimeout(400);
+    await open(document.file);
+    check(
+      say('and it is there when the document is opened again'),
+      (await page.locator('.ul-office-doc').innerText()).includes(ADDED),
+    );
+
     await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
     await page.locator('.tab .close').first().click();
     await page.waitForTimeout(400);
@@ -193,7 +311,16 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   app.kill();
-  spawn('taskkill', ['/F', '/IM', 'uleditor-desktop.exe'], { shell: true, stdio: 'ignore' });
+  /*
+   * By process tree, not by name.
+   *
+   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
+   * machine — including the one the person running this check has open, with
+   * whatever is unsaved in it. The dev build and the installed build share a
+   * name and nothing else, so the only safe handle is the process this harness
+   * started itself; `/T` takes the children Tauri leaves behind with it.
+   */
+  if (app.pid) spawn('taskkill', ['/F', '/T', '/PID', String(app.pid)], { shell: true, stdio: 'ignore' });
   await rm(workspace, { recursive: true, force: true }).catch(() => {});
 }
 

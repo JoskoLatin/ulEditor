@@ -11,7 +11,7 @@
  */
 
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -24,9 +24,39 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  *
  * @param {{ port?: number, timeoutMs?: number }} [opts]
  */
+/**
+ * Whether an ulEditor is already running, and would swallow the one we start.
+ *
+ * The application uses `tauri-plugin-single-instance`: a second copy hands its
+ * arguments to the first and **exits**. So with the person's own ulEditor open,
+ * every desktop check starts a window that is never theirs, waits four minutes
+ * for a debugging port that will never open, and reports
+ * `connect ECONNREFUSED` — a true sentence about a socket and a useless one
+ * about the cause. Asking first costs nothing and turns that into an
+ * instruction.
+ *
+ * Windows only, which is where these checks run; anywhere else it says nothing
+ * rather than guessing.
+ */
+export function alreadyRunning() {
+  if (process.platform !== 'win32') return false;
+  /* No filter and no shell, deliberately. `tasklist /FI` through a shell is
+     mangled when these checks are run from Git Bash — MSYS rewrites `/FI` into
+     a path and tasklist answers with an error nobody reads — so the list is
+     asked for whole and searched here. */
+  const listed = spawnSync('tasklist', [], { encoding: 'utf8' });
+  return /uleditor-desktop\.exe/i.test(listed.stdout ?? '');
+}
+
+export const ALREADY_RUNNING =
+  'ulEditor is already open, and a second copy hands over to the first and exits — ' +
+  'close it and run this again';
+
 export async function startDesktop(opts = {}) {
   const port = opts.port ?? 9333;
   const timeoutMs = opts.timeoutMs ?? 240000;
+
+  if (alreadyRunning()) throw new Error(ALREADY_RUNNING);
 
   const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
     cwd: ROOT,
@@ -70,8 +100,17 @@ export async function startDesktop(opts = {}) {
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});
   session?.app?.kill();
-  // Tauri leaves child processes behind.
-  spawn('taskkill', ['/F', '/IM', 'uleditor-desktop.exe'], { shell: true, stdio: 'ignore' });
+  /*
+   * By process tree, not by name.
+   *
+   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
+   * machine — including the one the person running this check has open, with
+   * whatever is unsaved in it. The dev build and the installed build share a
+   * name and nothing else, so the only safe handle is the process this harness
+   * started itself; `/T` takes the children Tauri leaves behind with it.
+   */
+  const pid = session?.app?.pid;
+  if (pid) spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { shell: true, stdio: 'ignore' });
   await new Promise((r) => setTimeout(r, 1500));
 }
 

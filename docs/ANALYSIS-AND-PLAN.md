@@ -373,9 +373,11 @@ of the two engines it was designed around has been taken.
 | Item | State |
 |---|---|
 | `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
-| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time. ProseMirror arrives for structural editing — inserting a paragraph, splitting a table |
+| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one. ProseMirror is still what the deeper structural work needs: splitting a paragraph mid-run, a row in a table, removing a paragraph the file already had |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
+| **A new paragraph in a `.docx`** | **done** — `Ctrl+Enter`, held as a plan over the file as it was opened and applied whole on every save, so a second save writes the same bytes and an undo reaches back past one. The style is resolved through `w:next` rather than copied, the run formatting comes from the run it follows, a section break and a tracked-change mark are never carried, and a paragraph in a table cell is refused with its reason. [tools/verify-docx-insert.mjs](../tools/verify-docx-insert.mjs) |
+| **The reader that refuses** | **done** — [tools/verify-docx-word.mjs](../tools/verify-docx-word.mjs). LibreOffice is lenient: handed a body child it does not understand it opens the file and drops it, and the conversion reads as a success. Word refuses. It drives Word over COM and requires that ours opens, that it holds **exactly one paragraph more** than the original Word also opened, and that the text is in it. Its first finding was our own `makeDocx()` fixture, which had no `_rels/.rels` and no content type for the main part — not a package Word would open, and every check built on it had passed because every check was ours |
 | **A reader that is not ours** | **done** — [tools/verify-office-readback.mjs](../tools/verify-office-readback.mjs). Every "it reopens" claim above went back through the same namespace-blind scanners that wrote the file, and a writer and a reader sharing a mistake agree perfectly. LibreOffice shares no code with us: **64 of 64 files we wrote opened in it**, and where it shows the spot we edited at all, **46 of 46 show the text we typed, diacritics and all** |
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
@@ -433,6 +435,68 @@ structural step model of the shape `editor-pdf` already proved — *"page
 operations change nothing until a save; until then there is only a plan"* — and
 an assertion that an insert is correct rather than merely performed. `pnpm
 readback` is that assertion, built first on purpose.
+
+**The fourth design was written with those three pieces in it, and was attacked
+again.** Four critics with four different lenses raised eleven problems, six of
+them called fatal, every one grounded in a file and line or in a number from the
+corpus. One of them was the design:
+
+> *After a save, an inserted paragraph can be neither edited nor removed — and
+> the flagship gesture always produces that case.* `save()` clears both undo
+> stacks; deleting a paragraph was out of scope; and the gesture inserted an
+> empty paragraph, which draws with no run inside it and so cannot be
+> double-clicked. **The design copied the word "plan" from `editor-pdf` and
+> dropped the property that makes a plan safe** — that editor's save clears no
+> stack, its plan outlives the save, and `removePage` exists.
+
+That is the finding that decided the architecture. The plan is now held over the
+file **as it was opened**, for text and structure alike: `PreviewSource.commit`
+is gone, every save applies the whole plan to the original, and nothing is
+cleared. Saving twice writes the same bytes. Undo reaches back past a save. The
+ordinal-rebasing arithmetic the design had needed — a page of it — was deleted
+outright, because nothing shifts when nothing is ever advanced.
+
+The other five each removed something that would have shipped:
+
+- **`w:next` is the answer to "properties resolved".** Not a flattened style
+  chain, which would freeze what should follow the document; the style itself
+  declares its heir. Measured on 49 real documents: nine declare `w:next`, 90
+  declarations, and every heading style among them hands on to body text —
+  `Naslov1 → Normal`, and in one file `Heading → Tijeloteksta`.
+- **The run formatting comes from the run, not the paragraph.** A critic built
+  the design's own output against a real 48pt title and converted it: the new
+  text arrived at the document default, sitting under the heading at a quarter
+  of its size, because the size was direct formatting on the runs and the copied
+  `w:pPr` said nothing about it.
+- **Enter is not the gesture.** Enter has meant *done typing* in this view since
+  the first run was rewritten, and `tools/verify-office-editing.mjs` presses it
+  to commit; redefining it would have quietly turned every pass of that check
+  into an unasked-for paragraph. The command is `Ctrl+Enter`.
+- **The reading flow measures the document once.** `PagedFlow` recomputes its
+  page count only in `relayout()`, and nothing in this editor had ever called
+  it: a document that grew and did not say so has a last page nobody can reach.
+- **The assertion the design proposed was wrong in both directions.** "The
+  marker appears on a line of its own" passes on a defect — a 12pt line under a
+  48pt heading is still its own line — and *fails* on a correct insertion after
+  a numbered item, which LibreOffice exports as `    2. …`. So the structural
+  claims are asserted against the XML the writer produced
+  ([tools/verify-docx-insert.mjs](../tools/verify-docx-insert.mjs)) and
+  LibreOffice is asked only the two questions no scanner of ours can answer: does
+  it open, and is the text there. And the critic's last sentence — *"add one
+  Word-side open before shipping, since Word is the reader that rejects a bad
+  body child and LibreOffice is the one that hides it"* — turned out to be
+  possible: Word is on this machine, so `pnpm verify:word` asks it, and the first
+  thing it refused was our own fixture.
+
+**And then it was built.** `Ctrl+Enter` adds a paragraph after the one the cursor
+is in; a table cell is refused with a reason rather than in silence; an empty new
+paragraph is never written, because a paragraph nobody typed into is one nobody
+could click into again. `pnpm verify:insert` puts one into every real `.docx` in
+the corpus — **44 of 44 that have anywhere to put one**, with the five that do
+not named rather than counted as passes — and asserts on each that the document
+is exactly one paragraph longer, that every character outside the single
+insertion point is unchanged, that nothing forbidden was inherited, and that
+saving twice writes the same file.
 
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:

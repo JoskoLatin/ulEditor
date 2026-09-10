@@ -75,6 +75,8 @@ export function menuDefinitions(): MenuDefinition[] {
         { command: 'find.inDocument' },
         { command: 'view.search' },
         'rule',
+        { command: 'edit.insertParagraph' },
+        'rule',
         { command: 'edit.goToDefinition' },
       ],
     },
