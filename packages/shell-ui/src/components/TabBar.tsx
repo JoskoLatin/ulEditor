@@ -52,7 +52,14 @@ export function TabBar({ group }: { group: GroupId }) {
             tabInstances.get(tab.id)?.focus();
           }}
         >
-          <FormatIcon family={FORMATS[tab.format].family} size={14} />
+          {/*
+           * Guarded, like the title bar and the status bar already guard it.
+           * This was the one of eight `FORMATS[...]` sites in the shell that
+           * did not, and a tab whose format is not in the registry threw here
+           * — which took the entire window to a blank page, because a render
+           * that throws with nothing catching it unmounts the whole tree.
+           */}
+          <FormatIcon family={FORMATS[tab.format]?.family ?? 'text'} size={14} />
           <span className="name">{tab.name}</span>
           <button
             className="close"

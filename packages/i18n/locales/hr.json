@@ -180,6 +180,11 @@
   "Unknown": "Nepoznato",
   "Untitled": "Bez naslova"
 ,
+  "This document broke the editor": "Ovaj dokument je slomio uređivač",
+  "The rest of the program is still running. Close the tab to carry on.": "Ostatak programa i dalje radi. Zatvorite karticu i nastavite.",
+  "Close the tab": "Zatvori karticu",
+  "ulEditor stopped unexpectedly last time. The report is open in a tab.": "ulEditor se prošli put neočekivano zaustavio. Izvještaj je otvoren u kartici.",
+  "ulEditor stopped unexpectedly {n} times. The reports are open in tabs.": "ulEditor se neočekivano zaustavio {n} puta. Izvještaji su otvoreni u karticama.",
   "This document could not be opened": "Ovaj dokument nije moguće otvoriti",
   "Loading {name}…": "Učitavam {name}…",
   "Could not open the document: {reason}": "Otvaranje nije uspjelo: {reason}",

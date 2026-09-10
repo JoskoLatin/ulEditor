@@ -6,6 +6,8 @@
 
 use std::sync::Mutex;
 
+mod crash;
+
 use tauri::ipc::Response;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -825,6 +827,49 @@ fn take_launch_paths(state: State<'_, LaunchPaths>) -> Vec<String> {
     std::mem::take(&mut *guard)
 }
 
+/* ── what is written down when it breaks ─────────────────────────────── */
+
+/// The size a report from the window is allowed to be.
+///
+/// A stack trace is a few kilobytes. Sixty-four of them is a runaway, and a
+/// runaway is the case this exists to survive rather than to preserve.
+const LONGEST_REPORT: usize = 64 * 1024;
+
+/// Writes what the window says went wrong, beside what the core writes.
+///
+/// It answers with the path so the caller could show it, and with a plain string
+/// error rather than a rich one: there is nothing useful to do about a crash
+/// report that could not be written, and something that has to be *done* about
+/// it is the beginning of a loop.
+#[tauri::command]
+fn record_crash(text: String) -> Result<String, String> {
+    let text = if text.len() > LONGEST_REPORT {
+        format!(
+            "{}\n…the rest was cut; it was longer than this file is allowed to be.\n",
+            &text[..LONGEST_REPORT]
+        )
+    } else {
+        text
+    };
+    crash::write(&text)
+        .map(|path| path.display().to_string())
+        .map_err(|err| err.to_string())
+}
+
+/// The reports nobody has been shown yet, and after this call, none.
+///
+/// Drained the same way the launch paths are, and for the same reason: the
+/// window reloads when the language changes, and a list that survived would
+/// announce the same crash every time somebody switched between English and
+/// Croatian.
+#[tauri::command]
+fn take_crash_reports() -> Vec<String> {
+    crash::unseen()
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect()
+}
+
 /* ── developer tools ─────────────────────────────────────────────────── */
 
 /// Opens the webview's inspector.
@@ -857,6 +902,14 @@ fn devtools_available() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    /*
+     * First, before the plugins, before the context, before the builder's own
+     * `expect` below. Everything above this line in the program's life would
+     * otherwise fail into a silence with nowhere to write — and "it will not
+     * start at all" is the report that most needs a file behind it.
+     */
+    crash::install();
+
     let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
 
     /*
@@ -901,6 +954,11 @@ pub fn run() {
                 workspace: Mutex::new(Workspace::new()),
             });
             app.manage(LaunchPaths(Mutex::new(paths_from(std::env::args()))));
+
+            /* Old reports go now rather than inside the hook. A directory sweep
+            on a process that is already dying is the one piece of this that
+            can safely wait until the program is healthy again. */
+            crash::trim();
 
             /*
              * The language servers, and one thread that carries what they say
@@ -988,6 +1046,8 @@ pub fn run() {
             open_devtools,
             devtools_available,
             take_launch_paths,
+            record_crash,
+            take_crash_reports,
         ])
         .build(tauri::generate_context!())
         .expect("starting ulEditor failed")

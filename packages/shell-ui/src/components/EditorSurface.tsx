@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { t } from '@uleditor/i18n';
 
+import { record } from '../shell/crash.js';
 import {
   selectActiveTabId,
   tabInstances,
@@ -48,6 +49,7 @@ export function EditorSurface({ group }: { group: GroupId }) {
 function Pane({ tab, active, focused }: { tab: TabState; active: boolean; focused: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
+  const patchTab = useWorkspace((s) => s.patchTab);
 
   useEffect(() => {
     if (mounted.current || !tab.ready || !ref.current) return;
@@ -55,10 +57,22 @@ function Pane({ tab, active, focused }: { tab: TabState; active: boolean; focuse
     if (!instance) return;
 
     mounted.current = true;
-    void Promise.resolve(instance.mount(ref.current)).then(() => {
-      if (focused) instance.focus();
-    });
-  }, [tab.id, tab.ready, focused]);
+    void Promise.resolve(instance.mount(ref.current))
+      .then(() => {
+        if (focused) instance.focus();
+      })
+      /*
+       * An editor that never started used to leave a tab that looked like a
+       * perfectly ordinary empty document — right name, right title bar, right
+       * status line, and nothing in it. The panel below already exists for a
+       * document that could not be opened; this is the same thing one step
+       * later, and it belongs in the same place.
+       */
+      .catch((error: unknown) => {
+        record(error, { where: 'starting an editor', format: tab.format, providerId: tab.providerId });
+        patchTab(tab.id, { error: error instanceof Error ? error.message : String(error) });
+      });
+  }, [tab.id, tab.ready, focused, patchTab]);
 
   // The focus follows the active tab, but only once the editor is mounted.
   useEffect(() => {

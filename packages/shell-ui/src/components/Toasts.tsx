@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
+import { record } from '../shell/crash.js';
 import type { ToastRecord } from '../host/index.js';
 
 export function Toasts() {
@@ -37,7 +38,13 @@ export function Toasts() {
                   key={action.label}
                   className="toast-btn"
                   data-primary={index === toast.actions.length - 1}
-                  onClick={() => void action.run()}
+                  /* A notice about a failure whose own button fails silently is
+                     the worst place in the program to swallow an error. */
+                  onClick={() =>
+                    void Promise.resolve(action.run()).catch((err: unknown) => {
+                      record(err, { where: `the action on a ${toast.level} notice` });
+                    })
+                  }
                 >
                   {action.label}
                 </button>

@@ -11,6 +11,7 @@ import { selectActiveTabId, selectSplit, useWorkspace } from './state/workspace.
 import { exitReading, useReading } from './shell/reading.js';
 import { restoreSession, watchSession } from './shell/session.js';
 import { watchLaunchPaths } from './shell/launch.js';
+import { watchForPastCrashes } from './shell/crash.js';
 
 import { About } from './components/About.js';
 import { ActivityBar } from './components/ActivityBar.js';
@@ -47,6 +48,10 @@ export function App({ shell }: { shell: Shell }) {
          finishes last decides which tab is in front — the file somebody
          double-clicked should not end up behind three restored ones. */
       stopLaunch = watchLaunchPaths(shell);
+      /* Last of the three, so a report about a crash is the tab in front — it
+         is the only one of them the person did not ask for and does need to
+         see. */
+      watchForPastCrashes(shell);
     });
     return () => {
       stop?.();

@@ -12,15 +12,23 @@
  * sits exactly where it always has, under the tabs.
  */
 
+import { useShell } from '../shell/context.js';
+import { closeTab } from '../shell/actions.js';
+import { record } from '../shell/crash.js';
 import { useWorkspace, type GroupId } from '../state/workspace.js';
+import { Boundary } from './Boundary.js';
 import { EditorSurface } from './EditorSurface.js';
 import { FindPanel } from './FindPanel.js';
 import { TabBar } from './TabBar.js';
 
 export function EditorGroup({ group }: { group: GroupId }) {
+  const shell = useShell();
   const focused = useWorkspace((s) => s.focused === group);
   const focusGroup = useWorkspace((s) => s.focusGroup);
   const split = useWorkspace((s) => s.tabs.some((tab) => tab.group === 'right'));
+  const active = useWorkspace((s) => s.active[group]);
+  const format = useWorkspace((s) => s.tabs.find((tab) => tab.id === s.active[group])?.format);
+  const providerId = useWorkspace((s) => s.tabs.find((tab) => tab.id === s.active[group])?.providerId);
 
   return (
     <section
@@ -35,9 +43,21 @@ export function EditorGroup({ group }: { group: GroupId }) {
       onMouseDownCapture={() => focusGroup(group)}
       onFocusCapture={() => focusGroup(group)}
     >
-      <TabBar group={group} />
-      {focused ? <FindPanel /> : null}
-      <EditorSurface group={group} />
+      {/*
+       * All three inside one boundary, deliberately. The measured blank page
+       * came from `TabBar`, which is the surface's sibling — a boundary around
+       * the surface alone is not in its ancestry and would never have run.
+       */}
+      <Boundary
+        onError={(error, componentStack) =>
+          record(error, { where: `the ${group} group`, format, providerId, componentStack })
+        }
+        onDismiss={active ? () => void closeTab(shell, active) : undefined}
+      >
+        <TabBar group={group} />
+        {focused ? <FindPanel /> : null}
+        <EditorSurface group={group} />
+      </Boundary>
     </section>
   );
 }

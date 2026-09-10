@@ -16,6 +16,13 @@ import { IconClose } from './Icons.js';
  */
 export function About() {
   const shell = useShell();
+
+  /* A link that will not open used to do nothing at all and say nothing
+     anywhere — the same shape the palette and the menu bar already fixed. */
+  const run = (id: string) =>
+    void shell.commands.execute(id).catch((err: unknown) => {
+      shell.notify.show('error', err instanceof Error ? err.message : String(err));
+    });
   const open = useWorkspace((s) => s.aboutOpen);
   const setOpen = useWorkspace((s) => s.setAboutOpen);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -83,10 +90,10 @@ export function About() {
         */}
         {shell.openExternal ? (
           <section className="about-links">
-            <button className="ghost-btn" onClick={() => void shell.commands.execute('help.source')}>
+            <button className="ghost-btn" onClick={() => run('help.source')}>
               {t('Source code')}
             </button>
-            <button className="ghost-btn" onClick={() => void shell.commands.execute('help.report')}>
+            <button className="ghost-btn" onClick={() => run('help.report')}>
               {t('Report a problem')}
             </button>
           </section>

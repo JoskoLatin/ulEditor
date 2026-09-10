@@ -445,6 +445,61 @@ move to `Alt+Click`** — CodeMirror's own default puts them on the same modifie
 so one of the two had to move, and that is the same swap VS Code made for the
 same reason.
 
+## When it breaks
+
+Two questions, and only one of them is about reporting.
+
+**Does one broken editor take the whole window?** It used to. Measured against
+the real shell, a render that throws with nothing catching it takes `#root`
+from twelve thousand characters to **zero** — no tab bar, no title bar, no
+menus, no status bar, and `Ctrl+Shift+P` opens nothing. A uniform grey
+rectangle. Two real faults produced exactly that: a tab whose format was not in
+the registry, because `TabBar` was the one of eight `FORMATS[...]` sites that
+did not guard, and an editor whose `focus()` threw inside an effect. The first
+is now guarded and the second is caught: a boundary wraps **the whole group** —
+the tabs, the find bar and the surface — so what breaks is one document, and
+the way back is closing its tab.
+
+It wraps the group and not the surface for a reason worth stating, because it
+is the kind of mistake that ships looking finished: the failure that produced
+the blank page was in `TabBar`, which is the surface's *sibling*. A boundary
+around the surface alone is not in its ancestry and would never have run.
+
+**And when it does break, what is written down?** A text file, in the
+application's own log folder, and **nothing else happens**. There is no
+endpoint, no key, no queue and no consent dialog to get wrong, because there is
+nothing to consent to. If you want somebody to see it, you send it — the way
+you would send any other file. `pnpm verify:crash` reads the two crash modules
+and fails the run if either grows a `fetch`, a URL or a client library, which
+makes adding telemetry a deliberate act rather than a quiet one.
+
+The reports are handed over **at the next start**, not when they are written,
+and that is forced rather than chosen: a React error unmounts the root the
+notifications live in, and a Rust panic ends the process outright, because this
+program is built with `panic = "abort"`. A message can only be given to a
+window that still exists, which means the next one. The report opens as a tab —
+this is a text editor, and walking somebody out to Explorer to find a `.txt`
+the program wrote would be an odd thing for it to do.
+
+The panic hook takes **no lock**, lists no folder and asks Tauri nothing. That
+is not caution, it is the difference between ending and hanging: the hook runs
+on the thread that panicked, and this program has threads that panic while
+holding a lock. A hook that waited for one would freeze the window instead of
+closing it, which is strictly worse than the crash. It is installed before the
+plugins, the context and the builder, so that "it will not start at all" — the
+report every desktop program gets most — has a file behind it too.
+
+There is no backtrace in a report, and that is deliberate: the release build is
+stripped and ships no symbols, so every frame would read `<unknown>`. The file,
+the line and the message are what a fix is made from.
+
+Two crashes still write nothing at all — a stack overflow and an out-of-memory
+abort never call the hook. An empty folder after a crash is therefore a real
+state, not a claim that nothing went wrong.
+
+**Telemetry is not started and stays opt-in.** There is nothing here to opt
+into yet.
+
 ## Reading mode
 
 `Ctrl+Shift+R` hides the entire program frame and leaves only the text.
@@ -540,6 +595,7 @@ pnpm verify:export    # text export to txt / md / docx / pdf
 pnpm verify:mermaid   # diagrams in Markdown — and that mermaid is not fetched without one
 pnpm verify:updates   # the updater: key, endpoint, permissions, manifest (no network)
 pnpm verify:clipboard # a spreadsheet range pasted into Markdown, as a table
+pnpm verify:crash     # a broken editor does not take the window, and no report leaves the disk
 pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)

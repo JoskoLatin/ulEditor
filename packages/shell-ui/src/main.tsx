@@ -18,6 +18,7 @@ import { createShell } from './host/index.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
 import { watchClipboard } from './shell/clipboard.js';
+import { watchForCrashes } from './shell/crash.js';
 import { checkOnStart } from './shell/updates.js';
 import { restoreZoom } from './shell/zoom.js';
 import { SIDEBAR_WIDTH, useWorkspace } from './state/workspace.js';
@@ -303,6 +304,13 @@ shell.registry.register(
     () => import('@uleditor/editor-pdf'),
   ),
 );
+
+/*
+ * Before the interface exists rather than after it, because the interface
+ * failing to come up at all is one of the things worth hearing about — and
+ * because a listener registered later would miss whatever happened first.
+ */
+watchForCrashes();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('The #root element is missing.');

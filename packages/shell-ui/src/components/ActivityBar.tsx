@@ -44,7 +44,11 @@ export function ActivityBar() {
         className="act-btn"
         title={t('Theme: {name}', { name: themeLabel })}
         aria-label={t('Theme: {name}', { name: themeLabel })}
-        onClick={() => void shell.commands.execute('view.cycleTheme')}
+        onClick={() =>
+          void shell.commands.execute('view.cycleTheme').catch((err: unknown) => {
+            shell.notify.show('error', err instanceof Error ? err.message : String(err));
+          })
+        }
       >
         <ThemeIcon size={17} />
       </button>
