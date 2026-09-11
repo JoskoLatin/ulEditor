@@ -55,6 +55,13 @@
  * in ours. A spot the reader never showed is a spot this instrument cannot ask
  * about, and it says so rather than counting it.
  *
+ * **A Word document gets every kind of change at once** — runs rewritten, a
+ * paragraph added, one taken away and one split where a caret could stand —
+ * because they share one operation list and real documents are where they
+ * collide. The split is asked on the same terms as the rest: a line the
+ * original's conversion showed whole and once has to come back as two lines,
+ * one after the other, divided where the cut fell.
+ *
  * **It never writes to the corpus.** Every edit is made against a copy in
  * memory; only the temporary folder ever sees a file.
  *
@@ -80,6 +87,7 @@ const {
   findParagraphs,
   paragraphOfRun,
   removalRefusal,
+  splitRefusal,
   readStyleSuccession,
   applyRunEdits,
   runText,
@@ -206,16 +214,55 @@ function edited(format, bytes) {
         /^[^&<>]{8,}$/.test(lineOf(span)),
     );
 
+    /*
+     * And one paragraph split, as Enter in the middle of a sentence splits it —
+     * in the same save as the rest, clear of the paragraphs they touch, and on
+     * a line a person could look for: long enough, with nothing in it the
+     * export would spell differently. Where it stood, the reader has to show
+     * two lines, divided where the cut fell.
+     */
+    const busy = new Set([...touched, anchor?.paragraph.index, going?.index]);
+    const divided = runs.find((run) => {
+      if (!run.text || run.refusal || splitRefusal(xml, paragraphs, run) !== null) return false;
+      const span = paragraphOfRun(paragraphs, run);
+      if (!span || busy.has(span.index)) return false;
+      if (/<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple|drawing|pict|object)[\s/>]/.test(xml.slice(span.start, span.end))) {
+        return false;
+      }
+      return runText(xml, run).trim().length >= 8 && /^[^&<>]{12,}$/.test(lineOf(span));
+    });
+    let split = null;
+    const cuts = [];
+    if (divided) {
+      const span = paragraphOfRun(paragraphs, divided);
+      const text = runText(xml, divided);
+      const at = text.indexOf(' ', Math.floor(text.length / 2)) > 0 ? text.indexOf(' ', Math.floor(text.length / 2)) : Math.floor(text.length / 2);
+      const parts = [text.slice(0, at), text.slice(at)];
+      cuts.push({ run: divided.index, parts });
+      /* Untrimmed, unlike `lineOf`: a space at the end of the text before the
+         cut belongs to the first line, and trimming each half would glue two
+         words together. Only the finished lines are trimmed, as the export's. */
+      const raw = (from, to) =>
+        [...xml.slice(from, to).matchAll(/<(?:[A-Za-z_][\w.-]*:)?t(?:\s[^>]*)?>([^<]*)</g)].map((m) => m[1]).join('');
+      split = {
+        whole: lineOf(span),
+        first: `${raw(span.start, divided.text.start)}${parts[0]}`.trim(),
+        second: `${parts[1]}${raw(divided.text.end, span.end)}`.trim(),
+      };
+    }
+
     return {
       bytes: writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
         inserts,
         removals: going ? [going.index] : [],
+        cuts,
       }),
       typed: [...edits.map((e) => e.text), ...inserts.map((one) => one.text)],
       was: anchor ? [...was, was[anchor.at]] : was,
       gone: going ? lineOf(going) : null,
+      split,
     };
   }
 
@@ -415,6 +462,7 @@ const skipped = [];
 const invisible = [];
 const added = [];
 const taken = [];
+const halved = [];
 const broke = [];
 
 for (const file of sampled) {
@@ -487,6 +535,22 @@ for (const file of sampled) {
     }
   }
 
+  /* A split, on the same terms: a line this reader showed whole and once in
+     the original has to come back as two lines, one after the other. */
+  if (made.split && original !== null) {
+    const lines = (body) => body.split(/\r?\n/).map((line) => line.trim());
+    const was = lines(original);
+    if (was.filter((line) => line === made.split.whole).length === 1) {
+      const now = lines(text);
+      const at = now.indexOf(made.split.first);
+      if (at === -1 || now[at + 1] !== made.split.second || now.includes(made.split.whole)) {
+        broke.push(`${name} (${format}): a split paragraph is not two lines — "${made.split.first.slice(0, 24)}" / "${made.split.second.slice(0, 24)}"`);
+      } else {
+        halved.push(name);
+      }
+    }
+  }
+
   if (asked.length === 0) {
     invisible.push(`${name}: this reader shows none of the spots we edited`);
     continue;
@@ -531,6 +595,12 @@ check(
   'and a paragraph taken out of the file is gone when it is reopened',
   taken.length > 0 && !broke.some((b) => b.includes('taken away is still there')),
   `${taken.length} documents lost one and were asked about it`,
+);
+
+check(
+  'and a paragraph split where the cursor stood is two lines when it is reopened',
+  halved.length > 0 && !broke.some((b) => b.includes('split paragraph is not two lines')),
+  `${halved.length} documents had one split and were asked about it`,
 );
 
 if (invisible.length > 0) {

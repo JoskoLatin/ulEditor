@@ -44,7 +44,7 @@ import {
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
-import { renderDocx, type NewParagraph, type ParagraphSeam, type Preview } from './docx.js';
+import { renderDocx, type DividedPiece, type NewParagraph, type ParagraphSeam, type Preview } from './docx.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
@@ -150,6 +150,76 @@ interface Snapshot {
   steps: NewParagraph[];
   /** Ordinals of the file's own paragraphs the plan removes. */
   removed: number[];
+  /** The pieces of text Enter divided, each with its parts. */
+  cuts: [number, string[]][];
+}
+
+/**
+ * What a piece of text being typed into stands for, resolved when the typing
+ * begins — while the numbering on the page is still the numbering the plan
+ * was drawn with.
+ */
+type Typing =
+  | { kind: 'run'; run: number }
+  | { kind: 'part'; run: number; part: number }
+  | { kind: 'step'; step: NewParagraph };
+
+/** Every text node inside a node, in document order. */
+function textsIn(node: Node): Text[] {
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  const out: Text[] = [];
+  for (let next = walker.nextNode(); next; next = walker.nextNode()) out.push(next as Text);
+  return out;
+}
+
+/**
+ * Puts text into a run's element without taking its formatting with it.
+ *
+ * A run is drawn as its text inside the elements its formatting became —
+ * `<strong>`, `<em>` — so assigning `textContent` to the run's own element
+ * would draw it plain from then on. The text goes into the first text node
+ * wherever the wrappers put it, and whatever typing left beside it — a second
+ * text node, a `<br>` — goes.
+ */
+function setRunText(element: HTMLElement, text: string): void {
+  for (const br of [...element.querySelectorAll('br')]) br.remove();
+  const [first, ...rest] = textsIn(element);
+  for (const extra of rest) extra.remove();
+  if (first) {
+    first.data = text;
+    return;
+  }
+  let inner: Element = element;
+  while (inner.firstElementChild) inner = inner.firstElementChild;
+  inner.appendChild(document.createTextNode(text));
+}
+
+/**
+ * How many characters stand before the caret in an element being typed into;
+ * `null` when the caret is elsewhere, or when text is selected instead.
+ */
+function caretOffset(target: HTMLElement): number | null {
+  const selection = document.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
+  const at = selection.getRangeAt(0);
+  if (!target.contains(at.startContainer)) return null;
+  const before = document.createRange();
+  before.selectNodeContents(target);
+  before.setEnd(at.startContainer, at.startOffset);
+  return before.toString().length;
+}
+
+/**
+ * Whether a paragraph holds anything besides one of its pieces of text, on
+ * one side of it — text, or a picture or a break with none.
+ */
+function holdsBesides(block: HTMLElement, target: HTMLElement, side: 'before' | 'after'): boolean {
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  if (side === 'before') range.setEndBefore(target);
+  else range.setStartAfter(target);
+  const rest = range.cloneContents();
+  return (rest.textContent ?? '').length > 0 || rest.querySelector('img, svg, br, canvas, video, object') !== null;
 }
 
 /**
@@ -188,6 +258,20 @@ class DocumentPreviewEditor implements EditorInstance {
    * applies the whole set to the file as it was opened.
    */
   #removed = new Set<number>();
+  /**
+   * The file's own pieces of text Enter divided: ordinal → its parts, at
+   * least two, every one after the first a paragraph of its own.
+   *
+   * The same kind of plan again. A piece in here is not in `#edits`: its
+   * text is the parts joined, and each part is retyped on its own.
+   */
+  #cuts = new Map<number, string[]>();
+  /**
+   * Each divided paragraph as it was drawn before its first division — what
+   * every redraw of it starts from. Kept once taken, because an undo can
+   * divide it again and the view has to be cut from the same whole.
+   */
+  #pristine = new Map<number, HTMLElement>();
   #undoStack: Snapshot[] = [];
   #redoStack: Snapshot[] = [];
   /** The plan as the file on disk holds it; anything else means unsaved. */
@@ -228,6 +312,7 @@ class DocumentPreviewEditor implements EditorInstance {
       edits,
       this.#steps.filter((step) => step.text.length > 0),
       [...this.#removed].sort((a, b) => a - b),
+      [...this.#cuts].sort((a, b) => a[0] - b[0]),
     ]);
   }
 
@@ -244,6 +329,7 @@ class DocumentPreviewEditor implements EditorInstance {
       edits: new Map(this.#edits),
       steps: this.#steps.filter((step) => step.text.length > 0).map((step) => ({ ...step })),
       removed: [...this.#removed].sort((a, b) => a - b),
+      cuts: [...this.#cuts].map(([run, parts]): [number, string[]] => [run, [...parts]]),
     };
   }
 
@@ -261,7 +347,7 @@ class DocumentPreviewEditor implements EditorInstance {
         this.preview.source
           ? this.preview.source.paragraphs
             ? t(
-                'Text can be retyped — double-click it. Ctrl+Enter adds a paragraph below, Ctrl+Shift+Backspace removes the one the cursor is in. Layout and styles stay as they are.',
+                'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Ctrl+Shift+Backspace removes the one the cursor is in. Layout and styles stay as they are.',
               )
             : t('Text can be retyped — double-click it. Layout and styles stay as they are.')
           : t('This document is shown, not edited — it opens for reading and searching.'),
@@ -340,26 +426,46 @@ class DocumentPreviewEditor implements EditorInstance {
     if (!(target instanceof HTMLElement) || target.isContentEditable) return;
 
     event.preventDefault();
-    /* Which step this is, resolved now while the numbering on the page is
-       fresh — not at the moment the caret leaves, by which time an undo may
-       have rebuilt every node of the plan under it. */
-    const added = target.closest<HTMLElement>('[data-new]');
-    this.#openForTyping(target, added ? this.#steps[Number(added.dataset.new)] : undefined);
+    const typing = this.#typingOf(target);
+    if (typing) this.#openForTyping(target, typing);
   };
 
   /**
-   * Opens one piece of text for typing, whether it is in the file or only in the
-   * plan.
-   *
-   * The two cases differ in exactly one place — where the typed text is written
-   * down when the caret leaves — and that difference is the last two lines.
+   * Which piece of text an element stands for. Resolved when the typing
+   * begins, not when the caret leaves — by then an undo may have rebuilt
+   * every node of the plan under it.
    */
-  #openForTyping(target: HTMLElement, step?: NewParagraph): void {
+  #typingOf(target: HTMLElement): Typing | null {
+    const added = target.closest<HTMLElement>('[data-new]');
+    if (added) {
+      const step = this.#steps[Number(added.dataset.new)];
+      return step ? { kind: 'step', step } : null;
+    }
+    if (target.dataset.partOf !== undefined) {
+      return { kind: 'part', run: Number(target.dataset.partOf), part: Number(target.dataset.part) };
+    }
+    if (target.dataset.run === undefined) return null;
+    const run = Number(target.dataset.run);
+    return this.#cuts.has(run) ? { kind: 'part', run, part: 0 } : { kind: 'run', run };
+  }
+
+  /**
+   * Opens one piece of text for typing — a run of the file, a part of one
+   * Enter divided, or a paragraph only the plan has.
+   *
+   * They differ in one place: where the typed text is written down when the
+   * caret leaves. A piece opens with all its text selected, which is how a
+   * double-click has always opened it; the part a split just made opens with
+   * the caret at its start, which is where Enter leaves it everywhere else a
+   * person types.
+   */
+  #openForTyping(target: HTMLElement, typing: Typing, caret: 'all' | 'start' = 'all'): void {
     const before = target.textContent ?? '';
 
     target.contentEditable = 'plaintext-only';
     target.focus();
-    document.getSelection()?.selectAllChildren(target);
+    if (caret === 'start') document.getSelection()?.collapse(textsIn(target)[0] ?? target, 0);
+    else document.getSelection()?.selectAllChildren(target);
 
     const finish = () => {
       target.removeEventListener('blur', finish);
@@ -375,8 +481,9 @@ class DocumentPreviewEditor implements EditorInstance {
       const typed = target.textContent ?? '';
       const after = before.includes('\u00A0') ? typed : typed.replace(/\u00A0/g, ' ');
 
-      if (step) this.#recordStep(step, after);
-      else if (after !== before) this.#record(Number(target.dataset.run), after);
+      if (typing.kind === 'step') this.#recordStep(typing.step, after);
+      else if (typing.kind === 'part') this.#recordPart(typing.run, typing.part, after, target);
+      else if (after !== before) this.#record(typing.run, after);
     };
 
     const onKey = (key: KeyboardEvent) => {
@@ -386,12 +493,19 @@ class DocumentPreviewEditor implements EditorInstance {
         target.blur();
         return;
       }
-      /* A new line in Word is an element of its own, not a character in the
-         text — and adding one is a command of its own, not this key. Enter here
-         means "done", which is what it has always meant in this editor and what
-         the browser check at tools/verify-office-editing.mjs relies on. */
+      /*
+       * Enter at a caret begins a new paragraph, the way it does everywhere
+       * else a person types — the paragraph split where the caret stands, or
+       * a new one begun after it. Where that is not a question this piece can
+       * be asked, it keeps the meaning it had here before: done. That is so
+       * with text selected, which is how every piece opens — a double-click
+       * and Enter changes nothing, as it never did; in a format with nothing
+       * to say about paragraphs; and in a table cell.
+       */
       if (key.key === 'Enter') {
         key.preventDefault();
+        const plain = !key.shiftKey && !key.ctrlKey && !key.altKey && !key.metaKey;
+        if (plain && this.#enter(target, typing)) return;
         target.blur();
       }
     };
@@ -404,6 +518,163 @@ class DocumentPreviewEditor implements EditorInstance {
     this.#undoStack.push(this.#capture());
     this.#redoStack = [];
     this.#edits.set(index, text);
+    this.#emitDirty();
+  }
+
+  /* ── Enter ───────────────────────────────────────────────────────── */
+
+  /**
+   * Enter at a caret: the paragraph split there, a new one begun after it, or
+   * a sentence saying why neither — asked before anything moves, so a refusal
+   * leaves the person typing where they were. `false` hands the key back to
+   * mean "done".
+   */
+  #enter(target: HTMLElement, typing: Typing): boolean {
+    const seam = this.preview.source?.paragraphs;
+    const offset = caretOffset(target);
+    const block = target.closest<HTMLElement>('[data-paragraph], [data-piece-of], [data-new]');
+    if (!seam || offset === null || !block) return false;
+
+    const text = target.textContent ?? '';
+    const before = offset > 0 || holdsBesides(block, target, 'before');
+    const after = offset < text.length || holdsBesides(block, target, 'after');
+
+    if (!before) {
+      this.#statusEmitter.fire(
+        t('Nothing stands before the cursor to keep in this paragraph — a new line above it starts at the end of the one before.'),
+      );
+      return true;
+    }
+
+    if (!after) {
+      /* The end of what is written: a new paragraph after this one, the one
+         Ctrl+Enter makes — its style handed on through `w:next`, as Word hands
+         it on at the end of a heading, where a split mid-sentence keeps it. */
+      const at = this.#insertionPoint();
+      if ('refusal' in at) {
+        this.#statusEmitter.fire(at.refusal);
+        return true;
+      }
+      this.insertParagraph();
+      return true;
+    }
+
+    if (typing.kind !== 'step') {
+      const refusal = seam.divisionRefusalAt(typing.run);
+      if (refusal) {
+        this.#statusEmitter.fire(refusal);
+        return true;
+      }
+    }
+
+    /* The typing is written down first, by the ordinary path: what was typed
+       is a change of its own, and the split a second one on top of it — so
+       Ctrl+Z takes back the split and leaves the typing. */
+    target.blur();
+    this.#divide(typing, offset);
+    return true;
+  }
+
+  /** Divides a piece of text at an offset: the first part stays, the rest begins a paragraph. */
+  #divide(typing: Typing, offset: number): void {
+    const body = this.preview.body;
+
+    if (typing.kind === 'step') {
+      /* A paragraph only the plan has divides into two of the same kind:
+         nothing of the file is involved, so there is nothing to carry. */
+      const position = this.#steps.indexOf(typing.step);
+      if (position === -1) return;
+      this.#undoStack.push(this.#capture());
+      this.#redoStack = [];
+      const text = typing.step.text;
+      typing.step.text = text.slice(0, offset);
+      const next: NewParagraph = { after: typing.step.after, text: text.slice(offset) };
+      this.#steps.splice(position + 1, 0, next);
+      this.#syncSteps();
+      this.#emitDirty();
+      const fresh = body.querySelector<HTMLElement>(`[data-new="${position + 1}"] .ul-office-run`);
+      if (fresh) this.#openForTyping(fresh, { kind: 'step', step: next }, 'start');
+      this.#statusEmitter.fire(t('Paragraph split — Ctrl+Z joins it back.'));
+      return;
+    }
+
+    const source = this.preview.source;
+    if (!source) return;
+    const run = typing.run;
+    const parts = this.#cuts.get(run) ?? [this.#edits.get(run) ?? source.textOf(run)];
+    const part = typing.kind === 'part' ? typing.part : 0;
+    const text = parts[part];
+    if (text === undefined) return;
+
+    const paragraph = body
+      .querySelector<HTMLElement>(`.ul-office-run[data-run="${run}"]`)
+      ?.closest<HTMLElement>('[data-paragraph]');
+    if (!paragraph) return;
+    const index = Number(paragraph.dataset.paragraph);
+    /* What every redraw of this paragraph starts from — taken once, before its
+       first division, now that the typing has left it. */
+    if (!this.#pristine.has(index)) this.#pristine.set(index, paragraph.cloneNode(true) as HTMLElement);
+
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    const next = [...parts];
+    next.splice(part, 1, text.slice(0, offset), text.slice(offset));
+    this.#cuts.set(run, next);
+    this.#edits.delete(run);
+    this.#syncSteps();
+    this.#emitDirty();
+
+    /* Typing goes on in the new part, from its start — when it has text to
+       hold a caret. A split made at the very end of a piece's own text, with
+       more of the paragraph after it, leaves an empty part ahead of the rest;
+       the caret is put at the start of that line instead. */
+    const fresh = body.querySelector<HTMLElement>(`[data-part-of="${run}"][data-part="${part + 1}"]`);
+    if (fresh && next[part + 1]!.length > 0) {
+      this.#openForTyping(fresh, { kind: 'part', run, part: part + 1 }, 'start');
+    } else {
+      const piece = fresh?.closest<HTMLElement>('[data-piece-of]');
+      if (piece) document.getSelection()?.collapse(piece, 0);
+      this.#root?.focus();
+    }
+    this.#statusEmitter.fire(t('Paragraph split — Ctrl+Z joins it back.'));
+  }
+
+  /**
+   * What was typed into a part of a divided piece of text.
+   *
+   * Emptied, a part that stood as a paragraph by itself goes — the rule a step
+   * keeps, for its reason: a paragraph with nothing in it is a line nobody
+   * could click into again. A part sharing its paragraph with anything else
+   * stays beside it, empty. When one part is all that is left, the piece is
+   * whole again, and its text an ordinary rewrite.
+   */
+  #recordPart(run: number, part: number, text: string, element: HTMLElement): void {
+    const parts = this.#cuts.get(run);
+    if (!parts || parts[part] === undefined) return;
+
+    const block = element.closest<HTMLElement>('[data-paragraph], [data-piece-of]');
+    const alone =
+      text.length === 0 &&
+      !!block &&
+      !holdsBesides(block, element, 'before') &&
+      !holdsBesides(block, element, 'after');
+    if (parts[part] === text && !alone) return;
+
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    const next = [...parts];
+    if (alone) next.splice(part, 1);
+    else next[part] = text;
+
+    if (next.length < 2) {
+      this.#cuts.delete(run);
+      const whole = next[0] ?? '';
+      if (whole === this.preview.source?.textOf(run)) this.#edits.delete(run);
+      else this.#edits.set(run, whole);
+    } else {
+      this.#cuts.set(run, next);
+    }
+    if (alone) this.#syncSteps();
     this.#emitDirty();
   }
 
@@ -461,7 +732,7 @@ class DocumentPreviewEditor implements EditorInstance {
     );
     if (fresh) {
       this.#flow?.scrollTo(fresh);
-      this.#openForTyping(fresh, step);
+      this.#openForTyping(fresh, { kind: 'step', step });
     }
   }
 
@@ -480,8 +751,19 @@ class DocumentPreviewEditor implements EditorInstance {
       if (step) return { after: step.after, behind: step };
     }
 
-    const paragraph = element?.closest<HTMLElement>('[data-paragraph]');
-    if (paragraph) return { after: Number(paragraph.dataset.paragraph), behind: null };
+    const paragraph = element?.closest<HTMLElement>('[data-paragraph], [data-piece-of]');
+    if (paragraph) {
+      const index = Number(paragraph.dataset.paragraph ?? paragraph.dataset.pieceOf);
+      /* A paragraph Enter split takes a new one only after its last line: a
+         step names a paragraph of the file, and the plan has no place between
+         two lines of one. */
+      if (this.#lastPiece(index) !== paragraph) {
+        return {
+          refusal: t('A new paragraph can follow only the last line of a split paragraph — Ctrl+Z joins the split back.'),
+        };
+      }
+      return { after: index, behind: null };
+    }
 
     /* A cell is the one refusal the view can answer by itself, and the only one
        the real corpus ever produces — every nested paragraph in those 49
@@ -618,9 +900,14 @@ class DocumentPreviewEditor implements EditorInstance {
        it when clicked — measured, not assumed, because a third of the real
        corpus's body paragraphs are blank and they are exactly what people
        want gone. */
-    const paragraph = element?.closest<HTMLElement>('[data-paragraph]');
+    const paragraph = element?.closest<HTMLElement>('[data-paragraph], [data-piece-of]');
     if (paragraph) {
-      const index = Number(paragraph.dataset.paragraph);
+      const index = Number(paragraph.dataset.paragraph ?? paragraph.dataset.pieceOf);
+      /* Removing one line of a split paragraph would cut through the range the
+         split already rewrites; the split is taken back first. */
+      if (this.#lastPiece(index) !== this.preview.body.querySelector(`[data-paragraph="${index}"]`)) {
+        return { refusal: t('This paragraph was split with Enter — Ctrl+Z joins it back before it can be removed.') };
+      }
       if (this.#removed.has(index)) return { refusal: t('This paragraph is already removed.') };
       const refusal = seam.removalRefusalAt(index, this.#removed);
       return refusal ? { refusal } : { paragraph: index, element: paragraph };
@@ -716,6 +1003,9 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   #syncSteps(): void {
     const body = this.preview.body;
+    /* The splits first: a step following a split paragraph is drawn after
+       its last line, so the lines have to be there to be followed. */
+    this.#syncCuts();
     for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
 
     /* The paragraphs the plan takes away are hidden rather than dropped: the
@@ -728,8 +1018,7 @@ class DocumentPreviewEditor implements EditorInstance {
 
     const last = new Map<number, HTMLElement>();
     this.#steps.forEach((step, position) => {
-      const anchor =
-        last.get(step.after) ?? body.querySelector<HTMLElement>(`[data-paragraph="${step.after}"]`);
+      const anchor = last.get(step.after) ?? this.#lastPiece(step.after);
       if (!anchor) return;
 
       const element = document.createElement(anchor.tagName === 'LI' ? 'li' : 'p');
@@ -770,11 +1059,89 @@ class DocumentPreviewEditor implements EditorInstance {
     this.#flow?.relayout();
   }
 
+  /**
+   * Draws the splits onto the page.
+   *
+   * The discipline the steps keep: rebuilt whole, because an undo can change
+   * the splits in any way at all — from the copy of each split paragraph
+   * taken before its first split, with the text the plan holds now. The
+   * paragraph's own element stays, since everything else is anchored to it;
+   * its content is put back and cut again, and each line after the first is
+   * a new element of the same kind — so a split heading is two headings, and
+   * a split list item two items the browser numbers as the reopened file
+   * will. The range that cuts it takes the run's formatting along, wrapper
+   * by wrapper, into the new line.
+   */
+  #syncCuts(): void {
+    const body = this.preview.body;
+    const source = this.preview.source;
+    for (const stale of [...body.querySelectorAll('[data-piece-of]')]) stale.remove();
+
+    for (const [index, pristine] of this.#pristine) {
+      const paragraph = body.querySelector<HTMLElement>(`[data-paragraph="${index}"]`);
+      if (!paragraph) continue;
+      paragraph.replaceChildren(...(pristine.cloneNode(true) as HTMLElement).childNodes);
+      for (const run of paragraph.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
+        const ordinal = Number(run.dataset.run);
+        setRunText(run, this.#edits.get(ordinal) ?? source?.textOf(ordinal) ?? '');
+      }
+    }
+
+    /* In document order — which is ordinal order — so a later split in the
+       same paragraph is looked for in the line an earlier one left it in. */
+    for (const [run, parts] of [...this.#cuts].sort((a, b) => a[0] - b[0])) {
+      let span = body.querySelector<HTMLElement>(`.ul-office-run[data-run="${run}"]`);
+      let holder = span?.closest<HTMLElement>('[data-paragraph], [data-piece-of]');
+      if (!span || !holder) continue;
+      const index = holder.dataset.paragraph ?? holder.dataset.pieceOf ?? '';
+      setRunText(span, parts.join(''));
+
+      for (let part = 1; part < parts.length; part++) {
+        const text = textsIn(span)[0];
+        if (!text) break;
+        const cut = document.createRange();
+        cut.setStart(text, parts[part - 1]!.length);
+        cut.setEnd(holder, holder.childNodes.length);
+        const moved = cut.extractContents();
+
+        const line = holder.cloneNode(false) as HTMLElement;
+        line.removeAttribute('id');
+        delete line.dataset.paragraph;
+        line.dataset.pieceOf = index;
+        line.append(moved);
+        holder.after(line);
+
+        /* The range copied the run's element on its way out, attributes and
+           all — the ordinal on the first cut, the previous part's number on
+           every cut after it — and that copy is this part now. Looked for by
+           either: by the ordinal alone, a third line kept the second's number
+           and what was typed into it went into the wrong part. */
+        const copy = line.querySelector<HTMLElement>(
+          `.ul-office-run[data-run="${run}"], .ul-office-run[data-part-of="${run}"]`,
+        );
+        if (!copy) break;
+        delete copy.dataset.run;
+        copy.dataset.partOf = String(run);
+        copy.dataset.part = String(part);
+        span = copy;
+        holder = line;
+      }
+    }
+  }
+
+  /** The element a paragraph of the file ends in: its last line, when Enter split it. */
+  #lastPiece(index: number): HTMLElement | null {
+    const body = this.preview.body;
+    const lines = body.querySelectorAll<HTMLElement>(`[data-piece-of="${index}"]`);
+    return lines[lines.length - 1] ?? body.querySelector<HTMLElement>(`[data-paragraph="${index}"]`);
+  }
+
   #restore(snapshot: Snapshot): void {
     const source = this.preview.source;
     this.#edits = snapshot.edits;
     this.#steps = snapshot.steps;
     this.#removed = new Set(snapshot.removed);
+    this.#cuts = new Map(snapshot.cuts.map(([run, parts]) => [run, [...parts]]));
     if (!source) return;
 
     /* Only the pieces that stand for something in the file — a piece that is
@@ -782,7 +1149,7 @@ class DocumentPreviewEditor implements EditorInstance {
        with the empty string and blank the paragraph. */
     for (const el of this.preview.body.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
       const index = Number(el.dataset.run);
-      el.textContent = snapshot.edits.get(index) ?? source.textOf(index);
+      setRunText(el, snapshot.edits.get(index) ?? source.textOf(index));
     }
     this.#syncSteps();
     this.#emitDirty();
@@ -797,7 +1164,8 @@ class DocumentPreviewEditor implements EditorInstance {
     const changes =
       this.#edits.size +
       this.#steps.filter((step) => step.text.length > 0).length +
-      this.#removed.size;
+      this.#removed.size +
+      [...this.#cuts.values()].reduce((sum, parts) => sum + parts.length - 1, 0);
     this.#statusEmitter.fire(
       dirty
         ? t('{words} words · {n} edits', { words: this.#words, n: changes })
@@ -818,12 +1186,20 @@ class DocumentPreviewEditor implements EditorInstance {
        editor directly. */
     if (!source) throw new Error(t('This document is open for reading only.'));
 
+    /* What is being typed is part of what is saved. The shell asks for a save
+       without asking the caret to leave first, and text still under the caret
+       has not been written down — it used to be, because Enter wrote it down
+       and people pressed Enter; now Enter begins a paragraph. */
+    const typing = document.activeElement;
+    if (typing instanceof HTMLElement && typing.isContentEditable && this.#root?.contains(typing)) typing.blur();
+
     const uri = target?.uri ?? this.doc.uri;
     const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
     const added = this.#steps.filter((step) => step.text.length > 0);
     const removed = [...this.#removed].sort((a, b) => a - b);
+    const divided: DividedPiece[] = [...this.#cuts].map(([index, parts]) => ({ index, parts }));
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added, removed));
+    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided));
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as
@@ -1201,6 +1577,12 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   async save(target?: SaveTarget): Promise<SaveResult> {
+    /* A value still being typed is part of what is saved — measured, a cell
+       typed into and saved without leaving it wrote the value it had before.
+       The shell does not ask the caret to leave, so the save does. */
+    const typing = document.activeElement;
+    if (typing instanceof HTMLElement && typing.isContentEditable && this.#root?.contains(typing)) typing.blur();
+
     if (this.workbook.convert) return this.#saveAsConverted(target);
 
     const { archive } = this.workbook;

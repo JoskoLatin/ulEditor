@@ -373,7 +373,7 @@ of the two engines it was designed around has been taken.
 | Item | State |
 |---|---|
 | `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
-| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one. and one the file already had can be taken away. ProseMirror is still what the deeper structural work needs: splitting a paragraph mid-run, a row in a table |
+| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, and Enter splits one where the caret stands: the change this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"** below). What still does: a row in a table, and joining two paragraphs back into one |
 | **A cell that is not in the file** | **not a hole, and measured rather than argued.** `applyCellEdits` will write a `<c>` into a row that has none and a whole `<row>` into a sheet that has none, which raises the obvious worry: does an edit land outside the `<dimension ref>` the sheet declares, leaving it stale? It cannot. The grid a person can type into is derived from the cells that exist, never from `<dimension>`, so it is a subset of the used range — and over 19 real worksheets, **none** has a grid reaching past its declared dimension (six declare none at all, which is legal). A merged range is not reachable either: `renderSheet` skips covered cells, so there is nothing to double-click |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
@@ -384,6 +384,7 @@ of the two engines it was designed around has been taken.
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
 | **A hundred thousand rows** | **done** — the section 7 budget this plan set before a line of the editor was written, *"scrolling through a 100k-row XLSX at 60 fps"*, unmet by a hard `MAX_ROWS = 5000` and an O(n) DOM-dump renderer underneath it. A till's own six-month receipt analysis has 10 831 rows and opened with more than half of them missing. The reader is now a streaming scanner instead of `DOMParser` — 100 000 rows read in 3.3–3.9 s where the old one took 13.7 s and 579 MB *to keep 5 000* — and the grid draws a window of a few thousand cells regardless of where in the sheet it stands, wheel-scrolling at a measured 16.7 ms median against the plan's own 16.7 ms frame. [tools/verify-sheet-scale.mjs](../tools/verify-sheet-scale.mjs) |
+| **Enter in the middle of a sentence** | **done** — the run the caret is in divided, its formatting on both halves, and every run after it carried into the new paragraph byte for byte; at the end of what is written, a new paragraph with the style `w:next` hands on, as Word does. The same plan again, undoable after a save. Exact byte identity on 43 of 49 real documents (the rest have nothing that may be split, and are named); fourteen broken builds of the writer each fail it; Word opens 11 of 11 with one paragraph more and the line divided where the cut fell, LibreOffice 38 of 38. Refused, and bought from Word by hand: a run inside a link (Word will not open the file), a section-ending paragraph (one section more), a field's result run. [tools/verify-docx-split.mjs](../tools/verify-docx-split.mjs) |
 
 **An independent reader was the missing instrument, and building it took an
 afternoon.** Everything the fidelity harness proves about a save, it proved with
@@ -545,6 +546,34 @@ also where a selection ends, at which point the Range loses the node it was
 anchored to. The fix keeps the element and replaces only its cells; the check
 that catches a regression of it compares the original DOM node's own
 `isConnected`, not anything either Range API is willing to answer honestly.
+
+**Splitting a paragraph did not need ProseMirror either, and the first design
+for it would have refused most of the places Enter is pressed.** The table
+said a split mid-run was the work ProseMirror was for; the plan model reached
+it instead, as one operation per divided paragraph — from inside its first
+divided run to its own end, the run's text rewritten, a boundary and a fresh
+run before each part after the first, and whatever followed carried across
+unread. The first version divided one run in two, once per paragraph, and the
+corpus refuted it twice: body paragraphs hold 2.9 editable runs on average and
+only 362 of 1263 hold a single one, so a split that could not carry the runs
+after it would have refused most of the places a person presses Enter; and
+typing is Enter after Enter, so a paragraph divided once has to be divisible
+again, in the same run and in the next. It became a run divided into parts,
+any number of runs of one paragraph at once, with a rewrite of any run the
+operation carries applied inside it rather than beside it.
+
+The browser check found the fault the node checks could not reach: the range
+that cuts the view copies the run's element on its way out, attributes and
+all, so the second cut in the same run looked for the copy by its ordinal,
+found none, and left the third line numbered as the second — what was typed
+into it would have gone into the wrong part. The mutation run found a line
+the other way round: a guard against rewriting the divided run itself could
+be taken out without a single check failing, because the range the cut claims
+already covered it. It was deleted rather than kept. And measuring Enter's
+old meaning turned up what that meaning had been hiding: a save with the
+caret still in the text wrote the text as it was before the typing, in
+spreadsheet cells as well as in Word — nobody had noticed, because everybody
+pressed Enter first.
 
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:

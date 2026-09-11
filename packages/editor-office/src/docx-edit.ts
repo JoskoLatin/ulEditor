@@ -823,6 +823,144 @@ export function removalRefusal(
   return null;
 }
 
+/* ── splitting a paragraph ───────────────────────────────────────────── */
+
+/** Whether every field opened within `[from, to)` also closes within it, and the reverse. */
+function fieldsBalanced(xml: string, from: number, to: number): boolean {
+  let begins = 0;
+  let ends = 0;
+  for (const raw of scanTags(xml.slice(from, to))) {
+    if (raw.closing || localName(raw.name) !== 'fldChar') continue;
+    const kind = tagAttr(xml, { start: raw.start + from, end: raw.end + from }, 'fldCharType');
+    if (kind === 'begin') begins++;
+    else if (kind === 'end') ends++;
+  }
+  return begins === ends;
+}
+
+/** Whether every paired range (see `PAIRED`) opened within `[from, to)` also closes within it. */
+function rangesBalanced(xml: string, from: number, to: number): boolean {
+  const halves = new Map<string, { starts: Set<string>; ends: Set<string> }>();
+  for (const raw of scanTags(xml.slice(from, to))) {
+    if (raw.closing) continue;
+    const local = localName(raw.name);
+    for (const [open, close] of PAIRED) {
+      if (local !== open && local !== close) continue;
+      const tag = { start: raw.start + from, end: raw.end + from };
+      const pair = halves.get(open) ?? { starts: new Set<string>(), ends: new Set<string>() };
+      (local === open ? pair.starts : pair.ends).add(tagAttr(xml, tag, 'id') ?? '');
+      halves.set(open, pair);
+    }
+  }
+  for (const pair of halves.values()) {
+    if ([...pair.starts].some((id) => !pair.ends.has(id))) return false;
+    if ([...pair.ends].some((id) => !pair.starts.has(id))) return false;
+  }
+  return true;
+}
+
+/**
+ * A run of the original part divided into pieces, each after the first
+ * opening a paragraph of its own — which is what Enter does in the middle of
+ * a sentence.
+ *
+ * `run` names a run of the **original** part and stays valid for the life of
+ * the document, the same guarantee `ParagraphInsert.after` makes. `parts` is
+ * its text in order: the first stays where the run stands, and every later
+ * one begins a new paragraph carrying the run's own formatting and the
+ * paragraph's own properties — both halves of a split heading are headings,
+ * both halves of a list item are list items. Everything that followed the
+ * run in its paragraph goes with the last part. The texts are carried rather
+ * than the offsets that first divided them, because each piece can be
+ * retyped afterwards on its own.
+ */
+export interface RunCut {
+  run: number;
+  parts: string[];
+}
+
+/**
+ * Whether a run is a direct child of its paragraph.
+ *
+ * A cut closes the run and the paragraph where it falls and opens a new pair,
+ * so anything else still open at that point — a `w:hyperlink`, an inline
+ * content control, a tracked insertion's `w:ins`, a `w:fldSimple` — would be
+ * opened in one paragraph and closed in the next, which is not XML. Such a
+ * run is left whole.
+ */
+function directChild(xml: string, paragraph: ParagraphSpan, run: RunSpan): boolean {
+  let depth = 0;
+  for (const tag of scanTags(xml.slice(paragraph.start, run.start))) {
+    if (tag.selfClosing) continue;
+    depth += tag.closing ? -1 : 1;
+  }
+  return depth === 1;
+}
+
+/**
+ * The paragraph properties a new piece of a split paragraph carries.
+ *
+ * The source's own `w:pPr`, byte for byte, less what must not be copied —
+ * the same two rules `paragraphMarkup` keeps: a section break is refused
+ * before this is reached, and a tracked-change mark would claim a reviewer
+ * made a paragraph they never saw. The style is **not** resolved through
+ * `w:next`, and that is the difference between a split and a new paragraph:
+ * Word keeps both halves of a heading divided mid-sentence a heading.
+ */
+function splitProps(xml: string, paragraph: ParagraphSpan): string {
+  if (!paragraph.props) return '';
+  const outer = paragraph.props;
+  const cuts: { start: number; end: number }[] = [];
+  for (const child of childRanges(xml, outer)) {
+    const local = localName(child.name);
+    if (NOT_INHERITED.has(local)) {
+      cuts.push(child);
+      continue;
+    }
+    if (local === 'rPr') {
+      for (const mark of childRanges(xml, child)) {
+        if (TRACKED.has(localName(mark.name))) cuts.push(mark);
+      }
+    }
+  }
+  let props = xml.slice(outer.start, outer.end);
+  for (const cut of cuts.sort((a, b) => b.start - a.start)) {
+    props = props.slice(0, cut.start - outer.start) + props.slice(cut.end - outer.start);
+  }
+  return props;
+}
+
+/**
+ * Why the paragraph a run sits in may not be divided at that run; `null` when
+ * it may.
+ *
+ * Unlike `removalRefusal`, the offset within the run's own text never matters:
+ * a division falls inside the run, so which side of it everything else lands
+ * on is decided by the run alone. A field or a marked stretch must close on
+ * the side it opened, or the cut leaves half of it in each paragraph — which
+ * is also what refuses a field's own result run, the case the design for
+ * paragraph insertion first found: its `begin` is behind it and its `end`
+ * ahead. A section-ending paragraph is refused outright rather than divided:
+ * Word moves the `w:sectPr` to whichever piece ends up last, which means
+ * rewriting the properties the first piece keeps, and three of the 49 real
+ * documents hold one at all — a rare case not worth a page layout.
+ */
+export function splitRefusal(xml: string, paragraphs: ParagraphSpan[], run: RunSpan): string | null {
+  const paragraph = paragraphOfRun(paragraphs, run);
+  if (!paragraph || paragraph.refusal) {
+    return paragraph?.refusal ?? 'the paragraph is not in the body of the document';
+  }
+  if (paragraph.section) return 'the paragraph ends a section';
+  if (!directChild(xml, paragraph, run)) return 'the run is inside an element a cut would tear in two';
+  if (!fieldsBalanced(xml, paragraph.start, run.start) || !fieldsBalanced(xml, run.end, paragraph.end)) {
+    return 'a field begins or ends here and continues elsewhere';
+  }
+  if (!rangesBalanced(xml, paragraph.start, run.start) || !rangesBalanced(xml, run.end, paragraph.end)) {
+    return 'a marked stretch continues outside the paragraph';
+  }
+  return null;
+}
+
 /** Everything a save needs to know about the paragraphs the plan reshapes. */
 export interface Reshaping {
   paragraphs: ParagraphSpan[];
@@ -830,6 +968,8 @@ export interface Reshaping {
   inserts: ParagraphInsert[];
   /** Ordinals of paragraphs of the original part the plan removes. */
   removals?: number[];
+  /** The runs the plan divides, each piece after the first a paragraph of its own. */
+  cuts?: RunCut[];
 }
 
 /**
@@ -897,25 +1037,61 @@ export function applyDocxEdits(
     }
   }
 
+  /*
+   * The cuts are settled next, for the same reason: everything after them has
+   * to know which bytes they claim. A divided paragraph is rewritten as ONE
+   * operation, from inside its first divided run to its own end, so nothing
+   * else may touch that range — the byte-range technique requires operations
+   * not to overlap. A rewrite of an ordinary run inside it is applied within
+   * the cut's own text instead; a paragraph a removal takes is not divided as
+   * well; a run named twice is divided once, and a cut with fewer than two
+   * parts is no cut. Each is re-judged against the original, because a caller
+   * is not obliged to have asked first.
+   */
+  const cutByRun = new Map<number, RunCut>();
+  const divided = new Map<number, RunSpan[]>();
+  const paragraphByIndex = new Map((reshaping?.paragraphs ?? []).map((span) => [span.index, span]));
+  for (const cut of reshaping?.cuts ?? []) {
+    const run = byIndex.get(cut.run);
+    if (!run?.text || run.refusal || cut.parts.length < 2 || cutByRun.has(cut.run)) continue;
+    const paragraph = paragraphOfRun(reshaping!.paragraphs, run);
+    if (!paragraph) continue;
+    if (removed.some((span) => paragraph.start >= span.start && paragraph.end <= span.end)) continue;
+    if (splitRefusal(xml, reshaping!.paragraphs, run) !== null) continue;
+    cutByRun.set(cut.run, cut);
+    divided.set(paragraph.index, [...(divided.get(paragraph.index) ?? []), run]);
+  }
+  const claimed = [...divided].map(([index, cut]) => ({
+    from: Math.min(...cut.map((run) => run.text!.start)),
+    to: paragraphByIndex.get(index)!.end,
+  }));
+
+  const rewrite = (text: string): string => `<w:t xml:space="preserve">${escapeXml(text)}</w:t>`;
+
   for (const edit of edits) {
     const run = byIndex.get(edit.index);
     if (!run?.text || run.refusal) continue;
     if (removed.some((span) => run.start >= span.start && run.end <= span.end)) continue;
+    /* A divided run's own text is inside the range too, so a rewrite of it
+       yields to its parts by this same rule. */
+    if (claimed.some((range) => run.text!.start >= range.from && run.text!.end <= range.to)) continue;
     operations.push({
       at: run.text.start,
       end: run.text.end,
       /* Without `xml:space="preserve"` Word discards leading and trailing
          spaces, so "name " would quietly become "name". */
-      text: `<w:t xml:space="preserve">${escapeXml(edit.text)}</w:t>`,
+      text: rewrite(edit.text),
       order: 0,
     });
   }
 
   if (reshaping) {
-    const paragraphs = new Map(reshaping.paragraphs.map((span) => [span.index, span]));
     reshaping.inserts.forEach((insert, order) => {
-      const paragraph = paragraphs.get(insert.after);
+      const paragraph = paragraphByIndex.get(insert.after);
       if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
+      /* After a divided paragraph too: its range ends where this begins, so
+         the two touch without overlapping, and the new paragraph lands after
+         the last piece — which is where the view draws it. */
       operations.push({
         at: paragraph.end,
         end: paragraph.end,
@@ -923,6 +1099,57 @@ export function applyDocxEdits(
         order,
       });
     });
+
+    /* A stretch of the original carried into a divided paragraph unread, with
+       the rewrites of the ordinary runs inside it applied as it goes. */
+    const typed = new Map(edits.map((edit) => [edit.index, edit.text]));
+    const carried = (from: number, to: number): string => {
+      const inside = runs
+        .filter(
+          (run) =>
+            run.text &&
+            !run.refusal &&
+            typed.has(run.index) &&
+            run.text.start >= from &&
+            run.text.end <= to,
+        )
+        .sort((a, b) => b.text!.start - a.text!.start);
+      let text = xml.slice(from, to);
+      for (const run of inside) {
+        text = text.slice(0, run.text!.start - from) + rewrite(typed.get(run.index)!) + text.slice(run.text!.end - from);
+      }
+      return text;
+    };
+
+    /*
+     * A divided paragraph, written whole. Its first piece keeps the opening
+     * the file already has — the same `w:p`, the same properties, every run
+     * before the first cut untouched — and each cut closes the run and the
+     * paragraph where it falls and opens a new pair carrying the run's own
+     * formatting and the paragraph's own properties. What followed the last
+     * cut, the paragraph's own closing tag included, is carried across as it
+     * was: it becomes the last piece's tail and its end.
+     */
+    for (const [index, cut] of divided) {
+      const paragraph = paragraphByIndex.get(index)!;
+      const ordered = [...cut].sort((a, b) => a.start - b.start);
+      const w = prefixOf(xml, paragraph);
+      const props = splitProps(xml, paragraph);
+      const piece = (text: string): string =>
+        `<${w}t xml:space="preserve">${escapeXml(text)}</${w}t>`;
+
+      let text = '';
+      ordered.forEach((run, k) => {
+        if (k > 0) text += carried(ordered[k - 1]!.text!.end, run.text!.start);
+        const [first, ...rest] = cutByRun.get(run.index)!.parts;
+        const rPr = runProperties(xml, run);
+        text += piece(first!);
+        for (const part of rest) text += `</${w}r></${w}p><${w}p>${props}<${w}r>${rPr}${piece(part)}`;
+      });
+      text += carried(ordered[ordered.length - 1]!.text!.end, paragraph.end);
+
+      operations.push({ at: ordered[0]!.text!.start, end: paragraph.end, text, order: 0 });
+    }
   }
 
   for (const span of removed) {

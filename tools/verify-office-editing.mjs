@@ -13,6 +13,13 @@
  * again with `Ctrl+Shift+Z`, saved, and looked for after reopening — and the
  * one paragraph a document cannot lose is pressed on, to see that it stays.
  *
+ * And Enter, which here meant "done typing" until it came to mean what it means
+ * everywhere else: a paragraph split where the caret stands, the caret moved by
+ * keys the way a person moves it, the new line typed into and saved **while the
+ * caret is still in it** — the save that once wrote the text as it was before
+ * the typing. Typing is finished here by clicking away from it, which is what
+ * finishes it for a person now that Enter begins a paragraph.
+ *
  * Both formats go through the same sequence because they go through the same
  * editor: one class drives them, and what a save costs is settled behind
  * `Preview.source`. A run of this is therefore also the check that the seam
@@ -127,6 +134,13 @@ try {
     await page.waitForSelector('.ul-office-doc', { timeout: 30000 });
   };
 
+  /* Typing is finished the way a person finishes it: by clicking away from
+     it. Enter no longer means "done" where a paragraph can be split. */
+  const finishTyping = async () => {
+    await page.locator('.ul-office-notes strong').first().click();
+    await page.waitForTimeout(200);
+  };
+
   for (const document of DOCUMENTS) {
     const say = (name) => `${document.label}: ${name}`;
 
@@ -147,8 +161,7 @@ try {
 
     await page.keyboard.press('Control+A');
     await page.keyboard.type(REPLACEMENT);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
+    await finishTyping();
 
     check(say('the text was replaced in the view'), (await first.innerText()) === REPLACEMENT, await first.innerText());
     check(say('the document is marked as modified'), (await page.locator('.tab[data-dirty="true"]').count()) === 1);
@@ -247,8 +260,7 @@ try {
     );
 
     await page.keyboard.type(ADDED);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
+    await finishTyping();
 
     check(
       say('what was typed stands in the document'),
@@ -405,6 +417,97 @@ try {
     await open(document.file);
     check(say('and it is still gone when the document is opened again'), !(await shownText()).includes(GOING));
 
+    /* ── Enter in the middle of a sentence ───────────────────────────── */
+
+    const HEAD = 'The conclusion mentions';
+    const TYPED = 'Č- ';
+    const conclusion = page.locator('.ul-office-doc [data-paragraph] .ul-office-run', { hasText: HEAD });
+    const partsBefore = strFromU8(unzipSync(await readFile(document.path))[document.part]);
+    const splitCountBefore = (partsBefore.match(/<w:p[\s>]/g) ?? []).length;
+
+    /* The very start first: nothing before the caret to keep, so no new line
+       — and the typing goes on rather than being ended by the refusal. */
+    await conclusion.dblclick();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    check(
+      say('Enter with nothing before the caret splits nothing, and leaves the typing where it was'),
+      (await page.locator('.ul-office-doc [data-piece-of]').count()) === 0 &&
+        (await page.evaluate(() => document.activeElement?.isContentEditable ?? false)),
+    );
+
+    /* Then the caret moved by keys to the end of HEAD, and Enter. */
+    for (let i = 0; i < HEAD.length; i++) await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const line = page.locator('.ul-office-doc [data-piece-of]');
+    check(
+      say('Enter in the middle of a sentence puts the rest of it on a line of its own'),
+      (await line.count()) === 1 && (await line.innerText()).trim().startsWith('uniqueword'),
+      (await line.count()) === 1 ? (await line.innerText()).trim().slice(0, 40) : `${await line.count()} lines`,
+    );
+    check(say('and what stays reads to the caret'), (await conclusion.innerText()).trim() === HEAD);
+    check(
+      say('and the new line is open for typing, with the caret at its start'),
+      await page.evaluate(() => {
+        const active = document.activeElement;
+        const selection = document.getSelection();
+        return !!active?.isContentEditable && active.closest('[data-piece-of]') !== null && selection?.isCollapsed === true && selection.anchorOffset === 0;
+      }),
+    );
+
+    /* Typed into, and saved without leaving it: the save writes it down. */
+    await page.keyboard.type(TYPED);
+    await page.keyboard.press('Control+S');
+    let splitSaved = true;
+    try {
+      await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, { timeout: 30000 });
+    } catch {
+      splitSaved = false;
+    }
+    check(say('the split was saved'), splitSaved);
+
+    const splitFile = unzipSync(await readFile(document.path));
+    const splitPart = strFromU8(splitFile[document.part]);
+    const lines = [...splitPart.matchAll(/<w:p[\s>][\s\S]*?<\/w:p>/g)].map((m) =>
+      [...m[0].matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((t) => t[1]).join(''),
+    );
+    const at = lines.findIndex((text) => text === HEAD);
+    check(
+      say('on disk: the sentence is two paragraphs, one after the other'),
+      at !== -1 && lines[at + 1] === `${TYPED} uniqueword for the sake of search.`,
+      at === -1 ? 'the first half is not a paragraph of its own' : JSON.stringify(lines[at + 1]),
+    );
+    check(
+      say('with what was typed while the caret was still in it'),
+      splitPart.includes(`${TYPED} uniqueword`),
+    );
+    check(
+      say('exactly one paragraph more'),
+      (splitPart.match(/<w:p[\s>]/g) ?? []).length === splitCountBefore + 1,
+      `${splitCountBefore} → ${(splitPart.match(/<w:p[\s>]/g) ?? []).length}`,
+    );
+    const splitDrift = document.otherParts.filter((path) => {
+      const a = document.before[path];
+      const b = splitFile[path];
+      return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
+    });
+    check(
+      say('splitting a paragraph touched no other part of the file'),
+      splitDrift.length === 0,
+      splitDrift.join(', ') || `${document.otherParts.length} parts unchanged`,
+    );
+
+    await page.locator('.tab .close').first().click();
+    await page.waitForTimeout(400);
+    await open(document.file);
+    check(
+      say('and the two are two paragraphs when the document is opened again'),
+      (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).innerText()).trim() === HEAD &&
+        (await page.locator('.ul-office-doc [data-paragraph]', { hasText: 'Č-' }).count()) === 1,
+    );
+
     /*
      * The case the critics called fatal, in the gesture people will use most:
      * add a paragraph, change your mind, take it away. With one planned
@@ -421,8 +524,7 @@ try {
     await page.keyboard.press('Control+Enter');
     await page.waitForTimeout(200);
     await page.keyboard.type(KEEP);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(200);
+    await finishTyping();
 
     await page.locator('.ul-office-doc [data-new] .ul-office-run', { hasText: KEEP }).click();
     await page.keyboard.press('Control+Enter');

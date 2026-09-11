@@ -34,6 +34,7 @@ import {
   readStyleSuccession,
   removalRefusal,
   runText,
+  splitRefusal,
   writeDocx,
   type ParagraphSpan,
   type RunSpan,
@@ -86,6 +87,20 @@ export interface NewParagraph {
 }
 
 /**
+ * A piece of text of the file divided by Enter, as the editor holds it.
+ *
+ * `index` is the ordinal the view marked the piece with — the same one
+ * `PreviewEdit` carries — and `parts` is its text in order, at least two: the
+ * first stays in the paragraph the piece stands in, and every one after it
+ * begins a paragraph of its own. Texts rather than offsets, because each part
+ * can be retyped on its own afterwards.
+ */
+export interface DividedPiece {
+  index: number;
+  parts: string[];
+}
+
+/**
  * What every in-place text editor here has in common, and no more than that.
  *
  * A Word document is rewritten a `w:r` at a time and an OpenDocument text a
@@ -109,7 +124,7 @@ export interface PreviewSource {
    * is applied and committed merely moves ranges, while an insertion that is
    * applied and committed can never be taken back.
    */
-  write(edits: PreviewEdit[], added?: NewParagraph[], removed?: number[]): Uint8Array;
+  write(edits: PreviewEdit[], added?: NewParagraph[], removed?: number[], divided?: DividedPiece[]): Uint8Array;
 
   /**
    * Absent means this format can rewrite the text it has and not add to it.
@@ -148,6 +163,16 @@ export interface ParagraphSeam {
    * time would end somewhere no single step may go.
    */
   removalRefusalAt(paragraph: number, planned: ReadonlySet<number>): string | null;
+
+  /**
+   * Why the paragraph this piece of text sits in may not be divided at it —
+   * what Enter does in the middle of a sentence; `null` when it may.
+   *
+   * By the piece rather than by the offset in it: a division falls inside the
+   * piece, so which side everything else in the paragraph lands on is decided
+   * by the piece alone.
+   */
+  divisionRefusalAt(index: number): string | null;
 }
 
 const HEADING = /^heading\s*([1-6])$/i;
@@ -625,12 +650,13 @@ function docxSource(
       const run = runs[index];
       return run ? runText(xml, run) : '';
     },
-    write: (edits, added, removed) =>
+    write: (edits, added, removed, divided) =>
       writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
         inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
         removals: removed,
+        cuts: (divided ?? []).map((one) => ({ run: one.index, parts: one.parts })),
       }),
 
     /* Offered only when the view and the raw scan agreed on how many paragraphs
@@ -679,6 +705,25 @@ function docxSource(
                 return t('This paragraph cannot be removed — a document cannot end on a table or an empty section.');
               }
               return t('Only a paragraph in the body of the document can be removed — not one in a table cell or a text box.');
+            },
+            divisionRefusalAt: (index) => {
+              const run = runs[index];
+              if (!run) return t('This piece of text is not in a paragraph of the document.');
+              const why = splitRefusal(xml, paragraphs, run);
+              if (why === null) return null;
+              if (why === 'the paragraph ends a section') {
+                return t('This paragraph ends a section — splitting it would change the page layout.');
+              }
+              if (why === 'the run is inside an element a cut would tear in two') {
+                return t('The cursor is inside a link, a content control or a tracked change — splitting here would cut it in two.');
+              }
+              if (why === 'a field begins or ends here and continues elsewhere') {
+                return t('A field runs through this spot — splitting the paragraph here would break it in two.');
+              }
+              if (why === 'a marked stretch continues outside the paragraph') {
+                return t('A comment, a tracked change or a protected range runs through this spot — splitting here would cut it in two.');
+              }
+              return t('Only a paragraph in the body of the document can be split — not one in a table cell or a text box.');
             },
           }
         : undefined,

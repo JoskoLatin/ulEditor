@@ -36,6 +36,15 @@
  * edit a paragraph nobody touched. The day Word stops doing any of these, the
  * rule that refuses it is refusing for nothing — and this is what would say so.
  *
+ * **And a paragraph split where the cursor stood** — Enter in the middle of a
+ * sentence. Word opens it with exactly one paragraph more, and a line it showed
+ * once in the original now stands as two lines one after the other, divided
+ * exactly where the cut fell. Two of the split's refusals are cut by hand the
+ * same way: a run inside a link, divided anyway, leaves the link opened in one
+ * paragraph and closed in the next, and Word will not open the file; a
+ * section-ending paragraph divided with its properties copied gives Word one
+ * section more than the document had.
+ *
  * Windows and Word only. Rather than skipping quietly where there is no Word —
  * a check whose only failure mode is a pass is a check that lies — it says so
  * and fails, the same way `pnpm readback` refuses to pass without LibreOffice.
@@ -61,6 +70,9 @@ const {
   paragraphOfRun,
   readStyleSuccession,
   removalRefusal,
+  splitRefusal,
+  runText,
+  escapeXml,
   unescapeXml,
   writeDocx,
 } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/docx-edit.ts')).href);
@@ -133,6 +145,12 @@ const nowhere = [];
 /** Documents with a paragraph taken away, and the line Word should no longer show. */
 const removals = [];
 const unremovable = [];
+/** Documents with a paragraph split, and the two lines Word should show where one stood. */
+const splits = [];
+const unsplittable = [];
+
+/** Markup that is a character in Word's text and nothing in the runs' — a line holding it cannot be looked for. */
+const UNREADABLE = /<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple|noBreakHyphen|softHyphen|drawing|pict|object)[\s/>]/;
 
 /** The text a paragraph shows, as its runs hold it. */
 const textOf = (xml, span) =>
@@ -188,6 +206,44 @@ for (const source of sources) {
     ),
   );
   pairs.push({ name: source.name, before, written });
+
+  /*
+   * And a paragraph split, as Enter in the middle of a sentence splits it. The
+   * line has to be one Word shows as it is — nothing in it that is a character
+   * to Word and nothing to the runs — and one that stands exactly once in the
+   * document, so "two lines where it stood" cannot be satisfied elsewhere.
+   */
+  {
+    const lines = paragraphs.map((span) => textOf(xml, span));
+    const run = runs.find((one) => {
+      if (!one.text || one.refusal || splitRefusal(xml, paragraphs, one) !== null) return false;
+      const span = paragraphOfRun(paragraphs, one);
+      if (!span || UNREADABLE.test(xml.slice(span.start, span.end))) return false;
+      const line = textOf(xml, span);
+      return runText(xml, one).length >= 4 && line.trim().length >= 8 && lines.filter((l) => l === line).length === 1;
+    });
+    if (run) {
+      const span = paragraphOfRun(paragraphs, run);
+      const text = runText(xml, run);
+      const at = Math.floor(text.length / 2);
+      const parts = [text.slice(0, at), text.slice(at)];
+      const path = join(work, `split-${splits.length}.docx`);
+      writeFileSync(
+        path,
+        Buffer.from(writeDocx(archive, runs, xml, [], { paragraphs, succession, inserts: [], cuts: [{ run: run.index, parts }] })),
+      );
+      splits.push({
+        name: source.name,
+        before,
+        path,
+        whole: textOf(xml, span),
+        first: textOf(xml, { start: span.start, end: run.text.start }) + parts[0],
+        second: parts[1] + textOf(xml, { start: run.text.end, end: span.end }),
+      });
+    } else {
+      unsplittable.push(source.name);
+    }
+  }
 
   /*
    * And a paragraph taken away. Chosen so the question has an answer: its text
@@ -303,6 +359,50 @@ const why = [];
   why.push({ name: 'protected range', refused, original: parts, cut: out, editors: true });
 }
 
+/**
+ * The part with one run divided by hand — a paragraph boundary and a fresh run
+ * put inside it the way a split writes them, the writer's rules not asked. The
+ * properties are copied as they stand, `w:sectPr` and all, which is exactly
+ * what the rule against dividing a section-ending paragraph prevents.
+ */
+function divideByHand(parts, pick, at) {
+  const xml = strFromU8(parts['word/document.xml']);
+  const runs = findRuns(xml);
+  const paragraphs = findParagraphs(xml);
+  const run = runs.find((one) => one.text && runText(xml, one) === pick);
+  const span = paragraphOfRun(paragraphs, run);
+  const pPr = /^<w:p(?:\s[^>]*)?>(<w:pPr>[\s\S]*?<\/w:pPr>)?/.exec(xml.slice(span.start, span.end))?.[1] ?? '';
+  const rPr = /<w:rPr(?:\s[^>]*)?(?:\/>|>[\s\S]*?<\/w:rPr>)/.exec(xml.slice(run.start, run.text.start))?.[0] ?? '';
+  const t = (text) => `<w:t xml:space="preserve">${escapeXml(text)}</w:t>`;
+  const out = { ...parts };
+  out['word/document.xml'] = strToU8(
+    xml.slice(0, run.text.start) +
+      t(pick.slice(0, at)) +
+      `</w:r></w:p><w:p>${pPr}<w:r>${rPr}` +
+      t(pick.slice(at)) +
+      xml.slice(run.text.end),
+  );
+  return { out, refused: splitRefusal(xml, paragraphs, run) };
+}
+
+{
+  /* An internal link, so the package needs no relationship for it. */
+  const parts = packaged(
+    p('Prije') + `<w:p><w:hyperlink w:anchor="cilj"><w:r><w:t>poveznica ovdje</w:t></w:r></w:hyperlink></w:p>` + p('Poslije'),
+  );
+  const { out, refused } = divideByHand(parts, 'poveznica ovdje', 5);
+  why.push({ name: 'a link divided', refused, original: parts, cut: out });
+}
+{
+  const parts = packaged(
+    p('Prvi odsječak') +
+      `<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr><w:r><w:t>Kraj prvog odsječka</w:t></w:r></w:p>` +
+      p('Drugi odsječak'),
+  );
+  const { out, refused } = divideByHand(parts, 'Kraj prvog odsječka', 5);
+  why.push({ name: 'a section divided', refused, original: parts, cut: out });
+}
+
 for (const [i, one] of why.entries()) {
   one.originalPath = join(work, `why-${i}-original.docx`);
   one.cutPath = join(work, `why-${i}-cut.docx`);
@@ -339,6 +439,7 @@ foreach ($file in $files) {
     $doc = $word.Documents.Open($file.path, $false, $true, $false, '', '', $false, '', '', 0, 0, $false, $true, $false)
     $row.paragraphs = $doc.Paragraphs.Count
     $row.tables = $doc.Tables.Count
+    $row.sections = $doc.Sections.Count
     $row.text = $doc.Content.Text
     if ($file.editors) {
       $counts = @()
@@ -363,6 +464,7 @@ const asking = [
   ...new Set([
     ...pairs.flatMap((one) => [one.before, one.written]),
     ...removals.flatMap((one) => [one.before, one.cut]),
+    ...splits.flatMap((one) => [one.before, one.path]),
     ...why.flatMap((one) => [one.originalPath, one.cutPath]),
   ]),
 ].map((path) => ({
@@ -507,9 +609,64 @@ check(
 );
 for (const name of cutStill.slice(0, 8)) console.log(`  · ${name}`);
 
-/* ── why the three refusals exist ───────────────────────────────────── */
+/* ── the splits ──────────────────────────────────────────────────────── */
 
-const [tables, ending, permission] = why;
+const splitOpened = [];
+const splitRefused = [];
+const splitCount = [];
+const splitLines = [];
+const splitUnseen = [];
+
+for (const split of splits) {
+  const before = said(split.before);
+  const after = said(split.path);
+  if (before.error || before.paragraphs === undefined) continue; // counted above
+  if (after.error || after.paragraphs === undefined) {
+    splitRefused.push(`${split.name}: ${(after.error ?? 'no answer').slice(0, 120)}`);
+    continue;
+  }
+  /* The control: the line has to be one Word showed, whole and once, in the
+     original — or two lines where it stood say nothing about the writer. */
+  const was = (before.text ?? '').split('\r');
+  if (was.filter((line) => line === split.whole).length !== 1) {
+    splitUnseen.push(split.name);
+    continue;
+  }
+  splitOpened.push(split.name);
+  if (after.paragraphs !== before.paragraphs + 1) {
+    splitCount.push(`${split.name}: ${before.paragraphs} → ${after.paragraphs}`);
+  }
+  const now = (after.text ?? '').split('\r');
+  const at = now.indexOf(split.first);
+  if (at === -1 || now[at + 1] !== split.second || now.includes(split.whole)) {
+    splitLines.push(`${split.name}: "${split.first}" / "${split.second}"`);
+  }
+}
+
+check(
+  'Word opens every file with a paragraph split',
+  splits.length > 0 && splitRefused.length === 0,
+  `${splitOpened.length} opened`,
+);
+for (const line of splitRefused) console.log(`  · ${line}`);
+
+check(
+  'and holds exactly one paragraph more',
+  splitOpened.length > 0 && splitCount.length === 0,
+  `${splitOpened.length - splitCount.length}/${splitOpened.length}`,
+);
+for (const line of splitCount.slice(0, 8)) console.log(`  · ${line}`);
+
+check(
+  'and where the line stood there are two, one after the other, divided where the cut fell',
+  splitOpened.length > 0 && splitLines.length === 0,
+  `${splitOpened.length - splitLines.length}/${splitOpened.length}`,
+);
+for (const line of splitLines.slice(0, 8)) console.log(`  · ${line}`);
+
+/* ── why the refusals exist ─────────────────────────────────────────── */
+
+const [tables, ending, permission, link, sectioned] = why;
 {
   const before = said(tables.originalPath);
   const after = said(tables.cutPath);
@@ -542,6 +699,28 @@ const [tables, ending, permission] = why;
     `Word: editors per paragraph ${before.editors ?? before.error} → ${after.editors ?? after.error} · ours: ${permission.refused ?? 'allowed'}`,
   );
 }
+{
+  const before = said(link.originalPath);
+  const after = said(link.cutPath);
+  check(
+    'Word will not open a link divided between two paragraphs — so a run inside one is not split',
+    link.refused === 'the run is inside an element a cut would tear in two' &&
+      before.paragraphs !== undefined &&
+      after.error !== undefined,
+    `Word: ${before.paragraphs !== undefined ? 'opens the original' : before.error} → ${(after.error ?? `${after.paragraphs} paragraphs`).slice(0, 90)} · ours: ${link.refused ?? 'allowed'}`,
+  );
+}
+{
+  const before = said(sectioned.originalPath);
+  const after = said(sectioned.cutPath);
+  check(
+    'Word counts a section more when a section-ending paragraph is split with its properties — so it is not split',
+    sectioned.refused === 'the paragraph ends a section' &&
+      before.sections !== undefined &&
+      after.sections === before.sections + 1,
+    `Word: ${before.sections ?? before.error} → ${after.sections ?? after.error} sections · ours: ${sectioned.refused ?? 'allowed'}`,
+  );
+}
 
 if (refusedOriginal.length > 0) {
   console.log(`\n${refusedOriginal.length} Word will not open in their original form either:`);
@@ -556,6 +735,14 @@ if (cutUnseen.length > 0) {
 if (unremovable.length > 0) {
   console.log(`\n${unremovable.length} offer no paragraph with a line of its own that may go:`);
   for (const name of unremovable) console.log(`  · ${name}`);
+}
+if (splitUnseen.length > 0) {
+  console.log(`\n${splitUnseen.length} had a split line Word did not show whole and once in the original:`);
+  for (const name of splitUnseen) console.log(`  · ${name}`);
+}
+if (unsplittable.length > 0) {
+  console.log(`\n${unsplittable.length} offer no line of its own that may be split:`);
+  for (const name of unsplittable) console.log(`  · ${name}`);
 }
 if (nowhere.length > 0) {
   console.log(`\n${nowhere.length} have no paragraph a new one may follow — every one of theirs is in a table:`);

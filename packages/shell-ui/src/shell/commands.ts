@@ -716,14 +716,16 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
 
   switch (key) {
     /*
-     * Ctrl+Enter — a paragraph after the one the cursor is in.
+     * Ctrl+Enter — a paragraph after the one the cursor is in, from wherever
+     * the cursor is, typing or not.
      *
-     * Deliberately not plain Enter: Enter has always meant "done typing" in the
-     * Office view, a run at a time, and every check written against that still
-     * relies on it. And deliberately allowed to fire with the focus inside the
-     * text being typed, because that is precisely where a person stands when
-     * they want the next paragraph. An editor that cannot take one lets the key
-     * through untouched rather than swallowing it.
+     * Plain Enter is the editor's own, and only while typing: there it splits
+     * the paragraph at the caret or begins a new one at its end, and it needs
+     * the caret's place in the text to do either — which no handler up here
+     * has. Deliberately allowed to fire with the focus inside the text being
+     * typed, because that is precisely where a person stands when they want
+     * the next paragraph. An editor that cannot take one lets the key through
+     * untouched rather than swallowing it.
      */
     case 'enter':
       if (activeInstance()?.canInsertParagraph?.()) {
