@@ -8,6 +8,11 @@
  * cannot be checked from Node — `contenteditable`, the trip through the Rust VFS
  * and reading it back.
  *
+ * And then the other direction: a paragraph the file already had is taken
+ * away with `Ctrl+Shift+Backspace`, brought back with `Ctrl+Z`, taken away
+ * again with `Ctrl+Shift+Z`, saved, and looked for after reopening — and the
+ * one paragraph a document cannot lose is pressed on, to see that it stays.
+ *
  * Both formats go through the same sequence because they go through the same
  * editor: one class drives them, and what a save costs is settled behind
  * `Preview.source`. A run of this is therefore also the check that the seam
@@ -25,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { unzipSync, strFromU8 } from 'fflate';
 
 import { makeDocx, makeOdt } from './fixtures.mjs';
-import { alreadyRunning, ALREADY_RUNNING } from './desktop-session.mjs';
+import { alreadyRunning, ALREADY_RUNNING, killTree } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9336;
@@ -218,6 +223,17 @@ try {
         say('and the document is not marked as changed by a key that did nothing'),
         (await page.locator('.tab[data-dirty="true"]').count()) === 0,
       );
+
+      /* And the same for taking one away: no seam, no command, and a key that
+         passes through rather than hiding a line the file will keep. */
+      await page.locator('.ul-office-run').first().click();
+      await page.keyboard.press('Control+Shift+Backspace');
+      await page.waitForTimeout(300);
+      check(
+        say('nor any way to remove one'),
+        (await page.locator('.ul-office-doc .is-removed').count()) === 0 &&
+          (await page.locator('.tab[data-dirty="true"]').count()) === 0,
+      );
       await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
       await page.locator('.tab .close').first().click();
       await page.waitForTimeout(400);
@@ -299,6 +315,157 @@ try {
       (await page.locator('.ul-office-doc').innerText()).includes(ADDED),
     );
 
+    /* ── a paragraph the file will no longer have ────────────────────── */
+
+    const shownText = async () => page.locator('.ul-office-doc').innerText();
+    const dirty = async () => (await page.locator('.tab[data-dirty="true"]').count()) === 1;
+
+    /*
+     * The one it may not lose first. The fixture's last paragraph stands behind
+     * a table, and a document cannot end on a table — Word puts a paragraph
+     * back, measured — so the command refuses, and the refusal must change
+     * nothing: not the view, and not the question of whether to save.
+     */
+    await page.locator('.ul-office-doc [data-paragraph]', { hasText: 'uniqueword' }).locator('.ul-office-run').first().click();
+    await page.keyboard.press('Control+Shift+Backspace');
+    await page.waitForTimeout(300);
+    check(
+      say('the last paragraph behind a table is not removed'),
+      (await page.locator('.ul-office-doc .is-removed').count()) === 0 && (await shownText()).includes('uniqueword'),
+    );
+    check(say('and a refusal does not mark the document as changed'), !(await dirty()));
+
+    const partBefore = strFromU8(unzipSync(await readFile(document.path))[document.part]);
+    const countBefore = (partBefore.match(/<w:p[\s>]/g) ?? []).length;
+    const GOING = 'An opening paragraph with diacritics';
+
+    await page.locator('.ul-office-doc [data-paragraph]', { hasText: GOING }).locator('.ul-office-run').first().click();
+    await page.keyboard.press('Control+Shift+Backspace');
+    await page.waitForTimeout(300);
+
+    check(say('Ctrl+Shift+Backspace takes the paragraph out of the view'), !(await shownText()).includes(GOING));
+    check(say('and the document says it has unsaved changes'), await dirty());
+
+    /* The critic's case: a second press must not aim at the paragraph that is
+       already gone. The cursor is moved to a paragraph that is still there. */
+    const landed = await page.evaluate(() => {
+      const anchor = document.getSelection()?.anchorNode ?? null;
+      const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const paragraph = element?.closest('[data-paragraph]');
+      return paragraph ? !paragraph.classList.contains('is-removed') : false;
+    });
+    check(say('the cursor is left in a paragraph that is still there'), landed);
+
+    await page.keyboard.press('Control+Z');
+    await page.waitForTimeout(300);
+    check(say('Ctrl+Z brings it back'), (await shownText()).includes(GOING));
+    check(say('and undoing back to the saved state leaves nothing to save'), !(await dirty()));
+
+    await page.keyboard.press('Control+Shift+Z');
+    await page.waitForTimeout(300);
+    check(say('Ctrl+Shift+Z takes it away again'), !(await shownText()).includes(GOING));
+
+    await page.keyboard.press('Control+S');
+    let removedSaved = true;
+    try {
+      await page.waitForFunction(
+        () => document.querySelectorAll('.tab[data-dirty="true"]').length === 0,
+        { timeout: 30000 },
+      );
+    } catch {
+      removedSaved = false;
+    }
+    check(say('the removal was saved'), removedSaved);
+
+    const shrunk = unzipSync(await readFile(document.path));
+    const shrunkPart = strFromU8(shrunk[document.part]);
+    check(say('the paragraph is not in the file'), !shrunkPart.includes(GOING));
+    check(
+      say('exactly one paragraph fewer, and not two'),
+      (shrunkPart.match(/<w:p[\s>]/g) ?? []).length === countBefore - 1,
+      `${countBefore} → ${(shrunkPart.match(/<w:p[\s>]/g) ?? []).length}`,
+    );
+    check(
+      say('and everything saved before it is still there'),
+      shrunkPart.includes(ADDED) && shrunkPart.includes('Rewritten in ulEditor'),
+    );
+    const shrunkDrift = document.otherParts.filter((path) => {
+      const a = document.before[path];
+      const b = shrunk[path];
+      return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
+    });
+    check(
+      say('removing a paragraph touched no other part of the file'),
+      shrunkDrift.length === 0,
+      shrunkDrift.join(', ') || `${document.otherParts.length} parts unchanged`,
+    );
+
+    await page.locator('.tab .close').first().click();
+    await page.waitForTimeout(400);
+    await open(document.file);
+    check(say('and it is still gone when the document is opened again'), !(await shownText()).includes(GOING));
+
+    /*
+     * The case the critics called fatal, in the gesture people will use most:
+     * add a paragraph, change your mind, take it away. With one planned
+     * paragraph already holding text, a second, empty one is opened and removed
+     * at once. The blur that finishes the typing drops the empty one from the
+     * plan by itself — and the first build then looked for it, got -1, and
+     * `splice(-1, 1)` took the LAST paragraph of the plan: the one with text in
+     * it, gone without an undo.
+     */
+    const KEEP = 'Ostaje — čćžšđ';
+    const newOnes = async () => page.locator('.ul-office-doc [data-new]').allInnerTexts();
+
+    await page.locator('.ul-office-doc [data-paragraph]', { hasText: ADDED }).locator('.ul-office-run').first().click();
+    await page.keyboard.press('Control+Enter');
+    await page.waitForTimeout(200);
+    await page.keyboard.type(KEEP);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+
+    await page.locator('.ul-office-doc [data-new] .ul-office-run', { hasText: KEEP }).click();
+    await page.keyboard.press('Control+Enter');
+    await page.waitForTimeout(200);
+    const beforeRemoval = await newOnes();
+    await page.keyboard.press('Control+Shift+Backspace');
+    await page.waitForTimeout(300);
+    const afterRemoval = await newOnes();
+
+    check(
+      say('removing an empty paragraph just added takes that one, and not another'),
+      beforeRemoval.length === 2 && afterRemoval.length === 1 && afterRemoval[0].includes(KEEP),
+      `${beforeRemoval.length} → ${afterRemoval.length}: ${afterRemoval.join(' | ').slice(0, 60)}`,
+    );
+    check(say('and the paragraph with text in it is still to be saved'), await dirty());
+
+    /* And the half-way case: typed into, not yet finished, and removed. What
+       was typed is written down by the blur, so the removal has something to
+       undo back to — before the fix, an undo that restored nothing. */
+    await page.locator('.ul-office-doc [data-new] .ul-office-run', { hasText: KEEP }).click();
+    await page.keyboard.press('Control+Enter');
+    await page.waitForTimeout(200);
+    await page.keyboard.type('napola');
+    await page.keyboard.press('Control+Shift+Backspace');
+    await page.waitForTimeout(300);
+    const halfGone = await newOnes();
+    await page.keyboard.press('Control+Z');
+    await page.waitForTimeout(300);
+    const halfBack = await newOnes();
+    check(
+      say('a paragraph typed into and removed before it was finished comes back with Ctrl+Z'),
+      !halfGone.some((one) => one.includes('napola')) && halfBack.some((one) => one.includes('napola')),
+      `${halfGone.length} → ${halfBack.length}`,
+    );
+
+    /* Back to the file as saved, so the screenshot and the close below ask no
+       question about unsaved work. */
+    for (let guard = 0; guard < 6 && (await dirty()); guard++) {
+      await page.keyboard.press('Control+Z');
+      await page.waitForTimeout(200);
+    }
+    check(say('and undoing all of it leaves the file as it was saved'), !(await dirty()));
+
     await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
     await page.locator('.tab .close').first().click();
     await page.waitForTimeout(400);
@@ -310,17 +477,8 @@ try {
     .catch(() => {});
 } finally {
   await browser?.close().catch(() => {});
-  app.kill();
-  /*
-   * By process tree, not by name.
-   *
-   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
-   * machine — including the one the person running this check has open, with
-   * whatever is unsaved in it. The dev build and the installed build share a
-   * name and nothing else, so the only safe handle is the process this harness
-   * started itself; `/T` takes the children Tauri leaves behind with it.
-   */
-  if (app.pid) spawn('taskkill', ['/F', '/T', '/PID', String(app.pid)], { shell: true, stdio: 'ignore' });
+  // By process tree, root still alive — see `killTree` in desktop-session.mjs.
+  killTree(app);
   await rm(workspace, { recursive: true, force: true }).catch(() => {});
 }
 

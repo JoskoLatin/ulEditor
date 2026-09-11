@@ -32,6 +32,7 @@ import {
   findRuns,
   paragraphOfRun,
   readStyleSuccession,
+  removalRefusal,
   runText,
   writeDocx,
   type ParagraphSpan,
@@ -108,7 +109,7 @@ export interface PreviewSource {
    * is applied and committed merely moves ranges, while an insertion that is
    * applied and committed can never be taken back.
    */
-  write(edits: PreviewEdit[], added?: NewParagraph[]): Uint8Array;
+  write(edits: PreviewEdit[], added?: NewParagraph[], removed?: number[]): Uint8Array;
 
   /**
    * Absent means this format can rewrite the text it has and not add to it.
@@ -131,6 +132,22 @@ export interface ParagraphSeam {
    * program is unreliable rather than that a table cell is a different problem.
    */
   refusalNear(index: number): string | null;
+
+  /**
+   * Why this paragraph may not be removed; `null` when it may.
+   *
+   * The ordinal here names a **paragraph**, where `refusalNear` names a run —
+   * removal starts from the paragraph the cursor is in, not from a piece of
+   * text, because a blank line has no text to start from and blank lines are
+   * what people most want to remove: 397 of the 1263 body paragraphs in the
+   * real corpus are empty spacers.
+   *
+   * `planned` is the removals already in the plan, because the rules are about
+   * what would **survive**: the last paragraph standing is refused even when
+   * the file was opened with plenty, or emptying a document one paragraph at a
+   * time would end somewhere no single step may go.
+   */
+  removalRefusalAt(paragraph: number, planned: ReadonlySet<number>): string | null;
 }
 
 const HEADING = /^heading\s*([1-6])$/i;
@@ -449,6 +466,8 @@ export function renderDocx(bytes: Uint8Array): Preview {
   const outline: PreviewOutline[] = [];
   let list: HTMLElement | null = null;
   let listKey = '';
+  /** Items already numbered under each counter, so a resumed group carries on. */
+  const counted = new Map<string, number>();
 
   const closeList = () => {
     list = null;
@@ -489,6 +508,16 @@ export function renderDocx(bytes: Uint8Array): Preview {
       if (!list || key !== listKey) {
         list = document.createElement(ordered.get(numId) ? 'ol' : 'ul');
         if (level > 0) list.dataset.level = String(Math.min(level, 4));
+        /* One `numId` is ONE counter in Word, however many times the list is
+           interrupted — a numbered list resumed after a plain paragraph carries
+           on from where it stopped. The browser cannot know that, so each
+           group carries its counter's name and the editor above chains the
+           `start` attributes: measured on a split list, removing item 1
+           renumbers a group pages away, and a preview that did not follow
+           would be showing numbers the reopened file will not have. */
+        list.dataset.num = key;
+        const sofar = counted.get(key) ?? 0;
+        if (sofar > 0 && list.tagName === 'OL') list.setAttribute('start', String(sofar + 1));
         body.appendChild(list);
         listKey = key;
       }
@@ -496,6 +525,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
       const item = mark(document.createElement('li'));
       item.append(...content);
       list.appendChild(item);
+      counted.set(key, (counted.get(key) ?? 0) + 1);
       continue;
     }
 
@@ -595,11 +625,12 @@ function docxSource(
       const run = runs[index];
       return run ? runText(xml, run) : '';
     },
-    write: (edits, added) =>
+    write: (edits, added, removed) =>
       writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
         inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
+        removals: removed,
       }),
 
     /* Offered only when the view and the raw scan agreed on how many paragraphs
@@ -615,6 +646,39 @@ function docxSource(
               return paragraph.refusal
                 ? t('A new paragraph can only go into the body of the document — not into a table cell or a text box.')
                 : null;
+            },
+            removalRefusalAt: (paragraph, planned) => {
+              /* The survivors of the plan so far; a paragraph already in the
+                 plan is simply not there any more, and the refusal says so. */
+              const alive = new Set(
+                paragraphs
+                  .filter((span) => span.refusal === null && !planned.has(span.index))
+                  .map((span) => span.index),
+              );
+              const why = removalRefusal(xml, paragraphs, paragraph, alive);
+              if (why === null) return null;
+              /* The pure half answers in English for the checks to read; a
+                 person is answered in their own language, one sentence per
+                 rule rather than a translation of an internal string. */
+              if (why === 'the paragraph ends a section') {
+                return t('This paragraph ends a section — removing it would change the page layout before it.');
+              }
+              if (why === 'a field begins or ends here and continues elsewhere') {
+                return t('A field begins or ends in this paragraph and continues elsewhere.');
+              }
+              if (why === 'a marked stretch continues outside the paragraph') {
+                return t('A comment, a tracked change or a protected range continues outside this paragraph.');
+              }
+              if (why === 'the paragraph keeps two tables apart') {
+                return t('This paragraph keeps two tables apart — removing it would merge them into one.');
+              }
+              if (why === 'the last paragraph of the document') {
+                return t('The last remaining paragraph of a document cannot be removed.');
+              }
+              if (why === 'the document would end without a paragraph') {
+                return t('This paragraph cannot be removed — a document cannot end on a table or an empty section.');
+              }
+              return t('Only a paragraph in the body of the document can be removed — not one in a table cell or a text box.');
             },
           }
         : undefined,

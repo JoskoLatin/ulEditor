@@ -79,6 +79,7 @@ const {
   findRuns,
   findParagraphs,
   paragraphOfRun,
+  removalRefusal,
   readStyleSuccession,
   applyRunEdits,
   runText,
@@ -182,10 +183,39 @@ function edited(format, bytes) {
     const inserts = anchor ? [{ after: anchor.paragraph.index, text: `${MARKER}p` }] : [];
     const succession = readStyleSuccession(readText(archive, 'word/styles.xml'));
 
+    /*
+     * And one paragraph taken away, in the same save — the three kinds of
+     * change share one operation list, and real documents are where they
+     * collide. It holds none of the rewritten runs and is not the anchor, so
+     * nothing else asked about here goes with it; its line is one a person
+     * could look for — long enough, with no break, tab or field in it that
+     * the export would spell differently.
+     */
+    const touched = new Set(picked.map((run) => paragraphOfRun(paragraphs, run)?.index));
+    const lineOf = (span) =>
+      [...xml.slice(span.start, span.end).matchAll(/<(?:[A-Za-z_][\w.-]*:)?t(?:\s[^>]*)?>([^<]*)</g)]
+        .map((m) => m[1])
+        .join('')
+        .trim();
+    const going = paragraphs.find(
+      (span) =>
+        !touched.has(span.index) &&
+        span.index !== anchor?.paragraph.index &&
+        removalRefusal(xml, paragraphs, span.index) === null &&
+        !/<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple)[\s/>]/.test(xml.slice(span.start, span.end)) &&
+        /^[^&<>]{8,}$/.test(lineOf(span)),
+    );
+
     return {
-      bytes: writeDocx(archive, runs, xml, edits, { paragraphs, succession, inserts }),
+      bytes: writeDocx(archive, runs, xml, edits, {
+        paragraphs,
+        succession,
+        inserts,
+        removals: going ? [going.index] : [],
+      }),
       typed: [...edits.map((e) => e.text), ...inserts.map((one) => one.text)],
       was: anchor ? [...was, was[anchor.at]] : was,
+      gone: going ? lineOf(going) : null,
     };
   }
 
@@ -384,6 +414,7 @@ const showed = [];
 const skipped = [];
 const invisible = [];
 const added = [];
+const taken = [];
 const broke = [];
 
 for (const file of sampled) {
@@ -443,6 +474,19 @@ for (const file of sampled) {
     asked.push({ was, typed: made.typed[i] });
   }
 
+  /* A paragraph taken away is asked about on the same terms, and on its own —
+     before the rewrites decide whether this document is worth asking about:
+     only a line this reader showed exactly once in the original can be missed
+     afterwards, or its absence would be a fact about the filter or about some
+     other line that happens to say the same thing. */
+  if (made.gone && original !== null && original.split(made.gone).length === 2) {
+    if (text.includes(made.gone)) {
+      broke.push(`${name} (${format}): a paragraph taken away is still there — "${made.gone.slice(0, 30)}"`);
+    } else {
+      taken.push(name);
+    }
+  }
+
   if (asked.length === 0) {
     invisible.push(`${name}: this reader shows none of the spots we edited`);
     continue;
@@ -481,6 +525,12 @@ check(
   'and a paragraph that was not in the file at all is there when it is reopened',
   added.length > 0,
   `${added.length} documents were given one and asked about it`,
+);
+
+check(
+  'and a paragraph taken out of the file is gone when it is reopened',
+  taken.length > 0 && !broke.some((b) => b.includes('taken away is still there')),
+  `${taken.length} documents lost one and were asked about it`,
 );
 
 if (invisible.length > 0) {

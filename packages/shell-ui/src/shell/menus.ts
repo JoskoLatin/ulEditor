@@ -76,6 +76,7 @@ export function menuDefinitions(): MenuDefinition[] {
         { command: 'view.search' },
         'rule',
         { command: 'edit.insertParagraph' },
+        { command: 'edit.removeParagraph' },
         'rule',
         { command: 'edit.goToDefinition' },
       ],

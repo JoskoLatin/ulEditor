@@ -165,7 +165,25 @@ export function record(error: unknown, context: CrashContext): void {
  */
 export function watchForCrashes(): void {
   window.addEventListener('error', (event) => {
-    record(event.error ?? event.message, { where: 'window' });
+    /*
+     * Nothing was thrown, so nothing crashed.
+     *
+     * A browser reports more than exceptions on this channel, and the one that
+     * matters here is `ResizeObserver loop completed with undelivered
+     * notifications` — a layout that settled over two frames instead of one,
+     * which the reading view's paging does as a matter of course. Measured, it
+     * arrives with `error: null` and line 0, once per round, and a real throw
+     * arrives with the thrown object. The first version of this listener fell
+     * back to the message, and so turned a paging layout into a crash: a
+     * console error the reading check failed on, and — worse — a report on
+     * disk and, at the next start, a tab announcing that ulEditor had stopped
+     * unexpectedly five times, when it had stopped no times at all. The other
+     * thing that arrives without an object is a script from another origin,
+     * muted to "Script error." with no place and no message, which is nothing
+     * a fix could be made from either.
+     */
+    if (event.error === null || event.error === undefined) return;
+    record(event.error, { where: 'window' });
   });
   window.addEventListener('unhandledrejection', (event) => {
     record(event.reason, { where: 'a promise nobody was waiting on' });

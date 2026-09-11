@@ -109,7 +109,19 @@ page.on('console', (msg) => {
 });
 page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`));
 
-const mermaidRequests = () => requested.filter((u) => /mermaid/i.test(u));
+/*
+ * The library, not every URL with the word in it.
+ *
+ * Under the dev server our own wrapper is a module of its own —
+ * `editor-markdown/src/mermaid.ts`, a few dozen lines imported statically by
+ * the editor — and it is fetched the moment any Markdown opens. Matching on the
+ * word alone reported that as the library arriving early, and the check failed
+ * against a program keeping its promise: the one URL it named was the wrapper.
+ * A production build inlines the wrapper into the editor's chunk, which is
+ * presumably where this passed when it was written.
+ */
+const mermaidRequests = () =>
+  requested.filter((u) => /mermaid/i.test(u) && !/\/editor-markdown\/src\/[^/?]*$/.test(u.split('?')[0]));
 
 try {
   await mkdir(SHOTS, { recursive: true });

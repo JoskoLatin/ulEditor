@@ -201,8 +201,56 @@ let page;
 try {
   browser = await chromium.launch();
   page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
+  /* Every line the crash listener writes, so it can be asked what it counted. */
+  const recorded = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && message.text().startsWith('[uleditor]')) recorded.push(message.text());
+  });
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForSelector('.shell', { timeout: 20000 });
+
+  /*
+   * (0) What is not a crash, and what is.
+   *
+   * The first version of the window listener fell back to the event's message
+   * when nothing had been thrown — and a ResizeObserver whose layout settles
+   * over two frames reports exactly that, with `error: null`, once per round.
+   * The reading view pages that way as a matter of course, so every session of
+   * reading wrote crash reports to disk and announced them at the next start.
+   * `verify:reading` is what caught it, as a console error nobody had written.
+   * So both halves are asked: the loop records nothing, and a real throw from a
+   * timer — the same channel — still records one, or the first half would pass
+   * against a listener that had simply stopped listening.
+   */
+  const before = recorded.length;
+  await page.evaluate(async () => {
+    const box = document.createElement('div');
+    document.body.appendChild(box);
+    let round = 0;
+    const observer = new ResizeObserver(() => {
+      if (round++ < 5) box.style.width = `${100 + round * 10}px`;
+    });
+    observer.observe(box);
+    await new Promise((settle) => setTimeout(settle, 300));
+    observer.disconnect();
+    box.remove();
+  });
+  check(
+    'a layout that settles over two frames is not recorded as a crash',
+    recorded.length === before,
+    recorded.length === before ? 'nothing recorded' : recorded.slice(before).join(' · ').slice(0, 140),
+  );
+  await page.evaluate(() => {
+    setTimeout(() => {
+      throw new Error('a real fault, thrown with nothing to catch it');
+    });
+  });
+  await page.waitForTimeout(200);
+  check(
+    'and a real throw on the same channel still is',
+    recorded.slice(before).some((line) => line.includes('a real fault')),
+    `${recorded.length - before} recorded`,
+  );
 
   const alive = async () => ({
     shell: (await page.locator('.shell').count()) > 0,

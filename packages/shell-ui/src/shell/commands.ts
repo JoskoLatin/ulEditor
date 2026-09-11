@@ -236,6 +236,19 @@ export function registerCommands(shell: Shell): () => void {
       when: () => activeInstance()?.canInsertParagraph?.() === true,
       run: () => activeInstance()?.insertParagraph?.(),
     }),
+    /*
+     * And taking one away — the same shape, and the same division of labour:
+     * the shell asks whether this document could take it at all, and the
+     * editor answers where the cursor is and whether that paragraph may go.
+     */
+    shell.commands.register({
+      id: 'edit.removeParagraph',
+      title: t('Remove this paragraph'),
+      category: t('Edit'),
+      keybinding: ['Ctrl', 'Shift', 'Backspace'],
+      when: () => activeInstance()?.canRemoveParagraph?.() === true,
+      run: () => activeInstance()?.removeParagraph?.(),
+    }),
     shell.commands.register({
       id: 'editor.goToLocation',
       title: t('Go to a place in a file'),
@@ -669,6 +682,24 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
     if (key === 'tab') {
       event.preventDefault();
       cycleTab(-1);
+    }
+    /*
+     * Ctrl+Shift+Backspace — the paragraph the cursor is in, taken away.
+     *
+     * Registered keybindings are drawn, not dispatched — the menu and the
+     * palette read them, and this hand-written handler is what actually fires
+     * — so an entry here is what makes the chord live at all. Deliberately not
+     * guarded by `inTextField`: the caret is inside the very paragraph being
+     * removed, which is exactly where a person stands when they want it gone,
+     * and the same reasoning Ctrl+Enter is allowed for. Chromium does nothing
+     * with this chord inside a `contenteditable`, measured, so nothing is
+     * taken from the browser; an editor that cannot remove a paragraph lets it
+     * through untouched.
+     */
+    if (key === 'backspace' && activeInstance()?.canRemoveParagraph?.()) {
+      event.preventDefault();
+      activeInstance()?.removeParagraph?.();
+      return;
     }
     if (key === 'z' && !inTextField && activeInstance()) {
       event.preventDefault();

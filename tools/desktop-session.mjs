@@ -92,25 +92,45 @@ export async function startDesktop(opts = {}) {
     }
   }
 
-  app.kill();
+  killTree(app);
   throw lastError ?? new Error('WebView2 never opened a CDP endpoint');
+}
+
+/**
+ * Ends a process this harness started, and everything it started — in the one
+ * order that does both.
+ *
+ * **By process tree, not by name.** `taskkill /IM uleditor-desktop.exe` closes
+ * every ulEditor on the machine, including the one the person running the
+ * check has open, with whatever is unsaved in it. The dev build and the
+ * installed build share a name and nothing else, so the only safe handle is
+ * the process the harness started itself, and `/T` takes the children Tauri
+ * leaves behind with it.
+ *
+ * **And the tree first, while its root is still alive.** Every harness here
+ * used to call `app.kill()` and then `taskkill /T` on the same pid — and `/T`
+ * finds children by asking for their parent, which by then no longer exists.
+ * Measured: `ERROR: The process "11016" not found.`, and the child lived on as
+ * an orphan. It was found as a real debug build of ulEditor, still running
+ * under `cargo run` after `verify:office-editing` had reported 51/51 and
+ * exited — holding the single-instance lock the next check would have tripped
+ * over, and looking to anyone who glanced at the task list like the person's
+ * own program. Synchronous as well, because the harness calls `process.exit`
+ * straight afterwards and an asynchronous `taskkill` may never have started.
+ */
+export function killTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
+  } else {
+    child.kill();
+  }
 }
 
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});
-  session?.app?.kill();
-  /*
-   * By process tree, not by name.
-   *
-   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
-   * machine — including the one the person running this check has open, with
-   * whatever is unsaved in it. The dev build and the installed build share a
-   * name and nothing else, so the only safe handle is the process this harness
-   * started itself; `/T` takes the children Tauri leaves behind with it.
-   */
-  const pid = session?.app?.pid;
-  if (pid) spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { shell: true, stdio: 'ignore' });
+  killTree(session?.app);
   await new Promise((r) => setTimeout(r, 1500));
 }
 

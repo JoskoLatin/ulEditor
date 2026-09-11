@@ -23,6 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { makePdf } from './fixtures.mjs';
+import { killTree } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9334;
@@ -415,17 +416,8 @@ try {
     .catch(() => {});
 } finally {
   await browser?.close().catch(() => {});
-  app.kill();
-  /*
-   * By process tree, not by name.
-   *
-   * `taskkill /IM uleditor-desktop.exe` closes **every** ulEditor on the
-   * machine — including the one the person running this check has open, with
-   * whatever is unsaved in it. The dev build and the installed build share a
-   * name and nothing else, so the only safe handle is the process this harness
-   * started itself; `/T` takes the children Tauri leaves behind with it.
-   */
-  if (app.pid) spawn('taskkill', ['/F', '/T', '/PID', String(app.pid)], { shell: true, stdio: 'ignore' });
+  // By process tree, root still alive — see `killTree` in desktop-session.mjs.
+  killTree(app);
   await rm(workspace, { recursive: true, force: true }).catch(() => {});
 }
 

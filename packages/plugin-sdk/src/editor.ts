@@ -157,6 +157,17 @@ export interface EditorInstance {
   insertParagraph?(): void;
   canInsertParagraph?(): boolean;
 
+  /**
+   * Removes the paragraph the cursor is in.
+   *
+   * The same double contract as `insertParagraph`: `canRemoveParagraph` is the
+   * coarse question the shell asks to decide whether the entry belongs in this
+   * document's menu at all, and the command itself answers the fine one — this
+   * cursor, this paragraph — out loud, with a reason, when it refuses.
+   */
+  removeParagraph?(): void;
+  canRemoveParagraph?(): boolean;
+
   readonly onDirtyChange: Event<boolean>;
   /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */
   readonly onStatusChange: Event<string>;

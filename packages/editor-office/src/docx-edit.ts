@@ -278,11 +278,11 @@ export function writeDocx(
   runs: RunSpan[],
   xml: string,
   edits: RunEdit[],
-  inserting?: Inserting,
+  reshaping?: Reshaping,
 ): Uint8Array {
   const next: Record<string, Uint8Array> = {};
   for (const [path, data] of Object.entries(archive)) next[path] = data;
-  next['word/document.xml'] = strToU8(applyDocxEdits(xml, runs, edits, inserting));
+  next['word/document.xml'] = strToU8(applyDocxEdits(xml, runs, edits, reshaping));
   return zipSync(next);
 }
 
@@ -317,6 +317,7 @@ const REGION = new Set([
   'tc',
   'txbxContent',
   'sdtContent',
+  'customXml',
   'hdr',
   'ftr',
   'footnote',
@@ -661,39 +662,245 @@ export function paragraphMarkup(
   return `<${w}p>${props}${body}</${w}p>`;
 }
 
-/** Everything a save needs to know about paragraphs that are not in the file yet. */
-export interface Inserting {
-  paragraphs: ParagraphSpan[];
-  succession: Succession;
-  inserts: ParagraphInsert[];
+/* ── removing a paragraph ────────────────────────────────────────────── */
+
+/**
+ * Ranges that must not be torn in half.
+ *
+ * Each of these opens somewhere and closes somewhere else, matched by `w:id`,
+ * and removing a paragraph that holds one end but not the other leaves the
+ * survivor orphaned. For `permStart`/`permEnd` that is not cosmetic: measured
+ * with Word itself, a protected document whose `permEnd` is removed loses the
+ * editable region on a paragraph the person never touched — Word discards the
+ * unmatched half and the permission with it. Bookmarks are deliberately **not**
+ * here: the same measurement showed Word opens a file with an orphaned
+ * bookmark half cleanly, and the corpus is full of Word's own `_GoBack`.
+ */
+const PAIRED = [
+  ['permStart', 'permEnd'],
+  ['moveFromRangeStart', 'moveFromRangeEnd'],
+  ['moveToRangeStart', 'moveToRangeEnd'],
+  ['commentRangeStart', 'commentRangeEnd'],
+] as const;
+
+/**
+ * Marks that may sit between two body paragraphs without being content.
+ *
+ * The question they answer is "would the document end with something that is
+ * not a paragraph" — a bookmark half or a proofing mark between paragraphs is
+ * an annotation of a place, not a block, and five real files keep a body-level
+ * `bookmarkEnd` there. Anything else — a table, a content control — is content,
+ * and a document may not end on it.
+ */
+const RANGE_MARKS = new Set([
+  'bookmarkStart',
+  'bookmarkEnd',
+  'proofErr',
+  'permStart',
+  'permEnd',
+  'moveFromRangeStart',
+  'moveFromRangeEnd',
+  'moveToRangeStart',
+  'moveToRangeEnd',
+  'commentRangeStart',
+  'commentRangeEnd',
+  'customXmlInsRangeStart',
+  'customXmlInsRangeEnd',
+  'customXmlDelRangeStart',
+  'customXmlDelRangeEnd',
+]);
+
+/** Whether anything that is genuinely content opens between two offsets. */
+function blockContentBetween(xml: string, from: number, to: number): boolean {
+  if (from >= to) return false;
+  for (const tag of scanTags(xml.slice(from, to))) {
+    if (!tag.closing && !RANGE_MARKS.has(localName(tag.name))) return true;
+  }
+  return false;
+}
+
+/** Whether a table opens between two offsets. */
+function tableBetween(xml: string, from: number, to: number): boolean {
+  if (from >= to) return false;
+  for (const tag of scanTags(xml.slice(from, to))) {
+    if (!tag.closing && localName(tag.name) === 'tbl') return true;
+  }
+  return false;
 }
 
 /**
- * Every rewrite and every new paragraph, written into the original in one pass.
+ * Why this paragraph may not be removed; `null` when it may.
+ *
+ * The rules, each measured rather than argued:
+ *
+ * - **Only a body paragraph** — the boundary insertion keeps, kept here too.
+ * - **Not a section marker.** A `w:pPr` holding `w:sectPr` is where a section
+ *   ends; removing it rewires the page layout of everything before it.
+ * - **Not half a field.** Over 1263 real body paragraphs no field crosses the
+ *   boundary, so this defends a rare case — a reason to keep the rule, not a
+ *   reason to trust it.
+ * - **Not half a protected or tracked range** — see `PAIRED`.
+ * - **Not the paragraph keeping two tables apart.** Word treats adjacent
+ *   body-level tables as one: measured over COM, `Tables.Count` goes from 2 to
+ *   1, while the preview here would keep showing two. Twelve real paragraphs
+ *   sit in that sandwich.
+ * - **Not the last paragraph standing.** Judged against `survivors` — the body
+ *   paragraphs the plan still keeps — not against the file as opened, because
+ *   taking them one at a time must not reach a place a single step refuses.
+ *   And not the last one before the body's tail either: a document that would
+ *   end on a table, or whose final section would be emptied, gets the missing
+ *   paragraph silently resurrected by Word — measured, the paragraph count
+ *   comes back unchanged — so the file written would not be the file read.
+ */
+export function removalRefusal(
+  xml: string,
+  paragraphs: ParagraphSpan[],
+  index: number,
+  survivors?: ReadonlySet<number>,
+): string | null {
+  const span = paragraphs.find((one) => one.index === index);
+  if (!span) return 'there is no such paragraph';
+  if (span.refusal) return span.refusal;
+  if (span.section) return 'the paragraph ends a section';
+
+  let begins = 0;
+  let ends = 0;
+  const halves = new Map<string, { starts: Set<string>; ends: Set<string> }>();
+  for (const raw of scanTags(xml.slice(span.start, span.end))) {
+    if (raw.closing) continue;
+    const local = localName(raw.name);
+    const tag = { start: raw.start + span.start, end: raw.end + span.start };
+    if (local === 'fldChar') {
+      const kind = tagAttr(xml, tag, 'fldCharType');
+      if (kind === 'begin') begins++;
+      else if (kind === 'end') ends++;
+      continue;
+    }
+    for (const [open, close] of PAIRED) {
+      if (local !== open && local !== close) continue;
+      const pair = halves.get(open) ?? { starts: new Set<string>(), ends: new Set<string>() };
+      (local === open ? pair.starts : pair.ends).add(tagAttr(xml, tag, 'id') ?? '');
+      halves.set(open, pair);
+    }
+  }
+  if (begins !== ends) return 'a field begins or ends here and continues elsewhere';
+  for (const pair of halves.values()) {
+    const crossed =
+      [...pair.starts].some((id) => !pair.ends.has(id)) ||
+      [...pair.ends].some((id) => !pair.starts.has(id));
+    if (crossed) return 'a marked stretch continues outside the paragraph';
+  }
+
+  const body = paragraphs.filter((one) => one.refusal === null);
+  const alive = survivors ?? new Set(body.map((one) => one.index));
+  if (!alive.has(index)) return 'there is no such paragraph';
+
+  /* The nearest body paragraphs the plan still keeps, on either side. Nothing
+     before the body holds a `w:tbl`, so scanning from 0 when none survives on
+     the left asks the right question anyway. */
+  let before: ParagraphSpan | null = null;
+  let after: ParagraphSpan | null = null;
+  for (const one of body) {
+    if (!alive.has(one.index) || one.index === index) continue;
+    if (one.index < index) before = one;
+    else if (!after) after = one;
+  }
+
+  if (!before && !after) return 'the last paragraph of the document';
+
+  if (
+    after &&
+    tableBetween(xml, before ? before.end : 0, span.start) &&
+    tableBetween(xml, span.end, after.start)
+  ) {
+    return 'the paragraph keeps two tables apart';
+  }
+
+  if (!after && (before!.section || blockContentBetween(xml, before!.end, span.start))) {
+    return 'the document would end without a paragraph';
+  }
+
+  return null;
+}
+
+/** Everything a save needs to know about the paragraphs the plan reshapes. */
+export interface Reshaping {
+  paragraphs: ParagraphSpan[];
+  succession: Succession;
+  inserts: ParagraphInsert[];
+  /** Ordinals of paragraphs of the original part the plan removes. */
+  removals?: number[];
+}
+
+/**
+ * Every rewrite, every new paragraph and every removal, written into the
+ * original in one pass.
  *
  * Back to front, so no offset moves under the next operation. Two new
  * paragraphs after the same one keep the order they were added in: at an equal
  * offset the later step is written first, which leaves it second on the page.
+ *
+ * **At an equal offset, a removal goes before an insertion.** The case is the
+ * normal one, not a corner: 1187 of 1214 consecutive body paragraphs in the
+ * real corpus touch with not a byte between them, so inserting after one
+ * paragraph and removing the next puts both operations at the same offset. The
+ * removal consumes a range and the insertion consumes nothing; applied the
+ * other way round, the removal's range would cut the head off the markup the
+ * insertion just wrote. Measured both ways over the 45 real files that have
+ * such a pair: this order is byte-exact in all 45, the other wrong in all 45.
  *
  * **A step with no text is not written.** An empty new paragraph is one the
  * person could never click into again — it draws as a blank line with no run
  * inside it, and the way back into editing is a run. Rather than leave that trap
  * in somebody's document, a paragraph nobody typed into is a paragraph nobody
  * added.
+ *
+ * **The removals are re-judged here**, against the survivors of the removals
+ * before them, in ordinal order — the writer enforces the policy, not only the
+ * view above it. A duplicate ordinal, an ordinal that would empty the body, an
+ * ordinal whose paragraph a single-step rule refuses: each is skipped rather
+ * than trusted, because a caller of this function is not obliged to have asked
+ * first. And a rewrite whose run sits inside a removed paragraph — a caption in
+ * a text box the paragraph carries included — is dropped with the paragraph:
+ * two operations over the same bytes is how offsets move under each other.
  */
 export function applyDocxEdits(
   xml: string,
   runs: RunSpan[],
   edits: RunEdit[],
-  inserting?: Inserting,
+  reshaping?: Reshaping,
 ): string {
   const byIndex = new Map(runs.map((run) => [run.index, run]));
 
   const operations: { at: number; end: number; text: string; order: number }[] = [];
 
+  /*
+   * The removals are settled first because the rewrites and the insertions
+   * both need to know about them — but their operations are pushed **last**,
+   * deliberately. A stable sort would otherwise leave them ahead of a
+   * colliding insertion by accident of the order they were added in, and the
+   * tie-break below would be correct without ever being load-bearing. Code
+   * that is right for a reason nobody can break is code nobody can check.
+   */
+  const removed: ParagraphSpan[] = [];
+  if (reshaping?.removals?.length) {
+    const body = reshaping.paragraphs.filter((span) => span.refusal === null);
+    const alive = new Set(body.map((span) => span.index));
+    /* Ascending, so each is judged against what the ones before it left. An
+       ordinal repeated is refused the second time round by the same rule that
+       judges every other: it is no longer among the survivors. */
+    for (const index of [...reshaping.removals].sort((a, b) => a - b)) {
+      if (removalRefusal(xml, reshaping.paragraphs, index, alive) !== null) continue;
+      alive.delete(index);
+      const span = reshaping.paragraphs.find((one) => one.index === index);
+      if (span) removed.push(span);
+    }
+  }
+
   for (const edit of edits) {
     const run = byIndex.get(edit.index);
     if (!run?.text || run.refusal) continue;
+    if (removed.some((span) => run.start >= span.start && run.end <= span.end)) continue;
     operations.push({
       at: run.text.start,
       end: run.text.end,
@@ -704,21 +911,30 @@ export function applyDocxEdits(
     });
   }
 
-  if (inserting) {
-    const paragraphs = new Map(inserting.paragraphs.map((span) => [span.index, span]));
-    inserting.inserts.forEach((insert, order) => {
+  if (reshaping) {
+    const paragraphs = new Map(reshaping.paragraphs.map((span) => [span.index, span]));
+    reshaping.inserts.forEach((insert, order) => {
       const paragraph = paragraphs.get(insert.after);
       if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
       operations.push({
         at: paragraph.end,
         end: paragraph.end,
-        text: paragraphMarkup(xml, paragraph, runs, inserting.succession, insert.text),
+        text: paragraphMarkup(xml, paragraph, runs, reshaping.succession, insert.text),
         order,
       });
     });
   }
 
-  operations.sort((a, b) => b.at - a.at || b.order - a.order);
+  for (const span of removed) {
+    operations.push({ at: span.start, end: span.end, text: '', order: 0 });
+  }
+
+  /* Descending offset; at an equal offset the consuming operation first —
+     which is the tie-break the comment above measures — and then the later
+     step first, which leaves it second on the page. */
+  operations.sort(
+    (a, b) => b.at - a.at || (b.end - b.at) - (a.end - a.at) || b.order - a.order,
+  );
 
   let out = xml;
   for (const operation of operations) {

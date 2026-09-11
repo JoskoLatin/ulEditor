@@ -160,6 +160,22 @@ The XML is **not re-serialised**; only the byte ranges the user touched are chan
 
 An OpenDocument text opened in the very same editor is offered none of this, and not by a check on the file's extension: the capability lives on the seam the editor writes through, so a format with nothing to say about structure offers nothing, and the editor above never learns which format it is holding.
 
+**And a paragraph the file already had can be taken away** — `Ctrl+Shift+Backspace`, or *Edit ▸ Remove this paragraph*. It is the same plan in the other direction: nothing happens to the file until a save, the paragraph stays in the view but hidden, `Ctrl+Z` brings it back even after a save, and every save applies the whole plan to the file as it was opened. It starts from the paragraph the cursor is in rather than from a piece of text, because the paragraphs people most want gone are blank lines with no text to start from — 397 of the 1263 body paragraphs in those 49 documents are empty spacers.
+
+It is the harder half, and not by a little. A rewrite moves no ranges and an insertion consumes none; a removal consumes a range that other parts of the file may be half inside. Every rule below was bought by asking Word what it did with the result, and `pnpm verify:word` asks it again on every run — cutting each refused case by hand, bypassing the writer, so that the day Word stops doing one of these, the rule that refuses it will be seen to be refusing for nothing:
+
+- **The paragraph between two tables is what keeps them two.** Remove it and Word's `Tables.Count` goes from 2 to 1 — adjacent tables are one table to Word — while the preview here would go on showing two. Twelve real paragraphs sit in that sandwich, three in one form and nine in one schedule.
+- **A document cannot end on a table.** Remove the last paragraph behind one and Word puts a paragraph back: the count comes back unchanged. The file written would not be the file anybody reads.
+- **Half a protected range is somebody's permission gone.** In a protected document whose editable stretch runs into the paragraph being removed, Word discards the orphaned start and with it the permission on a paragraph nobody touched — `Range.Editors.Count` goes `1,0,0 → 0,0`. The same rule refuses half a comment range and half a tracked move. A bookmark is **not** refused, and that was measured too: Word opens an orphaned bookmark half cleanly, and the corpus is full of Word's own `_GoBack`.
+- **Not a section marker, and not half a field.** Over those 1263 body paragraphs no field crosses a paragraph boundary, so that rule defends a rare case — a reason to keep it, not a reason to trust it.
+- **Not the last paragraph standing — counted against what the plan keeps, not what the file had.** Judged only against the original, every removal in a three-paragraph document passes on its own, and all three together leave a body with nothing in it: Word opens that by quietly inventing a paragraph, and ulEditor reopens it with no editable text at all, locked out of its own output. So each removal is judged against the survivors of the ones before it, in the view and again in the writer, which does not trust that it was asked first.
+
+The design was attacked by four critics before a line of it was written, and they came back with two fatal findings and eight real ones. The permission case above was one of the fatal two. The other was in the gesture people will use most: add a paragraph, change your mind, remove it. The blur that finishes the typing had already dropped the empty paragraph from the plan, the removal then looked for it, got `-1`, and `splice(-1, 1)` removes the **last** element of a list — somebody else's paragraph, anywhere in the document, gone without an undo. The step is now looked up again after the blur, and one that is already gone is simply gone.
+
+One finding was the implementation's rather than the design's, and the instrument found it. 1187 of the 1214 consecutive body paragraphs in the corpus touch with not a byte between them, so inserting after one paragraph and removing the next puts both operations at the same offset, and the removal has to be applied first — over the 45 real files that have such a pair, removal first is byte-exact in all 45 and the other order is wrong in all 45. The first build had the right order for the wrong reason: the removals happened to be pushed ahead of the insertions and a stable sort kept them there, so taking the stated rule out changed nothing — which is to say nothing depended on it. They are pushed last now, the rule is the only thing putting them first, and taking it out fails the check.
+
+A numbered list is one counter in Word however many times it is interrupted, so removing its first item renumbers a group pages away. The browser numbers every group from one; the preview now carries each counter across its interruptions, so what it shows is what the reopened file will. Five lists in four real files are split that way, one of them into thirteen groups.
+
 **Cells in a spreadsheet are retyped the same way** — double-click one. A cell holding a formula does not open, and says which formula it holds: the number on screen is a *result*, and overwriting a result with a literal is the quietest way there is to destroy a workbook. When an edited workbook does contain formulas, it is marked for full recalculation, so Excel works the totals out again on opening instead of showing stale ones.
 
 A date typed the way a person writes one — `15.6.2026.` — is stored as a date rather than as those characters, so the cell's own format keeps drawing it the way the sheet already drew it. Excel stores a date as a count of days, and counts a 29 February 1900 that never happened; the offset every library uses is right from 1 March 1900 onward and one day out below it. That is the quietest sort of wrong there is — an archival record dated 1898 simply arrives on the wrong day and nothing looks broken — so the arithmetic follows Excel's, bug included, and a date older than the first one it can store is refused rather than moved a century.
@@ -600,6 +616,7 @@ pnpm verify:pdf       # annotations and page operations (no browser)
 pnpm verify:odf       # OpenDocument dates and formulas (no browser)
 pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges (no browser)
 pnpm verify:insert    # a new paragraph in a .docx: what it inherits, and what stays untouched
+pnpm verify:delete    # a paragraph taken away: what is refused, and the exact bytes that are left
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm readback         # …and then opened by LibreOffice, which shares no code with us
@@ -607,7 +624,7 @@ pnpm verify:word      # …and by Word itself, which is the reader that refuses 
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application
-pnpm verify:office-editing   # retyping a .docx and adding a paragraph, out to disk and back
+pnpm verify:office-editing   # retyping a .docx, adding and removing a paragraph, out to disk and back
 pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back
@@ -681,8 +698,12 @@ before it was a substitution inside an element that already existed — so
 `pnpm verify:word` drives Word itself over COM and asks three things per
 document: that Word opens what we wrote, that it holds **exactly one paragraph
 more** than the original it also opened (a silent repair announces itself by
-throwing content away), and that our text is in it. Windows and Word only, and it
-says so and fails rather than skipping where there is neither.
+throwing content away), and that our text is in it. The same three are asked from
+the other side of a paragraph taken away — it opens, it holds exactly one fewer,
+and a line Word showed in the original is nowhere in it — and the three removals
+this program refuses are cut by hand and handed to Word, so the reason for each
+refusal is measured on every run rather than remembered. Windows and Word only,
+and it says so and fails rather than skipping where there is neither.
 
 The first thing it found was **our own fixture**. `makeDocx()` had no
 `_rels/.rels` and no content type naming the main part, so it was not a package

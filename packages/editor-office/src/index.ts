@@ -44,7 +44,7 @@ import {
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
-import { renderDocx, type NewParagraph, type Preview } from './docx.js';
+import { renderDocx, type NewParagraph, type ParagraphSeam, type Preview } from './docx.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
@@ -109,6 +109,9 @@ function searchIn(
   const results: FindResult[] = [];
 
   for (const node of textNodesOf(root)) {
+    /* Text inside a paragraph the plan has removed is text the saved file will
+       not contain; a search that found it would scroll to a node with no box. */
+    if (node.parentElement?.closest('.is-removed')) continue;
     const value = node.nodeValue ?? '';
     const haystack = query.caseSensitive ? value : value.toLowerCase();
 
@@ -139,10 +142,12 @@ function searchIn(
 
 /* ── Word ────────────────────────────────────────────────────────────── */
 
-/** Everything an undo has to put back: the rewrites and the plan, together. */
+/** Everything an undo has to put back: the rewrites and the whole plan, together. */
 interface Snapshot {
   edits: Map<number, string>;
   steps: NewParagraph[];
+  /** Ordinals of the file's own paragraphs the plan removes. */
+  removed: number[];
 }
 
 /**
@@ -172,6 +177,15 @@ class DocumentPreviewEditor implements EditorInstance {
    * person can still take back a paragraph they added ten minutes ago.
    */
   #steps: NewParagraph[] = [];
+  /**
+   * The file's own paragraphs the plan takes away, by their ordinals.
+   *
+   * The same kind of plan as `#steps`, in the other direction: the paragraph
+   * stays in the file until a save, its element stays in the view — hidden, so
+   * it can go on anchoring any new paragraphs drawn after it — and every save
+   * applies the whole set to the file as it was opened.
+   */
+  #removed = new Set<number>();
   #undoStack: Snapshot[] = [];
   #redoStack: Snapshot[] = [];
   /** The plan as the file on disk holds it; anything else means unsaved. */
@@ -208,7 +222,11 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   #key(): string {
     const edits = [...this.#edits].sort((a, b) => a[0] - b[0]);
-    return JSON.stringify([edits, this.#steps.filter((step) => step.text.length > 0)]);
+    return JSON.stringify([
+      edits,
+      this.#steps.filter((step) => step.text.length > 0),
+      [...this.#removed].sort((a, b) => a - b),
+    ]);
   }
 
   /**
@@ -223,6 +241,7 @@ class DocumentPreviewEditor implements EditorInstance {
     return {
       edits: new Map(this.#edits),
       steps: this.#steps.filter((step) => step.text.length > 0).map((step) => ({ ...step })),
+      removed: [...this.#removed].sort((a, b) => a - b),
     };
   }
 
@@ -240,7 +259,7 @@ class DocumentPreviewEditor implements EditorInstance {
         this.preview.source
           ? this.preview.source.paragraphs
             ? t(
-                'Text can be retyped — double-click it. Ctrl+Enter adds a paragraph below. Layout and styles stay as they are.',
+                'Text can be retyped — double-click it. Ctrl+Enter adds a paragraph below, Ctrl+Shift+Backspace removes the one the cursor is in. Layout and styles stay as they are.',
               )
             : t('Text can be retyped — double-click it. Layout and styles stay as they are.')
           : t('This document is shown, not edited — it opens for reading and searching.'),
@@ -495,6 +514,156 @@ class DocumentPreviewEditor implements EditorInstance {
     return first === -1 ? this.#steps.length : first;
   }
 
+  /* ── a paragraph the file will no longer have ────────────────────── */
+
+  /**
+   * Removes the paragraph the cursor is in.
+   *
+   * A paragraph of the plan simply leaves the plan. A paragraph of the file
+   * joins `#removed`: nothing happens to the file until a save, the element
+   * stays in the view — hidden — and Ctrl+Z is a change of mind rather than a
+   * repair. The refusals are the seam's, and they are sentences: a section
+   * marker, half a field, the last paragraph standing each say why, because a
+   * command that appears to do nothing teaches people the program is
+   * unreliable.
+   */
+  removeParagraph(): void {
+    const seam = this.preview.source?.paragraphs;
+    if (!seam) return;
+
+    /* Read where the cursor is BEFORE the blur below moves everything. */
+    const at = this.#removalPoint(seam);
+
+    /* Then finish whatever is being typed, and finish it now — the same
+       discipline `insertParagraph` spells out. What that blur may do to the
+       plan is answered below by looking the step up again. */
+    const typing = document.activeElement;
+    if (typing instanceof HTMLElement && typing.isContentEditable) typing.blur();
+
+    if ('refusal' in at) {
+      this.#statusEmitter.fire(at.refusal);
+      return;
+    }
+
+    if ('step' in at) {
+      /*
+       * The blur above may have taken the step itself — an empty one goes the
+       * moment its caret leaves — so its position is read only now. Splicing
+       * at a remembered position, or at `indexOf === -1`, would take some
+       * other person's paragraph: `splice(-1, 1)` removes the LAST element,
+       * which is a different paragraph anywhere in the document.
+       */
+      const position = this.#steps.indexOf(at.step);
+      if (position === -1) {
+        this.#afterRemoval(null);
+        return;
+      }
+      /* Whether there is anything to undo back to is read now, after the blur
+         has written down what was typed — before it, a paragraph somebody had
+         typed "hello" into still reads as empty, and its removal would leave
+         an undo that restores nothing. */
+      const worth = at.step.text.length > 0;
+      if (worth) {
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+      }
+      const landing = this.#landingAfter(at.element);
+      this.#steps.splice(position, 1);
+      this.#syncSteps();
+      this.#emitDirty();
+      this.#afterRemoval(landing);
+      // After `#emitDirty`, which writes the ordinary status line over anything before it.
+      if (worth) this.#statusEmitter.fire(t('Paragraph removed — Ctrl+Z brings it back.'));
+      return;
+    }
+
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    /* The rewrites inside it go with it — they sit inside the very range the
+       save will cut, and two operations over the same bytes is how offsets
+       move under each other. The snapshot above still holds them, so an undo
+       brings the paragraph back with the retyping intact. */
+    for (const el of at.element.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
+      this.#edits.delete(Number(el.dataset.run));
+    }
+    const landing = this.#landingAfter(at.element);
+    this.#removed.add(at.paragraph);
+    this.#syncSteps();
+    this.#emitDirty();
+    this.#afterRemoval(landing);
+    this.#statusEmitter.fire(t('Paragraph removed — Ctrl+Z brings it back.'));
+  }
+
+  /** The paragraph the cursor is in: a step of the plan, an ordinal of the file, or a refusal. */
+  #removalPoint(
+    seam: ParagraphSeam,
+  ):
+    | { step: NewParagraph; element: HTMLElement }
+    | { paragraph: number; element: HTMLElement }
+    | { refusal: string } {
+    const body = this.preview.body;
+    const anchor = document.getSelection()?.anchorNode ?? null;
+    const inside = anchor && body.contains(anchor) ? anchor : null;
+    const element = inside instanceof Element ? inside : (inside?.parentElement ?? null);
+
+    const added = element?.closest<HTMLElement>('[data-new]');
+    if (added) {
+      const step = this.#steps[Number(added.dataset.new)];
+      if (step) return { step, element: added };
+    }
+
+    /* A blank spacer line carries the ordinal too, and the selection lands in
+       it when clicked — measured, not assumed, because a third of the real
+       corpus's body paragraphs are blank and they are exactly what people
+       want gone. */
+    const paragraph = element?.closest<HTMLElement>('[data-paragraph]');
+    if (paragraph) {
+      const index = Number(paragraph.dataset.paragraph);
+      if (this.#removed.has(index)) return { refusal: t('This paragraph is already removed.') };
+      const refusal = seam.removalRefusalAt(index, this.#removed);
+      return refusal ? { refusal } : { paragraph: index, element: paragraph };
+    }
+
+    if (element?.closest('td, th')) {
+      return {
+        refusal: t(
+          'Only a paragraph in the body of the document can be removed — not one in a table cell or a text box.',
+        ),
+      };
+    }
+
+    return { refusal: t('Put the cursor in a paragraph of the document first.') };
+  }
+
+  /**
+   * Where the cursor should stand once this element is hidden or gone.
+   *
+   * The next visible paragraph of the file, or the previous one from the end —
+   * read BEFORE the plan is redrawn, because the redraw replaces every planned
+   * node. Without this the selection stays anchored inside the hidden element,
+   * and the next press of the same key would be aimed at a paragraph that is
+   * already gone.
+   */
+  #landingAfter(element: HTMLElement): HTMLElement | null {
+    const marked = [
+      ...this.preview.body.querySelectorAll<HTMLElement>('[data-paragraph]'),
+    ].filter((one) => one !== element && !this.#removed.has(Number(one.dataset.paragraph)));
+    for (const candidate of marked) {
+      if (element.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        return candidate;
+      }
+    }
+    return marked[marked.length - 1] ?? null;
+  }
+
+  #afterRemoval(landing: HTMLElement | null): void {
+    const selection = document.getSelection();
+    if (!selection) return;
+    if (landing?.isConnected) selection.collapse(landing, 0);
+    else selection.removeAllRanges();
+    this.#root?.focus();
+  }
+
   /**
    * What was typed into a paragraph of the plan.
    *
@@ -547,6 +716,14 @@ class DocumentPreviewEditor implements EditorInstance {
     const body = this.preview.body;
     for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
 
+    /* The paragraphs the plan takes away are hidden rather than dropped: the
+       element goes on anchoring any new paragraphs drawn after it, and a
+       hidden list item is skipped by the browser's numbering exactly as the
+       reopened file will skip the paragraph. */
+    for (const el of body.querySelectorAll<HTMLElement>('[data-paragraph]')) {
+      el.classList.toggle('is-removed', this.#removed.has(Number(el.dataset.paragraph)));
+    }
+
     const last = new Map<number, HTMLElement>();
     this.#steps.forEach((step, position) => {
       const anchor =
@@ -566,8 +743,28 @@ class DocumentPreviewEditor implements EditorInstance {
       last.set(step.after, element);
     });
 
+    /* One `numId` is ONE counter in Word, however many visual groups the list
+       is drawn in — removing the first item renumbers a group pages away. So
+       every group's `start` is recomputed from what is visible above it,
+       planned additions counted and planned removals not. */
+    const counters = new Map<string, number>();
+    for (const group of body.querySelectorAll<HTMLElement>('[data-num]')) {
+      const key = group.dataset.num ?? '';
+      const sofar = counters.get(key) ?? 0;
+      if (group.tagName === 'OL') {
+        if (sofar > 0) group.setAttribute('start', String(sofar + 1));
+        else group.removeAttribute('start');
+      }
+      let visible = 0;
+      for (const item of group.children) {
+        if (item instanceof HTMLElement && !item.classList.contains('is-removed')) visible++;
+      }
+      counters.set(key, sofar + visible);
+    }
+
     /* The flow measures the document once and keeps the number; a document that
-       grew and did not say so has a last page nobody can reach. */
+       grew and did not say so has a last page nobody can reach — and one that
+       shrank, a last page past its own end. */
     this.#flow?.relayout();
   }
 
@@ -575,6 +772,7 @@ class DocumentPreviewEditor implements EditorInstance {
     const source = this.preview.source;
     this.#edits = snapshot.edits;
     this.#steps = snapshot.steps;
+    this.#removed = new Set(snapshot.removed);
     if (!source) return;
 
     /* Only the pieces that stand for something in the file — a piece that is
@@ -594,7 +792,10 @@ class DocumentPreviewEditor implements EditorInstance {
       this.#dirty = dirty;
       this.#dirtyEmitter.fire(dirty);
     }
-    const changes = this.#edits.size + this.#steps.filter((step) => step.text.length > 0).length;
+    const changes =
+      this.#edits.size +
+      this.#steps.filter((step) => step.text.length > 0).length +
+      this.#removed.size;
     this.#statusEmitter.fire(
       dirty
         ? t('{words} words · {n} edits', { words: this.#words, n: changes })
@@ -618,8 +819,9 @@ class DocumentPreviewEditor implements EditorInstance {
     const uri = target?.uri ?? this.doc.uri;
     const edits = [...this.#edits].map(([index, text]) => ({ index, text }));
     const added = this.#steps.filter((step) => step.text.length > 0);
+    const removed = [...this.#removed].sort((a, b) => a - b);
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added));
+    await this.host.fs.writeBytes(uri, source.write(edits, added, removed));
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as
@@ -676,6 +878,16 @@ class DocumentPreviewEditor implements EditorInstance {
     return this.preview.source?.paragraphs !== undefined;
   }
 
+  /**
+   * The same coarse question as `canInsertParagraph`, in the other direction —
+   * whether this document's seam can take a paragraph away at all. Where the
+   * cursor is, and whether THAT paragraph may go, is answered out loud when
+   * the command runs.
+   */
+  canRemoveParagraph(): boolean {
+    return this.preview.source?.paragraphs !== undefined;
+  }
+
   async find(query: FindQuery): Promise<FindResult[]> {
     const root = this.preview.body;
     return searchIn(
@@ -715,10 +927,17 @@ class DocumentPreviewEditor implements EditorInstance {
       },
       page: (delta) => this.#flow?.page(delta),
       seek: (fraction) => this.#flow?.seek(fraction),
-      outline: () => headingOutline(this.preview.body),
+      /* A heading the plan removed is not a place in the document any more. */
+      outline: () =>
+        headingOutline(this.preview.body).filter(
+          (entry) => !this.preview.body.querySelector(`#${CSS.escape(entry.id)}`)?.closest('.is-removed'),
+        ),
       goTo: (id) => {
         const target = this.preview.body.querySelector(`#${CSS.escape(id)}`);
-        if (target instanceof HTMLElement) this.#flow?.scrollTo(target);
+        /* A heading the plan removed has no box to scroll to. */
+        if (target instanceof HTMLElement && !target.closest('.is-removed')) {
+          this.#flow?.scrollTo(target);
+        }
       },
       onProgress: this.#progressEmitter.event,
       end: () => {

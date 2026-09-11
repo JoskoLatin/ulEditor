@@ -352,3 +352,15 @@
   min-width: 1ch;
   min-height: 1em;
 }
+
+/*
+ * A paragraph the plan has taken away.
+ *
+ * Hidden rather than removed from the DOM: the element goes on anchoring any
+ * planned paragraphs drawn after it, and a hidden list item leaves the
+ * browser's numbering exactly as the reopened file will leave the list. What
+ * stands on the page is what the file will hold — and this one will not.
+ */
+.ul-office-doc .is-removed {
+  display: none;
+}
