@@ -95,7 +95,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | PDF pages | **works** — rotate, delete, reorder, merge, extract | pdf-lib |
 | **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader *(full editing → ProseMirror, phase 2)* |
 | **DOC** (Word 97–2003) | **works — viewing** (headings, bold, lists, tables, fields) | own OLE2/FIB reader |
-| **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells) | own reader + byte-range editing *(formulas → Univer, phase 2)* |
+| **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells), every row kept and scrolled as a window — measured at 100 000 rows | own reader + byte-range editing *(formulas → Univer, phase 2)* |
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
 | **ODS** (OpenDocument) | **works — viewing + cell editing**, written back into the `.ods` itself | own reader + byte-range editing |
 | **ODT** (OpenDocument) | **works — viewing + text editing** (headings, formatting, lists, tables, images) | own reader + byte-range editing |
@@ -618,6 +618,7 @@ pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges
 pnpm verify:insert    # a new paragraph in a .docx: what it inherits, and what stays untouched
 pnpm verify:delete    # a paragraph taken away: what is refused, and the exact bytes that are left
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
+pnpm verify:sheets    # a 100k-row .xlsx: every row read, the grid windowed, 60 fps
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm readback         # …and then opened by LibreOffice, which shares no code with us
 pnpm verify:word      # …and by Word itself, which is the reader that refuses (Windows)

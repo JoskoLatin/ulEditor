@@ -54,10 +54,12 @@ import { readDoc } from './doc.js';
 import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
-import { columnName, readXlsx, renderSheet, type Sheet, type Workbook } from './xlsx.js';
+import { columnName, readXlsx, type Sheet, type Workbook } from './xlsx.js';
+import { SheetGrid, type GridCell } from './sheet-grid.js';
 
 export { renderDocx } from './docx.js';
-export { columnName, readXlsx, renderSheet } from './xlsx.js';
+export { columnName, readXlsx } from './xlsx.js';
+export { SheetGrid } from './sheet-grid.js';
 export type { Preview } from './docx.js';
 export type { Sheet, Workbook } from './xlsx.js';
 
@@ -976,7 +978,9 @@ class XlsxPreviewEditor implements EditorInstance {
   #grid: HTMLElement | null = null;
   #active = 0;
   /** Grids are built lazily — a workbook can hold dozens of sheets. */
-  #rendered = new Map<number, HTMLElement>();
+  #grids = new Map<number, SheetGrid>();
+  /** Where each sheet was scrolled to, so coming back to one is coming back to it. */
+  #scrolled = new Map<number, { top: number; left: number }>();
 
   /** The retyped cells: `sheet:row,col` → what was typed. */
   #edits = new Map<string, string>();
@@ -1038,14 +1042,23 @@ class XlsxPreviewEditor implements EditorInstance {
     const grid = this.#grid;
     if (!sheet || !grid) return;
 
+    const leaving = this.#grids.get(this.#active);
+    if (leaving && this.#active !== index) {
+      this.#scrolled.set(this.#active, { top: grid.scrollTop, left: grid.scrollLeft });
+      leaving.detach();
+    }
     this.#active = index;
 
-    let table = this.#rendered.get(index);
-    if (!table) {
-      table = renderSheet(sheet);
-      this.#rendered.set(index, table);
+    let view = this.#grids.get(index);
+    if (!view) {
+      view = new SheetGrid(sheet, (key) => this.#shown(index, key));
+      this.#grids.set(index, view);
     }
-    grid.replaceChildren(table);
+    grid.replaceChildren(view.table);
+    const back = this.#scrolled.get(index);
+    grid.scrollTop = back?.top ?? 0;
+    grid.scrollLeft = back?.left ?? 0;
+    view.attach(grid);
 
     for (const [i, button] of [...(this.#root?.querySelectorAll('.ul-sheet-tabs button') ?? [])].entries()) {
       if (button instanceof HTMLElement) button.dataset.active = String(i === index);
@@ -1054,10 +1067,23 @@ class XlsxPreviewEditor implements EditorInstance {
     this.#emitStatus();
   }
 
+  /**
+   * What a cell of a sheet shows: what was typed over it if anything was, and
+   * the file's value otherwise. The grid asks this of every cell it draws, so a
+   * retyped cell that scrolls out of view comes back retyped.
+   */
+  #shown(index: number, key: string): GridCell | undefined {
+    const edited = this.#edits.get(`${index}:${key}`);
+    if (edited !== undefined) return { text: edited, kind: typedKind(edited) };
+    const cell = this.workbook.sheets[index]?.cells.get(key);
+    return cell ? { text: cell.text, kind: cell.kind, formula: cell.formula } : undefined;
+  }
+
   unmount(): void {
     showHit(null);
     this.#grid?.removeEventListener('dblclick', this.#onDoubleClick);
-    this.#rendered.clear();
+    for (const view of this.#grids.values()) view.detach();
+    this.#grids.clear();
     this.#root?.remove();
     this.#root = null;
     this.#grid = null;
@@ -1141,19 +1167,9 @@ class XlsxPreviewEditor implements EditorInstance {
 
   #restore(edits: Map<string, string>): void {
     this.#edits = edits;
-    for (const [index, table] of this.#rendered) {
-      const sheet = this.workbook.sheets[index];
-      if (!sheet) continue;
-      for (const td of table.querySelectorAll<HTMLElement>('td[data-ref]')) {
-        const ref = td.dataset.ref ?? '';
-        const edited = edits.get(`${index}:${ref}`);
-        const original = sheet.cells.get(ref);
-        td.textContent = edited ?? original?.text ?? '';
-        const kind = edited !== undefined ? typedKind(edited) : original?.kind;
-        if (kind) td.dataset.kind = kind;
-        else delete td.dataset.kind;
-      }
-    }
+    /* Only the cells in the page are drawn again; the rest are drawn from the
+       same edits whenever they scroll in. */
+    for (const view of this.#grids.values()) view.refresh();
     this.#emitDirty();
   }
 
@@ -1391,18 +1407,7 @@ class XlsxPreviewEditor implements EditorInstance {
   }
 
   #revealCell(row: number, col: number): void {
-    const table = this.#rendered.get(this.#active);
-    const grid = this.#grid;
-    if (!table || !grid) return;
-
-    const target = table.querySelector(`td[data-ref="${row},${col}"]`);
-    if (!(target instanceof HTMLElement)) return;
-
-    for (const previous of [...table.querySelectorAll('td[data-hit="true"]')]) {
-      previous.removeAttribute('data-hit');
-    }
-    target.dataset.hit = 'true';
-    target.scrollIntoView({ block: 'center', inline: 'center' });
+    this.#grids.get(this.#active)?.reveal(row, col);
   }
 
   /**

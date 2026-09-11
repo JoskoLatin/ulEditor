@@ -62,6 +62,12 @@ export interface SheetSpans {
   rows: RowSpan[];
   /** Where a new row may be inserted; `null` when the sheet has no `sheetData`. */
   sheetDataEnd: number | null;
+  /**
+   * The ranges array formulas fill. Only the first cell of one carries the
+   * `<f>`; the others hold its results and nothing else, so without this a
+   * cell Excel will not let anybody change on its own looks like any other.
+   */
+  arrays: { row: number; col: number; rows: number; cols: number }[];
 }
 
 /** One attribute out of a tag's raw text, quotes of either kind. */
@@ -74,6 +80,7 @@ function attrIn(xml: string, tag: { start: number; end: number }, name: string):
 /** Maps every row and cell of a worksheet to its byte range. */
 export function findCells(xml: string): SheetSpans {
   const rows: RowSpan[] = [];
+  const arrays: SheetSpans['arrays'] = [];
   let sheetDataEnd: number | null = null;
 
   let openRow: RowSpan | null = null;
@@ -124,10 +131,35 @@ export function findCells(xml: string): SheetSpans {
       continue;
     }
 
-    if (openCell && local === 'f' && !tag.closing) openCell.formula = true;
+    if (openCell && local === 'f' && !tag.closing) {
+      openCell.formula = true;
+      if (attrIn(xml, tag, 't') === 'array') {
+        const [from, to] = (attrIn(xml, tag, 'ref') ?? '').split(':');
+        const a = from ? parseCellRef(from) : null;
+        const b = to ? parseCellRef(to) : a;
+        if (a && b) arrays.push({ row: a.row, col: a.col, rows: b.row - a.row + 1, cols: b.col - a.col + 1 });
+      }
+    }
   }
 
-  return { rows, sheetDataEnd };
+  for (const array of arrays) {
+    for (const row of rows) {
+      if (row.r - 1 < array.row || row.r - 1 >= array.row + array.rows) continue;
+      for (const cell of row.cells) {
+        if (cell.col >= array.col && cell.col < array.col + array.cols) cell.formula = true;
+      }
+    }
+  }
+
+  return { rows, sheetDataEnd, arrays };
+}
+
+/** Whether a position lies inside a range an array formula fills. */
+function inArray(spans: SheetSpans, position: { row: number; col: number }): boolean {
+  return spans.arrays.some(
+    (a) =>
+      position.row >= a.row && position.row < a.row + a.rows && position.col >= a.col && position.col < a.col + a.cols,
+  );
 }
 
 /* ── what a typed value becomes ──────────────────────────────────────── */
@@ -236,6 +268,8 @@ export function applyCellEdits(xml: string, spans: SheetSpans, edits: CellEdit[]
 
     // Clearing a cell the file does not have is already done.
     if (edit.value === '') continue;
+    // Nor is a value written into a range an array formula fills.
+    if (inArray(spans, position)) continue;
 
     if (row) {
       const after = row.cells.find((c) => c.col > position.col);

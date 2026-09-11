@@ -219,13 +219,26 @@
   overflow: auto;
 }
 
+/*
+ * Fixed columns, sized once from the data: only the rows in view are in the
+ * page, and a table sized to whatever happens to be in view would change width
+ * under the person as they scrolled. The widths come from `sheet-grid.ts`.
+ */
 .ul-sheet {
   border-collapse: separate;
   border-spacing: 0;
+  table-layout: fixed;
   font-family: var(--sans);
   font-size: var(--fs-md);
   color: var(--ink);
   white-space: nowrap;
+}
+
+/* The rows above and below the window, standing in for everything not drawn. */
+.ul-sheet .ul-sheet-spacer td {
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .ul-sheet th,

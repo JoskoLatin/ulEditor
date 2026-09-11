@@ -299,6 +299,7 @@
   "Comments are not shown.": "Komentari nisu prikazani.",
   "Charts are not shown.": "Grafikoni nisu prikazani.",
   "Images inside sheets are not shown.": "Slike u listovima nisu prikazane.",
+  "Only the first {cols} columns of each sheet are shown.": "Prikazano je samo prvih {cols} stupaca svakog lista.",
   "Filters and frozen panes are not applied.": "Filtri i zamrznuta zaglavlja nisu primijenjeni.",
   "Formulas are not recalculated — the value stored in the file is shown.": "Formule se ne računaju — prikazana je vrijednost spremljena u datoteci.",
   "This is not a valid Office archive — it is probably damaged or incompletely downloaded.": "Datoteka nije ispravna Office arhiva — vjerojatno je oštećena ili nepotpuno preuzeta.",

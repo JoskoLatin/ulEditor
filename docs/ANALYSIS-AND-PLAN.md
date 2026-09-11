@@ -372,7 +372,7 @@ of the two engines it was designed around has been taken.
 
 | Item | State |
 |---|---|
-| `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
+| `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
 | `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one. and one the file already had can be taken away. ProseMirror is still what the deeper structural work needs: splitting a paragraph mid-run, a row in a table |
 | **A cell that is not in the file** | **not a hole, and measured rather than argued.** `applyCellEdits` will write a `<c>` into a row that has none and a whole `<row>` into a sheet that has none, which raises the obvious worry: does an edit land outside the `<dimension ref>` the sheet declares, leaving it stale? It cannot. The grid a person can type into is derived from the cells that exist, never from `<dimension>`, so it is a subset of the used range — and over 19 real worksheets, **none** has a grid reaching past its declared dimension (six declare none at all, which is legal). A merged range is not reachable either: `renderSheet` skips covered cells, so there is nothing to double-click |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
@@ -383,6 +383,7 @@ of the two engines it was designed around has been taken.
 | **A reader that is not ours** | **done** — [tools/verify-office-readback.mjs](../tools/verify-office-readback.mjs). Every "it reopens" claim above went back through the same namespace-blind scanners that wrote the file, and a writer and a reader sharing a mistake agree perfectly. LibreOffice shares no code with us: **64 of 64 files we wrote opened in it**, and where it shows the spot we edited at all, **46 of 46 show the text we typed, diacritics and all** |
 | **"Fidelity mode"** | **done** in the only form this program can honour: a format it cannot write hands the view over without an `edit`, a run it cannot rewrite without deciding something is not offered, and a redaction it cannot guarantee refuses the page and says why — while the person is still looking at the spot |
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
+| **A hundred thousand rows** | **done** — the section 7 budget this plan set before a line of the editor was written, *"scrolling through a 100k-row XLSX at 60 fps"*, unmet by a hard `MAX_ROWS = 5000` and an O(n) DOM-dump renderer underneath it. A till's own six-month receipt analysis has 10 831 rows and opened with more than half of them missing. The reader is now a streaming scanner instead of `DOMParser` — 100 000 rows read in 3.3–3.9 s where the old one took 13.7 s and 579 MB *to keep 5 000* — and the grid draws a window of a few thousand cells regardless of where in the sheet it stands, wheel-scrolling at a measured 16.7 ms median against the plan's own 16.7 ms frame. [tools/verify-sheet-scale.mjs](../tools/verify-sheet-scale.mjs) |
 
 **An independent reader was the missing instrument, and building it took an
 afternoon.** Everything the fidelity harness proves about a save, it proved with
@@ -499,6 +500,51 @@ not named rather than counted as passes — and asserts on each that the documen
 is exactly one paragraph longer, that every character outside the single
 insertion point is unchanged, that nothing forbidden was inherited, and that
 saving twice writes the same file.
+
+**The budget in section 7 had never been met, because nothing had tried.**
+`MAX_ROWS = 5000` was a constant nobody had measured against, and the renderer
+under it built one `<tr>` per row of the whole sheet on every open — the
+harness that finally asked the question timed the old reader at **13.7 s and
+579 MB to read 100 000 rows in order to keep 5 000 of them**, and the grid it
+fed never finished appearing. The reader is a hand-written streaming scanner
+now, in the shape `PagedFlow` and the OOXML tag readers had already proved for
+this project — walk the bytes once, character by character, build nothing the
+caller did not ask for — and the grid draws a window of a few thousand cells
+at row 1 or row 100 000 alike, wheel-scrolling at a measured 16.7 ms median
+against the plan's own 60 fps frame. A page-sized jump stays under two frames
+rather than one, which is not the same claim: traced with Chrome's own
+tracing, that frame's ~21 ms is headless Chromium repainting an entire new
+screen of text in its software rasterizer, not this program's script — the
+grid's own work measured at 3.7 ms.
+
+**Rewriting the reader surfaced two real data-loss bugs it was never looking
+for.** A cell holding `<f t="shared" si="N"/>` — a shared formula's dependent,
+with no formula text of its own — or sitting inside an array formula's range
+without a `<f>` at all, read as a plain number under the old DOM-walking
+reader, because its per-cell formula flag was only ever set by the literal
+presence of an `<f>` child. Retyping such a cell was accepted, drawn, and then
+silently refused by the writer's own guard on save — the value shown and the
+value written were two different things, and a real file in the corpus,
+`PrvoUclanjenje.xlsx`, has 27 of them. The new reader tracks shared-formula
+masters and array-formula ranges explicitly and marks every cell either
+covers; the writer's guard now has cells to refuse rather than a blind spot.
+
+**And the grid's own test found a bug in itself before it found one in the
+grid.** A selection held across a scroll of several screens lost its top end
+by the third screen — but the first fix, and the check written to prove it,
+both passed for the wrong reason: `Selection.containsNode`, measured directly,
+answers wrong for a range spanning table rows in this browser even when the
+range's boundary points plainly surround the node, and `Range.intersectsNode`
+asked the same question a different way returned a false pass once a boundary
+had decayed toward the front of the table — either oracle called a row "held"
+that had in fact been torn out and replaced. Mutation-testing the check itself
+— putting the bug back and confirming the check now fails — found the actual
+defect one layer down: `#fixMerges()` redrew the row carrying a cut merge by
+replacing its whole `<tr>`, which is invisible to a user until that row is
+also where a selection ends, at which point the Range loses the node it was
+anchored to. The fix keeps the element and replaces only its cells; the check
+that catches a regression of it compares the original DOM node's own
+`isConnected`, not anything either Range API is willing to answer honestly.
 
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:

@@ -52,7 +52,7 @@ import {
 import type { Preview, PreviewOutline } from './docx.js';
 import { writeOdf } from './odf-package.js';
 import { applyOdtEdits, findOdtPieces, spacesOf, type OdtPiece } from './odt-edit.js';
-import { MAX_COLS, MAX_ROWS, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
+import { MAX_COLS, MAX_ROWS, truncationNote, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
 
 /**
  * A cell repeated with content is written out that many times; one repeated
@@ -553,7 +553,7 @@ export function readOds(bytes: Uint8Array): Workbook {
   for (const node of children(opened.body, 'table')) {
     const { sheet, truncated } = readTable(node, formats, widthByStyle, sheets.length);
     if (truncated) {
-      notes.add(`Only the first ${MAX_ROWS} rows and ${MAX_COLS} columns of each sheet are shown.`);
+      notes.add(truncationNote());
     }
     sheets.push(sheet);
   }

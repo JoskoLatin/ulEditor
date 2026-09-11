@@ -31,6 +31,7 @@ import {
   formatDate,
   formatNumber,
   isDateFormat,
+  truncationNote,
   type Cell,
   type Merge,
   type Sheet,
@@ -474,7 +475,7 @@ export function readXls(bytes: Uint8Array): Workbook {
   if (sheets.length === 0) throw new Error(t('The workbook has no readable sheet.'));
 
   if (truncated) {
-    notes.add(`Only the first ${MAX_ROWS} rows and ${MAX_COLS} columns of each sheet are shown.`);
+    notes.add(truncationNote());
   }
   notes.add('Only cell values and number formats are read from the old format — charts, images and styling are not shown.');
   notes.add('Formulas are not recalculated — the value stored in the file is shown.');

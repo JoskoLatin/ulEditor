@@ -689,6 +689,121 @@ export function makeXlsx() {
 }
 
 /**
+ * A sheet the size of a real export and then some: 100 000 rows by 27 columns.
+ *
+ * Built to ask what a small fixture cannot — whether the reader keeps every row
+ * and whether the grid scrolls at the speed a frame allows. Three things are
+ * planted in it, each where the old grid could never have shown it: a marker
+ * on row 90 000 for the search, a marker on the last row, and a merged cell
+ * running from row 5 to row 300, so a window edge has to cut through it.
+ *
+ * @param {number} [rows]
+ * @param {number} [cols]
+ */
+export function makeBigXlsx(rows = 100000, cols = 27) {
+  const strings = [];
+  const index = new Map();
+  const shared = (text) => {
+    if (!index.has(text)) {
+      index.set(text, strings.length);
+      strings.push(text);
+    }
+    return index.get(text);
+  };
+  const colName = (i) => {
+    let name = '';
+    for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+    return name;
+  };
+  const text = (ref, value) => `<c r="${ref}" t="s"><v>${shared(value)}</v></c>`;
+
+  const out = [];
+  out.push(`<row r="1">${Array.from({ length: cols }, (_, c) => text(`${colName(c)}1`, `Stupac ${colName(c)}`)).join('')}</row>`);
+  for (let r = 2; r <= rows; r++) {
+    let row = `<row r="${r}">`;
+    for (let c = 0; c < cols; c++) {
+      const ref = `${colName(c)}${r}`;
+      if (c === 0) {
+        if (r === 5) row += text(ref, 'Spojeno kroz tristo redaka');
+        else if (r > 5 && r <= 300) continue; // covered by the merge
+        else row += text(ref, `Račun ${r % 500}`);
+      } else if (r === 90000 && c === 3) {
+        row += text(ref, 'biljegZaPretragu-90000');
+      } else if (r === rows && c === 1) {
+        row += text(ref, 'zadnjiRedak');
+      } else {
+        row += `<c r="${ref}"><v>${(r * 7 + c) % 1000}.5</v></c>`;
+      }
+    }
+    out.push(row + '</row>');
+  }
+
+  const workbook =
+    `<?xml version="1.0"?>\n<workbook xmlns="${SHEET_NS}" xmlns:r="${REL_NS}"><sheets>` +
+    `<sheet name="Podaci" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rels =
+    `<?xml version="1.0"?>\n<Relationships xmlns="${PKG_REL_NS}">` +
+    `<Relationship Id="rId1" Type="${WORKSHEET_REL}" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const sheet =
+    `<?xml version="1.0"?>\n<worksheet xmlns="${SHEET_NS}"><sheetData>${out.join('')}</sheetData>` +
+    `<mergeCells count="1"><mergeCell ref="A5:A300"/></mergeCells></worksheet>`;
+
+  return zipSync({
+    '[Content_Types].xml': strToU8(CONTENT_TYPES),
+    'xl/workbook.xml': strToU8(workbook),
+    'xl/_rels/workbook.xml.rels': strToU8(rels),
+    'xl/sharedStrings.xml': strToU8(
+      `<?xml version="1.0"?>\n<sst xmlns="${SHEET_NS}">${strings.map((s) => `<si><t>${s}</t></si>`).join('')}</sst>`,
+    ),
+    'xl/worksheets/sheet1.xml': strToU8(sheet),
+  });
+}
+
+/**
+ * The formulas that do not look like formulas.
+ *
+ * Each of these was offered for retyping by the reader before the walker, and
+ * refused by the writer without a word — so a person could type into it, save,
+ * see their value, and reopen the file to find it had never been written:
+ *
+ * - **B3 and B4 depend on a shared formula** — `<f t="shared" si="0"/>`, no text;
+ * - **C2 and C3 hold an array formula's results** and no `<f>` at all, and C4
+ *   is inside the same array's range without being in the file;
+ * - **D1 is a formula whose result is empty**, so it has no value to be read.
+ *
+ * And **E1 holds a line break written as CR LF**, which an XML parser hands
+ * over as `\n`; a reader that walks the text has to do the same, or a cell
+ * that read `prvi` `drugi` would now read with a carriage return in it.
+ */
+export function makeFormulaXlsx() {
+  const strings = ['prvi\r\ndrugi'];
+  const workbook =
+    `<?xml version="1.0"?>\n<workbook xmlns="${SHEET_NS}" xmlns:r="${REL_NS}"><sheets>` +
+    `<sheet name="Formule" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rels =
+    `<?xml version="1.0"?>\n<Relationships xmlns="${PKG_REL_NS}">` +
+    `<Relationship Id="rId1" Type="${WORKSHEET_REL}" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const sheet =
+    `<?xml version="1.0"?>\n<worksheet xmlns="${SHEET_NS}"><sheetData>` +
+    `<row r="1"><c r="A1"><v>10</v></c><c r="C1"><f t="array" ref="C1:C4">A1:A4*2</f><v>20</v></c>` +
+    `<c r="D1" t="str"><f>IF(A1&gt;100,"veliko","")</f><v></v></c><c r="E1" t="s"><v>0</v></c></row>` +
+    `<row r="2"><c r="A2"><v>20</v></c><c r="B2"><f t="shared" ref="B2:B4" si="0">A2*2+$A$1</f><v>50</v></c><c r="C2"><v>40</v></c></row>` +
+    `<row r="3"><c r="A3"><v>30</v></c><c r="B3"><f t="shared" si="0"/><v>70</v></c><c r="C3"><v>60</v></c></row>` +
+    `<row r="4"><c r="A4"><v>40</v></c><c r="B4"><f t="shared" si="0"/><v>90</v></c></row>` +
+    `</sheetData></worksheet>`;
+
+  return zipSync({
+    '[Content_Types].xml': strToU8(CONTENT_TYPES),
+    'xl/workbook.xml': strToU8(workbook),
+    'xl/_rels/workbook.xml.rels': strToU8(rels),
+    'xl/sharedStrings.xml': strToU8(
+      `<?xml version="1.0"?>\n<sst xmlns="${SHEET_NS}">${strings.map((s) => `<si><t>${s}</t></si>`).join('')}</sst>`,
+    ),
+    'xl/worksheets/sheet1.xml': strToU8(sheet),
+  });
+}
+
+/**
  * An old binary Excel file — `.xls`, Excel 97–2003 — assembled by hand.
  *
  * Two layers, both spelled out: an OLE2 compound file whose FAT, directory and
