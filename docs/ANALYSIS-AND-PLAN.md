@@ -367,13 +367,13 @@ auto-update has no meaning without a signature to check.
 ### Phase 2 — Office (months 4–10)
 
 The project's biggest risk, which is why it comes only once the shell stands and
-contributors exist. State as of 9 September 2026 — it started early, and neither
+contributors exist. State as of 11 September 2026 — it started early, and neither
 of the two engines it was designed around has been taken.
 
 | Item | State |
 |---|---|
 | `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
-| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, and Enter splits one where the caret stands: the change this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"** below). What still does: a row in a table, and joining two paragraphs back into one |
+| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, Enter splits one where the caret stands, and Backspace joins two back into one: the changes this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"** and **"Backspace at the start of a line"** below). What still does: a row in a table |
 | **A cell that is not in the file** | **not a hole, and measured rather than argued.** `applyCellEdits` will write a `<c>` into a row that has none and a whole `<row>` into a sheet that has none, which raises the obvious worry: does an edit land outside the `<dimension ref>` the sheet declares, leaving it stale? It cannot. The grid a person can type into is derived from the cells that exist, never from `<dimension>`, so it is a subset of the used range — and over 19 real worksheets, **none** has a grid reaching past its declared dimension (six declare none at all, which is legal). A merged range is not reachable either: `renderSheet` skips covered cells, so there is nothing to double-click |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
@@ -385,6 +385,7 @@ of the two engines it was designed around has been taken.
 | Cross-format clipboard | **done** — a spreadsheet range arrives in a Markdown document as a table. The payload contract and every editor's `copySelection` had existed since the SDK was written and nothing carried a payload between them; the wire is `shell/clipboard.ts`, and it intercepts a paste only when an editor asks for it synchronously |
 | **A hundred thousand rows** | **done** — the section 7 budget this plan set before a line of the editor was written, *"scrolling through a 100k-row XLSX at 60 fps"*, unmet by a hard `MAX_ROWS = 5000` and an O(n) DOM-dump renderer underneath it. A till's own six-month receipt analysis has 10 831 rows and opened with more than half of them missing. The reader is now a streaming scanner instead of `DOMParser` — 100 000 rows read in 3.3–3.9 s where the old one took 13.7 s and 579 MB *to keep 5 000* — and the grid draws a window of a few thousand cells regardless of where in the sheet it stands, wheel-scrolling at a measured 16.7 ms median against the plan's own 16.7 ms frame. [tools/verify-sheet-scale.mjs](../tools/verify-sheet-scale.mjs) |
 | **Enter in the middle of a sentence** | **done** — the run the caret is in divided, its formatting on both halves, and every run after it carried into the new paragraph byte for byte; at the end of what is written, a new paragraph with the style `w:next` hands on, as Word does. The same plan again, undoable after a save. Exact byte identity on 43 of 49 real documents (the rest have nothing that may be split, and are named); fourteen broken builds of the writer each fail it; Word opens 11 of 11 with one paragraph more and the line divided where the cut fell, LibreOffice 38 of 38. Refused, and bought from Word by hand: a run inside a link (Word will not open the file), a section-ending paragraph (one section more), a field's result run. [tools/verify-docx-split.mjs](../tools/verify-docx-split.mjs) |
+| **Backspace at the start of a line** | **done** — and Delete at the end of one: two paragraphs joined, the boundary between them the only bytes that change. The joined paragraph keeps the first one's properties unless the first shows nothing, where the empty one is removed instead — both halves of that rule measured with Word over COM, "nothing" included. Exact byte identity on 43 of 49 real documents, 25 broken builds of the writer each failing it; Word opens 11 of 11 with one paragraph fewer, and **joining the same two paragraphs itself gives the same style, alignment, list, indents and spacing** in 11 of 11. In the editor, one key at a line's edge means four things — a division taken back, two added lines made one, added text continuing the piece above it, two paragraphs of the file joined — and 24 broken builds of the editor each fail the browser check that tells them apart. [tools/verify-docx-join.mjs](../tools/verify-docx-join.mjs), [tools/verify-docx-lines.mjs](../tools/verify-docx-lines.mjs) |
 
 **An independent reader was the missing instrument, and building it took an
 afternoon.** Everything the fidelity harness proves about a save, it proved with
@@ -575,14 +576,45 @@ caret still in the text wrote the text as it was before the typing, in
 spreadsheet cells as well as in Word — nobody had noticed, because everybody
 pressed Enter first.
 
+**Joining asked Word the question a file cannot answer, and then kept asking
+it.** Two paragraphs joined keep one paragraph's properties, and nothing in
+either says whose. Word was asked over COM, both keys, eighteen pairs of
+paragraphs Word had made itself — the first one's, every time, except after an
+empty one, where Word deletes the empty paragraph and the one below keeps its
+own — and then ten hand-made paragraphs to find out what "empty" is: a bookmark,
+a proofing mark, an empty text element, a run with only formatting, the page
+break of the last layout; not a tab, not a space. The writer follows that rule,
+and the rule is not left as a claim: the Word check has Word join the same two
+paragraphs itself, with `Selection.TypeBackspace`, in each document it is given,
+and requires the joined paragraph it reads from ours to match the one it made,
+key by key. It only counts when the two paragraphs' properties differ — a
+comparison that cannot tell the rule wrong proves nothing about it — and four
+of the eleven do.
+
+The editor was the harder half, because one key at a line's edge is four
+different joins and the plan holds what was done rather than the order it was
+done in. Two things came out of that. A new paragraph after a joined line, and
+a line Enter makes inside one, take the joined line's properties — the first
+paragraph's — which is what Word gives; so a join in front of lines Enter had
+already made would change them, where Word, doing the two one after the other,
+would not. Where the two paragraphs' properties are the same bytes nobody can
+tell, and over the real corpus adjacent body paragraphs mostly are; where they
+differ, the join is refused and says why. And the first build of the browser
+check survived five of twenty-four broken builds of the editor: a Delete a
+character short of the line's end joining anyway, a part the typing had just
+taken away being merged a second time, a join the tab never called unsaved.
+Each was a case the check had not thought to ask, and each is asked now.
+
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:
 what is not touched is not rewritten — not re-serialised, not reflowed, not
 re-kerned — so styles, numbering, images and metadata come back byte for byte
 rather than approximately. A re-serialising editor cannot claim that, and the
-harness would have nothing to measure. They become necessary at the point where
-the unit of change stops being a run or a cell — a new paragraph, a merged row,
-a recalculated total — and that is what phase 2 has left to do.
+harness would have nothing to measure. They were expected to become necessary
+at the point where the unit of change stops being a run or a cell; a paragraph
+added, taken away, split and joined turned out not to need them, and what is
+left — a row in a table, a merged row, a recalculated total — is what phase 2
+has left to do.
 
 Output: **v0.5**
 

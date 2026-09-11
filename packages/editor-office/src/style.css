@@ -377,3 +377,15 @@
 .ul-office-doc .is-removed {
   display: none;
 }
+
+/*
+ * A paragraph joined onto the line above it.
+ *
+ * Its content is drawn in that line now, and its own element stays behind,
+ * emptied and hidden, for the same reason a removed one does: a paragraph
+ * added after it is still anchored to it, and a hidden list item is skipped
+ * by the numbering as the reopened file will skip it.
+ */
+.ul-office-doc .is-joined {
+  display: none;
+}

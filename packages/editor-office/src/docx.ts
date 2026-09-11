@@ -28,12 +28,16 @@ import {
   type Relationships,
 } from './ooxml.js';
 import {
+  continuedRun,
   findParagraphs,
   findRuns,
+  joinRefusal,
   paragraphOfRun,
+  propertiesAlike,
   readStyleSuccession,
   removalRefusal,
   runText,
+  showsNothing,
   splitRefusal,
   writeDocx,
   type ParagraphSpan,
@@ -124,7 +128,15 @@ export interface PreviewSource {
    * is applied and committed merely moves ranges, while an insertion that is
    * applied and committed can never be taken back.
    */
-  write(edits: PreviewEdit[], added?: NewParagraph[], removed?: number[], divided?: DividedPiece[]): Uint8Array;
+  write(
+    edits: PreviewEdit[],
+    added?: NewParagraph[],
+    removed?: number[],
+    divided?: DividedPiece[],
+    /* Paragraphs joined with the next one the plan keeps, by the ordinals the
+       view marked them with. */
+    joined?: number[],
+  ): Uint8Array;
 
   /**
    * Absent means this format can rewrite the text it has and not add to it.
@@ -173,6 +185,32 @@ export interface ParagraphSeam {
    * by the piece alone.
    */
   divisionRefusalAt(index: number): string | null;
+
+  /**
+   * Why this paragraph may not be joined with the next one the plan keeps —
+   * what Delete does at the end of it, and Backspace at the start of the
+   * next; `null` when it may. `planned` is the removals already in the plan,
+   * because a paragraph the plan removes is taken with the boundary.
+   */
+  joinRefusalAt(paragraph: number, planned: ReadonlySet<number>): string | null;
+
+  /**
+   * Whether this paragraph, with these rewrites, shows nothing Word counts as
+   * a character. Backspace after such a paragraph removes it rather than
+   * joining it, as Word does — a join would give the paragraph below the empty
+   * one's properties, and a heading after a blank line would stop being one.
+   */
+  emptyAt(paragraph: number, edits: ReadonlyMap<number, string>): boolean;
+
+  /** Whether two paragraphs would give a new line the same properties. */
+  alike(a: number, b: number): boolean;
+
+  /**
+   * The piece of text a new paragraph after this one takes its formatting
+   * from — so text typed into one can be joined back onto that piece without
+   * changing how it looks; `null` when the paragraph has none of its own.
+   */
+  continuedRunAt(paragraph: number): number | null;
 }
 
 const HEADING = /^heading\s*([1-6])$/i;
@@ -650,13 +688,14 @@ function docxSource(
       const run = runs[index];
       return run ? runText(xml, run) : '';
     },
-    write: (edits, added, removed, divided) =>
+    write: (edits, added, removed, divided, joined) =>
       writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
         inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
         removals: removed,
         cuts: (divided ?? []).map((one) => ({ run: one.index, parts: one.parts })),
+        joins: joined,
       }),
 
     /* Offered only when the view and the raw scan agreed on how many paragraphs
@@ -724,6 +763,40 @@ function docxSource(
                 return t('A comment, a tracked change or a protected range runs through this spot — splitting here would cut it in two.');
               }
               return t('Only a paragraph in the body of the document can be split — not one in a table cell or a text box.');
+            },
+            joinRefusalAt: (paragraph, planned) => {
+              const alive = new Set(
+                paragraphs
+                  .filter((span) => span.refusal === null && !planned.has(span.index))
+                  .map((span) => span.index),
+              );
+              const why = joinRefusal(xml, paragraphs, paragraph, alive);
+              if (why === null) return null;
+              if (why === 'nothing follows the paragraph') return t('Nothing follows this paragraph to join to it.');
+              if (why === 'something stands between the two paragraphs') {
+                return t('Something stands between these paragraphs that this view does not show — a table or a content control.');
+              }
+              if (why === 'the paragraph ends a section') {
+                return t('One of these paragraphs ends a section — joining them would change the page layout.');
+              }
+              if (why === 'a tracked change is recorded where the paragraphs meet') {
+                return t('A tracked change is recorded where these paragraphs meet — joining them would lose it.');
+              }
+              if (why === 'there is no such paragraph') return t('This piece of text is not in a paragraph of the document.');
+              return t('Only paragraphs in the body of the document can be joined — not ones in a table cell or a text box.');
+            },
+            emptyAt: (paragraph, edits) => {
+              const span = paragraphs.find((one) => one.index === paragraph);
+              return span ? showsNothing(xml, span, runs, edits) : false;
+            },
+            alike: (a, b) => {
+              const first = paragraphs.find((one) => one.index === a);
+              const second = paragraphs.find((one) => one.index === b);
+              return !!first && !!second && propertiesAlike(xml, first, second);
+            },
+            continuedRunAt: (paragraph) => {
+              const span = paragraphs.find((one) => one.index === paragraph);
+              return span ? (continuedRun(xml, span, runs)?.index ?? null) : null;
             },
           }
         : undefined,

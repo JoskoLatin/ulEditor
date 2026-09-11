@@ -93,7 +93,7 @@ No editor works seriously with code *and* Office documents *and* PDF. VS Code ha
 | **PDF redaction** | **works** — text leaves the content stream, it is not covered up | own content-stream reader |
 | **PDF text editing** | **works** — click an existing line and rewrite it, in the document's own font | the same + pdf-lib |
 | PDF pages | **works** — rotate, delete, reorder, merge, extract | pdf-lib |
-| **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images), and paragraphs split with Enter, added and removed | own reader *(full editing → ProseMirror, phase 2)* |
+| **DOCX** | **works — viewing + text editing** (headings, formatting, lists, tables, images), and paragraphs split with Enter, joined with Backspace and Delete, added and removed | own reader *(full editing → ProseMirror, phase 2)* |
 | **DOC** (Word 97–2003) | **works — viewing** (headings, bold, lists, tables, fields) | own OLE2/FIB reader |
 | **XLSX** | **works — viewing + cell editing** (sheets, formats, formulas, merged cells), every row kept and scrolled as a window — measured at 100 000 rows | own reader + byte-range editing *(formulas → Univer, phase 2)* |
 | **XLS** (Excel 97–2003) | **works — viewing + cell editing**; a save writes a new `.xlsx` beside the original | own OLE2/BIFF8 reader |
@@ -186,6 +186,12 @@ Building it turned up two older bugs no check had asked about, both measured aga
 
 - **A save while the caret was still in the text wrote the text as it was before the typing.** The shell asks for a save without asking the caret to leave, and typing is written down when it leaves — hidden until now only because Enter wrote it down and people pressed Enter. A cell typed into and saved the same way lost its value too. Both editors now finish the typing before they write.
 - **Any undo drew every bold and italic run in the document plain.** Undo put the text back with `textContent`, which replaces the elements the formatting is drawn with — on the fixture, `<strong>` 1 → 0 and `<em>` 1 → 0 after undoing a retype of an unrelated plain sentence. The file was never touched; the view was. The text now goes into the text node inside them.
+
+**And Backspace joins them back.** At the very start of a line it joins the line onto the one above; Delete at the very end of one joins the next onto it — the same boundary taken away either way. Whose properties the joined paragraph keeps is a question the file cannot answer, so Word was asked, over COM, on documents Word made itself: **the first one's** — a heading with body text after it, joined, is a heading; body text with a heading after it is body text; centred and left is centred; a list item and body text is a list item; both keys, every time — **unless the first shows nothing**, where Word deletes it and the paragraph below keeps its own: an empty line before a heading, joined, is the heading. What counts as nothing was asked as well. A paragraph holding only a bookmark, a proofing mark, an empty text element, a run with nothing but formatting, or the page break Word remembers from its last layout is empty to it — the bookmark goes with it; a tab or a single space is not. So Backspace after an empty line removes the line, which is the plan's removal, and after anything else joins. A bookmark end standing between the two paragraphs is carried into the joined one, at the join, which is where Word puts it.
+
+One key at a line's edge means four different things, and the editor tells them apart. Two lines Enter made of one paragraph are joined by taking the division back; two lines added here become one text; a line added here after one of the file goes onto the end of the piece it took its formatting from; and two paragraphs of the file are joined in the plan, written on save as the boundary between them and nothing else — the first one's closing tag, what stood between, the next one's opening tag and properties. `pnpm verify:join` asserts that as an exact identity on 43 of the 49 real documents, whose body paragraphs may be joined with the next in 1189 cases of 1214 (340 of those are empty, and are removals); 25 deliberately broken builds of the writer each fail it. Word opens every joined document it is given — 11 of 11 — with one paragraph fewer and one line where two stood, and then it is asked what the rest of this project only ever asks of us: it joins the same two paragraphs itself, with `Selection.TypeBackspace`, and the paragraph it makes has the same style, alignment, list, indents and spacing as the one it reads from ours, in 11 of 11 — four of them pairs whose properties differ, which are the ones that could tell the rule wrong. LibreOffice shows 23 real documents with the two lines as one, in the same save as rewrites, new paragraphs, removals and splits. `pnpm verify:lines` presses the keys in the editor a person types into — 50 checks, every save compared with the page line for line — and 24 broken builds of the editor each fail it.
+
+Refused, each with its reason on the status line: a table between the two lines; a section's end on either side (joined by hand, Word counts one section fewer); a tracked change recorded on either paragraph's mark; a paragraph of the file joined onto a line added here; and a join in front of lines Enter made, where the two paragraphs' properties differ — the plan holds what was done, not in what order, and those lines would take the properties Word would have left them without.
 
 **Cells in a spreadsheet are retyped the same way** — double-click one. A cell holding a formula does not open, and says which formula it holds: the number on screen is a *result*, and overwriting a result with a literal is the quietest way there is to destroy a workbook. When an edited workbook does contain formulas, it is marked for full recalculation, so Excel works the totals out again on opening instead of showing stale ones.
 
@@ -629,6 +635,8 @@ pnpm verify:odt       # retyping text in an .odt: spacing, refusals, byte ranges
 pnpm verify:insert    # a new paragraph in a .docx: what it inherits, and what stays untouched
 pnpm verify:delete    # a paragraph taken away: what is refused, and the exact bytes that are left
 pnpm verify:split     # Enter mid-sentence: one run divided, the rest carried, every real .docx byte-exact
+pnpm verify:join      # Backspace and Delete: two paragraphs joined, the first one's properties kept, byte-exact
+pnpm verify:lines     # Enter, Backspace and Delete in the editor itself, every save compared with the page
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
 pnpm verify:sheets    # a 100k-row .xlsx: every row read, the grid windowed, 60 fps
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
@@ -637,7 +645,7 @@ pnpm verify:word      # …and by Word itself, which is the reader that refuses 
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application
-pnpm verify:office-editing   # retyping a .docx, adding and removing a paragraph, out to disk and back
+pnpm verify:office-editing   # retyping a .docx, adding, removing, splitting and joining paragraphs, out to disk and back
 pnpm verify:desktop-ocr      # OCR under the application's own CSP
 pnpm verify:desktop-diagram  # a Markdown diagram under the same CSP
 pnpm verify:desktop-image    # turning, cropping and converting a picture, out to disk and back

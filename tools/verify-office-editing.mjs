@@ -20,6 +20,9 @@
  * the typing. Typing is finished here by clicking away from it, which is what
  * finishes it for a person now that Enter begins a paragraph.
  *
+ * And Backspace at the start of the line the split left, which joins the two
+ * back into one paragraph — saved, on disk as one, and one when reopened.
+ *
  * Both formats go through the same sequence because they go through the same
  * editor: one class drives them, and what a save costs is settled behind
  * `Preview.source`. A run of this is therefore also the check that the seam
@@ -506,6 +509,78 @@ try {
       say('and the two are two paragraphs when the document is opened again'),
       (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).innerText()).trim() === HEAD &&
         (await page.locator('.ul-office-doc [data-paragraph]', { hasText: 'Č-' }).count()) === 1,
+    );
+
+    /* ── Backspace at the start of a line ────────────────────────────── */
+
+    /*
+     * The two paragraphs the split left are two paragraphs of the file now,
+     * and Backspace at the start of the second joins them back into one — the
+     * first one's properties kept, as Word keeps them. Saved, again, with the
+     * caret still in the line.
+     */
+    const TAIL = `${TYPED} uniqueword for the sake of search.`;
+    const joinBefore = (strFromU8(unzipSync(await readFile(document.path))[document.part]).match(/<w:p[\s>]/g) ?? []).length;
+    await page.locator('.ul-office-doc [data-paragraph] .ul-office-run', { hasText: 'Č-' }).dblclick();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(300);
+    const joinedLine = page.locator('.ul-office-doc [data-paragraph]:not(.is-joined)', { hasText: HEAD });
+    check(
+      say('Backspace at the start of a paragraph joins it onto the one above'),
+      (await joinedLine.count()) === 1 && (await joinedLine.evaluate((el) => el.textContent)) === `${HEAD}${TAIL}`,
+      (await joinedLine.count()) === 1 ? (await joinedLine.evaluate((el) => el.textContent)).slice(0, 60) : `${await joinedLine.count()} lines`,
+    );
+    check(
+      say('and the typing goes on from where the two meet'),
+      await page.evaluate(() => {
+        const selection = document.getSelection();
+        return !!document.activeElement?.isContentEditable && selection?.isCollapsed === true && selection.anchorOffset === 0;
+      }),
+    );
+
+    await page.keyboard.press('Control+S');
+    let joinSaved = true;
+    try {
+      await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, { timeout: 30000 });
+    } catch {
+      joinSaved = false;
+    }
+    check(say('the join was saved'), joinSaved);
+
+    const joinFile = unzipSync(await readFile(document.path));
+    const joinPart = strFromU8(joinFile[document.part]);
+    const joinLines = [...joinPart.matchAll(/<w:p[\s>][\s\S]*?<\/w:p>/g)].map((m) =>
+      [...m[0].matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((t) => t[1]).join(''),
+    );
+    check(
+      say('on disk: one paragraph where the two stood, holding both'),
+      joinLines.includes(`${HEAD}${TAIL}`) && !joinLines.includes(HEAD) && !joinLines.includes(TAIL),
+      JSON.stringify(joinLines.find((line) => line.startsWith(HEAD)) ?? 'not found'),
+    );
+    check(
+      say('exactly one paragraph fewer'),
+      (joinPart.match(/<w:p[\s>]/g) ?? []).length === joinBefore - 1,
+      `${joinBefore} → ${(joinPart.match(/<w:p[\s>]/g) ?? []).length}`,
+    );
+    const joinDrift = document.otherParts.filter((path) => {
+      const a = document.before[path];
+      const b = joinFile[path];
+      return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
+    });
+    check(
+      say('joining two paragraphs touched no other part of the file'),
+      joinDrift.length === 0,
+      joinDrift.join(', ') || `${document.otherParts.length} parts unchanged`,
+    );
+
+    await page.locator('.tab .close').first().click();
+    await page.waitForTimeout(400);
+    await open(document.file);
+    check(
+      say('and they are one paragraph when the document is opened again'),
+      (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).count()) === 1 &&
+        (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).evaluate((el) => el.textContent)) === `${HEAD}${TAIL}`,
     );
 
     /*

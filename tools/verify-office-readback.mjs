@@ -56,11 +56,12 @@
  * about, and it says so rather than counting it.
  *
  * **A Word document gets every kind of change at once** — runs rewritten, a
- * paragraph added, one taken away and one split where a caret could stand —
- * because they share one operation list and real documents are where they
- * collide. The split is asked on the same terms as the rest: a line the
+ * paragraph added, one taken away, one split where a caret could stand and two
+ * joined — because they share one operation list and real documents are where
+ * they collide. The split is asked on the same terms as the rest: a line the
  * original's conversion showed whole and once has to come back as two lines,
- * one after the other, divided where the cut fell.
+ * one after the other, divided where the cut fell; and two lines it showed one
+ * after the other have to come back as one.
  *
  * **It never writes to the corpus.** Every edit is made against a copy in
  * memory; only the temporary folder ever sees a file.
@@ -88,6 +89,8 @@ const {
   paragraphOfRun,
   removalRefusal,
   splitRefusal,
+  joinRefusal,
+  showsNothing,
   readStyleSuccession,
   applyRunEdits,
   runText,
@@ -251,6 +254,31 @@ function edited(format, bytes) {
       };
     }
 
+    /*
+     * And two paragraphs joined, as Backspace at the start of the second joins
+     * them — clear of every paragraph the rest touch, and on two lines a person
+     * could look for. Where they stood, the reader has to show one line holding
+     * both, and neither of them on its own.
+     */
+    const rawOf = (span) =>
+      [...xml.slice(span.start, span.end).matchAll(/<(?:[A-Za-z_][\w.-]*:)?t(?:\s[^>]*)?>([^<]*)</g)].map((m) => m[1]).join('');
+    const clear = (span) =>
+      !busy.has(span.index) &&
+      span.index !== (divided ? paragraphOfRun(paragraphs, divided)?.index : undefined) &&
+      !/<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple|drawing|pict|object)[\s/>]/.test(xml.slice(span.start, span.end)) &&
+      /^[^&<>]{6,}$/.test(lineOf(span));
+    const body = paragraphs.filter((span) => span.refusal === null);
+    const pair = body
+      .slice(0, -1)
+      .map((first, i) => [first, body[i + 1]])
+      .find(
+        ([first, next]) =>
+          clear(first) && clear(next) && joinRefusal(xml, paragraphs, first.index) === null && !showsNothing(xml, first, runs),
+      );
+    const joined = pair
+      ? { first: lineOf(pair[0]), second: lineOf(pair[1]), whole: `${rawOf(pair[0])}${rawOf(pair[1])}`.trim() }
+      : null;
+
     return {
       bytes: writeDocx(archive, runs, xml, edits, {
         paragraphs,
@@ -258,11 +286,13 @@ function edited(format, bytes) {
         inserts,
         removals: going ? [going.index] : [],
         cuts,
+        joins: pair ? [pair[0].index] : [],
       }),
       typed: [...edits.map((e) => e.text), ...inserts.map((one) => one.text)],
       was: anchor ? [...was, was[anchor.at]] : was,
       gone: going ? lineOf(going) : null,
       split,
+      joined,
     };
   }
 
@@ -463,6 +493,7 @@ const invisible = [];
 const added = [];
 const taken = [];
 const halved = [];
+const merged = [];
 const broke = [];
 
 for (const file of sampled) {
@@ -535,10 +566,27 @@ for (const file of sampled) {
     }
   }
 
+  const lines = (body) => body.split(/\r?\n/).map((line) => line.trim());
+
+  /* A join, on the same terms: two lines this reader showed once each, one
+     after the other, have to come back as one line holding both. */
+  if (made.joined && original !== null) {
+    const was = lines(original);
+    const at = was.indexOf(made.joined.first);
+    const once = (line) => was.filter((one) => one === line).length === 1;
+    if (at !== -1 && was[at + 1] === made.joined.second && once(made.joined.first) && once(made.joined.second)) {
+      const now = lines(text);
+      if (!now.includes(made.joined.whole) || now.includes(made.joined.first) || now.includes(made.joined.second)) {
+        broke.push(`${name} (${format}): two joined paragraphs are not one line — "${made.joined.whole.slice(0, 40)}"`);
+      } else {
+        merged.push(name);
+      }
+    }
+  }
+
   /* A split, on the same terms: a line this reader showed whole and once in
      the original has to come back as two lines, one after the other. */
   if (made.split && original !== null) {
-    const lines = (body) => body.split(/\r?\n/).map((line) => line.trim());
     const was = lines(original);
     if (was.filter((line) => line === made.split.whole).length === 1) {
       const now = lines(text);
@@ -601,6 +649,12 @@ check(
   'and a paragraph split where the cursor stood is two lines when it is reopened',
   halved.length > 0 && !broke.some((b) => b.includes('split paragraph is not two lines')),
   `${halved.length} documents had one split and were asked about it`,
+);
+
+check(
+  'and two paragraphs joined are one line when it is reopened',
+  merged.length > 0 && !broke.some((b) => b.includes('joined paragraphs are not one line')),
+  `${merged.length} documents had two joined and were asked about it`,
 );
 
 if (invisible.length > 0) {

@@ -600,12 +600,17 @@ export function paragraphMarkup(
   runs: RunSpan[],
   succession: Succession,
   text: string,
+  /* A paragraph joined onto the end of another is written with the other's
+     properties, and a new one after it continues that line — so the line's
+     properties and its last run can come from two different paragraphs. */
+  like: ParagraphSpan = paragraph,
+  lastRun: RunSpan | null = lastRunOf(xml, paragraph, runs),
 ): string {
   const w = prefixOf(xml, paragraph);
 
   let props = '';
-  if (paragraph.props) {
-    const outer = paragraph.props;
+  if (like.props) {
+    const outer = like.props;
 
     /* Every change to the properties is collected first and applied from the
        end backwards, the same discipline the document itself is edited with.
@@ -657,7 +662,7 @@ export function paragraphMarkup(
     if (/^<[^>]*>\s*<\/[^>]*>$/.test(props)) props = '';
   }
 
-  const rPr = runProperties(xml, lastRunOf(xml, paragraph, runs));
+  const rPr = runProperties(xml, lastRun);
   const body = `<${w}r>${rPr}<${w}t xml:space="preserve">${escapeXml(text)}</${w}t></${w}r>`;
   return `<${w}p>${props}${body}</${w}p>`;
 }
@@ -961,6 +966,197 @@ export function splitRefusal(xml: string, paragraphs: ParagraphSpan[], run: RunS
   return null;
 }
 
+/* ── joining two paragraphs ──────────────────────────────────────────── */
+
+/**
+ * Where a paragraph's content lies — after its opening tag and its own
+ * properties, up to its closing tag. Word writes an empty paragraph as
+ * `<w:p/>`, which has neither, and is given an empty range at its end.
+ */
+interface Inside {
+  start: number;
+  end: number;
+  selfClosing: boolean;
+}
+
+function insideOf(xml: string, paragraph: ParagraphSpan): Inside {
+  const open = scanTags(xml.slice(paragraph.start, paragraph.end)).next().value;
+  if (!open || open.selfClosing) return { start: paragraph.end, end: paragraph.end, selfClosing: true };
+  /* The properties are the first child when there are any — `<w:pPr/>` too,
+     which `findParagraphs` does not record and which must not be carried
+     into the middle of another paragraph. */
+  const first = childRanges(xml, paragraph)[0];
+  return {
+    start: first && localName(first.name) === 'pPr' ? first.end : paragraph.start + open.end,
+    end: xml.lastIndexOf('<', paragraph.end - 1),
+    selfClosing: false,
+  };
+}
+
+/**
+ * Whether a stretch of a paragraph shows nothing Word counts as a character,
+ * as the plan leaves it.
+ *
+ * Measured with Word over COM, Backspace at the start of a paragraph each way:
+ * a paragraph holding only a bookmark, a proofing mark, a run with nothing but
+ * its formatting, an empty text element or the page break Word remembers from
+ * its last layout is empty to it — the join deletes it, bookmark and all, and
+ * the paragraph below keeps its own properties. A tab or a single space is
+ * not. Anything this does not recognise counts as something, so an element
+ * nobody listed can only ever make a paragraph count as holding text.
+ */
+function showsNothingIn(
+  xml: string,
+  from: number,
+  to: number,
+  byText: ReadonlyMap<number, RunSpan>,
+  typed: ReadonlyMap<number, string>,
+): boolean {
+  /* Inside a `w:rPr`: how text looks, not what it is. Counted by depth,
+     because a tracked formatting change holds a `w:rPr` of its own. */
+  let skip = 0;
+  for (const tag of scanTags(xml.slice(from, to))) {
+    const local = localName(tag.name);
+    if (skip > 0) {
+      if (!tag.selfClosing) skip += tag.closing ? -1 : 1;
+      continue;
+    }
+    if (tag.closing) continue;
+    if (local === 'rPr') {
+      if (!tag.selfClosing) skip = 1;
+      continue;
+    }
+    if (local === 'r' || local === 'lastRenderedPageBreak' || RANGE_MARKS.has(local)) continue;
+    if (local === 't') {
+      if (tag.selfClosing) continue;
+      const run = byText.get(from + tag.start);
+      const text = run
+        ? (typed.get(run.index) ?? runText(xml, run))
+        : unescapeXml(xml.slice(from + tag.end, xml.indexOf('<', from + tag.end)));
+      if (text.length > 0) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a paragraph shows nothing Word counts as a character — with the
+ * rewrites of its runs as the plan holds them, because a line whose text was
+ * typed away is as empty to the person looking at it as one that never had
+ * any.
+ */
+export function showsNothing(
+  xml: string,
+  paragraph: ParagraphSpan,
+  runs: RunSpan[],
+  edits: ReadonlyMap<number, string> = new Map(),
+): boolean {
+  const inside = insideOf(xml, paragraph);
+  const byText = new Map(runs.filter((run) => run.text).map((run) => [run.text!.start, run]));
+  return showsNothingIn(xml, inside.start, inside.end, byText, edits);
+}
+
+/**
+ * The next paragraph of the body the plan keeps, and what stands between.
+ *
+ * A paragraph the plan removes is taken with the boundary rather than kept
+ * beside it — Backspace twice after a blank line removes the line and then
+ * joins across where it was. The range marks between two paragraphs are the
+ * only other thing allowed there: Word itself carries a body-level
+ * `w:bookmarkEnd` into the joined paragraph, at the join, and that is where it
+ * goes here.
+ */
+function partnerOf(
+  xml: string,
+  body: ParagraphSpan[],
+  span: ParagraphSpan,
+  alive: ReadonlySet<number>,
+): { next: ParagraphSpan; gap: string } | string {
+  let gap = '';
+  let from = span.end;
+  for (const one of body) {
+    if (one.index <= span.index) continue;
+    if (blockContentBetween(xml, from, one.start)) return 'something stands between the two paragraphs';
+    gap += xml.slice(from, one.start);
+    if (alive.has(one.index)) return { next: one, gap };
+    from = one.end;
+  }
+  return 'nothing follows the paragraph';
+}
+
+/** Whether a tracked change is recorded on a paragraph's mark — in its `w:pPr`, or in the mark's own `w:rPr`. */
+function markRecorded(xml: string, span: ParagraphSpan): boolean {
+  if (!span.props) return false;
+  return childRanges(xml, span.props).some((child) => {
+    const local = localName(child.name);
+    if (local === 'pPrChange' || local === 'ins' || local === 'del') return true;
+    return local === 'rPr' && childRanges(xml, child).some((mark) => TRACKED.has(localName(mark.name)));
+  });
+}
+
+/**
+ * Why a paragraph may not be joined with the next one the plan keeps — what
+ * Delete does at the end of it, and Backspace at the start of the next;
+ * `null` when it may.
+ *
+ * Joining tears nothing: a field or a comment that ran from one paragraph
+ * into the next ends up inside one, which is better than it was. What it can
+ * do is move a boundary somebody else's layout hangs on, and those are the
+ * refusals:
+ *
+ * - **Only two body paragraphs**, with nothing between them but range marks
+ *   and paragraphs the plan removes. A table between them is not a thing a
+ *   join can pass, and neither is a block-level content control, which this
+ *   view does not draw — the check is on the bytes, not on what is shown.
+ * - **Not a section's end, on either side.** The joined paragraph keeps the
+ *   first one's properties, so the second's `w:sectPr` would go and the first's
+ *   would move past text that was in the next section.
+ * - **Not a tracked change recorded on either paragraph's mark.** The mark
+ *   between them is the one the join deletes, and a record claiming a reviewer
+ *   inserted or formatted it would be left describing a different one.
+ */
+export function joinRefusal(
+  xml: string,
+  paragraphs: ParagraphSpan[],
+  index: number,
+  survivors?: ReadonlySet<number>,
+): string | null {
+  const span = paragraphs.find((one) => one.index === index);
+  if (!span) return 'there is no such paragraph';
+  if (span.refusal) return span.refusal;
+  const body = paragraphs.filter((one) => one.refusal === null);
+  const alive = survivors ?? new Set(body.map((one) => one.index));
+  if (!alive.has(index)) return 'there is no such paragraph';
+
+  const pair = partnerOf(xml, body, span, alive);
+  if (typeof pair === 'string') return pair;
+  if (span.section || pair.next.section) return 'the paragraph ends a section';
+  if (markRecorded(xml, span) || markRecorded(xml, pair.next)) {
+    return 'a tracked change is recorded where the paragraphs meet';
+  }
+  return null;
+}
+
+/**
+ * Whether two paragraphs would write a new line with the same properties.
+ *
+ * A join gives the lines after it the first paragraph's properties where they
+ * had the second's, and Word, doing the same things one after another, would
+ * have left the lines made before the join as they were. Where the two are
+ * the same bytes, nobody can tell which happened — and over the real corpus
+ * adjacent body paragraphs mostly are.
+ */
+export function propertiesAlike(xml: string, a: ParagraphSpan, b: ParagraphSpan): boolean {
+  return splitProps(xml, a) === splitProps(xml, b);
+}
+
+/** The run a new paragraph after this one takes its formatting from; `null` when it has none of its own. */
+export function continuedRun(xml: string, paragraph: ParagraphSpan, runs: RunSpan[]): RunSpan | null {
+  return lastRunOf(xml, paragraph, runs);
+}
+
 /** Everything a save needs to know about the paragraphs the plan reshapes. */
 export interface Reshaping {
   paragraphs: ParagraphSpan[];
@@ -970,11 +1166,17 @@ export interface Reshaping {
   removals?: number[];
   /** The runs the plan divides, each piece after the first a paragraph of its own. */
   cuts?: RunCut[];
+  /**
+   * Ordinals of paragraphs of the original part the plan joins with the next
+   * paragraph it keeps — the boundary between them taken away, the joined
+   * paragraph keeping the first one's properties, as Word keeps them.
+   */
+  joins?: number[];
 }
 
 /**
- * Every rewrite, every new paragraph and every removal, written into the
- * original in one pass.
+ * Every rewrite, every new paragraph, every removal, every division and every
+ * join, written into the original in one pass.
  *
  * Back to front, so no offset moves under the next operation. Two new
  * paragraphs after the same one keep the order they were added in: at an equal
@@ -1066,6 +1268,72 @@ export function applyDocxEdits(
     to: paragraphByIndex.get(index)!.end,
   }));
 
+  const typed = new Map(edits.map((edit) => [edit.index, edit.text]));
+  const byText = new Map(runs.filter((run) => run.text).map((run) => [run.text!.start, run]));
+
+  /*
+   * The joins are settled after the cuts, because what the line before a
+   * boundary shows depends on how the cuts left it, and in ordinal order, so
+   * a chain of them — Delete, Delete — is judged link by link against the
+   * links before it. Each is re-judged against the original and the plan's
+   * survivors, because a caller is not obliged to have asked first; and each
+   * yields to a paragraph the plan adds after its first paragraph, or after
+   * one its boundary takes, since that paragraph would land inside the range
+   * the join removes.
+   *
+   * **An empty first paragraph is not joined.** Measured with Word, Backspace
+   * at the start of a paragraph after an empty one deletes the empty one, and
+   * the paragraph below keeps its own properties — a heading stays a heading.
+   * A join keeps the first one's properties by construction, so it would
+   * make that heading body text: what Word does there is a removal, and the
+   * plan says so with a removal. "Empty" is the line that ends at the
+   * boundary, not the paragraph alone: a paragraph whose text was typed away
+   * after something was joined onto its front still ends a line with text.
+   */
+  const joinedTo = new Map<number, number>();
+  const joins: { first: ParagraphSpan; next: ParagraphSpan; gap: string }[] = [];
+  const lineShowsNothing = (span: ParagraphSpan): boolean => {
+    const cut = divided.get(span.index);
+    if (cut) {
+      const last = [...cut].sort((a, b) => b.start - a.start)[0]!;
+      if (cutByRun.get(last.index)!.parts.at(-1)!.length > 0) return false;
+      return showsNothingIn(xml, last.text!.end, insideOf(xml, span).end, byText, typed);
+    }
+    const inside = insideOf(xml, span);
+    if (!showsNothingIn(xml, inside.start, inside.end, byText, typed)) return false;
+    const before = joinedTo.get(span.index);
+    return before === undefined || lineShowsNothing(paragraphByIndex.get(before)!);
+  };
+  if (reshaping?.joins?.length) {
+    const body = reshaping.paragraphs.filter((span) => span.refusal === null);
+    const alive = new Set(body.filter((span) => !removed.includes(span)).map((span) => span.index));
+    const followed = new Set(reshaping.inserts.filter((insert) => insert.text.length > 0).map((insert) => insert.after));
+    for (const index of [...new Set(reshaping.joins)].sort((a, b) => a - b)) {
+      if (joinRefusal(xml, reshaping.paragraphs, index, alive) !== null) continue;
+      const first = paragraphByIndex.get(index)!;
+      const pair = partnerOf(xml, body, first, alive) as { next: ParagraphSpan; gap: string };
+      const crossed = body.filter((span) => span.index >= index && span.index < pair.next.index);
+      if (crossed.some((span) => followed.has(span.index))) continue;
+      if (lineShowsNothing(first)) continue;
+      joinedTo.set(pair.next.index, index);
+      joins.push({ first, next: pair.next, gap: pair.gap });
+    }
+  }
+  /** The paragraph whose properties the line holding this one's end is written with. */
+  const headOf = (index: number): ParagraphSpan => {
+    let at = index;
+    while (joinedTo.has(at)) at = joinedTo.get(at)!;
+    return paragraphByIndex.get(at)!;
+  };
+  /** The run a new line after this paragraph continues: its own last, or the last of the line it was joined onto. */
+  const lineRun = (index: number): RunSpan | null => {
+    for (let at: number | undefined = index; at !== undefined; at = joinedTo.get(at)) {
+      const found = lastRunOf(xml, paragraphByIndex.get(at)!, runs);
+      if (found) return found;
+    }
+    return null;
+  };
+
   const rewrite = (text: string): string => `<w:t xml:space="preserve">${escapeXml(text)}</w:t>`;
 
   for (const edit of edits) {
@@ -1091,18 +1359,27 @@ export function applyDocxEdits(
       if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
       /* After a divided paragraph too: its range ends where this begins, so
          the two touch without overlapping, and the new paragraph lands after
-         the last piece — which is where the view draws it. */
+         the last piece — which is where the view draws it. After a joined one
+         it continues the line the join made: that line's properties, handed
+         on through `w:next`, and the formatting of its last run. */
       operations.push({
         at: paragraph.end,
         end: paragraph.end,
-        text: paragraphMarkup(xml, paragraph, runs, reshaping.succession, insert.text),
+        text: paragraphMarkup(
+          xml,
+          paragraph,
+          runs,
+          reshaping.succession,
+          insert.text,
+          headOf(paragraph.index),
+          lineRun(paragraph.index),
+        ),
         order,
       });
     });
 
     /* A stretch of the original carried into a divided paragraph unread, with
        the rewrites of the ordinary runs inside it applied as it goes. */
-    const typed = new Map(edits.map((edit) => [edit.index, edit.text]));
     const carried = (from: number, to: number): string => {
       const inside = runs
         .filter(
@@ -1126,15 +1403,19 @@ export function applyDocxEdits(
      * the file already has — the same `w:p`, the same properties, every run
      * before the first cut untouched — and each cut closes the run and the
      * paragraph where it falls and opens a new pair carrying the run's own
-     * formatting and the paragraph's own properties. What followed the last
-     * cut, the paragraph's own closing tag included, is carried across as it
-     * was: it becomes the last piece's tail and its end.
+     * formatting and the properties of the line it divides: the paragraph's
+     * own, or, where the paragraph was joined onto another, the one the
+     * joined line is written with — Word divides the line it shows. What
+     * followed the last cut is carried across as it was, up to the
+     * paragraph's closing tag, which stays where it stands: it becomes the
+     * last piece's end.
      */
     for (const [index, cut] of divided) {
       const paragraph = paragraphByIndex.get(index)!;
+      const end = insideOf(xml, paragraph).end;
       const ordered = [...cut].sort((a, b) => a.start - b.start);
       const w = prefixOf(xml, paragraph);
-      const props = splitProps(xml, paragraph);
+      const props = splitProps(xml, headOf(index));
       const piece = (text: string): string =>
         `<${w}t xml:space="preserve">${escapeXml(text)}</${w}t>`;
 
@@ -1146,13 +1427,32 @@ export function applyDocxEdits(
         text += piece(first!);
         for (const part of rest) text += `</${w}r></${w}p><${w}p>${props}<${w}r>${rPr}${piece(part)}`;
       });
-      text += carried(ordered[ordered.length - 1]!.text!.end, paragraph.end);
+      text += carried(ordered[ordered.length - 1]!.text!.end, end);
 
-      operations.push({ at: ordered[0]!.text!.start, end: paragraph.end, text, order: 0 });
+      operations.push({ at: ordered[0]!.text!.start, end, text, order: 0 });
+    }
+
+    /*
+     * A join, written as the boundary it removes: from the first paragraph's
+     * closing tag to the end of the next one's properties, so the joined
+     * paragraph opens with the first one's tag and properties and closes with
+     * the next one's tag, and nothing either holds is rewritten. The range
+     * marks that stood between them are carried to the join. A `<w:p/>` has
+     * no closing tag of its own to finish the line with, so where the chain
+     * ends on one, one is written.
+     */
+    const firsts = new Set(joins.map((join) => join.first.index));
+    for (const join of joins) {
+      const from = insideOf(xml, join.first);
+      const to = insideOf(xml, join.next);
+      const closing = to.selfClosing && !firsts.has(join.next.index) ? `</${prefixOf(xml, headOf(join.first.index))}p>` : '';
+      operations.push({ at: from.end, end: to.start, text: join.gap + closing, order: 0 });
     }
   }
 
+  /* A paragraph a join's boundary takes is taken by the join. */
   for (const span of removed) {
+    if (joins.some((join) => span.start >= join.first.end && span.end <= join.next.start)) continue;
     operations.push({ at: span.start, end: span.end, text: '', order: 0 });
   }
 

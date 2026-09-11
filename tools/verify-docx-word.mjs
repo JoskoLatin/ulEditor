@@ -45,6 +45,18 @@
  * section-ending paragraph divided with its properties copied gives Word one
  * section more than the document had.
  *
+ * **And two paragraphs joined** — Backspace at the start of the second. Word
+ * opens it with exactly one paragraph fewer and one line where two stood, and
+ * then it is asked the question the rest of this file only asks of us: Word
+ * joins the same two paragraphs itself, in the original, with
+ * `Selection.TypeBackspace`, and the paragraph it makes has to have the same
+ * style, alignment, list, indents and spacing as the one Word reads from ours.
+ * Word is the reference implementation of a join, and this is where it is
+ * consulted. Two rules are shown the same way: after an empty line Word keeps
+ * the next paragraph's properties — so the plan removes an empty first
+ * paragraph rather than joining it — and a section-ending paragraph joined by
+ * hand onto the one before costs Word a section.
+ *
  * Windows and Word only. Rather than skipping quietly where there is no Word —
  * a check whose only failure mode is a pass is a check that lies — it says so
  * and fails, the same way `pnpm readback` refuses to pass without LibreOffice.
@@ -71,6 +83,9 @@ const {
   readStyleSuccession,
   removalRefusal,
   splitRefusal,
+  joinRefusal,
+  showsNothing,
+  propertiesAlike,
   runText,
   escapeXml,
   unescapeXml,
@@ -148,6 +163,9 @@ const unremovable = [];
 /** Documents with a paragraph split, and the two lines Word should show where one stood. */
 const splits = [];
 const unsplittable = [];
+/** Documents with two paragraphs joined, and the one line Word should show where two stood. */
+const joins = [];
+const unjoinable = [];
 
 /** Markup that is a character in Word's text and nothing in the runs' — a line holding it cannot be looked for. */
 const UNREADABLE = /<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple|noBreakHyphen|softHyphen|drawing|pict|object)[\s/>]/;
@@ -242,6 +260,44 @@ for (const source of sources) {
       });
     } else {
       unsplittable.push(source.name);
+    }
+  }
+
+  /*
+   * And two paragraphs joined, as Backspace at the start of the second joins
+   * them. Both lines have to be ones Word shows as they are and that stand
+   * once in the document, so the two can be found again by their text — in
+   * the original, where Word is asked to do the same join itself, and in
+   * ours, where the joined line is looked for.
+   */
+  {
+    const lines = paragraphs.map((span) => textOf(xml, span));
+    const body = paragraphs.filter((span) => span.refusal === null);
+    const readable = (span) => {
+      const line = textOf(xml, span);
+      return !UNREADABLE.test(xml.slice(span.start, span.end)) && line.trim().length >= 3 && lines.filter((l) => l === line).length === 1;
+    };
+    const pairs = body
+      .slice(0, -1)
+      .map((first, i) => [first, body[i + 1]])
+      .filter(
+        ([first, next]) =>
+          joinRefusal(xml, paragraphs, first.index) === null && !showsNothing(xml, first, runs) && readable(first) && readable(next),
+      );
+    /* Two paragraphs whose properties differ, where the document has any:
+       only those can tell "the first one's properties" from "the second's",
+       and a comparison with Word that cannot tell them apart proves nothing
+       about the rule. */
+    const telling = pairs.filter(([first, next]) => !propertiesAlike(xml, first, next));
+    const pool = telling.length > 0 ? telling : pairs;
+    const pair = pool[Math.floor(pool.length / 2)];
+    if (pair) {
+      const [first, next] = pair;
+      const path = join(work, `joined-${joins.length}.docx`);
+      writeFileSync(path, Buffer.from(writeDocx(archive, runs, xml, [], { paragraphs, succession, inserts: [], joins: [first.index] })));
+      joins.push({ name: source.name, before, path, first: textOf(xml, first), second: textOf(xml, next), telling: telling.length > 0 });
+    } else {
+      unjoinable.push(source.name);
     }
   }
 
@@ -403,11 +459,66 @@ function divideByHand(parts, pick, at) {
   why.push({ name: 'a section divided', refused, original: parts, cut: out });
 }
 
+/**
+ * The part with two paragraphs joined by hand — the boundary between them
+ * cut out the way a join writes it, the first one's properties kept, the
+ * writer's rules not asked.
+ */
+function joinByHand(parts, pick) {
+  const xml = strFromU8(parts['word/document.xml']);
+  const paragraphs = findParagraphs(xml);
+  const body = paragraphs.filter((one) => one.refusal === null);
+  const at = body.findIndex((one) => textOf(xml, one) === pick);
+  const [first, next] = [body[at], body[at + 1]];
+  const opening = /^<w:p(?:\s[^>]*?)?(\/?)>(<w:pPr(?:\s[^>]*)?(?:\/>|>[\s\S]*?<\/w:pPr>))?/.exec(xml.slice(next.start, next.end))[0];
+  const selfClosing = /^<w:p(?:\s[^>]*?)?\/>/.test(xml.slice(first.start, first.end));
+  const out = { ...parts };
+  out['word/document.xml'] = strToU8(
+    selfClosing
+      ? xml.slice(0, first.start) + '<w:p>' + xml.slice(next.start + opening.length)
+      : xml.slice(0, first.end - '</w:p>'.length) + xml.slice(first.end, next.start) + xml.slice(next.start + opening.length),
+  );
+  return { out, refused: joinRefusal(xml, paragraphs, first.index), first, xml, paragraphs };
+}
+
+{
+  /* An empty line before a centred one: Word, joining them itself, keeps the
+     centred line centred, because it deletes the empty one. A join keeping
+     the first one's properties would not — which is why the plan removes an
+     empty first paragraph rather than joining it. */
+  const parts = packaged(p('Prije') + '<w:p/>' + p('Središte', '<w:pPr><w:jc w:val="center"/></w:pPr>') + p('Poslije'));
+  const { out, first, xml, paragraphs } = joinByHand(parts, '');
+  const plan = { paragraphs, succession: { next: new Map(), fallback: '' }, inserts: [], removals: [first.index] };
+  why.push({
+    name: 'an empty line joined',
+    empty: showsNothing(xml, first, findRuns(xml)),
+    original: parts,
+    cut: out,
+    ours: unzipSync(writeDocx(parts, findRuns(xml), xml, [], plan)),
+    joinFirst: '',
+    joinSecond: 'Središte',
+    describe: 'Središte',
+  });
+}
+{
+  const parts = packaged(
+    p('Prvi odsječak') +
+      `<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr><w:r><w:t>Kraj prvog odsječka</w:t></w:r></w:p>` +
+      p('Drugi odsječak'),
+  );
+  const { out, refused } = joinByHand(parts, 'Prvi odsječak');
+  why.push({ name: 'a section joined', refused, original: parts, cut: out });
+}
+
 for (const [i, one] of why.entries()) {
   one.originalPath = join(work, `why-${i}-original.docx`);
   one.cutPath = join(work, `why-${i}-cut.docx`);
   writeFileSync(one.originalPath, Buffer.from(zipSync(one.original)));
   writeFileSync(one.cutPath, Buffer.from(zipSync(one.cut)));
+  if (one.ours) {
+    one.oursPath = join(work, `why-${i}-ours.docx`);
+    writeFileSync(one.oursPath, Buffer.from(zipSync(one.ours)));
+  }
 }
 
 check('documents were prepared, each with one paragraph added', pairs.length > 0, `${pairs.length}`);
@@ -432,6 +543,10 @@ $word = New-Object -ComObject Word.Application
 $word.Visible = $false
 $word.DisplayAlerts = 0
 $word.AutomationSecurity = 3
+function Props($p) {
+  return @{ text = $p.Range.Text; style = [string]$p.Style.NameLocal; align = $p.Alignment; list = $p.Range.ListFormat.ListType;
+    left = $p.LeftIndent; first = $p.FirstLineIndent; before = $p.SpaceBefore; after = $p.SpaceAfter }
+}
 $out = @()
 foreach ($file in $files) {
   $row = @{ path = $file.path }
@@ -446,6 +561,33 @@ foreach ($file in $files) {
       foreach ($para in $doc.Paragraphs) { $counts += $para.Range.Editors.Count }
       $row.editors = ($counts -join ',')
       $row.protection = $doc.ProtectionType
+    }
+    if ($file.describe -ne $null) {
+      foreach ($para in $doc.Paragraphs) {
+        if ($para.Range.Text -eq ($file.describe + [char]13)) { $row.described = (Props $para); break }
+      }
+    }
+    if ($file.joinSecond -ne $null) {
+      # Word joins the two itself: Backspace at the start of the second, in memory, never saved.
+      # A document opened without a window of its own has no application Selection; its window has one.
+      try {
+        $doc.TrackRevisions = $false
+        $selection = $doc.Windows.Item(1).Selection
+        $prev = $null
+        foreach ($para in $doc.Paragraphs) {
+          if ($prev -ne $null -and $prev.Range.Text -eq ($file.joinFirst + [char]13) -and $para.Range.Text -eq ($file.joinSecond + [char]13)) {
+            $start = $prev.Range.Start
+            $selection.SetRange($para.Range.Start, $para.Range.Start)
+            $selection.TypeBackspace()
+            $row.wordJoined = (Props $doc.Range($start, $start).Paragraphs.Item(1))
+            $row.wordParagraphs = $doc.Paragraphs.Count
+            break
+          }
+          $prev = $para
+        }
+      } catch {
+        $row.joinError = $_.Exception.Message
+      }
     }
     $doc.Close(0)
   } catch {
@@ -465,12 +607,22 @@ const asking = [
     ...pairs.flatMap((one) => [one.before, one.written]),
     ...removals.flatMap((one) => [one.before, one.cut]),
     ...splits.flatMap((one) => [one.before, one.path]),
-    ...why.flatMap((one) => [one.originalPath, one.cutPath]),
+    ...joins.flatMap((one) => [one.before, one.path]),
+    ...why.flatMap((one) => [one.originalPath, one.cutPath, ...(one.oursPath ? [one.oursPath] : [])]),
   ]),
-].map((path) => ({
-  path,
-  editors: why.some((one) => one.editors && (one.originalPath === path || one.cutPath === path)),
-}));
+].map((path) => {
+  /* Word is asked to join two paragraphs itself in an original, and to
+     describe the joined one in ours — the same line looked for by its text. */
+  const joining = joins.find((one) => one.before === path) ?? why.find((one) => one.joinSecond !== undefined && one.originalPath === path);
+  const joined = joins.find((one) => one.path === path);
+  const described = why.find((one) => one.describe !== undefined && (one.cutPath === path || one.oursPath === path));
+  return {
+    path,
+    editors: why.some((one) => one.editors && (one.originalPath === path || one.cutPath === path)),
+    ...(joining ? { joinFirst: joining.first ?? joining.joinFirst, joinSecond: joining.second ?? joining.joinSecond } : {}),
+    ...(joined ? { describe: joined.first + joined.second } : described ? { describe: described.describe } : {}),
+  };
+});
 
 writeFileSync(join(work, 'files.json'), JSON.stringify(asking), 'utf8');
 
@@ -664,9 +816,80 @@ check(
 );
 for (const line of splitLines.slice(0, 8)) console.log(`  · ${line}`);
 
+/* ── the joins ───────────────────────────────────────────────────────── */
+
+const joinOpened = [];
+const joinRefused = [];
+const joinCount = [];
+const joinLines = [];
+const joinUnseen = [];
+const joinUnlike = [];
+/** What Word says about a paragraph, the joined one compared key by key. */
+const PROPS = ['text', 'style', 'align', 'list', 'left', 'first', 'before', 'after'];
+
+for (const one of joins) {
+  const before = said(one.before);
+  const after = said(one.path);
+  if (before.error || before.paragraphs === undefined) continue; // counted above
+  if (after.error || after.paragraphs === undefined) {
+    joinRefused.push(`${one.name}: ${(after.error ?? 'no answer').slice(0, 120)}`);
+    continue;
+  }
+  /* The control: the two lines have to be ones Word showed, one after the
+     other, in the original — and Word has to have found them there to join
+     them itself, one paragraph fewer by its own count. */
+  const was = (before.text ?? '').split('\r');
+  const at = was.indexOf(one.first);
+  if (at === -1 || was[at + 1] !== one.second || !before.wordJoined || before.wordParagraphs !== before.paragraphs - 1) {
+    joinUnseen.push(one.name);
+    continue;
+  }
+  joinOpened.push(one.name);
+  if (after.paragraphs !== before.paragraphs - 1) joinCount.push(`${one.name}: ${before.paragraphs} → ${after.paragraphs}`);
+  const now = (after.text ?? '').split('\r');
+  if (!now.includes(one.first + one.second) || now.includes(one.first) || now.includes(one.second)) {
+    joinLines.push(`${one.name}: "${one.first}" + "${one.second}"`);
+  }
+  const theirs = before.wordJoined;
+  const ours = after.described;
+  const differs = ours ? PROPS.filter((key) => String(theirs[key]) !== String(ours[key])) : ['the joined line was not found'];
+  if (differs.length > 0) {
+    joinUnlike.push(`${one.name}: ${differs.map((key) => `${key} Word ${JSON.stringify(theirs[key])} / ours ${JSON.stringify(ours?.[key])}`).join(', ')}`);
+  }
+}
+
+check(
+  'Word opens every file with two paragraphs joined',
+  joins.length > 0 && joinRefused.length === 0,
+  `${joinOpened.length} opened`,
+);
+for (const line of joinRefused) console.log(`  · ${line}`);
+
+check(
+  'and holds exactly one paragraph fewer',
+  joinOpened.length > 0 && joinCount.length === 0,
+  `${joinOpened.length - joinCount.length}/${joinOpened.length}`,
+);
+for (const line of joinCount.slice(0, 8)) console.log(`  · ${line}`);
+
+check(
+  'and where two lines stood there is one, holding both',
+  joinOpened.length > 0 && joinLines.length === 0,
+  `${joinOpened.length - joinLines.length}/${joinOpened.length}`,
+);
+for (const line of joinLines.slice(0, 8)) console.log(`  · ${line}`);
+
+const told = joins.filter((one) => one.telling && joinOpened.includes(one.name)).length;
+check(
+  'and Word, joining the same two itself, gives the joined paragraph the same style, alignment, list, indents and spacing',
+  joinOpened.length > 0 && joinUnlike.length === 0 && told > 0,
+  `${joinOpened.length - joinUnlike.length}/${joinOpened.length} — ${told} of them two paragraphs whose properties differ`,
+);
+for (const line of joinUnlike.slice(0, 8)) console.log(`  · ${line}`);
+
 /* ── why the refusals exist ─────────────────────────────────────────── */
 
-const [tables, ending, permission, link, sectioned] = why;
+const [tables, ending, permission, link, sectioned, emptied, joinedSection] = why;
 {
   const before = said(tables.originalPath);
   const after = said(tables.cutPath);
@@ -721,6 +944,26 @@ const [tables, ending, permission, link, sectioned] = why;
     `Word: ${before.sections ?? before.error} → ${after.sections ?? after.error} sections · ours: ${sectioned.refused ?? 'allowed'}`,
   );
 }
+{
+  const original = said(emptied.originalPath);
+  const byHand = said(emptied.cutPath);
+  const ours = said(emptied.oursPath);
+  const align = (props) => (props ? ['left', 'centred', 'right', 'justified'][props.align] ?? props.align : 'not found');
+  check(
+    "Word keeps the second paragraph's properties after an empty one — so an empty first paragraph is removed, not joined",
+    emptied.empty === true && original.wordJoined?.align === 1 && ours.described?.align === 1 && byHand.described?.align === 0,
+    `Word's own join: ${align(original.wordJoined)} · ours, a removal: ${align(ours.described)} · a join keeping the first: ${align(byHand.described)}`,
+  );
+}
+{
+  const before = said(joinedSection.originalPath);
+  const after = said(joinedSection.cutPath);
+  check(
+    'Word counts a section fewer when a section-ending paragraph is joined onto the one before — so it is refused',
+    joinedSection.refused === 'the paragraph ends a section' && before.sections !== undefined && after.sections === before.sections - 1,
+    `Word: ${before.sections ?? before.error} → ${after.sections ?? after.error} sections · ours: ${joinedSection.refused ?? 'allowed'}`,
+  );
+}
 
 if (refusedOriginal.length > 0) {
   console.log(`\n${refusedOriginal.length} Word will not open in their original form either:`);
@@ -743,6 +986,14 @@ if (splitUnseen.length > 0) {
 if (unsplittable.length > 0) {
   console.log(`\n${unsplittable.length} offer no line of its own that may be split:`);
   for (const name of unsplittable) console.log(`  · ${name}`);
+}
+if (joinUnseen.length > 0) {
+  console.log(`\n${joinUnseen.length} had two lines Word did not show one after the other, or would not join itself:`);
+  for (const name of joinUnseen) console.log(`  · ${name}`);
+}
+if (unjoinable.length > 0) {
+  console.log(`\n${unjoinable.length} offer no two lines of their own that may be joined:`);
+  for (const name of unjoinable) console.log(`  · ${name}`);
 }
 if (nowhere.length > 0) {
   console.log(`\n${nowhere.length} have no paragraph a new one may follow — every one of theirs is in a table:`);

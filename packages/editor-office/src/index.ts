@@ -113,7 +113,7 @@ function searchIn(
   for (const node of textNodesOf(root)) {
     /* Text inside a paragraph the plan has removed is text the saved file will
        not contain; a search that found it would scroll to a node with no box. */
-    if (node.parentElement?.closest('.is-removed')) continue;
+    if (node.parentElement?.closest('.is-removed, .is-joined')) continue;
     const value = node.nodeValue ?? '';
     const haystack = query.caseSensitive ? value : value.toLowerCase();
 
@@ -152,6 +152,8 @@ interface Snapshot {
   removed: number[];
   /** The pieces of text Enter divided, each with its parts. */
   cuts: [number, string[]][];
+  /** Ordinals of the file's own paragraphs joined with the next one the plan keeps. */
+  joins: number[];
 }
 
 /**
@@ -163,6 +165,15 @@ type Typing =
   | { kind: 'run'; run: number }
   | { kind: 'part'; run: number; part: number }
   | { kind: 'step'; step: NewParagraph };
+
+/** Where the caret goes once a join is written down — looked for again after the redraw. */
+interface Caret {
+  element: () => HTMLElement | null;
+  at: number | 'start' | 'end';
+}
+
+/** A join decided on: the sentence saying why not, or the change to make once the typing is written down. */
+type Joining = { refusal: string } | { apply: () => { caret: Caret | null; status: string | null } };
 
 /** Every text node inside a node, in document order. */
 function textsIn(node: Node): Text[] {
@@ -222,6 +233,26 @@ function holdsBesides(block: HTMLElement, target: HTMLElement, side: 'before' | 
   return (rest.textContent ?? '').length > 0 || rest.querySelector('img, svg, br, canvas, video, object') !== null;
 }
 
+/** Whether a line shows nothing at all — no text, and no picture or break either. */
+function blank(line: HTMLElement): boolean {
+  return (line.textContent ?? '').length === 0 && line.querySelector('img, svg, br, canvas, video, object') === null;
+}
+
+/** Puts the caret this many characters into an element's text. */
+function placeCaret(element: HTMLElement, offset: number): void {
+  let left = offset;
+  for (const text of textsIn(element)) {
+    if (left <= text.length) {
+      document.getSelection()?.collapse(text, left);
+      return;
+    }
+    left -= text.length;
+  }
+  const texts = textsIn(element);
+  const last = texts[texts.length - 1];
+  document.getSelection()?.collapse(last ?? element, last ? last.length : 0);
+}
+
 /**
  * One editor for every document this program can draw as paragraphs.
  *
@@ -272,6 +303,25 @@ class DocumentPreviewEditor implements EditorInstance {
    * divide it again and the view has to be cut from the same whole.
    */
   #pristine = new Map<number, HTMLElement>();
+  /**
+   * The file's own paragraphs the plan joins with the next paragraph it keeps
+   * — Backspace at the start of a line, Delete at the end of one. The same
+   * kind of plan again: the file does not change until a save, and the view
+   * moves the next paragraph's content into the line of this one, whose
+   * properties the joined paragraph keeps, as Word keeps them.
+   */
+  #joins = new Set<number>();
+  /** The joins the last redraw made: second paragraph → the one it was joined onto. */
+  #joinedInto = new Map<number, number>();
+  /**
+   * The paragraph of the file each run of the body stands in, and the body's
+   * paragraphs in the order they stand — read once, from the view as it was
+   * drawn, because a join moves runs into another paragraph's element and a
+   * question asked of the page afterwards would be answered by where they
+   * are drawn, not by where they are.
+   */
+  #home = new Map<number, number>();
+  #order: number[] = [];
   #undoStack: Snapshot[] = [];
   #redoStack: Snapshot[] = [];
   /** The plan as the file on disk holds it; anything else means unsaved. */
@@ -290,6 +340,13 @@ class DocumentPreviewEditor implements EditorInstance {
     private readonly preview: Preview,
   ) {
     this.#words = wordCount(preview.text);
+    for (const paragraph of preview.body.querySelectorAll<HTMLElement>('[data-paragraph]')) {
+      const index = Number(paragraph.dataset.paragraph);
+      this.#order.push(index);
+      for (const run of paragraph.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
+        this.#home.set(Number(run.dataset.run), index);
+      }
+    }
     this.#saved = this.#key();
   }
 
@@ -313,6 +370,7 @@ class DocumentPreviewEditor implements EditorInstance {
       this.#steps.filter((step) => step.text.length > 0),
       [...this.#removed].sort((a, b) => a - b),
       [...this.#cuts].sort((a, b) => a[0] - b[0]),
+      [...this.#joins].sort((a, b) => a - b),
     ]);
   }
 
@@ -330,6 +388,7 @@ class DocumentPreviewEditor implements EditorInstance {
       steps: this.#steps.filter((step) => step.text.length > 0).map((step) => ({ ...step })),
       removed: [...this.#removed].sort((a, b) => a - b),
       cuts: [...this.#cuts].map(([run, parts]): [number, string[]] => [run, [...parts]]),
+      joins: [...this.#joins].sort((a, b) => a - b),
     };
   }
 
@@ -347,7 +406,7 @@ class DocumentPreviewEditor implements EditorInstance {
         this.preview.source
           ? this.preview.source.paragraphs
             ? t(
-                'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Ctrl+Shift+Backspace removes the one the cursor is in. Layout and styles stay as they are.',
+                'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in. Layout and styles stay as they are.',
               )
             : t('Text can be retyped — double-click it. Layout and styles stay as they are.')
           : t('This document is shown, not edited — it opens for reading and searching.'),
@@ -457,15 +516,16 @@ class DocumentPreviewEditor implements EditorInstance {
    * caret leaves. A piece opens with all its text selected, which is how a
    * double-click has always opened it; the part a split just made opens with
    * the caret at its start, which is where Enter leaves it everywhere else a
-   * person types.
+   * person types; and a piece a join reopens, with the caret where the two
+   * lines met.
    */
-  #openForTyping(target: HTMLElement, typing: Typing, caret: 'all' | 'start' = 'all'): void {
+  #openForTyping(target: HTMLElement, typing: Typing, caret: 'all' | 'start' | 'end' | number = 'all'): void {
     const before = target.textContent ?? '';
 
     target.contentEditable = 'plaintext-only';
     target.focus();
-    if (caret === 'start') document.getSelection()?.collapse(textsIn(target)[0] ?? target, 0);
-    else document.getSelection()?.selectAllChildren(target);
+    if (caret === 'all') document.getSelection()?.selectAllChildren(target);
+    else placeCaret(target, caret === 'start' ? 0 : caret === 'end' ? before.length : caret);
 
     const finish = () => {
       target.removeEventListener('blur', finish);
@@ -507,6 +567,15 @@ class DocumentPreviewEditor implements EditorInstance {
         const plain = !key.shiftKey && !key.ctrlKey && !key.altKey && !key.metaKey;
         if (plain && this.#enter(target, typing)) return;
         target.blur();
+        return;
+      }
+      /*
+       * Backspace at the very start of a line, and Delete at the very end of
+       * one, join it with its neighbour — anywhere short of a line's edge the
+       * browser deletes a character, as it always has.
+       */
+      if ((key.key === 'Backspace' || key.key === 'Delete') && !key.shiftKey && !key.ctrlKey && !key.altKey && !key.metaKey) {
+        if (this.#edge(target, typing, key.key === 'Backspace' ? 'start' : 'end')) key.preventDefault();
       }
     };
 
@@ -606,14 +675,13 @@ class DocumentPreviewEditor implements EditorInstance {
     const text = parts[part];
     if (text === undefined) return;
 
-    const paragraph = body
-      .querySelector<HTMLElement>(`.ul-office-run[data-run="${run}"]`)
-      ?.closest<HTMLElement>('[data-paragraph]');
-    if (!paragraph) return;
-    const index = Number(paragraph.dataset.paragraph);
-    /* What every redraw of this paragraph starts from — taken once, before its
+    /* The paragraph the run stands in, by what the view was drawn with — a
+       join may have drawn it inside another paragraph's element since. What
+       every redraw of that paragraph starts from is taken once, before its
        first division, now that the typing has left it. */
-    if (!this.#pristine.has(index)) this.#pristine.set(index, paragraph.cloneNode(true) as HTMLElement);
+    const index = this.#home.get(run);
+    if (index === undefined) return;
+    this.#keep(index);
 
     this.#undoStack.push(this.#capture());
     this.#redoStack = [];
@@ -676,6 +744,408 @@ class DocumentPreviewEditor implements EditorInstance {
     }
     if (alone) this.#syncSteps();
     this.#emitDirty();
+  }
+
+  /* ── Backspace and Delete at the edge of a line ──────────────────── */
+
+  /**
+   * A line joined with the one before it — Backspace at its very start — or
+   * with the one after it — Delete at its very end: the same boundary taken
+   * away either way, as in Word.
+   *
+   * What the boundary is decides what the join is. Two lines Enter made of
+   * one paragraph are two parts of a piece of text, and joining them takes
+   * the division back. Two lines added here are two texts of the plan, and
+   * joining them makes one. A line added here after a line of the file is
+   * text that goes onto the end of the piece it took its formatting from. And
+   * two paragraphs of the file are joined by the plan's joins — unless the
+   * first shows nothing, where Word removes it and the paragraph below keeps
+   * its own properties, so the plan removes it too.
+   *
+   * Everything is decided before the typing is written down, so a refusal
+   * leaves the person typing where they were; `false` hands the key back to
+   * the browser, which deletes a character.
+   */
+  #edge(target: HTMLElement, typing: Typing, side: 'start' | 'end'): boolean {
+    const seam = this.preview.source?.paragraphs;
+    const offset = caretOffset(target);
+    const line = target.closest<HTMLElement>('[data-paragraph], [data-piece-of], [data-new]');
+    if (!seam || offset === null || !line) return false;
+    const typed = target.textContent ?? '';
+    const atEdge =
+      side === 'start'
+        ? offset === 0 && !holdsBesides(line, target, 'before')
+        : offset === typed.length && !holdsBesides(line, target, 'after');
+    if (!atEdge) return false;
+
+    const join =
+      side === 'start' ? this.#joinBefore(seam, line, typing, typed) : this.#joinAfter(seam, line, typing, typed);
+    if (!join) return false;
+    if ('refusal' in join) {
+      this.#statusEmitter.fire(join.refusal);
+      return true;
+    }
+
+    /* The typing is written down first, by the ordinary path: what was typed
+       is a change of its own, and the join a second one on top of it — so
+       Ctrl+Z takes back the join and leaves the typing. */
+    target.blur();
+    const landing = join.apply();
+    this.#syncSteps();
+    this.#emitDirty();
+    // After `#emitDirty`, which writes the ordinary status line over anything before it.
+    if (landing.status) this.#statusEmitter.fire(landing.status);
+
+    const element = landing.caret?.element() ?? null;
+    const resumed = element ? this.#typingOf(element) : null;
+    if (element && resumed) this.#openForTyping(element, resumed, landing.caret!.at);
+    else this.#root?.focus();
+    return true;
+  }
+
+  /** Backspace at the start of a line. */
+  #joinBefore(seam: ParagraphSeam, line: HTMLElement, typing: Typing, typed: string): Joining | null {
+    /* A line Enter made begins with the part the division gave it. */
+    if (line.dataset.pieceOf !== undefined) {
+      const first = line.querySelector<HTMLElement>('.ul-office-run[data-part-of]');
+      return first ? this.#mergeParts(Number(first.dataset.partOf), Number(first.dataset.part) - 1, 'start') : null;
+    }
+
+    const above = this.#neighbour(line, 'before');
+
+    if (typing.kind === 'step') {
+      /* Emptied, the line added here goes by itself when the typing leaves
+         it, and the caret goes to the end of the line above — Backspace in an
+         empty paragraph, as anywhere. */
+      if (typed.length === 0) return { apply: () => ({ caret: this.#endOf(above), status: null }) };
+      if (above?.dataset.new !== undefined) {
+        const upper = this.#steps[Number(above.dataset.new)];
+        return upper ? this.#mergeSteps(upper, typing.step) : null;
+      }
+      if (above && above.tagName !== 'TABLE') return this.#continueInto(seam, above, typing.step, typed);
+      return { refusal: t('Nothing stands before this paragraph to join it to.') };
+    }
+
+    if (!above) return { refusal: t('Nothing stands before this paragraph to join it to.') };
+    if (above.tagName === 'TABLE') {
+      return { refusal: t('A table stands between these lines — a paragraph cannot be joined across it.') };
+    }
+    if (above.dataset.new !== undefined) {
+      return { refusal: t('A line added here cannot be joined with a paragraph the file already has.') };
+    }
+    return this.#joinParagraphs(seam, above, line, this.#edits, {
+      element: () => this.#elementOf(typing),
+      at: 'start',
+    });
+  }
+
+  /** Delete at the end of a line. */
+  #joinAfter(seam: ParagraphSeam, line: HTMLElement, typing: Typing, typed: string): Joining | null {
+    /* A part Enter left another after: the division taken back. */
+    if (typing.kind === 'part') {
+      const parts = this.#cuts.get(typing.run);
+      if (parts && typing.part < parts.length - 1) return this.#mergeParts(typing.run, typing.part, 'end');
+    }
+
+    const below = this.#neighbour(line, 'after');
+
+    if (typing.kind === 'step') {
+      /* Emptied, it goes by itself, and the caret goes to the start of the
+         line below — Delete in an empty paragraph. */
+      if (typed.length === 0) return { apply: () => ({ caret: this.#startOf(below), status: null }) };
+      if (below?.dataset.new !== undefined) {
+        const lower = this.#steps[Number(below.dataset.new)];
+        return lower ? this.#mergeSteps(typing.step, lower) : null;
+      }
+      if (!below) return { refusal: t('Nothing follows this paragraph to join to it.') };
+      if (below.tagName === 'TABLE') {
+        return { refusal: t('A table stands between these lines — a paragraph cannot be joined across it.') };
+      }
+      return { refusal: t('A line added here cannot be joined with a paragraph the file already has.') };
+    }
+
+    if (!below) return { refusal: t('Nothing follows this paragraph to join to it.') };
+    if (below.tagName === 'TABLE') {
+      return { refusal: t('A table stands between these lines — a paragraph cannot be joined across it.') };
+    }
+    if (below.dataset.new !== undefined) {
+      const lower = this.#steps[Number(below.dataset.new)];
+      return lower ? this.#continueInto(seam, line, lower, lower.text) : null;
+    }
+    /* The text being typed is part of the question "does this line show
+       anything" — typed away, the line is as empty as one that never had any. */
+    const edits = new Map(this.#edits);
+    if (typing.kind === 'run') edits.set(typing.run, typed);
+    return this.#joinParagraphs(seam, line, below, edits, { element: () => this.#elementOf(typing), at: 'end' });
+  }
+
+  /**
+   * Parts `k` and `k + 1` of a divided piece of text made one again: the
+   * division between two lines taken back.
+   */
+  #mergeParts(run: number, k: number, side: 'start' | 'end'): Joining | null {
+    const count = this.#cuts.get(run)?.length ?? 0;
+    if (k < 0 || k + 1 >= count) return null;
+    const caret = (at: number | 'start' | 'end'): Caret => ({
+      element: () => this.#elementOf(this.#cuts.has(run) ? { kind: 'part', run, part: k } : { kind: 'run', run }),
+      at,
+    });
+    return {
+      apply: () => {
+        const parts = this.#cuts.get(run);
+        /* The typing that just left may have taken a part away already — an
+           emptied part alone on its line goes by itself, and those two lines
+           are joined by that. The caret goes where they meet. */
+        if (!parts || parts.length < count) return { caret: caret(side === 'start' ? 'end' : 'start'), status: null };
+
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+        const at = parts[k]!.length;
+        const next = [...parts];
+        next.splice(k, 2, parts[k]! + parts[k + 1]!);
+        if (next.length < 2) {
+          this.#cuts.delete(run);
+          const whole = next[0]!;
+          if (whole === this.preview.source?.textOf(run)) this.#edits.delete(run);
+          else this.#edits.set(run, whole);
+        } else {
+          this.#cuts.set(run, next);
+        }
+        return { caret: caret(at), status: t('Paragraphs joined — Ctrl+Z splits them again.') };
+      },
+    };
+  }
+
+  /** Two lines added here made one: the lower one's text onto the end of the upper one. */
+  #mergeSteps(upper: NewParagraph, lower: NewParagraph): Joining {
+    return {
+      apply: () => {
+        if (!this.#steps.includes(upper) || !this.#steps.includes(lower)) return { caret: null, status: null };
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+        const at = upper.text.length;
+        upper.text += lower.text;
+        this.#steps.splice(this.#steps.indexOf(lower), 1);
+        return {
+          caret: { element: () => this.#elementOf({ kind: 'step', step: upper }), at },
+          status: t('Paragraphs joined — Ctrl+Z splits them again.'),
+        };
+      },
+    };
+  }
+
+  /**
+   * A line added here joined onto the end of the file's line above it: its
+   * text goes onto the piece it took its formatting from, and it is no longer
+   * a paragraph of its own. Only onto that piece, and only when nothing stands
+   * after it — text typed after a link, a picture or a field belongs to none
+   * of them, and continuing any of them would change how it looks.
+   */
+  #continueInto(seam: ParagraphSeam, upper: HTMLElement, step: NewParagraph, text: string): Joining {
+    const last = this.#tailOf(Number(upper.dataset.paragraph ?? upper.dataset.pieceOf));
+    const pieces = upper.querySelectorAll<HTMLElement>('.ul-office-run[data-run], .ul-office-run[data-part-of]');
+    const piece = pieces[pieces.length - 1];
+    if (text.length === 0) return { apply: () => ({ caret: this.#endOf(upper), status: null }) };
+
+    const run = piece ? Number(piece.dataset.run ?? piece.dataset.partOf) : NaN;
+    if (!piece || holdsBesides(upper, piece, 'after') || step.after !== last || seam.continuedRunAt(last) !== run) {
+      return {
+        refusal: t('The line this would join ends in something that cannot be continued — a link, a picture or a field.'),
+      };
+    }
+
+    return {
+      apply: () => {
+        if (!this.#steps.includes(step)) return { caret: null, status: null };
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+        let at: number;
+        let resume: Typing;
+        const parts = this.#cuts.get(run);
+        if (parts) {
+          const index = parts.length - 1;
+          at = parts[index]!.length;
+          this.#cuts.set(run, [...parts.slice(0, index), parts[index]! + step.text]);
+          resume = index === 0 ? { kind: 'run', run } : { kind: 'part', run, part: index };
+        } else {
+          const whole = this.#edits.get(run) ?? this.preview.source?.textOf(run) ?? '';
+          at = whole.length;
+          this.#edits.set(run, whole + step.text);
+          resume = { kind: 'run', run };
+        }
+        this.#steps.splice(this.#steps.indexOf(step), 1);
+        return {
+          caret: { element: () => this.#elementOf(resume), at },
+          status: t('Paragraphs joined — Ctrl+Z splits them again.'),
+        };
+      },
+    };
+  }
+
+  /**
+   * The paragraph of the file whose end is `upper`'s end, joined with the one
+   * whose first line is `lower` — or, where that paragraph shows nothing,
+   * removed, which is what Word does there.
+   */
+  #joinParagraphs(
+    seam: ParagraphSeam,
+    upper: HTMLElement,
+    lower: HTMLElement,
+    edits: ReadonlyMap<number, string>,
+    caret: Caret,
+  ): Joining {
+    const head = Number(upper.dataset.paragraph ?? upper.dataset.pieceOf);
+    const last = this.#tailOf(head);
+    const next = Number(lower.dataset.paragraph);
+    const plain = upper.dataset.paragraph === String(last) && this.#lineEnd(last) === upper;
+
+    if (plain && seam.emptyAt(last, edits)) {
+      const refusal = this.#removed.has(last) ? t('This paragraph is already removed.') : seam.removalRefusalAt(last, this.#removed);
+      if (refusal) return { refusal };
+      return {
+        apply: () => {
+          this.#undoStack.push(this.#capture());
+          this.#redoStack = [];
+          for (const el of upper.querySelectorAll<HTMLElement>('.ul-office-run[data-run]')) {
+            this.#edits.delete(Number(el.dataset.run));
+          }
+          this.#removed.add(last);
+          return {
+            caret: caret.at === 'start' ? caret : { element: () => this.#firstRunOf(next), at: 'start' },
+            status: t('The empty line was removed — Ctrl+Z brings it back.'),
+          };
+        },
+      };
+    }
+
+    /* A line that shows nothing and is not one paragraph's own: joining onto
+       it would ask Word's question of a paragraph the line is only part of. */
+    if (!plain && blank(upper)) {
+      return { refusal: t('That empty line was made by joining or splitting lines — Ctrl+Z undoes that first.') };
+    }
+    const refusal = seam.joinRefusalAt(last, this.#removed);
+    if (refusal) return { refusal };
+    if (this.#partner(last) !== next) {
+      return {
+        refusal: t('Something stands between these paragraphs that this view does not show — a table or a content control.'),
+      };
+    }
+    /* The lines Enter made after `next` keep the properties they were made
+       with in Word; here they take the properties of the line they belong
+       to, and the join changes which line that is. Where the two are the
+       same bytes nobody can tell — otherwise it is refused. */
+    if (this.#madeByEnter(next) && !seam.alike(head, next)) {
+      return {
+        refusal: t('Joining here would change the formatting of lines Enter made after it — Ctrl+Z those first.'),
+      };
+    }
+
+    return {
+      apply: () => {
+        this.#keep(last);
+        this.#keep(next);
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+        this.#joins.add(last);
+        return { caret, status: t('Paragraphs joined — Ctrl+Z splits them again.') };
+      },
+    };
+  }
+
+  /** The line drawn beside this one — or the table there; `null` at the document's edge. */
+  #neighbour(line: HTMLElement, side: 'before' | 'after'): HTMLElement | null {
+    const blocks = [
+      ...this.preview.body.querySelectorAll<HTMLElement>('[data-paragraph], [data-piece-of], [data-new], table'),
+    ].filter(
+      (one) => !one.closest('.is-removed, .is-joined') && !(one.tagName === 'TABLE' && one.parentElement?.closest('table')),
+    );
+    const at = blocks.indexOf(line);
+    if (at === -1) return null;
+    return blocks[side === 'before' ? at - 1 : at + 1] ?? null;
+  }
+
+  /** Where the caret goes at the end of a line: its last piece of text. */
+  #endOf(line: HTMLElement | null): Caret | null {
+    const pieces = line?.querySelectorAll<HTMLElement>('.ul-office-run') ?? [];
+    const piece = pieces[pieces.length - 1];
+    const who = piece ? this.#typingOf(piece) : null;
+    return who ? { element: () => this.#elementOf(who), at: 'end' } : null;
+  }
+
+  /** Where the caret goes at the start of a line: its first piece of text. */
+  #startOf(line: HTMLElement | null): Caret | null {
+    const piece = line?.querySelector<HTMLElement>('.ul-office-run') ?? null;
+    const who = piece ? this.#typingOf(piece) : null;
+    return who ? { element: () => this.#elementOf(who), at: 'start' } : null;
+  }
+
+  /** The first piece of text of a paragraph of the file, wherever it is drawn now. */
+  #firstRunOf(paragraph: number): HTMLElement | null {
+    for (const [run, home] of [...this.#home].sort((a, b) => a[0] - b[0])) {
+      if (home !== paragraph) continue;
+      const element = this.preview.body.querySelector<HTMLElement>(`.ul-office-run[data-run="${run}"]`);
+      if (element) return element;
+    }
+    return null;
+  }
+
+  /** The element a piece of text is drawn in now — found again after a redraw. */
+  #elementOf(typing: Typing): HTMLElement | null {
+    const body = this.preview.body;
+    if (typing.kind === 'step') {
+      const position = this.#steps.indexOf(typing.step);
+      return position === -1 ? null : body.querySelector<HTMLElement>(`[data-new="${position}"] .ul-office-run`);
+    }
+    if (typing.kind === 'part' && typing.part > 0) {
+      return body.querySelector<HTMLElement>(`[data-part-of="${typing.run}"][data-part="${typing.part}"]`);
+    }
+    return body.querySelector<HTMLElement>(`.ul-office-run[data-run="${typing.run}"]`);
+  }
+
+  /**
+   * Whether Enter made lines after this paragraph's first — divisions of it
+   * or of anything joined onto it, or paragraphs added after the last of
+   * them: the lines whose properties a join in front of them would change.
+   */
+  #madeByEnter(paragraph: number): boolean {
+    const members = [paragraph];
+    for (let at = paragraph, next = this.#partner(at); this.#joins.has(at) && next !== null; at = next, next = this.#partner(at)) {
+      members.push(next);
+    }
+    const tail = members[members.length - 1]!;
+    return (
+      [...this.#cuts.keys()].some((run) => members.includes(this.#home.get(run) ?? -1)) ||
+      this.#steps.some((step) => step.after === tail && step.text.length > 0)
+    );
+  }
+
+  /** Keeps a paragraph as it was drawn, for every redraw to start from — taken once, while it still is. */
+  #keep(index: number): void {
+    if (this.#pristine.has(index)) return;
+    const element = this.preview.body.querySelector<HTMLElement>(`[data-paragraph="${index}"]`);
+    if (element) this.#pristine.set(index, element.cloneNode(true) as HTMLElement);
+  }
+
+  /** The next paragraph of the body the plan keeps after this one — the one a join joins it with. */
+  #partner(index: number): number | null {
+    for (let i = this.#order.indexOf(index) + 1; i > 0 && i < this.#order.length; i++) {
+      if (!this.#removed.has(this.#order[i]!)) return this.#order[i]!;
+    }
+    return null;
+  }
+
+  /** The paragraph whose line this one's content is drawn in — itself, or the first of the joins it was pulled into. */
+  #headOf(index: number): number {
+    let at = index;
+    while (this.#joinedInto.has(at)) at = this.#joinedInto.get(at)!;
+    return at;
+  }
+
+  /** The last paragraph joined into the line a paragraph heads — the one whose end is that line's end. */
+  #tailOf(head: number): number {
+    let at = head;
+    for (let next = this.#partner(at); next !== null && this.#joinedInto.get(next) === at; next = this.#partner(at)) at = next;
+    return at;
   }
 
   /* ── a paragraph that is not in the file yet ─────────────────────── */
@@ -757,12 +1227,14 @@ class DocumentPreviewEditor implements EditorInstance {
       /* A paragraph Enter split takes a new one only after its last line: a
          step names a paragraph of the file, and the plan has no place between
          two lines of one. */
-      if (this.#lastPiece(index) !== paragraph) {
+      if (this.#lineEnd(index) !== paragraph) {
         return {
           refusal: t('A new paragraph can follow only the last line of a split paragraph — Ctrl+Z joins the split back.'),
         };
       }
-      return { after: index, behind: null };
+      /* And a line paragraphs were joined into ends where the last of them
+         ends — the one a new paragraph follows. */
+      return { after: this.#tailOf(index), behind: null };
     }
 
     /* A cell is the one refusal the view can answer by itself, and the only one
@@ -905,8 +1377,12 @@ class DocumentPreviewEditor implements EditorInstance {
       const index = Number(paragraph.dataset.paragraph ?? paragraph.dataset.pieceOf);
       /* Removing one line of a split paragraph would cut through the range the
          split already rewrites; the split is taken back first. */
-      if (this.#lastPiece(index) !== this.preview.body.querySelector(`[data-paragraph="${index}"]`)) {
+      if (this.#lineEnd(index) !== this.preview.body.querySelector(`[data-paragraph="${index}"]`)) {
         return { refusal: t('This paragraph was split with Enter — Ctrl+Z joins it back before it can be removed.') };
+      }
+      /* And a line joined from several would leave the join nothing to join. */
+      if (this.#joins.has(index)) {
+        return { refusal: t('This line was joined from several paragraphs — Ctrl+Z splits them apart before it can be removed.') };
       }
       if (this.#removed.has(index)) return { refusal: t('This paragraph is already removed.') };
       const refusal = seam.removalRefusalAt(index, this.#removed);
@@ -1003,9 +1479,10 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   #syncSteps(): void {
     const body = this.preview.body;
-    /* The splits first: a step following a split paragraph is drawn after
-       its last line, so the lines have to be there to be followed. */
-    this.#syncCuts();
+    /* The joins and the splits first: a step following a paragraph is drawn
+       after the last line its content went into, so the lines have to be
+       there to be followed. */
+    this.#syncLines();
     for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
 
     /* The paragraphs the plan takes away are hidden rather than dropped: the
@@ -1018,7 +1495,7 @@ class DocumentPreviewEditor implements EditorInstance {
 
     const last = new Map<number, HTMLElement>();
     this.#steps.forEach((step, position) => {
-      const anchor = last.get(step.after) ?? this.#lastPiece(step.after);
+      const anchor = last.get(step.after) ?? this.#lineEnd(step.after);
       if (!anchor) return;
 
       const element = document.createElement(anchor.tagName === 'LI' ? 'li' : 'p');
@@ -1046,9 +1523,13 @@ class DocumentPreviewEditor implements EditorInstance {
         if (sofar > 0) group.setAttribute('start', String(sofar + 1));
         else group.removeAttribute('start');
       }
+      /* A list item joined onto the line above is no longer an item: its
+         numbering went with its properties. */
       let visible = 0;
       for (const item of group.children) {
-        if (item instanceof HTMLElement && !item.classList.contains('is-removed')) visible++;
+        if (item instanceof HTMLElement && !item.classList.contains('is-removed') && !item.classList.contains('is-joined')) {
+          visible++;
+        }
       }
       counters.set(key, sofar + visible);
     }
@@ -1060,22 +1541,31 @@ class DocumentPreviewEditor implements EditorInstance {
   }
 
   /**
-   * Draws the splits onto the page.
+   * Draws the joins and the splits onto the page.
    *
    * The discipline the steps keep: rebuilt whole, because an undo can change
-   * the splits in any way at all — from the copy of each split paragraph
-   * taken before its first split, with the text the plan holds now. The
+   * them in any way at all — from the copy of each paragraph taken before it
+   * was first joined or split, with the text the plan holds now. A
    * paragraph's own element stays, since everything else is anchored to it;
-   * its content is put back and cut again, and each line after the first is
-   * a new element of the same kind — so a split heading is two headings, and
-   * a split list item two items the browser numbers as the reopened file
-   * will. The range that cuts it takes the run's formatting along, wrapper
-   * by wrapper, into the new line.
+   * its content is put back, and then moved and cut again.
+   *
+   * The joins go first, last one first: the next paragraph's content goes
+   * into the element of the one it is joined onto — so the joined line keeps
+   * that element's kind, a heading or a list item, as the paragraph keeps its
+   * properties — and its own element is hidden, emptied. Last one first, so a
+   * chain gathers from its far end into its head.
+   *
+   * The splits go after, so a split of a joined line is cut out of the line
+   * as it is drawn: each line after the first is a new element of the kind of
+   * the line it was cut from — a split heading is two headings, a split list
+   * item two items the browser numbers as the reopened file will. The range
+   * that cuts it takes the run's formatting along, wrapper by wrapper.
    */
-  #syncCuts(): void {
+  #syncLines(): void {
     const body = this.preview.body;
     const source = this.preview.source;
     for (const stale of [...body.querySelectorAll('[data-piece-of]')]) stale.remove();
+    for (const hidden of [...body.querySelectorAll('.is-joined')]) hidden.classList.remove('is-joined');
 
     for (const [index, pristine] of this.#pristine) {
       const paragraph = body.querySelector<HTMLElement>(`[data-paragraph="${index}"]`);
@@ -1085,6 +1575,17 @@ class DocumentPreviewEditor implements EditorInstance {
         const ordinal = Number(run.dataset.run);
         setRunText(run, this.#edits.get(ordinal) ?? source?.textOf(ordinal) ?? '');
       }
+    }
+
+    this.#joinedInto = new Map();
+    for (const first of [...this.#joins].sort((a, b) => b - a)) {
+      const second = this.#partner(first);
+      const into = body.querySelector<HTMLElement>(`[data-paragraph="${first}"]`);
+      const from = second === null ? null : body.querySelector<HTMLElement>(`[data-paragraph="${second}"]`);
+      if (second === null || !into || !from) continue;
+      into.append(...from.childNodes);
+      from.classList.add('is-joined');
+      this.#joinedInto.set(second, first);
     }
 
     /* In document order — which is ordinal order — so a later split in the
@@ -1129,11 +1630,16 @@ class DocumentPreviewEditor implements EditorInstance {
     }
   }
 
-  /** The element a paragraph of the file ends in: its last line, when Enter split it. */
-  #lastPiece(index: number): HTMLElement | null {
+  /**
+   * The element a paragraph of the file ends in: the last line of the lines
+   * its content is drawn in — its own, or those of the paragraph it was
+   * joined onto, split or not.
+   */
+  #lineEnd(index: number): HTMLElement | null {
     const body = this.preview.body;
-    const lines = body.querySelectorAll<HTMLElement>(`[data-piece-of="${index}"]`);
-    return lines[lines.length - 1] ?? body.querySelector<HTMLElement>(`[data-paragraph="${index}"]`);
+    const head = this.#headOf(index);
+    const lines = body.querySelectorAll<HTMLElement>(`[data-piece-of="${head}"]`);
+    return lines[lines.length - 1] ?? body.querySelector<HTMLElement>(`[data-paragraph="${head}"]`);
   }
 
   #restore(snapshot: Snapshot): void {
@@ -1142,6 +1648,7 @@ class DocumentPreviewEditor implements EditorInstance {
     this.#steps = snapshot.steps;
     this.#removed = new Set(snapshot.removed);
     this.#cuts = new Map(snapshot.cuts.map(([run, parts]) => [run, [...parts]]));
+    this.#joins = new Set(snapshot.joins);
     if (!source) return;
 
     /* Only the pieces that stand for something in the file — a piece that is
@@ -1165,7 +1672,8 @@ class DocumentPreviewEditor implements EditorInstance {
       this.#edits.size +
       this.#steps.filter((step) => step.text.length > 0).length +
       this.#removed.size +
-      [...this.#cuts.values()].reduce((sum, parts) => sum + parts.length - 1, 0);
+      [...this.#cuts.values()].reduce((sum, parts) => sum + parts.length - 1, 0) +
+      this.#joins.size;
     this.#statusEmitter.fire(
       dirty
         ? t('{words} words · {n} edits', { words: this.#words, n: changes })
@@ -1198,8 +1706,9 @@ class DocumentPreviewEditor implements EditorInstance {
     const added = this.#steps.filter((step) => step.text.length > 0);
     const removed = [...this.#removed].sort((a, b) => a - b);
     const divided: DividedPiece[] = [...this.#cuts].map(([index, parts]) => ({ index, parts }));
+    const joined = [...this.#joins].sort((a, b) => a - b);
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided));
+    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined));
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as
@@ -1305,15 +1814,16 @@ class DocumentPreviewEditor implements EditorInstance {
       },
       page: (delta) => this.#flow?.page(delta),
       seek: (fraction) => this.#flow?.seek(fraction),
-      /* A heading the plan removed is not a place in the document any more. */
+      /* A heading the plan removed is not a place in the document any more,
+         and neither is one joined onto the line above it. */
       outline: () =>
         headingOutline(this.preview.body).filter(
-          (entry) => !this.preview.body.querySelector(`#${CSS.escape(entry.id)}`)?.closest('.is-removed'),
+          (entry) => !this.preview.body.querySelector(`#${CSS.escape(entry.id)}`)?.closest('.is-removed, .is-joined'),
         ),
       goTo: (id) => {
         const target = this.preview.body.querySelector(`#${CSS.escape(id)}`);
         /* A heading the plan removed has no box to scroll to. */
-        if (target instanceof HTMLElement && !target.closest('.is-removed')) {
+        if (target instanceof HTMLElement && !target.closest('.is-removed, .is-joined')) {
           this.#flow?.scrollTo(target);
         }
       },
