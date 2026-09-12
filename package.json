@@ -33,6 +33,7 @@
     "verify:export": "node tools/verify-export.mjs",
     "verify:mermaid": "node tools/verify-mermaid.mjs",
     "verify:updates": "node tools/verify-updates.mjs",
+    "verify:updater-key": "node tools/verify-updater-key.mjs",
     "verify:clipboard": "node tools/verify-clipboard.mjs",
     "verify:crash": "node tools/verify-crash.mjs",
     "verify:search": "node tools/verify-project-search.mjs",

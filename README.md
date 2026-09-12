@@ -648,6 +648,7 @@ pnpm verify:sheets    # a 100k-row .xlsx: every row read, the grid windowed, 60 
 pnpm fidelity         # a folder of real documents, edited and checked byte for byte
 pnpm readback         # …and then opened by LibreOffice, which shares no code with us
 pnpm verify:word      # …and by Word itself, which is the reader that refuses (Windows)
+pnpm verify:updater-key # the private update key signs what the application's public key accepts
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application

@@ -93,6 +93,24 @@ updates, because each of them verifies against the public half compiled into
 the build it is running. The only way out is a release with a new key, which
 every existing installation has to be replaced by hand.
 
+Before trusting a key for the first time — and again whenever `pubkey` in
+`tauri.conf.json` changes — ask whether the two halves are actually a pair:
+
+```powershell
+pnpm verify:updater-key
+```
+
+It signs a throwaway file with the private key on this machine and verifies the
+signature against the public key the application carries, then checks that the
+same key refuses a file altered after signing. `verify-updates.mjs` names this
+as the first thing that can be wrong with a self-updating program and cannot
+check it, because the private half is not in the repository: every other part
+can be right and every installation still refuse every update, in silence,
+because the signature was made by a key the application does not trust. The two
+halves being a pair is not visible by looking at them — a public key copied
+beside the wrong private key passes every comparison and fails only on somebody
+else's machine, which is why this signs rather than compares.
+
 **Without the secret a release still happens.** The installers are built and
 attached as always; only the `.sig` files and `latest.json` are missing, so the
 program on somebody's machine simply never offers that version. A warning says
