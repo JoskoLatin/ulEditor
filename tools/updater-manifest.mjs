@@ -99,6 +99,30 @@ export function manifestFrom(input) {
   };
 }
 
+/**
+ * Where an asset's bytes are read from.
+ *
+ * `gh release view --json assets` gives each asset an `id`, and it is the
+ * GraphQL node id — `RA_kwDOT_zNdc4hYnH3` — not the numeric id the REST assets
+ * endpoint takes. Building `/repos/…/releases/assets/{id}` out of it answers
+ * 404 for every signature, and this script then reports, correctly and
+ * uselessly, that the release holds no signed artefact: the `.sig` files are
+ * all there and none of them could be read. `apiUrl` is the same asset with the
+ * numeric id already in it, so it is used rather than a path assembled here.
+ *
+ * That failure hid for two releases because the step never ran: without
+ * `TAURI_SIGNING_PRIVATE_KEY` the job takes the other branch, and the first
+ * release with a key was the first time this line was executed at all.
+ *
+ * @param {{ name?: string, apiUrl?: string }} asset
+ */
+export function assetEndpoint(asset) {
+  const url = asset?.apiUrl ?? '';
+  return /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/.test(url)
+    ? url
+    : null;
+}
+
 /* ── the command line ────────────────────────────────────────────────── */
 
 /** `gh` rather than a token and `fetch`: the release may still be a draft. */
@@ -117,11 +141,10 @@ function main() {
     /\/$/,
     '',
   );
-  const slug = repository.replace(/^https:\/\/github\.com\//, '');
 
   const release = JSON.parse(gh(['release', 'view', tag, '--json', 'assets,name,body']));
   const assets = release.assets.map((asset) => asset.name);
-  const ids = new Map(release.assets.map((asset) => [asset.name, asset.id ?? null]));
+  const endpoints = new Map(release.assets.map((asset) => [asset.name, assetEndpoint(asset)]));
 
   /* A signature is a few hundred bytes of base64, and there are at most four of
      them, so they are simply fetched one at a time. Through the API rather than
@@ -136,14 +159,11 @@ function main() {
     }
     let text = null;
     try {
-      const id = ids.get(name);
-      if (id) {
-        text = gh([
-          'api',
-          '-H',
-          'Accept: application/octet-stream',
-          `/repos/${slug}/releases/assets/${id}`,
-        ]);
+      const endpoint = endpoints.get(name);
+      if (endpoint) {
+        text = gh(['api', '-H', 'Accept: application/octet-stream', endpoint]);
+      } else {
+        console.error(`${name} has no usable asset URL — see assetEndpoint above`);
       }
     } catch (err) {
       console.error(`could not read ${name}: ${err instanceof Error ? err.message : err}`);

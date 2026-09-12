@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { manifestFrom } from './updater-manifest.mjs';
+import { assetEndpoint, manifestFrom } from './updater-manifest.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(ROOT, path), 'utf8');
@@ -272,6 +272,45 @@ check(
 check(
   'the plugin is imported dynamically, so the web bundle never holds it',
   updates.includes("await import('@tauri-apps/plugin-updater')"),
+);
+
+/* Where the signatures are read from.
+
+   Everything above tests the manifest out of signatures handed to it, which is
+   the mapping worth checking without a network — and it passed happily while
+   the release job could not read a single signature off the page. `gh` gives an
+   asset two identifiers and only one of them works on the REST endpoint, so the
+   choice between them is pinned here rather than discovered on the next
+   release. */
+const asset = {
+  name: 'ulEditor_0.5.0_x64-setup.exe.sig',
+  id: 'RA_kwDOT_zNdc4hYnH3',
+  apiUrl: 'https://api.github.com/repos/JoskoLatin/ulEditor/releases/assets/560099831',
+  url: 'https://github.com/JoskoLatin/ulEditor/releases/download/untagged-01af/x.sig',
+};
+
+check(
+  'an asset is read through the URL carrying its numeric id',
+  assetEndpoint(asset) === asset.apiUrl,
+  assetEndpoint(asset) ?? 'nothing',
+);
+
+check(
+  'the GraphQL node id is never made into a REST path',
+  !String(assetEndpoint(asset)).includes(asset.id),
+);
+
+/* The browser URL would answer a draft release with a login page, and a login
+   page is a perfectly good string — it would land in the manifest as a
+   signature and every application would refuse the update it described. */
+check(
+  'the browser download URL is not used',
+  assetEndpoint({ name: asset.name, apiUrl: asset.url }) === null,
+);
+
+check(
+  'an asset with no usable URL yields nothing rather than a guess',
+  assetEndpoint({ name: asset.name }) === null && assetEndpoint({}) === null,
 );
 
 const failed = checks.filter((c) => !c.passed);
