@@ -90,9 +90,13 @@ const {
   escapeXml,
   unescapeXml,
   writeDocx,
+  findRows,
+  rowRefusal,
+  rowShape,
 } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/docx-edit.ts')).href);
 
 const MARKER = 'ulProvjera-ČĆŽŠĐ-novi-odlomak';
+const ROW_MARKER = 'ulProvjera-ČĆŽŠĐ-novi-redak';
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -166,6 +170,31 @@ const unsplittable = [];
 /** Documents with two paragraphs joined, and the one line Word should show where two stood. */
 const joins = [];
 const unjoinable = [];
+/** Documents with a row added to a table, and where Word should find it. */
+const rows = [];
+const noTable = [];
+
+/**
+ * The tables the body holds directly — the ones Word numbers in
+ * `Document.Tables`, which does not count a table inside a cell.
+ */
+function topTables(xml) {
+  const out = [];
+  let depth = 0;
+  let start = -1;
+  const re = /<(\/?)w:tbl(?:\s[^>]*)?(\/?)>/g;
+  for (let m = re.exec(xml); m; m = re.exec(xml)) {
+    if (m[2]) continue;
+    if (m[1]) {
+      depth--;
+      if (depth === 0) out.push({ start, end: m.index + m[0].length });
+    } else {
+      if (depth === 0) start = m.index;
+      depth++;
+    }
+  }
+  return out;
+}
 
 /** Markup that is a character in Word's text and nothing in the runs' — a line holding it cannot be looked for. */
 const UNREADABLE = /<(?:[A-Za-z_][\w.-]*:)?(?:br|cr|tab|sym|fldChar|fldSimple|noBreakHyphen|softHyphen|drawing|pict|object)[\s/>]/;
@@ -298,6 +327,40 @@ for (const source of sources) {
       joins.push({ name: source.name, before, path, first: textOf(xml, first), second: textOf(xml, next), telling: telling.length > 0 });
     } else {
       unjoinable.push(source.name);
+    }
+  }
+
+  /*
+   * And a row added to a table, as Ctrl+Enter in a cell adds one. Word is
+   * asked to add the same row itself, and the row it makes has to look like
+   * the row we wrote — the comparison the join gets, over cells.
+   *
+   * The table has to be one Word's own object model will talk about cell by
+   * cell: a table of the body rather than one inside a cell, with no table
+   * inside it and no cell merged downwards, because a merged table refuses to
+   * be read row by row in Word. The row is the table's first.
+   */
+  {
+    const all = findRows(xml);
+    const numbered = topTables(xml);
+    const usable = numbered.findIndex((range, k) => {
+      const body = xml.slice(range.start, range.end);
+      if (/<w:vMerge/.test(body) || (body.match(/<w:tbl[\s>]/g) ?? []).length > 1) return false;
+      const own = all.filter((one) => one.start >= range.start && one.end <= range.end);
+      return own.length > 0 && own[0].table === range.start && rowRefusal(xml, all, own[0].index) === null && k < 12;
+    });
+    const range = usable === -1 ? null : numbered[usable];
+    const first = range ? all.find((one) => one.start >= range.start && one.end <= range.end) : null;
+    if (first) {
+      const cells = rowShape(xml, first).map((_, k) => (k === 0 ? ROW_MARKER : ''));
+      const path = join(work, `row-${rows.length}.docx`);
+      writeFileSync(
+        path,
+        Buffer.from(writeDocx(archive, runs, xml, [], { paragraphs, succession, inserts: [], rows: all, rowInserts: [{ after: first.index, cells }] })),
+      );
+      rows.push({ name: source.name, before, path, table: usable + 1, at: 1, cells: cells.length });
+    } else {
+      noTable.push(source.name);
     }
   }
 
@@ -547,6 +610,22 @@ function Props($p) {
   return @{ text = $p.Range.Text; style = [string]$p.Style.NameLocal; align = $p.Alignment; list = $p.Range.ListFormat.ListType;
     left = $p.LeftIndent; first = $p.FirstLineIndent; before = $p.SpaceBefore; after = $p.SpaceAfter }
 }
+# One row of a table, cell by cell — what it looks like, never what is in it.
+# The width asked for is the one the cell DECLARES: Cell.Width is what the
+# layout gave it, and a table set to fit its contents widens a column around
+# the text typed into the new row — which would be this check measuring its
+# own marker rather than the row.
+function RowLook($t, $n) {
+  $cells = @()
+  foreach ($c in $t.Range.Cells) {
+    if ($c.RowIndex -ne $n) { continue }
+    $p = $c.Range.Paragraphs.Item(1)
+    $cells += (@([string]$p.Style.NameLocal, [string]$p.Alignment, [string]$p.Range.ListFormat.ListType,
+      [string][math]::Round($c.PreferredWidth, 1), [string]$c.PreferredWidthType,
+      [string]$c.Shading.BackgroundPatternColor, [string]$c.Range.Bold, [string]$c.ColumnIndex) -join '/')
+  }
+  return ($cells -join ' | ')
+}
 $out = @()
 foreach ($file in $files) {
   $row = @{ path = $file.path }
@@ -556,6 +635,27 @@ foreach ($file in $files) {
     $row.tables = $doc.Tables.Count
     $row.sections = $doc.Sections.Count
     $row.text = $doc.Content.Text
+    $counts = @()
+    foreach ($t in $doc.Tables) { try { $counts += $t.Rows.Count } catch { $counts += -1 } }
+    $row.tableRows = ($counts -join ',')
+    if ($file.rowTable -ne $null) {
+      # The row we wrote, as Word sees it.
+      try { $row.ourRow = RowLook $doc.Tables.Item($file.rowTable) ($file.rowAt + 1) } catch { $row.rowError = $_.Exception.Message }
+    }
+    if ($file.insertAfter -ne $null) {
+      # And Word adding the same row itself, in memory, never saved.
+      try {
+        $doc.TrackRevisions = $false
+        $t = $doc.Tables.Item($file.rowTable)
+        $selection = $doc.Windows.Item(1).Selection
+        foreach ($c in $t.Range.Cells) { if ($c.RowIndex -eq $file.insertAfter) { $c.Select(); break } }
+        $selection.InsertRowsBelow(1)
+        $row.wordRow = RowLook $t ($file.insertAfter + 1)
+        $row.wordRows = $t.Rows.Count
+      } catch {
+        $row.rowError = $_.Exception.Message
+      }
+    }
     if ($file.editors) {
       $counts = @()
       foreach ($para in $doc.Paragraphs) { $counts += $para.Range.Editors.Count }
@@ -608,6 +708,7 @@ const asking = [
     ...removals.flatMap((one) => [one.before, one.cut]),
     ...splits.flatMap((one) => [one.before, one.path]),
     ...joins.flatMap((one) => [one.before, one.path]),
+    ...rows.flatMap((one) => [one.before, one.path]),
     ...why.flatMap((one) => [one.originalPath, one.cutPath, ...(one.oursPath ? [one.oursPath] : [])]),
   ]),
 ].map((path) => {
@@ -616,11 +717,17 @@ const asking = [
   const joining = joins.find((one) => one.before === path) ?? why.find((one) => one.joinSecond !== undefined && one.originalPath === path);
   const joined = joins.find((one) => one.path === path);
   const described = why.find((one) => one.describe !== undefined && (one.cutPath === path || one.oursPath === path));
+  /* And the same for a row: Word adds one itself in the original, and
+     describes ours in the file we wrote. */
+  const adding = rows.find((one) => one.before === path);
+  const added = rows.find((one) => one.path === path);
   return {
     path,
     editors: why.some((one) => one.editors && (one.originalPath === path || one.cutPath === path)),
     ...(joining ? { joinFirst: joining.first ?? joining.joinFirst, joinSecond: joining.second ?? joining.joinSecond } : {}),
     ...(joined ? { describe: joined.first + joined.second } : described ? { describe: described.describe } : {}),
+    ...(adding ? { rowTable: adding.table, insertAfter: adding.at } : {}),
+    ...(added ? { rowTable: added.table, rowAt: added.at } : {}),
   };
 });
 
@@ -887,6 +994,72 @@ check(
 );
 for (const line of joinUnlike.slice(0, 8)) console.log(`  · ${line}`);
 
+/* ── a row added to a table ──────────────────────────────────────────── */
+
+const rowRefused = [];
+const rowOpened = [];
+const rowCount = [];
+const rowMissing = [];
+const rowUnlike = [];
+const rowUnseen = [];
+
+for (const one of rows) {
+  const before = said(one.before);
+  const after = said(one.path);
+  if (before.error || before.paragraphs === undefined) continue; // counted above
+  if (after.error || after.paragraphs === undefined) {
+    rowRefused.push(`${one.name}: ${(after.error ?? 'no answer').slice(0, 120)}`);
+    continue;
+  }
+  /* The control: Word has to have added the same row itself in the original,
+     and to have described the row it made. Where it could not, the file is
+     named rather than counted as a pass. */
+  if (!before.wordRow || before.rowError) {
+    rowUnseen.push(`${one.name}: ${(before.rowError ?? 'Word added no row').slice(0, 90)}`);
+    continue;
+  }
+  rowOpened.push(one.name);
+
+  const was = (before.tableRows ?? '').split(',');
+  const now = (after.tableRows ?? '').split(',');
+  if (after.tables !== before.tables || now.length !== was.length || Number(now[one.table - 1]) !== Number(was[one.table - 1]) + 1) {
+    rowCount.push(`${one.name}: table ${one.table} ${was[one.table - 1]} → ${now[one.table - 1]} rows, ${before.tables} → ${after.tables} tables`);
+  }
+  if (!(after.text ?? '').includes(ROW_MARKER)) rowMissing.push(one.name);
+  /* And the row Word made from the same row, cell by cell, against ours. */
+  if (after.ourRow !== before.wordRow) {
+    rowUnlike.push(`${one.name}: Word ${JSON.stringify(before.wordRow)} / ours ${JSON.stringify(after.ourRow ?? after.rowError)}`);
+  }
+}
+
+check(
+  'Word opens every file we added a row to',
+  rows.length > 0 && rowRefused.length === 0,
+  rows.length ? `${rowOpened.length}/${rows.length} asked` : 'no document offered a table Word can be asked about',
+);
+for (const line of rowRefused) console.log(`  · ${line}`);
+for (const line of rowUnseen) console.log(`  · not counted: ${line}`);
+
+check(
+  'and shows one row more in that table, and the same tables as before',
+  rowOpened.length > 0 && rowCount.length === 0,
+  rowCount.length ? rowCount.slice(0, 4).join(' · ') : `${rowOpened.length} tables one row longer`,
+);
+for (const line of rowCount) console.log(`  · ${line}`);
+
+check(
+  'and the text typed into the new row is in it',
+  rowOpened.length > 0 && rowMissing.length === 0,
+  rowMissing.length ? rowMissing.slice(0, 4).join(' · ') : `${rowOpened.length}/${rowOpened.length}`,
+);
+
+check(
+  'and Word, adding the same row itself, gives its cells the same style, alignment, list, width, shading and weight',
+  rowOpened.length > 0 && rowUnlike.length === 0,
+  `${rowOpened.length - rowUnlike.length}/${rowOpened.length}`,
+);
+for (const line of rowUnlike.slice(0, 8)) console.log(`  · ${line}`);
+
 /* ── why the refusals exist ─────────────────────────────────────────── */
 
 const [tables, ending, permission, link, sectioned, emptied, joinedSection] = why;
@@ -998,6 +1171,10 @@ if (unjoinable.length > 0) {
 if (nowhere.length > 0) {
   console.log(`\n${nowhere.length} have no paragraph a new one may follow — every one of theirs is in a table:`);
   for (const name of nowhere) console.log(`  · ${name}`);
+}
+if (noTable.length > 0) {
+  console.log(`\n${noTable.length} offer no table Word can be asked about cell by cell:`);
+  for (const name of noTable) console.log(`  · ${name}`);
 }
 
 rmSync(work, { recursive: true, force: true });

@@ -95,6 +95,10 @@ const {
   applyRunEdits,
   runText,
   writeDocx,
+  findRows,
+  rowRefusal,
+  rowShape,
+  anchorRow,
 } = await load('packages/editor-office/src/docx-edit.ts');
 const { findCells, applyCellEdits, writeXlsx } = await load(
   'packages/editor-office/src/xlsx-edit.ts',
@@ -279,6 +283,32 @@ function edited(format, bytes) {
       ? { first: lineOf(pair[0]), second: lineOf(pair[1]), whole: `${rawOf(pair[0])}${rawOf(pair[1])}`.trim() }
       : null;
 
+    /*
+     * And a row added to a table, in the same save as everything else. It is
+     * asked about on the same terms as the new paragraph: the marker goes into
+     * the first cell of a new row under a row whose own first cell this reader
+     * showed, so a marker that does not come back is a fact about the write
+     * rather than about the filter's idea of a table.
+     */
+    const tableRows = findRows(xml);
+    const cellOf = (row) => {
+      const closes = xml.indexOf('</w:tc>', row.start);
+      return closes === -1 ? '' : rawOf({ start: row.start, end: closes }).trim();
+    };
+    const under = tableRows.find(
+      (row) => rowRefusal(xml, tableRows, row.index) === null && /^[^&<>]{5,}$/.test(cellOf(row)),
+    );
+    /* As many cells as the row the new one is copied from has, which is not
+       always the row named: a merge carries the new row past its last row. */
+    const rowInserts = under
+      ? [
+          {
+            after: under.index,
+            cells: rowShape(xml, anchorRow(xml, tableRows, under)).map((_, k) => (k === 0 ? `${MARKER}r` : '')),
+          },
+        ]
+      : [];
+
     return {
       bytes: writeDocx(archive, runs, xml, edits, {
         paragraphs,
@@ -287,9 +317,15 @@ function edited(format, bytes) {
         removals: going ? [going.index] : [],
         cuts,
         joins: pair ? [pair[0].index] : [],
+        rows: tableRows,
+        rowInserts,
       }),
-      typed: [...edits.map((e) => e.text), ...inserts.map((one) => one.text)],
-      was: anchor ? [...was, was[anchor.at]] : was,
+      typed: [
+        ...edits.map((e) => e.text),
+        ...inserts.map((one) => one.text),
+        ...rowInserts.map((one) => one.cells[0]),
+      ],
+      was: [...(anchor ? [...was, was[anchor.at]] : was), ...(under ? [cellOf(under)] : [])],
       gone: going ? lineOf(going) : null,
       split,
       joined,
@@ -494,6 +530,7 @@ const added = [];
 const taken = [];
 const halved = [];
 const merged = [];
+const rowed = [];
 const broke = [];
 
 for (const file of sampled) {
@@ -609,6 +646,9 @@ for (const file of sampled) {
      that quietly never asked about one would be reporting the easy half and
      calling it the whole. */
   if (asked.some((one) => one.typed.endsWith(`${MARKER}p`))) added.push(name);
+  /* And the same for a row that was not in the table, which no scanner of
+     ours can confirm either. */
+  if (asked.some((one) => one.typed.endsWith(`${MARKER}r`))) rowed.push(name);
 
   const missing = asked.filter((one) => !text.includes(one.typed));
   if (missing.length === 0) showed.push(name);
@@ -655,6 +695,12 @@ check(
   'and two paragraphs joined are one line when it is reopened',
   merged.length > 0 && !broke.some((b) => b.includes('joined paragraphs are not one line')),
   `${merged.length} documents had two joined and were asked about it`,
+);
+
+check(
+  'and a row that was not in the table is there when it is reopened',
+  rowed.length > 0,
+  `${rowed.length} documents were given one and asked about it`,
 );
 
 if (invisible.length > 0) {

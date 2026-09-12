@@ -44,7 +44,14 @@ import {
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
-import { renderDocx, type DividedPiece, type NewParagraph, type ParagraphSeam, type Preview } from './docx.js';
+import {
+  renderDocx,
+  type DividedPiece,
+  type NewParagraph,
+  type NewTableRow,
+  type ParagraphSeam,
+  type Preview,
+} from './docx.js';
 import { applyCellEdits, findCells, typedKind, writeXlsx } from './xlsx-edit.js';
 import { readText, type Archive } from './ooxml.js';
 import { readOds, readOdt } from './odf.js';
@@ -154,6 +161,8 @@ interface Snapshot {
   cuts: [number, string[]][];
   /** Ordinals of the file's own paragraphs joined with the next one the plan keeps. */
   joins: number[];
+  /** The rows the plan adds to the file's tables, each after a row of the file. */
+  rows: NewTableRow[];
 }
 
 /**
@@ -164,7 +173,8 @@ interface Snapshot {
 type Typing =
   | { kind: 'run'; run: number }
   | { kind: 'part'; run: number; part: number }
-  | { kind: 'step'; step: NewParagraph };
+  | { kind: 'step'; step: NewParagraph }
+  | { kind: 'cell'; row: NewTableRow; cell: number };
 
 /** Where the caret goes once a join is written down — looked for again after the redraw. */
 interface Caret {
@@ -311,6 +321,15 @@ class DocumentPreviewEditor implements EditorInstance {
    * properties the joined paragraph keeps, as Word keeps them.
    */
   #joins = new Set<number>();
+  /**
+   * The rows the plan adds to the file's tables, each after a row of the
+   * file — Ctrl+Enter in a cell, which is what that key means one unit up.
+   *
+   * The same kind of plan once more: the table in the file is untouched until
+   * a save, the row is drawn where the save will put it, and what is typed
+   * into its cells lives here rather than in the file's runs.
+   */
+  #rows: NewTableRow[] = [];
   /** The joins the last redraw made: second paragraph → the one it was joined onto. */
   #joinedInto = new Map<number, number>();
   /**
@@ -371,7 +390,13 @@ class DocumentPreviewEditor implements EditorInstance {
       [...this.#removed].sort((a, b) => a - b),
       [...this.#cuts].sort((a, b) => a[0] - b[0]),
       [...this.#joins].sort((a, b) => a - b),
+      this.#written(),
     ]);
+  }
+
+  /** The rows of the plan a save would actually write — the ones somebody typed into. */
+  #written(): NewTableRow[] {
+    return this.#rows.filter((row) => row.cells.some((cell) => cell.length > 0));
   }
 
   /**
@@ -389,6 +414,7 @@ class DocumentPreviewEditor implements EditorInstance {
       removed: [...this.#removed].sort((a, b) => a - b),
       cuts: [...this.#cuts].map(([run, parts]): [number, string[]] => [run, [...parts]]),
       joins: [...this.#joins].sort((a, b) => a - b),
+      rows: this.#written().map((row) => ({ after: row.after, cells: [...row.cells] })),
     };
   }
 
@@ -405,9 +431,13 @@ class DocumentPreviewEditor implements EditorInstance {
            the outline and the search are the same either way. */
         this.preview.source
           ? this.preview.source.paragraphs
-            ? t(
-                'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in. Layout and styles stay as they are.',
-              )
+            ? this.preview.source.rows
+              ? t(
+                  'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below. Layout and styles stay as they are.',
+                )
+              : t(
+                  'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in. Layout and styles stay as they are.',
+                )
             : t('Text can be retyped — double-click it. Layout and styles stay as they are.')
           : t('This document is shown, not edited — it opens for reading and searching.'),
       ),
@@ -495,6 +525,13 @@ class DocumentPreviewEditor implements EditorInstance {
    * every node of the plan under it.
    */
   #typingOf(target: HTMLElement): Typing | null {
+    const cell = target.closest<HTMLElement>('[data-cell]');
+    const inRow = cell?.closest<HTMLElement>('[data-new-row]');
+    if (cell && inRow) {
+      const row = this.#rows[Number(inRow.dataset.newRow)];
+      return row ? { kind: 'cell', row, cell: Number(cell.dataset.cell) } : null;
+    }
+
     const added = target.closest<HTMLElement>('[data-new]');
     if (added) {
       const step = this.#steps[Number(added.dataset.new)];
@@ -542,6 +579,7 @@ class DocumentPreviewEditor implements EditorInstance {
       const after = before.includes('\u00A0') ? typed : typed.replace(/\u00A0/g, ' ');
 
       if (typing.kind === 'step') this.#recordStep(typing.step, after);
+      else if (typing.kind === 'cell') this.#recordCell(typing.row, typing.cell, after);
       else if (typing.kind === 'part') this.#recordPart(typing.run, typing.part, after, target);
       else if (after !== before) this.#record(typing.run, after);
     };
@@ -602,7 +640,9 @@ class DocumentPreviewEditor implements EditorInstance {
     const seam = this.preview.source?.paragraphs;
     const offset = caretOffset(target);
     const block = target.closest<HTMLElement>('[data-paragraph], [data-piece-of], [data-new]');
-    if (!seam || offset === null || !block) return false;
+    /* A cell of a row the plan added is not a line of the document: it is one
+       cell of one row, and the keys keep the meaning the browser gives them. */
+    if (typing.kind === 'cell' || !seam || offset === null || !block) return false;
 
     const text = target.textContent ?? '';
     const before = offset > 0 || holdsBesides(block, target, 'before');
@@ -628,7 +668,7 @@ class DocumentPreviewEditor implements EditorInstance {
       return true;
     }
 
-    if (typing.kind !== 'step') {
+    if (typing.kind === 'run' || typing.kind === 'part') {
       const refusal = seam.divisionRefusalAt(typing.run);
       if (refusal) {
         this.#statusEmitter.fire(refusal);
@@ -668,7 +708,7 @@ class DocumentPreviewEditor implements EditorInstance {
     }
 
     const source = this.preview.source;
-    if (!source) return;
+    if (!source || typing.kind === 'cell') return;
     const run = typing.run;
     const parts = this.#cuts.get(run) ?? [this.#edits.get(run) ?? source.textOf(run)];
     const part = typing.kind === 'part' ? typing.part : 0;
@@ -770,7 +810,8 @@ class DocumentPreviewEditor implements EditorInstance {
     const seam = this.preview.source?.paragraphs;
     const offset = caretOffset(target);
     const line = target.closest<HTMLElement>('[data-paragraph], [data-piece-of], [data-new]');
-    if (!seam || offset === null || !line) return false;
+    // A cell is not a line: there is no neighbouring paragraph for it to join.
+    if (typing.kind === 'cell' || !seam || offset === null || !line) return false;
     const typed = target.textContent ?? '';
     const atEdge =
       side === 'start'
@@ -1092,6 +1133,12 @@ class DocumentPreviewEditor implements EditorInstance {
   /** The element a piece of text is drawn in now — found again after a redraw. */
   #elementOf(typing: Typing): HTMLElement | null {
     const body = this.preview.body;
+    if (typing.kind === 'cell') {
+      const position = this.#rows.indexOf(typing.row);
+      return position === -1
+        ? null
+        : body.querySelector<HTMLElement>(`[data-new-row="${position}"] [data-cell="${typing.cell}"] .ul-office-run`);
+    }
     if (typing.kind === 'step') {
       const position = this.#steps.indexOf(typing.step);
       return position === -1 ? null : body.querySelector<HTMLElement>(`[data-new="${position}"] .ul-office-run`);
@@ -1151,16 +1198,19 @@ class DocumentPreviewEditor implements EditorInstance {
   /* ── a paragraph that is not in the file yet ─────────────────────── */
 
   /**
-   * Adds a paragraph after the one the cursor is in.
+   * Adds a paragraph after the one the cursor is in — or, in a table, a row
+   * below the row it is in, which is the same thing one unit up.
    *
-   * The command is offered only where the seam offers it, and refuses out loud
-   * rather than quietly: a table cell is a different problem — the grid around
-   * it declares row and column counts this program does not maintain — and a
-   * command that appears to do nothing teaches people the program is unreliable.
+   * A cell used to be the refusal here: the grid around it declares row and
+   * column counts, and adding a paragraph to one says nothing about them. A
+   * row says everything about them, so it is the change a table can take —
+   * and the refusals that are left are still spoken out loud rather than
+   * swallowed, because a command that appears to do nothing teaches people the
+   * program is unreliable.
    */
   insertParagraph(): void {
     const source = this.preview.source;
-    if (!source?.paragraphs) return;
+    if (!source?.paragraphs && !source?.rows) return;
 
     /* Read where the cursor is BEFORE anything moves, because the two lines
        after this move a great deal. */
@@ -1186,6 +1236,30 @@ class DocumentPreviewEditor implements EditorInstance {
     }
 
     /*
+     * In a table the same key means the same thing one unit up: a row below
+     * the row the cursor is in, with a cell for every cell that row has. It
+     * is drawn where the save will put it — below the last row a merged cell
+     * reaches, which is where Word puts it.
+     */
+    if ('row' in at) {
+      const position = this.#positionForRow(at);
+      const row: NewTableRow = { after: at.row, cells: at.shape.map(() => '') };
+      this.#rows.splice(position, 0, row);
+      this.#syncSteps();
+      this.#emitDirty();
+
+      const fresh = this.preview.body.querySelector<HTMLElement>(
+        `[data-new-row="${position}"] [data-cell="0"] .ul-office-run`,
+      );
+      if (fresh) {
+        this.#flow?.scrollTo(fresh);
+        this.#openForTyping(fresh, { kind: 'cell', row, cell: 0 });
+      }
+      this.#statusEmitter.fire(t('Row added — type into its cells; Ctrl+Z takes it back.'));
+      return;
+    }
+
+    /*
      * No undo entry yet, deliberately. An empty paragraph is not a change to the
      * file, and one that is abandoned without a word typed into it disappears on
      * its own — an undo step that restores the same state is a keystroke that
@@ -1206,12 +1280,26 @@ class DocumentPreviewEditor implements EditorInstance {
     }
   }
 
-  /** Where a new paragraph would go, or why it would not. */
-  #insertionPoint(): { after: number; behind: NewParagraph | null } | { refusal: string } {
+  /** Where a new paragraph — or, in a table, a new row — would go, or why it would not. */
+  #insertionPoint():
+    | { after: number; behind: NewParagraph | null }
+    | { row: number; shape: number[]; behind: NewTableRow | null }
+    | { refusal: string } {
     const body = this.preview.body;
     const anchor = document.getSelection()?.anchorNode ?? null;
     const inside = anchor && body.contains(anchor) ? anchor : null;
     const element = inside instanceof Element ? inside : (inside?.parentElement ?? null);
+
+    /* Inside a row that is itself only a plan: the new one follows the same
+       row of the file, and sits immediately behind this one. */
+    const inRow = element?.closest<HTMLElement>('[data-new-row]');
+    if (inRow) {
+      const seam = this.preview.source?.rows;
+      const planned = this.#rows[Number(inRow.dataset.newRow)];
+      if (seam && planned) {
+        return { row: planned.after, shape: seam.shapeAt(planned.after), behind: planned };
+      }
+    }
 
     /* Inside a paragraph that is itself only a plan: the new one follows the
        same paragraph of the file, and sits immediately behind this one. */
@@ -1237,14 +1325,23 @@ class DocumentPreviewEditor implements EditorInstance {
       return { after: this.#tailOf(index), behind: null };
     }
 
-    /* A cell is the one refusal the view can answer by itself, and the only one
-       the real corpus ever produces — every nested paragraph in those 49
-       documents is in a `w:tc`. Asking the seam covers the rest, and reaching
-       it needs an editable run to ask about. */
-    if (element?.closest('td, th')) {
-      return {
-        refusal: t('A new paragraph can only go into the body of the document — not into a table cell or a text box.'),
-      };
+    /* In a cell, the unit is the row. The cursor is in a paragraph of a table
+       and there is no place in the body for a new one — but there is a place
+       in the table for a new row, which is what the same key has always meant
+       one unit up. A cell the seam has no row for, or a table it will not add
+       to, answers with the reason. */
+    const cell = element?.closest<HTMLElement>('td, th');
+    if (cell) {
+      const seam = this.preview.source?.rows;
+      const marked = cell.closest<HTMLElement>('tr')?.dataset.row;
+      if (!seam || marked === undefined) {
+        return {
+          refusal: t('A new paragraph can only go into the body of the document — not into a table cell or a text box.'),
+        };
+      }
+      const index = Number(marked);
+      const refusal = seam.refusalAt(index);
+      return refusal ? { refusal } : { row: index, shape: seam.shapeAt(index), behind: null };
     }
 
     const run = element?.closest<HTMLElement>('.ul-office-run[data-run]');
@@ -1270,6 +1367,16 @@ class DocumentPreviewEditor implements EditorInstance {
     return first === -1 ? this.#steps.length : first;
   }
 
+  /** And the same place in the list of rows, by the same rule. */
+  #positionForRow(at: { row: number; behind: NewTableRow | null }): number {
+    if (at.behind) {
+      const found = this.#rows.indexOf(at.behind);
+      if (found !== -1) return found + 1;
+    }
+    const first = this.#rows.findIndex((row) => row.after === at.row);
+    return first === -1 ? this.#rows.length : first;
+  }
+
   /* ── a paragraph the file will no longer have ────────────────────── */
 
   /**
@@ -1285,7 +1392,10 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   removeParagraph(): void {
     const seam = this.preview.source?.paragraphs;
-    if (!seam) return;
+    /* A document whose every paragraph is inside a table has no paragraph
+       seam and still has rows: a row the plan added can be taken back there
+       too, and that is the only thing this command can do in it. */
+    if (!seam && !this.preview.source?.rows) return;
 
     /* Read where the cursor is BEFORE the blur below moves everything. */
     const at = this.#removalPoint(seam);
@@ -1298,6 +1408,28 @@ class DocumentPreviewEditor implements EditorInstance {
 
     if ('refusal' in at) {
       this.#statusEmitter.fire(at.refusal);
+      return;
+    }
+
+    if ('tableRow' in at) {
+      /* The blur above may have taken the row itself — one nobody typed into
+         goes the moment its caret leaves — so it is looked up only now. */
+      const position = this.#rows.indexOf(at.tableRow);
+      if (position === -1) {
+        this.#afterRemoval(null);
+        return;
+      }
+      const worth = at.tableRow.cells.some((cell) => cell.length > 0);
+      if (worth) {
+        this.#undoStack.push(this.#capture());
+        this.#redoStack = [];
+      }
+      this.#rows.splice(position, 1);
+      this.#syncSteps();
+      this.#emitDirty();
+      this.#afterRemoval(null);
+      // After `#emitDirty`, which writes the ordinary status line over anything before it.
+      if (worth) this.#statusEmitter.fire(t('Row removed — Ctrl+Z brings it back.'));
       return;
     }
 
@@ -1352,15 +1484,24 @@ class DocumentPreviewEditor implements EditorInstance {
 
   /** The paragraph the cursor is in: a step of the plan, an ordinal of the file, or a refusal. */
   #removalPoint(
-    seam: ParagraphSeam,
+    seam: ParagraphSeam | undefined,
   ):
     | { step: NewParagraph; element: HTMLElement }
+    | { tableRow: NewTableRow; element: HTMLElement }
     | { paragraph: number; element: HTMLElement }
     | { refusal: string } {
     const body = this.preview.body;
     const anchor = document.getSelection()?.anchorNode ?? null;
     const inside = anchor && body.contains(anchor) ? anchor : null;
     const element = inside instanceof Element ? inside : (inside?.parentElement ?? null);
+
+    /* A row only the plan has simply leaves the plan. A row the file already
+       has is a different question, and the sentence below answers it. */
+    const inRow = element?.closest<HTMLElement>('[data-new-row]');
+    if (inRow) {
+      const row = this.#rows[Number(inRow.dataset.newRow)];
+      if (row) return { tableRow: row, element: inRow };
+    }
 
     const added = element?.closest<HTMLElement>('[data-new]');
     if (added) {
@@ -1372,7 +1513,7 @@ class DocumentPreviewEditor implements EditorInstance {
        it when clicked — measured, not assumed, because a third of the real
        corpus's body paragraphs are blank and they are exactly what people
        want gone. */
-    const paragraph = element?.closest<HTMLElement>('[data-paragraph], [data-piece-of]');
+    const paragraph = seam ? element?.closest<HTMLElement>('[data-paragraph], [data-piece-of]') : null;
     if (paragraph) {
       const index = Number(paragraph.dataset.paragraph ?? paragraph.dataset.pieceOf);
       /* Removing one line of a split paragraph would cut through the range the
@@ -1385,7 +1526,9 @@ class DocumentPreviewEditor implements EditorInstance {
         return { refusal: t('This line was joined from several paragraphs — Ctrl+Z splits them apart before it can be removed.') };
       }
       if (this.#removed.has(index)) return { refusal: t('This paragraph is already removed.') };
-      const refusal = seam.removalRefusalAt(index, this.#removed);
+      /* `seam` is what marked this paragraph in the first place — the guard
+         above only narrows the type. */
+      const refusal = seam!.removalRefusalAt(index, this.#removed);
       return refusal ? { refusal } : { paragraph: index, element: paragraph };
     }
 
@@ -1469,6 +1612,41 @@ class DocumentPreviewEditor implements EditorInstance {
   }
 
   /**
+   * What was typed into one cell of a row the plan added.
+   *
+   * The row is passed by identity rather than by the position it held when
+   * the typing began, for the reason a step is: an undo between those two
+   * moments may have rebuilt the list.
+   *
+   * A row nobody typed into anywhere goes, the rule a new paragraph keeps —
+   * and for a stronger reason here. An added row written with every cell
+   * empty would be a row of cells with no text in any of them, and a cell
+   * with no text has nothing to double-click: the person would be left a row
+   * they could never type into again.
+   */
+  #recordCell(row: NewTableRow, cell: number, text: string): void {
+    const position = this.#rows.indexOf(row);
+    if (position === -1 || row.cells[cell] === undefined) return;
+
+    if (row.cells[cell] === text) {
+      if (text.length > 0 || row.cells.some((one) => one.length > 0)) return;
+      /* Nothing was ever typed into it, so there is nothing to undo back to —
+         it leaves as quietly as it arrived. */
+      this.#rows.splice(position, 1);
+      this.#syncSteps();
+      this.#emitDirty();
+      return;
+    }
+
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    row.cells[cell] = text;
+    if (row.cells.every((one) => one.length === 0)) this.#rows.splice(position, 1);
+    this.#syncSteps();
+    this.#emitDirty();
+  }
+
+  /**
    * Draws the plan onto the page.
    *
    * Rebuilt whole rather than patched, because an undo can change the list in
@@ -1483,6 +1661,7 @@ class DocumentPreviewEditor implements EditorInstance {
        after the last line its content went into, so the lines have to be
        there to be followed. */
     this.#syncLines();
+    this.#syncRows();
     for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
 
     /* The paragraphs the plan takes away are hidden rather than dropped: the
@@ -1538,6 +1717,55 @@ class DocumentPreviewEditor implements EditorInstance {
        grew and did not say so has a last page nobody can reach — and one that
        shrank, a last page past its own end. */
     this.#flow?.relayout();
+  }
+
+  /**
+   * Draws the rows the plan adds onto the page.
+   *
+   * The discipline the steps keep, once more: every planned row is removed
+   * and drawn again, because an undo can change the list in any way at all.
+   * A row goes **after the row the save will put it after** — below the last
+   * row a merged cell reaches, which the seam answers and Word agrees with —
+   * and carries a cell for every cell of that row, as wide across the grid as
+   * that row's cells are. What a person sees is the row the file will hold.
+   */
+  #syncRows(): void {
+    const body = this.preview.body;
+    const seam = this.preview.source?.rows;
+    for (const stale of [...body.querySelectorAll('[data-new-row]')]) stale.remove();
+    if (!seam) return;
+
+    /** The last row drawn after each source row, so several keep their order. */
+    const last = new Map<number, HTMLElement>();
+    this.#rows.forEach((plan, position) => {
+      const anchor = last.get(plan.after) ?? body.querySelector<HTMLElement>(`tr[data-row="${seam.anchorAt(plan.after)}"]`);
+      if (!anchor) return;
+
+      const shape = seam.shapeAt(plan.after);
+      const row = document.createElement('tr');
+      row.dataset.newRow = String(position);
+
+      plan.cells.forEach((text, k) => {
+        /* A row added under a heading row is a heading row too — Word copies
+           the `w:tblHeader` — so the cell is drawn as the one above it is. */
+        const above = anchor.children[k];
+        const cell = document.createElement(above?.tagName === 'TH' ? 'th' : 'td');
+        cell.dataset.cell = String(k);
+        const span = shape[k] ?? 1;
+        if (span > 1) cell.colSpan = span;
+
+        const line = document.createElement('p');
+        const piece = document.createElement('span');
+        piece.className = 'ul-office-run is-new';
+        piece.textContent = text;
+        line.appendChild(piece);
+        cell.appendChild(line);
+        row.appendChild(cell);
+      });
+
+      anchor.after(row);
+      last.set(plan.after, row);
+    });
   }
 
   /**
@@ -1649,6 +1877,7 @@ class DocumentPreviewEditor implements EditorInstance {
     this.#removed = new Set(snapshot.removed);
     this.#cuts = new Map(snapshot.cuts.map(([run, parts]) => [run, [...parts]]));
     this.#joins = new Set(snapshot.joins);
+    this.#rows = snapshot.rows;
     if (!source) return;
 
     /* Only the pieces that stand for something in the file — a piece that is
@@ -1673,7 +1902,8 @@ class DocumentPreviewEditor implements EditorInstance {
       this.#steps.filter((step) => step.text.length > 0).length +
       this.#removed.size +
       [...this.#cuts.values()].reduce((sum, parts) => sum + parts.length - 1, 0) +
-      this.#joins.size;
+      this.#joins.size +
+      this.#written().length;
     this.#statusEmitter.fire(
       dirty
         ? t('{words} words · {n} edits', { words: this.#words, n: changes })
@@ -1707,8 +1937,9 @@ class DocumentPreviewEditor implements EditorInstance {
     const removed = [...this.#removed].sort((a, b) => a - b);
     const divided: DividedPiece[] = [...this.#cuts].map(([index, parts]) => ({ index, parts }));
     const joined = [...this.#joins].sort((a, b) => a - b);
+    const rows = this.#written();
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined));
+    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined, rows));
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as

@@ -659,7 +659,7 @@ export function paragraphMarkup(
     }
 
     // A `w:pPr` emptied of everything is noise; leave it out entirely.
-    if (/^<[^>]*>\s*<\/[^>]*>$/.test(props)) props = '';
+    if (emptied(props)) props = '';
   }
 
   const rPr = runProperties(xml, lastRun);
@@ -903,18 +903,18 @@ function directChild(xml: string, paragraph: ParagraphSpan, run: RunSpan): boole
 }
 
 /**
- * The paragraph properties a new piece of a split paragraph carries.
+ * A `w:pPr` copied byte for byte, less what must not be copied — a section
+ * break, and the tracked-change marks that would claim a reviewer made a
+ * paragraph they never saw.
  *
- * The source's own `w:pPr`, byte for byte, less what must not be copied —
- * the same two rules `paragraphMarkup` keeps: a section break is refused
- * before this is reached, and a tracked-change mark would claim a reviewer
- * made a paragraph they never saw. The style is **not** resolved through
- * `w:next`, and that is the difference between a split and a new paragraph:
- * Word keeps both halves of a heading divided mid-sentence a heading.
+ * The style is **not** resolved through `w:next`, and that is the difference
+ * between copying properties and writing a new paragraph after another: Word
+ * keeps both halves of a heading divided mid-sentence a heading, and gives a
+ * row added under a cell styled `Heading 1` a cell styled `Heading 1` —
+ * measured, both.
  */
-function splitProps(xml: string, paragraph: ParagraphSpan): string {
-  if (!paragraph.props) return '';
-  const outer = paragraph.props;
+function inheritedProps(xml: string, outer: { start: number; end: number } | null): string {
+  if (!outer) return '';
   const cuts: { start: number; end: number }[] = [];
   for (const child of childRanges(xml, outer)) {
     const local = localName(child.name);
@@ -933,6 +933,16 @@ function splitProps(xml: string, paragraph: ParagraphSpan): string {
     props = props.slice(0, cut.start - outer.start) + props.slice(cut.end - outer.start);
   }
   return props;
+}
+
+/** The paragraph properties a new piece of a split paragraph carries: its own. */
+function splitProps(xml: string, paragraph: ParagraphSpan): string {
+  return inheritedProps(xml, paragraph.props);
+}
+
+/** An element written with nothing inside it — `<w:trPr></w:trPr>` or `<w:trPr/>`, which is noise either way. */
+function emptied(markup: string): boolean {
+  return markup.length === 0 || /^<[^>]*\/>$/.test(markup) || /^<[^>]*>\s*<\/[^>]*>$/.test(markup);
 }
 
 /**
@@ -1157,6 +1167,269 @@ export function continuedRun(xml: string, paragraph: ParagraphSpan, runs: RunSpa
   return lastRunOf(xml, paragraph, runs);
 }
 
+/* ── a new row in a table ────────────────────────────────────────────── */
+
+export interface RowSpan {
+  /** The ordinal among all `w:tr` in the part, in document order. */
+  index: number;
+  start: number;
+  end: number;
+  /** Where the table this row belongs to begins; the rows of one table share it. */
+  table: number;
+  /** Why no new row may follow this one; `null` when one may. */
+  refusal: string | null;
+}
+
+/**
+ * What may stand between a row and the body of the document.
+ *
+ * A table inside a table is still a table: its grid is declared by its own
+ * `w:tblGrid`, its rows hold its own cells, and Word adds a row to it exactly
+ * as it does to any other — measured. A table inside a text box, a header, a
+ * footnote or a content control is a different question, each with its own
+ * answer, and none of them is this one.
+ */
+const ROW_REGION = new Set(['tbl', 'tr', 'tc']);
+
+/**
+ * Finds every `w:tr` in the part, in document order.
+ *
+ * The ordinals count **every** row, the rows of nested tables included, so an
+ * index is a stable name for a row for the life of the document — the same
+ * promise `findParagraphs` makes, and for the same reason: a row added after
+ * the wrong one is worse than no row at all.
+ */
+export function findRows(xml: string): RowSpan[] {
+  const rows: RowSpan[] = [];
+  /** Every open element, so nesting is read rather than guessed. */
+  const stack: { local: string; start: number }[] = [];
+  /** The rows currently open; the innermost is last. */
+  const open: RowSpan[] = [];
+
+  const begin = (start: number, end: number): RowSpan => {
+    const parent = stack[stack.length - 1];
+    /* The row's own table, and then out through whatever holds it: only
+       tables, rows and cells may stand between it and the body. */
+    let where = '';
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const local = stack[i]!.local;
+      if (ROW_REGION.has(local)) continue;
+      where = local;
+      break;
+    }
+    const span: RowSpan = {
+      index: rows.length,
+      start,
+      end,
+      table: parent?.local === 'tbl' ? parent.start : -1,
+      refusal:
+        parent?.local !== 'tbl'
+          ? 'the row is not a row of a table'
+          : where === 'body'
+            ? null
+            : 'the table is not in the body of the document',
+    };
+    rows.push(span);
+    return span;
+  };
+
+  for (const tag of scanTags(xml)) {
+    const local = localName(tag.name);
+
+    if (tag.closing) {
+      const popped = stack.pop();
+      if (popped?.local === 'tr') {
+        const span = open.pop();
+        if (span) span.end = tag.end;
+      }
+      continue;
+    }
+
+    if (tag.selfClosing) {
+      /* `<w:tr/>` is a row with no cells at all. It is counted, because the
+         ordinals have to match the view's, and refused by the rule that
+         refuses any row with no cells to copy. */
+      if (local === 'tr') begin(tag.start, tag.end);
+      continue;
+    }
+
+    if (local === 'tr') open.push(begin(tag.start, tag.end));
+    stack.push({ local, start: tag.start });
+  }
+
+  return rows;
+}
+
+/** The cells of a row — its own `w:tc` children, never a nested table's. */
+function cellsOf(xml: string, row: RowSpan): Tag[] {
+  return childRanges(xml, row).filter((child) => localName(child.name) === 'tc');
+}
+
+/** Whether a cell carries on a vertical merge begun in a row above it. */
+function continuesMerge(xml: string, cell: Tag): boolean {
+  const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+  if (!props) return false;
+  const merge = childRanges(xml, props).find((child) => localName(child.name) === 'vMerge');
+  return merge !== undefined && (tagAttr(xml, merge, 'val') ?? 'continue') !== 'restart';
+}
+
+/** The next row of the same table; `null` at its end. A nested table's rows are not its own. */
+function nextRow(rows: RowSpan[], row: RowSpan): RowSpan | null {
+  for (let i = row.index + 1; i < rows.length; i++) {
+    const one = rows[i]!;
+    if (one.table === row.table) return one;
+    if (one.start > row.end) return null;
+  }
+  return null;
+}
+
+/**
+ * The row a new one actually follows.
+ *
+ * Word puts it **below the last row a vertical merge covers**, not inside the
+ * merge: measured over COM, a row asked for below a cell merged down two rows
+ * arrives below both of them, and the merge is left exactly as it was. That
+ * is not Word being clever about tables — a merged cell genuinely stands in
+ * every row it spans, so "below this row" means below the last of them. A new
+ * row written between the two halves of a merge would leave a `w:vMerge`
+ * carrying on from a row that no longer starts one.
+ */
+export function anchorRow(xml: string, rows: RowSpan[], row: RowSpan): RowSpan {
+  let at = row;
+  for (let next = nextRow(rows, at); next !== null; next = nextRow(rows, at)) {
+    if (!cellsOf(xml, next).some((cell) => continuesMerge(xml, cell))) break;
+    at = next;
+  }
+  return at;
+}
+
+/** Children of a `w:trPr` that must not be carried into a new row — a row Word records as inserted or deleted. */
+const ROW_NOT_INHERITED = new Set(['ins', 'del', 'trPrChange']);
+
+/**
+ * And of a `w:tcPr`: the vertical merge, which the new cell is not part of —
+ * measured, Word writes the cell below a merged one unmerged — and the marks
+ * recording a change to the cell this one is only a copy of.
+ */
+const CELL_NOT_INHERITED = new Set(['vMerge', 'tcPrChange', 'cellIns', 'cellDel', 'cellMerge']);
+
+/** Whether a tracked change is recorded on a row's own mark. */
+function rowRecorded(xml: string, row: RowSpan): boolean {
+  const props = childRanges(xml, row).find((child) => localName(child.name) === 'trPr');
+  return props !== undefined && childRanges(xml, props).some((mark) => ROW_NOT_INHERITED.has(localName(mark.name)));
+}
+
+/**
+ * Why no new row may follow this one; `null` when one may.
+ *
+ * - **Only a row of a table in the body**, nested tables included — see
+ *   `ROW_REGION`.
+ * - **Not a row with no cells**, which has no structure to copy.
+ * - **Not a row a tracked change is recorded on.** `w:trPr > w:ins` is how
+ *   Word records a row somebody inserted with track changes on; copying it
+ *   would claim that reviewer inserted this one too.
+ *
+ * Asked of the row the new one would follow as well as of the row the cursor
+ * is in, because a merge makes those two different rows.
+ */
+export function rowRefusal(xml: string, rows: RowSpan[], index: number): string | null {
+  const span = rows.find((one) => one.index === index);
+  if (!span) return 'there is no such row';
+  if (span.refusal) return span.refusal;
+  const anchor = anchorRow(xml, rows, span);
+  if (anchor.refusal) return anchor.refusal;
+  if (cellsOf(xml, anchor).length === 0) return 'the row has no cells';
+  if (rowRecorded(xml, span) || rowRecorded(xml, anchor)) return 'a tracked change is recorded on the row';
+  return null;
+}
+
+/** The `w:rPr` of a paragraph mark — the formatting Word gives text typed into that paragraph. */
+function markProperties(xml: string, props: { start: number; end: number } | null): string {
+  if (!props) return '';
+  const first = childRanges(xml, props).find((child) => localName(child.name) === 'rPr');
+  return first ? cutChildren(xml, first, TRACKED) : '';
+}
+
+/** How wide each cell of a row is, in columns of the table's grid. */
+export function rowShape(xml: string, row: RowSpan): number[] {
+  return cellsOf(xml, row).map((cell) => {
+    const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+    const span = props ? childRanges(xml, props).find((child) => localName(child.name) === 'gridSpan') : undefined;
+    return span ? Math.max(1, Number(tagAttr(xml, span, 'val') ?? 1) || 1) : 1;
+  });
+}
+
+/** One cell of a new row: the cell above it, emptied, with whatever was typed into it. */
+function cellMarkup(xml: string, cell: Tag, text: string, w: string): string {
+  const inside = childRanges(xml, cell);
+  const props = inside.find((child) => localName(child.name) === 'tcPr');
+  const first = inside.find((child) => localName(child.name) === 'p');
+
+  const tcPr = props ? cutChildren(xml, props, CELL_NOT_INHERITED) : '';
+  /* The cell's own first paragraph — its own, never one inside a table the
+     cell holds, which belongs to a grid of its own. */
+  const own = first ? (childRanges(xml, first).find((child) => localName(child.name) === 'pPr') ?? null) : null;
+  const pPr = inheritedProps(xml, own);
+  /* Text typed into the new cell takes the paragraph mark's formatting, which
+     is what Word gives it — measured: a row added under a bold heading row
+     writes `<w:r><w:rPr><w:b/></w:rPr>` around what is typed there. */
+  const body =
+    text.length > 0
+      ? `<${w}r>${markProperties(xml, own)}<${w}t xml:space="preserve">${escapeXml(text)}</${w}t></${w}r>`
+      : '';
+  const paragraph = emptied(pPr) && body === '' ? `<${w}p/>` : `<${w}p>${emptied(pPr) ? '' : pPr}${body}</${w}p>`;
+  return `<${w}tc>${emptied(tcPr) ? '' : tcPr}${paragraph}</${w}tc>`;
+}
+
+/**
+ * The markup for one new row: **the row above it, emptied of its content.**
+ *
+ * That sentence is Word's, not a guess. Asked over COM on rows Word had made
+ * itself — a heading row, a row with a fixed height that may not break across
+ * pages, a row of cells with a shading, a width, a horizontal merge, a
+ * centred paragraph, a list, a `Heading 1` style — Word's own inserted row
+ * carries every one of them and nothing else: the `w:tblPrEx`, the `w:trPr`,
+ * each cell's `w:tcPr`, and each cell's first paragraph's `w:pPr`, each byte
+ * for byte. What it does not carry is content: no runs, no bookmarks, no
+ * drawings, and no vertical merge. A cell whose paragraph had no properties
+ * of its own is written `<w:p/>`, which is what Word writes there.
+ */
+export function rowMarkup(xml: string, row: RowSpan, cells: readonly string[]): string {
+  const w = prefixOf(xml, row);
+  let out = '';
+  let at = 0;
+
+  for (const child of childRanges(xml, row)) {
+    const local = localName(child.name);
+    if (local === 'tblPrEx') {
+      out += xml.slice(child.start, child.end);
+      continue;
+    }
+    if (local === 'trPr') {
+      const props = cutChildren(xml, child, ROW_NOT_INHERITED);
+      if (!emptied(props)) out += props;
+      continue;
+    }
+    if (local === 'tc') out += cellMarkup(xml, child, cells[at++] ?? '', w);
+  }
+
+  return `<${w}tr>${out}</${w}tr>`;
+}
+
+/**
+ * A row that is not in the file yet.
+ *
+ * The same kind of plan as `ParagraphInsert`, over a different unit: `after`
+ * names a row of the **original** part and stays valid for the life of the
+ * document, and `cells` is what was typed into each cell of the new row, in
+ * order. A row nobody typed into anywhere is a row nobody added — the rule a
+ * new paragraph keeps, for the same reason.
+ */
+export interface TableRowInsert {
+  after: number;
+  cells: string[];
+}
+
 /** Everything a save needs to know about the paragraphs the plan reshapes. */
 export interface Reshaping {
   paragraphs: ParagraphSpan[];
@@ -1172,11 +1445,15 @@ export interface Reshaping {
    * paragraph keeping the first one's properties, as Word keeps them.
    */
   joins?: number[];
+  /** The rows of the original part, for the new rows to name and be copied from. */
+  rows?: RowSpan[];
+  /** The rows the plan adds to a table, each after a row of the original part. */
+  rowInserts?: TableRowInsert[];
 }
 
 /**
- * Every rewrite, every new paragraph, every removal, every division and every
- * join, written into the original in one pass.
+ * Every rewrite, every new paragraph, every removal, every division, every
+ * join and every new table row, written into the original in one pass.
  *
  * Back to front, so no offset moves under the next operation. Two new
  * paragraphs after the same one keep the order they were added in: at an equal
@@ -1441,6 +1718,31 @@ export function applyDocxEdits(
      * no closing tag of its own to finish the line with, so where the chain
      * ends on one, one is written.
      */
+    /*
+     * A new row in a table, written after the row it follows and nowhere
+     * else — the one operation here that touches no byte of anything that
+     * was already in the file. Re-judged against the original, because a
+     * caller of this function is not obliged to have asked first, and a row
+     * nobody typed a single character into is not written at all: a new
+     * paragraph keeps that rule for its own reason, and a row keeps it for
+     * this one — an empty row of empty cells has nothing in it a person
+     * could ever put a cursor in again.
+     */
+    const rows = reshaping.rows ?? [];
+    (reshaping.rowInserts ?? []).forEach((insert, order) => {
+      if (insert.cells.every((text) => text.length === 0)) return;
+      if (rowRefusal(xml, rows, insert.after) !== null) return;
+      const anchor = anchorRow(xml, rows, rows.find((one) => one.index === insert.after)!);
+      operations.push({
+        at: anchor.end,
+        end: anchor.end,
+        text: rowMarkup(xml, anchor, insert.cells),
+        /* Two rows added after one row keep the order they were added in:
+           the later step is written first, which leaves it second. */
+        order,
+      });
+    });
+
     const firsts = new Set(joins.map((join) => join.first.index));
     for (const join of joins) {
       const from = insideOf(xml, join.first);

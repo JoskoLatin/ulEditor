@@ -23,6 +23,10 @@
  * And Backspace at the start of the line the split left, which joins the two
  * back into one paragraph — saved, on disk as one, and one when reopened.
  *
+ * And the same key one unit up: `Ctrl+Enter` with the caret in a table cell,
+ * which adds a row below that row — typed into cell by cell, saved, one row
+ * more on disk, and there when the document is opened again.
+ *
  * Both formats go through the same sequence because they go through the same
  * editor: one class drives them, and what a save costs is settled behind
  * `Preview.source`. A run of this is therefore also the check that the seam
@@ -581,6 +585,75 @@ try {
       say('and they are one paragraph when the document is opened again'),
       (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).count()) === 1 &&
         (await page.locator('.ul-office-doc [data-paragraph]', { hasText: HEAD }).evaluate((el) => el.textContent)) === `${HEAD}${TAIL}`,
+    );
+
+    /* ── a row in a table ────────────────────────────────────────────── */
+
+    /*
+     * The same key one unit up: Ctrl+Enter with the caret in a cell adds a row
+     * below that row, typed into cell by cell and saved with the caret still
+     * in the last of them.
+     */
+    const ROW = 'ODS — čćžšđ';
+    const rowsBefore = (strFromU8(unzipSync(await readFile(document.path))[document.part]).match(/<w:tr[\s>]/g) ?? []).length;
+    await page.locator('.ul-office-doc table .ul-office-run', { hasText: 'XLSX' }).first().dblclick();
+    await page.keyboard.press('Control+Enter');
+    await page.waitForTimeout(300);
+    const planned = page.locator('.ul-office-doc [data-new-row]');
+    check(
+      say('Ctrl+Enter in a cell adds a row below the one the caret is in'),
+      (await planned.count()) === 1 && (await planned.locator('td').count()) === 2,
+      `${await planned.count()} rows, ${await planned.locator('td').count()} cells`,
+    );
+    await page.keyboard.type(ROW);
+    await planned.locator('.ul-office-run').nth(1).dblclick();
+    await page.keyboard.type('3');
+    check(
+      say('every cell of it can be typed into'),
+      (await planned.evaluate((el) => el.textContent)) === `${ROW}3`,
+      await planned.evaluate((el) => el.textContent),
+    );
+
+    await page.keyboard.press('Control+S');
+    let rowSaved = true;
+    try {
+      await page.waitForFunction(() => document.querySelectorAll('.tab[data-dirty="true"]').length === 0, { timeout: 30000 });
+    } catch {
+      rowSaved = false;
+    }
+    check(say('the row was saved, with the caret still in its cell'), rowSaved);
+
+    const rowFile = unzipSync(await readFile(document.path));
+    const rowPart = strFromU8(rowFile[document.part]);
+    check(
+      say('on disk: exactly one row more'),
+      (rowPart.match(/<w:tr[\s>]/g) ?? []).length === rowsBefore + 1,
+      `${rowsBefore} → ${(rowPart.match(/<w:tr[\s>]/g) ?? []).length}`,
+    );
+    check(
+      say('holding what was typed into its cells, below the row the caret was in'),
+      /<w:t xml:space="preserve">ODS — čćžšđ<\/w:t>/.test(rowPart) && rowPart.indexOf(ROW) > rowPart.indexOf('XLSX'),
+    );
+    const rowDrift = document.otherParts.filter((path) => {
+      const a = document.before[path];
+      const b = rowFile[path];
+      return !b || a.length !== b.length || a.some((byte, i) => byte !== b[i]);
+    });
+    check(
+      say('adding a row touched no other part of the file'),
+      rowDrift.length === 0,
+      rowDrift.join(', ') || `${document.otherParts.length} parts unchanged`,
+    );
+
+    await page.locator('.tab .close').first().click();
+    await page.waitForTimeout(400);
+    await open(document.file);
+    const reopenedRows = page.locator('.ul-office-doc table tr');
+    check(
+      say('and the table has it when the document is opened again'),
+      (await reopenedRows.count()) === rowsBefore + 1 &&
+        (await reopenedRows.last().evaluate((el) => el.textContent)) === `${ROW}3`,
+      `${await reopenedRows.count()} rows · ${await reopenedRows.last().evaluate((el) => el.textContent)}`,
     );
 
     /*

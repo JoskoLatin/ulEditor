@@ -28,19 +28,24 @@ import {
   type Relationships,
 } from './ooxml.js';
 import {
+  anchorRow,
   continuedRun,
   findParagraphs,
+  findRows,
   findRuns,
   joinRefusal,
   paragraphOfRun,
   propertiesAlike,
   readStyleSuccession,
   removalRefusal,
+  rowRefusal,
+  rowShape,
   runText,
   showsNothing,
   splitRefusal,
   writeDocx,
   type ParagraphSpan,
+  type RowSpan,
   type RunSpan,
   type Succession,
 } from './docx-edit.js';
@@ -105,6 +110,19 @@ export interface DividedPiece {
 }
 
 /**
+ * A row that is not in the file's table yet, as the editor holds it.
+ *
+ * `after` is the ordinal the view marked a row with — the same one `data-row`
+ * carries — and `cells` is what was typed into each cell of the new row, one
+ * for every cell the row it follows has. A row nobody typed into anywhere is
+ * never written, the rule a new paragraph keeps.
+ */
+export interface NewTableRow {
+  after: number;
+  cells: string[];
+}
+
+/**
  * What every in-place text editor here has in common, and no more than that.
  *
  * A Word document is rewritten a `w:r` at a time and an OpenDocument text a
@@ -136,6 +154,8 @@ export interface PreviewSource {
     /* Paragraphs joined with the next one the plan keeps, by the ordinals the
        view marked them with. */
     joined?: number[],
+    /* Rows added to a table, each after a row the view marked. */
+    rows?: NewTableRow[],
   ): Uint8Array;
 
   /**
@@ -148,6 +168,34 @@ export interface PreviewSource {
    * command that quietly does nothing.
    */
   paragraphs?: ParagraphSeam;
+
+  /** And the same for the rows of a table; absent means this format has no answer for them. */
+  rows?: TableRowSeam;
+}
+
+export interface TableRowSeam {
+  /**
+   * Why no new row may follow this one; `null` when one may — a sentence for
+   * a person to read, as every other refusal here is.
+   */
+  refusalAt(row: number): string | null;
+
+  /**
+   * The row a new one would actually follow.
+   *
+   * Not always the row asked about: a cell merged down the table stands in
+   * every row it spans, so a row added below it goes below the last of them,
+   * which is where Word puts it. The view draws the new row there, so what a
+   * person sees is where the file will have it.
+   */
+  anchorAt(row: number): number;
+
+  /**
+   * How wide each cell of a new row after this one would be, in columns of
+   * the table's grid — so the view can draw the row the file will hold, with
+   * the same cells across the same columns.
+   */
+  shapeAt(row: number): number[];
 }
 
 export interface ParagraphSeam {
@@ -255,6 +303,15 @@ interface Context {
   paraIndex: Map<Element, number>;
   /** The paragraphs a new one may follow; empty when the two counts disagree. */
   insertable: Set<number>;
+  /** The ordinal of each `w:tr`, the same one `findRows` counts them by. */
+  rowIndex: Map<Element, number>;
+  /**
+   * The rows the view may name — all of them, or none when the two counts
+   * disagree. Unlike the paragraphs, a row that may not take a new one is
+   * marked too: the ordinal is how the seam is asked **why**, and a reason is
+   * better than a command that appears to do nothing.
+   */
+  markedRows: Set<number>;
 }
 
 /** A single `w:r` — the carrier of its own formatting. */
@@ -426,6 +483,9 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
 
   for (const rowNode of children(node, 'tr')) {
     const row = document.createElement('tr');
+    /* The ordinal a new row names, on the row itself. */
+    const index = ctx.rowIndex.get(rowNode);
+    if (index !== undefined && ctx.markedRows.has(index)) row.dataset.row = String(index);
     const header = child(child(rowNode, 'trPr') ?? rowNode, 'tblHeader') !== null;
     let column = 0;
 
@@ -489,15 +549,19 @@ export function renderDocx(bytes: Uint8Array): Preview {
   const xml = readText(archive, 'word/document.xml') ?? '';
   const runs = findRuns(xml);
   const paragraphs = findParagraphs(xml);
+  const rows = findRows(xml);
   const succession = readStyleSuccession(readText(archive, 'word/styles.xml'));
 
   const runIndex = new Map<Element, number>();
   const paraIndex = new Map<Element, number>();
+  const rowIndex = new Map<Element, number>();
   let seen = 0;
   let seenParagraphs = 0;
+  let seenRows = 0;
   for (const el of doc.querySelectorAll('*')) {
     if (el.localName === 'r') runIndex.set(el, seen++);
     else if (el.localName === 'p') paraIndex.set(el, seenParagraphs++);
+    else if (el.localName === 'tr') rowIndex.set(el, seenRows++);
   }
 
   const ctx: Context = {
@@ -519,6 +583,11 @@ export function renderDocx(bytes: Uint8Array): Preview {
       seenParagraphs === paragraphs.length
         ? new Set(paragraphs.filter((span) => !span.refusal).map((span) => span.index))
         : new Set(),
+    rowIndex,
+    /* And the same guard once more: a row is named only when the view and the
+       raw scan counted the same rows, because a row added after the wrong one
+       would land in another table entirely. */
+    markedRows: seenRows === rows.length ? new Set(rows.map((span) => span.index)) : new Set(),
   };
 
   const ordered = readNumbering(archive);
@@ -661,7 +730,7 @@ export function renderDocx(bytes: Uint8Array): Preview {
        gives, rather than a promise of editing that has no target. */
     source:
       ctx.editable.size > 0
-        ? docxSource(archive, xml, runs, paragraphs, succession, ctx.insertable)
+        ? docxSource(archive, xml, runs, paragraphs, rows, succession, ctx.insertable, ctx.markedRows)
         : undefined,
   };
 }
@@ -680,15 +749,17 @@ function docxSource(
   xml: string,
   runs: RunSpan[],
   paragraphs: ParagraphSpan[],
+  rows: RowSpan[],
   succession: Succession,
   insertable: Set<number>,
+  markedRows: Set<number>,
 ): PreviewSource {
   return {
     textOf: (index) => {
       const run = runs[index];
       return run ? runText(xml, run) : '';
     },
-    write: (edits, added, removed, divided, joined) =>
+    write: (edits, added, removed, divided, joined, newRows) =>
       writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
@@ -696,6 +767,8 @@ function docxSource(
         removals: removed,
         cuts: (divided ?? []).map((one) => ({ run: one.index, parts: one.parts })),
         joins: joined,
+        rows,
+        rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
       }),
 
     /* Offered only when the view and the raw scan agreed on how many paragraphs
@@ -797,6 +870,32 @@ function docxSource(
             continuedRunAt: (paragraph) => {
               const span = paragraphs.find((one) => one.index === paragraph);
               return span ? (continuedRun(xml, span, runs)?.index ?? null) : null;
+            },
+          }
+        : undefined,
+
+    /* Offered only when the view and the raw scan counted the same rows —
+       the guard the runs and the paragraphs get, for the same reason. */
+    rows:
+      markedRows.size > 0
+        ? {
+            refusalAt: (row) => {
+              const why = rowRefusal(xml, rows, row);
+              if (why === null) return null;
+              if (why === 'there is no such row') return t('Put the cursor in a row of a table first.');
+              if (why === 'the row has no cells') return t('This row has no cells for a new row to be made from.');
+              if (why === 'a tracked change is recorded on the row') {
+                return t('A tracked change is recorded on this row — a row copied from it would claim the same reviewer made it.');
+              }
+              return t('A new row can only go into a table in the body of the document — not into one in a header, a text box or a content control.');
+            },
+            anchorAt: (row) => {
+              const span = rows.find((one) => one.index === row);
+              return span ? anchorRow(xml, rows, span).index : row;
+            },
+            shapeAt: (row) => {
+              const span = rows.find((one) => one.index === row);
+              return span ? rowShape(xml, anchorRow(xml, rows, span)) : [];
             },
           }
         : undefined,

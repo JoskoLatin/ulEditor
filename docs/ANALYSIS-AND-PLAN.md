@@ -367,13 +367,13 @@ auto-update has no meaning without a signature to check.
 ### Phase 2 — Office (months 4–10)
 
 The project's biggest risk, which is why it comes only once the shell stands and
-contributors exist. State as of 11 September 2026 — it started early, and neither
+contributors exist. State as of 12 September 2026 — it started early, and neither
 of the two engines it was designed around has been taken.
 
 | Item | State |
 |---|---|
 | `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
-| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, Enter splits one where the caret stands, and Backspace joins two back into one: the changes this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"** and **"Backspace at the start of a line"** below). What still does: a row in a table |
+| `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, Enter splits one where the caret stands, Backspace joins two back into one, and Ctrl+Enter in a cell adds a row to the table: every change this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"**, **"Backspace at the start of a line"** and **"A row in a table"** below). What is left of phase 2 for documents is a merged row, which changes a grid rather than adding to it |
 | **A cell that is not in the file** | **not a hole, and measured rather than argued.** `applyCellEdits` will write a `<c>` into a row that has none and a whole `<row>` into a sheet that has none, which raises the obvious worry: does an edit land outside the `<dimension ref>` the sheet declares, leaving it stale? It cannot. The grid a person can type into is derived from the cells that exist, never from `<dimension>`, so it is a subset of the used range — and over 19 real worksheets, **none** has a grid reaching past its declared dimension (six declare none at all, which is legal). A merged range is not reachable either: `renderSheet` skips covered cells, so there is nothing to double-click |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |
 | **Fidelity harness** | **done** — [tools/fidelity.mjs](../tools/fidelity.mjs), 604 real documents at the last run, none failing. Not the instrument the plan named: nothing here re-lays-out what it opened, so pictures are not compared. What is measured is the promise actually made — every other part of the archive back byte for byte, the file reopening, the ordinals still meaning the same text, and nothing arriving as mojibake |
@@ -386,6 +386,8 @@ of the two engines it was designed around has been taken.
 | **A hundred thousand rows** | **done** — the section 7 budget this plan set before a line of the editor was written, *"scrolling through a 100k-row XLSX at 60 fps"*, unmet by a hard `MAX_ROWS = 5000` and an O(n) DOM-dump renderer underneath it. A till's own six-month receipt analysis has 10 831 rows and opened with more than half of them missing. The reader is now a streaming scanner instead of `DOMParser` — 100 000 rows read in 3.3–3.9 s where the old one took 13.7 s and 579 MB *to keep 5 000* — and the grid draws a window of a few thousand cells regardless of where in the sheet it stands, wheel-scrolling at a measured 16.7 ms median against the plan's own 16.7 ms frame. [tools/verify-sheet-scale.mjs](../tools/verify-sheet-scale.mjs) |
 | **Enter in the middle of a sentence** | **done** — the run the caret is in divided, its formatting on both halves, and every run after it carried into the new paragraph byte for byte; at the end of what is written, a new paragraph with the style `w:next` hands on, as Word does. The same plan again, undoable after a save. Exact byte identity on 43 of 49 real documents (the rest have nothing that may be split, and are named); fourteen broken builds of the writer each fail it; Word opens 11 of 11 with one paragraph more and the line divided where the cut fell, LibreOffice 38 of 38. Refused, and bought from Word by hand: a run inside a link (Word will not open the file), a section-ending paragraph (one section more), a field's result run. [tools/verify-docx-split.mjs](../tools/verify-docx-split.mjs) |
 | **Backspace at the start of a line** | **done** — and Delete at the end of one: two paragraphs joined, the boundary between them the only bytes that change. The joined paragraph keeps the first one's properties unless the first shows nothing, where the empty one is removed instead — both halves of that rule measured with Word over COM, "nothing" included. Exact byte identity on 43 of 49 real documents, 25 broken builds of the writer each failing it; Word opens 11 of 11 with one paragraph fewer, and **joining the same two paragraphs itself gives the same style, alignment, list, indents and spacing** in 11 of 11. In the editor, one key at a line's edge means four things — a division taken back, two added lines made one, added text continuing the piece above it, two paragraphs of the file joined — and 24 broken builds of the editor each fail the browser check that tells them apart. [tools/verify-docx-join.mjs](../tools/verify-docx-join.mjs), [tools/verify-docx-lines.mjs](../tools/verify-docx-lines.mjs) |
+
+| **A row in a table** | **done** — `Ctrl+Enter` with the cursor in a cell, the same key that adds a paragraph everywhere else, one unit up. The new row is the row above it emptied — the table property exceptions, the row properties, every cell's properties and every cell's first paragraph's properties byte for byte, no content and no vertical merge — which is what Word's own inserted row is, measured over COM on tables Word made: a heading row that repeats, a row that may not break across pages, cells shaded, widened, merged across columns, centred, bulleted, styled. The style is not resolved through `w:next`, unlike a new paragraph's, and text typed into a cell takes the paragraph mark's own formatting, which is what Word gives it. A row asked for below a cell merged downwards lands below the last row that merge reaches, where Word puts it. Word's own rows written again in 10 of 10; 228 rows across 35 tables in the real corpus may take one, each document byte-identical outside it; Word opens 4 of 4 with one row more in that table and its own added row matches ours cell for cell; LibreOffice shows it in 4. [tools/verify-docx-rows.mjs](../tools/verify-docx-rows.mjs), [tools/verify-docx-table.mjs](../tools/verify-docx-table.mjs) |
 
 **An independent reader was the missing instrument, and building it took an
 afternoon.** Everything the fidelity harness proves about a save, it proved with
@@ -605,6 +607,25 @@ character short of the line's end joining anyway, a part the typing had just
 taken away being merged a second time, a join the tab never called unsaved.
 Each was a case the check had not thought to ask, and each is asked now.
 
+**A row was the first change to something other than the text, and the same
+method answered it.** Word was asked what a new row looks like, on tables Word
+had made itself, and its answer was the row above with the content taken out —
+properties copied at three levels and nothing else. Two of the answers were
+worth the asking. A cell styled `Heading 1` gives a cell styled `Heading 1`,
+where a new *paragraph* after a heading is body text: a row is copied, not
+succeeded, and a program that had reasoned from the paragraph rule would have
+got it wrong. And a row asked for below a cell merged downwards arrives below
+the last row that merge reaches — Word does not put a row inside a merge, and
+neither can we: a `w:vMerge` carrying on from a row that no longer starts one
+is not a table. The comparison with Word found one fault, and it was in the
+instrument: the first version compared `Cell.Width`, which is what the layout
+gave the cell, so a table set to fit its contents widened a column around the
+marker text and reported a difference this program had not made. Asking for
+the width the cell *declares* is the question that was meant. What the editor
+had to add is a place to type: a new row is drawn with a box in every cell,
+because a row of cells with nothing in them is a row nobody can put a cursor
+in — which is also why a row nobody typed into is never written.
+
 **Why neither engine was taken.** Both were chosen to make documents editable,
 and byte-range editing turned out to make a stronger promise than either could:
 what is not touched is not rewritten — not re-serialised, not reflowed, not
@@ -612,9 +633,10 @@ re-kerned — so styles, numbering, images and metadata come back byte for byte
 rather than approximately. A re-serialising editor cannot claim that, and the
 harness would have nothing to measure. They were expected to become necessary
 at the point where the unit of change stops being a run or a cell; a paragraph
-added, taken away, split and joined turned out not to need them, and what is
-left — a row in a table, a merged row, a recalculated total — is what phase 2
-has left to do.
+added, taken away, split and joined turned out not to need them, and neither
+did a row added to a table — the unit changed twice without either engine.
+What is left — a merged row, a recalculated total — is what phase 2 has left
+to do, and both change a grid rather than adding to one.
 
 Output: **v0.5**
 
