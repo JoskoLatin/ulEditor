@@ -168,6 +168,19 @@ export interface EditorInstance {
   removeParagraph?(): void;
   canRemoveParagraph?(): boolean;
 
+  /**
+   * Merges the table cells somebody selected into one.
+   *
+   * The same double contract once more, and one difference that matters: this
+   * is the first command here whose subject is a **selection** rather than a
+   * cursor. The shell still asks only the coarse question — has this document
+   * any answer for the rows of a table — and the editor answers the fine one
+   * out loud: which cells those are, whether they are of one row, whether they
+   * are next to each other in the file rather than merely on the screen.
+   */
+  mergeCells?(): void;
+  canMergeCells?(): boolean;
+
   readonly onDirtyChange: Event<boolean>;
   /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */
   readonly onStatusChange: Event<string>;

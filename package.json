@@ -48,6 +48,7 @@
     "verify:join": "node tools/verify-docx-join.mjs",
     "verify:rows": "node tools/verify-docx-rows.mjs",
     "verify:merge": "node tools/verify-docx-merge.mjs",
+    "verify:cells": "node tools/verify-docx-cells.mjs",
     "verify:lines": "node tools/verify-docx-lines.mjs",
     "verify:table": "node tools/verify-docx-table.mjs",
     "verify:word": "node tools/verify-docx-word.mjs",

@@ -34,6 +34,7 @@ import {
   findRows,
   findRuns,
   joinRefusal,
+  mergeRefusal,
   paragraphOfRun,
   propertiesAlike,
   readStyleSuccession,
@@ -123,6 +124,21 @@ export interface NewTableRow {
 }
 
 /**
+ * A run of cells of one row, merged across into a single cell, as the editor
+ * holds it before a save.
+ *
+ * `row` is the ordinal `data-row` carries and `from` the ordinal `data-tc`
+ * does — counted over every `w:tc` the row has, continuations of a vertical
+ * merge included, which is not the cell's position on the screen. `count` is
+ * how many cells the run covers, the first included.
+ */
+export interface MergedCells {
+  row: number;
+  from: number;
+  count: number;
+}
+
+/**
  * What every in-place text editor here has in common, and no more than that.
  *
  * A Word document is rewritten a `w:r` at a time and an OpenDocument text a
@@ -156,6 +172,8 @@ export interface PreviewSource {
     joined?: number[],
     /* Rows added to a table, each after a row the view marked. */
     rows?: NewTableRow[],
+    /* Runs of cells merged across into one, each in a row the view marked. */
+    merges?: MergedCells[],
   ): Uint8Array;
 
   /**
@@ -196,6 +214,16 @@ export interface TableRowSeam {
    * the same cells across the same columns.
    */
   shapeAt(row: number): number[];
+
+  /**
+   * Why these cells may not be merged into one; `null` when they may — a
+   * sentence for a person to read, as every other refusal here is.
+   *
+   * `from` and `count` are in the ordinals `data-tc` carries, so a cell the
+   * view never drew — one continuing a vertical merge — still counts, and a
+   * run that reaches across one is refused rather than quietly swallowing it.
+   */
+  mergeRefusalAt(row: number, from: number, count: number): string | null;
 }
 
 export interface ParagraphSeam {
@@ -488,8 +516,22 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
     if (index !== undefined && ctx.markedRows.has(index)) row.dataset.row = String(index);
     const header = child(child(rowNode, 'trPr') ?? rowNode, 'tblHeader') !== null;
     let column = 0;
+    /*
+     * The ordinal a merge names a cell by, counted over **every** `w:tc` the
+     * row has — a cell continuing a vertical merge included, because that is
+     * what `cellsOf` counts and what `CellMerge.from` means.
+     *
+     * It is deliberately not the cell's position in the DOM and not `column`.
+     * A continuation is drawn by the row above and gets no element here at
+     * all, so the two cells either side of one are adjacent on the screen and
+     * two apart in the file; and `column` counts grid columns, which a
+     * `w:gridSpan` advances by more than one. Either number would name a
+     * different cell than the one somebody pointed at.
+     */
+    let ordinal = 0;
 
     for (const cellNode of children(rowNode, 'tc')) {
+      const at = ordinal++;
       const props = child(cellNode, 'tcPr');
       const span = attrNum(child(props ?? cellNode, 'gridSpan'), 'val') ?? 1;
       const merge = child(props ?? cellNode, 'vMerge');
@@ -504,6 +546,14 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
 
       const cell = document.createElement(header ? 'th' : 'td');
       if (span > 1) cell.colSpan = span;
+      /* Only in a row the view and the raw scan agree about, which is the row
+         that carries `data-row`: a cell nobody can name a row for is a cell no
+         merge can name either. The span goes with it so a redraw can put the
+         cell back the way the file has it, however the plan has widened it. */
+      if (row.dataset.row !== undefined) {
+        cell.dataset.tc = String(at);
+        cell.dataset.span = String(span);
+      }
 
       for (const inner of [...cellNode.children]) {
         if (inner.localName === 'p') {
@@ -759,7 +809,7 @@ function docxSource(
       const run = runs[index];
       return run ? runText(xml, run) : '';
     },
-    write: (edits, added, removed, divided, joined, newRows) =>
+    write: (edits, added, removed, divided, joined, newRows, merged) =>
       writeDocx(archive, runs, xml, edits, {
         paragraphs,
         succession,
@@ -769,6 +819,7 @@ function docxSource(
         joins: joined,
         rows,
         rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
+        merges: (merged ?? []).map((one) => ({ row: one.row, from: one.from, count: one.count })),
       }),
 
     /* Offered only when the view and the raw scan agreed on how many paragraphs
@@ -896,6 +947,27 @@ function docxSource(
             shapeAt: (row) => {
               const span = rows.find((one) => one.index === row);
               return span ? rowShape(xml, anchorRow(xml, rows, span)) : [];
+            },
+            mergeRefusalAt: (row, from, count) => {
+              const why = mergeRefusal(xml, rows, { row, from, count });
+              if (why === null) return null;
+              if (why === 'a merge takes two cells at least') {
+                return t('Select two cells or more of one row to merge them.');
+              }
+              if (why === 'the row has no such cells') {
+                return t('This row does not have those cells.');
+              }
+              if (why === 'a cell already merged down cannot be merged across') {
+                return t('One of these cells is merged down the table already, and Word was never asked what merging it across does.');
+              }
+              if (why === 'a tracked change is recorded on a cell') {
+                return t('A tracked change is recorded on one of these cells — merging them would claim the same reviewer did it.');
+              }
+              if (why === 'a tracked change is recorded on the row') {
+                return t('A tracked change is recorded on this row — merging its cells would claim the same reviewer did it.');
+              }
+              if (why === 'there is no such row') return t('Select cells in a row of a table first.');
+              return t('Cells can only be merged in a table in the body of the document — not in one in a header, a text box or a content control.');
             },
           }
         : undefined,

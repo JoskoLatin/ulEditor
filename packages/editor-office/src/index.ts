@@ -48,6 +48,7 @@ import {
   renderDocx,
   type DividedPiece,
   type NewParagraph,
+  type MergedCells,
   type NewTableRow,
   type ParagraphSeam,
   type Preview,
@@ -163,6 +164,8 @@ interface Snapshot {
   joins: number[];
   /** The rows the plan adds to the file's tables, each after a row of the file. */
   rows: NewTableRow[];
+  /** The runs of cells the plan merges across, each in a row of the file. */
+  merges: MergedCells[];
 }
 
 /**
@@ -330,6 +333,16 @@ class DocumentPreviewEditor implements EditorInstance {
    * into its cells lives here rather than in the file's runs.
    */
   #rows: NewTableRow[] = [];
+  /**
+   * The runs of cells the plan merges across, each in a row of the file —
+   * `Ctrl+M` over cells somebody selected.
+   *
+   * The first change here that needs a **range** rather than a caret: every
+   * gesture before it asked only where the cursor was. The same plan, all the
+   * same: the table in the file is untouched until a save, the merged cell is
+   * drawn as the save will write it, and `Ctrl+Z` takes it back.
+   */
+  #merges: MergedCells[] = [];
   /** The joins the last redraw made: second paragraph → the one it was joined onto. */
   #joinedInto = new Map<number, number>();
   /**
@@ -391,6 +404,7 @@ class DocumentPreviewEditor implements EditorInstance {
       [...this.#cuts].sort((a, b) => a[0] - b[0]),
       [...this.#joins].sort((a, b) => a - b),
       this.#written(),
+      this.#merges,
     ]);
   }
 
@@ -415,6 +429,7 @@ class DocumentPreviewEditor implements EditorInstance {
       cuts: [...this.#cuts].map(([run, parts]): [number, string[]] => [run, [...parts]]),
       joins: [...this.#joins].sort((a, b) => a - b),
       rows: this.#written().map((row) => ({ after: row.after, cells: [...row.cells] })),
+      merges: this.#merges.map((merge) => ({ ...merge })),
     };
   }
 
@@ -433,7 +448,7 @@ class DocumentPreviewEditor implements EditorInstance {
           ? this.preview.source.paragraphs
             ? this.preview.source.rows
               ? t(
-                  'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below. Layout and styles stay as they are.',
+                  'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below and Ctrl+M merges the cells you select. Layout and styles stay as they are.',
                 )
               : t(
                   'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in. Layout and styles stay as they are.',
@@ -1661,6 +1676,7 @@ class DocumentPreviewEditor implements EditorInstance {
        after the last line its content went into, so the lines have to be
        there to be followed. */
     this.#syncLines();
+    this.#syncMerges();
     this.#syncRows();
     for (const stale of [...body.querySelectorAll('[data-new]')]) stale.remove();
 
@@ -1729,6 +1745,64 @@ class DocumentPreviewEditor implements EditorInstance {
    * and carries a cell for every cell of that row, as wide across the grid as
    * that row's cells are. What a person sees is the row the file will hold.
    */
+  /**
+   * Draws the merges onto the page: the cells the plan takes become one.
+   *
+   * Put back whole and then applied whole, the way `#syncRows` rebuilds rather
+   * than patches — done in place because these are the **file's** own cells
+   * rather than elements the plan made, so there is nothing to throw away and
+   * redraw. A swallowed cell keeps its element and is hidden; its content
+   * moves into the first cell inside a marker that says which cell it came
+   * from, which is what lets the next redraw put it back.
+   *
+   * The runs keep their `data-run`, so a piece of text inside a merged cell is
+   * still double-clickable and still retyped by ordinal — and `applyDocxEdits`
+   * carries exactly those rewrites into the markup the merge writes.
+   *
+   * A cell showing nothing brings nothing, which is Word's own rule for a
+   * merge: an empty cell merged with one holding a sentence gives one
+   * paragraph rather than a blank line above it.
+   */
+  #syncMerges(): void {
+    const body = this.preview.body;
+
+    for (const carried of [...body.querySelectorAll<HTMLElement>('[data-merged-from]')]) {
+      const home = carried
+        .closest<HTMLElement>('tr')
+        ?.querySelector<HTMLElement>(`:scope > [data-tc="${carried.dataset.mergedFrom}"]`);
+      if (home) home.append(...carried.childNodes);
+      carried.remove();
+    }
+    for (const cell of body.querySelectorAll<HTMLTableCellElement>('td[data-tc], th[data-tc]')) {
+      cell.hidden = false;
+      cell.colSpan = Number(cell.dataset.span ?? 1);
+      delete cell.dataset.merged;
+    }
+
+    for (const plan of this.#merges) {
+      const row = body.querySelector<HTMLElement>(`tr[data-row="${plan.row}"]`);
+      const own = (at: number) => row?.querySelector<HTMLTableCellElement>(`:scope > [data-tc="${at}"]`) ?? null;
+      const first = own(plan.from);
+      if (!row || !first) continue;
+
+      let span = Number(first.dataset.span ?? 1);
+      for (let at = plan.from + 1; at < plan.from + plan.count; at++) {
+        const cell = own(at);
+        if (!cell) continue;
+        span += Number(cell.dataset.span ?? 1);
+        if ((cell.textContent ?? '').trim().length > 0) {
+          const carried = document.createElement('div');
+          carried.dataset.mergedFrom = String(at);
+          carried.append(...cell.childNodes);
+          first.appendChild(carried);
+        }
+        cell.hidden = true;
+      }
+      first.colSpan = span;
+      first.dataset.merged = 'true';
+    }
+  }
+
   #syncRows(): void {
     const body = this.preview.body;
     const seam = this.preview.source?.rows;
@@ -1878,6 +1952,7 @@ class DocumentPreviewEditor implements EditorInstance {
     this.#cuts = new Map(snapshot.cuts.map(([run, parts]) => [run, [...parts]]));
     this.#joins = new Set(snapshot.joins);
     this.#rows = snapshot.rows;
+    this.#merges = snapshot.merges;
     if (!source) return;
 
     /* Only the pieces that stand for something in the file — a piece that is
@@ -1939,7 +2014,7 @@ class DocumentPreviewEditor implements EditorInstance {
     const joined = [...this.#joins].sort((a, b) => a - b);
     const rows = this.#written();
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined, rows));
+    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined, rows, this.#merges));
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as
@@ -1994,6 +2069,131 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   canInsertParagraph(): boolean {
     return this.preview.source?.paragraphs !== undefined;
+  }
+
+  /**
+   * The coarse question for merging cells: has this format an answer for the
+   * rows of a table at all? A Word document says yes; the OpenDocument text,
+   * the old binary `.doc` and the Rich Text driven by this same class say no.
+   */
+  canMergeCells(): boolean {
+    return this.preview.source?.rows !== undefined;
+  }
+
+  /**
+   * The cells somebody selected, merged into one — `Ctrl+M`.
+   *
+   * The first gesture here that reads a **range**. Everything before it asked
+   * `getSelection()` for one node and ignored the other end, which is why a
+   * drag across two cells has until now added a row to whichever cell it began
+   * in and said nothing about the rest.
+   */
+  mergeCells(): void {
+    const source = this.preview.source;
+    if (!source?.rows) return;
+
+    /* Where the selection is, read BEFORE the blur below — blurring collapses
+       it, and a collapsed selection is one cell, which is not a merge. */
+    const at = this.#mergePoint();
+
+    const typing = document.activeElement;
+    if (typing instanceof HTMLElement && typing.isContentEditable) typing.blur();
+
+    if ('refusal' in at) {
+      this.#statusEmitter.fire(at.refusal);
+      return;
+    }
+
+    /* The snapshot is of the plan BEFORE this merge, because that is what an
+       undo comes back to — the order every other gesture here keeps. */
+    this.#undoStack.push(this.#capture());
+    this.#redoStack = [];
+    this.#merges.push({ row: at.row, from: at.from, count: at.count });
+    this.#syncSteps();
+    this.#emitDirty();
+    this.#statusEmitter.fire(t('Cells merged — Ctrl+Z takes it back.'));
+  }
+
+  /**
+   * Which cells a merge would take, or why it would take none.
+   *
+   * Measured rather than assumed, because the obvious reading of a selection
+   * is wrong twice over:
+   *
+   * - **`containsNode(cell, true)`, not `anchorNode` and `focusNode`.** A drag
+   *   across cells gives one ordinary range whose ends sit in the text of the
+   *   first and last cell; Chromium does no whole-cell table selection here.
+   *   Asked partly-contained, every cell the drag crossed answers yes, in
+   *   either direction — which is the instrument the sheet grid already uses
+   *   one format over.
+   * - **and the ends have to be in cells of this row.** A drag that begins in
+   *   the paragraph *above* a table and ends in its third cell contains all
+   *   three cells of that row, and so does `Ctrl+A` over the whole document.
+   *   "Every cell hit belongs to one row" is therefore not enough on its own:
+   *   without this, selecting a page would silently merge a row nobody
+   *   pointed at.
+   *
+   * And the ordinals have to be **consecutive**, which is not the same as
+   * adjacent on the screen. A cell continuing a vertical merge is drawn by the
+   * row above and has no element of its own, so the two cells either side of
+   * one look neighbouring and are two apart in the file. Merging "them" would
+   * either swallow a cell nobody can see or name a different run entirely.
+   */
+  #mergePoint(): { row: number; from: number; count: number } | { refusal: string } {
+    const body = this.preview.body;
+    const seam = this.preview.source?.rows;
+    const selection = document.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!seam || !selection || !range || !body.contains(range.commonAncestorContainer)) {
+      return { refusal: t('Select two cells or more of one row to merge them.') };
+    }
+
+    const hit = [...body.querySelectorAll<HTMLTableCellElement>('td[data-tc], th[data-tc]')].filter((cell) =>
+      selection.containsNode(cell, true),
+    );
+    if (hit.length === 0) return { refusal: t('Select two cells or more of one row to merge them.') };
+
+    /* One row, and the row's own cells: `querySelectorAll` from a row reaches
+       down into a table a cell holds, whose cells belong to a grid this is not
+       about. */
+    const rows = new Set(hit.map((cell) => cell.parentElement));
+    if (rows.size > 1) return { refusal: t('Cells can only be merged within one row.') };
+    const row = hit[0]!.parentElement as HTMLElement | null;
+    const marked = row?.dataset.row;
+    if (!row || marked === undefined) {
+      return { refusal: t('Cells can only be merged in a table in the body of the document — not in one in a header, a text box or a content control.') };
+    }
+    if (row.closest('[data-new-row]')) {
+      return { refusal: t('This row is one the plan is adding — save the document first, then merge its cells.') };
+    }
+
+    /* Both ends of the range inside cells of this row, or the selection
+       reached the row from outside and means something else. */
+    const endsInRow = (node: Node | null): boolean => {
+      const element = node instanceof Element ? node : (node?.parentElement ?? null);
+      const cell = element?.closest<HTMLElement>('td[data-tc], th[data-tc]') ?? null;
+      return cell !== null && cell.parentElement === row;
+    };
+    if (!endsInRow(range.startContainer) || !endsInRow(range.endContainer)) {
+      return { refusal: t('Select the cells themselves — this selection reaches outside the row.') };
+    }
+
+    const ordinals = hit.map((cell) => Number(cell.dataset.tc)).sort((a, b) => a - b);
+    const from = ordinals[0]!;
+    const count = ordinals[ordinals.length - 1]! - from + 1;
+    if (ordinals.length !== count) {
+      return { refusal: t('These cells are not next to each other in the file — one between them is part of a merge going down.') };
+    }
+
+    /* One gesture, one entry in the plan: the writer drops a merge that
+       overlaps another without a word, so the refusal belongs here. */
+    const already = this.#merges.some(
+      (plan) => plan.row === Number(marked) && from < plan.from + plan.count && plan.from < from + count,
+    );
+    if (already) return { refusal: t('These cells are merged already — Ctrl+Z takes that back.') };
+
+    const refusal = seam.mergeRefusalAt(Number(marked), from, count);
+    return refusal ? { refusal } : { row: Number(marked), from, count };
   }
 
   /**

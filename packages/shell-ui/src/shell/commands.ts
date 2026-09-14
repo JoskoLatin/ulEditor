@@ -249,6 +249,20 @@ export function registerCommands(shell: Shell): () => void {
       when: () => activeInstance()?.canRemoveParagraph?.() === true,
       run: () => activeInstance()?.removeParagraph?.(),
     }),
+    /*
+     * And merging the cells somebody selected. `Ctrl+M` rather than a chord
+     * already spoken for, and it needs the hand-written case below as well as
+     * this: a registered keybinding is drawn in the palette and the menu, it
+     * is not what dispatches the key.
+     */
+    shell.commands.register({
+      id: 'edit.mergeCells',
+      title: t('Merge selected cells'),
+      category: t('Edit'),
+      keybinding: ['Ctrl', 'M'],
+      when: () => activeInstance()?.canMergeCells?.() === true,
+      run: () => activeInstance()?.mergeCells?.(),
+    }),
     shell.commands.register({
       id: 'editor.goToLocation',
       title: t('Go to a place in a file'),
@@ -731,6 +745,15 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
       if (activeInstance()?.canInsertParagraph?.()) {
         event.preventDefault();
         activeInstance()?.insertParagraph?.();
+      }
+      break;
+    /* Merging cells is asked for with a selection rather than a caret, so this
+       one deliberately fires while text is selected — which is the only state
+       it makes sense in. */
+    case 'm':
+      if (activeInstance()?.canMergeCells?.()) {
+        event.preventDefault();
+        activeInstance()?.mergeCells?.();
       }
       break;
     case 's':
