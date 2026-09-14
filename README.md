@@ -641,6 +641,7 @@ pnpm verify:delete    # a paragraph taken away: what is refused, and the exact b
 pnpm verify:split     # Enter mid-sentence: one run divided, the rest carried, every real .docx byte-exact
 pnpm verify:join      # Backspace and Delete: two paragraphs joined, the first one's properties kept, byte-exact
 pnpm verify:rows      # Ctrl+Enter in a cell: a row added, against the rows Word writes itself
+pnpm verify:merge     # cells merged across: the first cell's properties, every cell's content — against Word's own merge
 pnpm verify:lines     # Enter, Backspace and Delete in the editor itself, every save compared with the page
 pnpm verify:table     # Ctrl+Enter in a cell in the editor itself, every save compared with the page
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)

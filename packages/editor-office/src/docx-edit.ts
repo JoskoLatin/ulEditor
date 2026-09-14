@@ -1352,11 +1352,7 @@ function markProperties(xml: string, props: { start: number; end: number } | nul
 
 /** How wide each cell of a row is, in columns of the table's grid. */
 export function rowShape(xml: string, row: RowSpan): number[] {
-  return cellsOf(xml, row).map((cell) => {
-    const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
-    const span = props ? childRanges(xml, props).find((child) => localName(child.name) === 'gridSpan') : undefined;
-    return span ? Math.max(1, Number(tagAttr(xml, span, 'val') ?? 1) || 1) : 1;
-  });
+  return cellsOf(xml, row).map((cell) => cellSpan(xml, cell));
 }
 
 /** One cell of a new row: the cell above it, emptied, with whatever was typed into it. */
@@ -1430,6 +1426,201 @@ export interface TableRowInsert {
   cells: string[];
 }
 
+/** Children of a `w:tcPr` that record somebody's tracked change to the cell, never copied forward. */
+const CELL_RECORDED = new Set(['tcPrChange', 'cellIns', 'cellDel', 'cellMerge']);
+
+/** How many columns of the grid one cell covers. */
+function cellSpan(xml: string, cell: Tag): number {
+  const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+  const span = props ? childRanges(xml, props).find((child) => localName(child.name) === 'gridSpan') : undefined;
+  return span ? Math.max(1, Number(tagAttr(xml, span, 'val') ?? 1) || 1) : 1;
+}
+
+/** What a cell declares its width to be, when it declares one at all. */
+function cellWidth(xml: string, cell: Tag): { w: number; type: string } | null {
+  const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+  const declared = props ? childRanges(xml, props).find((child) => localName(child.name) === 'tcW') : undefined;
+  if (!declared) return null;
+  const w = Number(tagAttr(xml, declared, 'w') ?? NaN);
+  const type = tagAttr(xml, declared, 'type') ?? 'dxa';
+  return Number.isFinite(w) ? { w, type } : null;
+}
+
+/** Whether a cell carries a vertical merge, either end of one. */
+function cellMerged(xml: string, cell: Tag): boolean {
+  const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+  return props !== undefined && childRanges(xml, props).some((child) => localName(child.name) === 'vMerge');
+}
+
+/** Whether a tracked change is recorded on a cell's own properties. */
+function cellRecorded(xml: string, cell: Tag): boolean {
+  const props = childRanges(xml, cell).find((child) => localName(child.name) === 'tcPr');
+  return props !== undefined && childRanges(xml, props).some((child) => CELL_RECORDED.has(localName(child.name)));
+}
+
+/**
+ * Whether a cell shows nothing, and so brings nothing into a merge.
+ *
+ * Measured: an empty cell merged with one holding text gives a cell holding
+ * that text and **one** paragraph, not two. Word drops what shows nothing
+ * rather than stacking a blank line above the sentence — the same answer
+ * `showsNothing` gets for a paragraph at a join, one unit up.
+ */
+function cellShowsNothing(xml: string, cell: Tag): boolean {
+  const text = xml.slice(cell.start, cell.end);
+  /* A `w:t` with a character in it. `<w:tc>` does not match: what follows the
+     `t` there is a `c`, where this requires the tag to end. */
+  if (/<[A-Za-z_][\w.-]*:?t(?:\s[^>]*)?>[^<]/.test(text)) return false;
+  for (const tag of scanTags(text)) {
+    const local = localName(tag.name);
+    if (!tag.closing && (local === 'drawing' || local === 'pict' || local === 'object' || local === 'tbl')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Cells of one row, merged across into a single cell.
+ *
+ * `row` names a row of the **original** part and `from` the first of its own
+ * `w:tc` children, so the pair stays valid for the life of the document — the
+ * promise `TableRowInsert` and `ParagraphInsert` both make.
+ */
+export interface CellMerge {
+  row: number;
+  /** The first cell of the run, among the row's own cells. */
+  from: number;
+  /** How many cells the run covers, the first included. */
+  count: number;
+}
+
+/**
+ * Why these cells may not be merged; `null` when they may.
+ *
+ * - **Two cells at least**, and all of them cells this row actually has.
+ * - **Not a row outside the body of the document** — the same `ROW_REGION`
+ *   rule a new row keeps, and for the same reason: a grid this view does not
+ *   maintain.
+ * - **Not a cell carrying a vertical merge.** This is the one answer Word was
+ *   asked for and did not give: told to merge a cell continuing a merge from
+ *   above with the cell beside it, Word merged **the two cells to its right**
+ *   instead and left the continuation exactly as it was. That is an answer
+ *   about how the automation counts a row's cells, not about what the rule is,
+ *   and a measurement that did not measure what it meant to is not evidence.
+ *   So it is refused out loud until it can be asked properly.
+ * - **Not a cell or a row a tracked change is recorded on**, which a merge
+ *   would sign somebody else's name to.
+ */
+export function mergeRefusal(xml: string, rows: RowSpan[], merge: CellMerge): string | null {
+  const row = rows.find((one) => one.index === merge.row);
+  if (!row) return 'there is no such row';
+  if (row.refusal) return row.refusal;
+  if (rowRecorded(xml, row)) return 'a tracked change is recorded on the row';
+
+  const cells = cellsOf(xml, row);
+  if (merge.count < 2) return 'a merge takes two cells at least';
+  if (merge.from < 0 || merge.from + merge.count > cells.length) return 'the row has no such cells';
+
+  const run = cells.slice(merge.from, merge.from + merge.count);
+  if (run.some((cell) => cellMerged(xml, cell))) return 'a cell already merged down cannot be merged across';
+  if (run.some((cell) => cellRecorded(xml, cell))) return 'a tracked change is recorded on a cell';
+  return null;
+}
+
+/**
+ * The markup for a run of cells merged into one: **the first cell's
+ * properties, and every cell's content.**
+ *
+ * That sentence is Word's. Asked over COM on tables Word had made itself, its
+ * own merge writes one `w:tc` where there were several, and:
+ *
+ * - `w:gridSpan` is the **sum** of what the merged cells spanned — two cells of
+ *   one column each give `w:val="2"`, and merging that result with a third
+ *   gives `w:val="3"`;
+ * - `w:tcW` is the **sum** of the widths they declared — 3120 and 3120 give
+ *   6240, and 6240 and 3120 give 9360;
+ * - everything else in the `w:tcPr` is the **first** cell's. Two cells shaded
+ *   differently give the first one's shading; the second's is gone;
+ * - the **content of every cell is kept**, paragraph after paragraph, in the
+ *   order the cells stood in — a merge joins what is written, it does not
+ *   choose between it;
+ * - except that a cell showing nothing brings nothing, so an empty cell merged
+ *   with one holding a sentence gives one paragraph rather than two;
+ * - and `w:tblGrid` is **not touched**. The grid still declares the columns it
+ *   always did; what changed is how many of them one cell covers. That is the
+ *   whole difference between merging cells and changing a table's shape, and it
+ *   is why this reaches the same byte-range writer everything else here uses.
+ *
+ * The width is summed only when every merged cell declares one **of the same
+ * kind**: a cell measured in twentieths of a point and one measured as a
+ * percentage do not add up, and inventing a total for them would be this
+ * program deciding something Word was never asked. Where they differ, the
+ * first cell's declaration is left exactly as it was.
+ */
+export function mergeMarkup(xml: string, row: RowSpan, merge: CellMerge, rewritten?: (from: number, to: number) => string): string {
+  const w = prefixOf(xml, row);
+  const cells = cellsOf(xml, row);
+  const run = cells.slice(merge.from, merge.from + merge.count);
+  const first = run[0]!;
+
+  const span = run.reduce((total, cell) => total + cellSpan(xml, cell), 0);
+
+  const widths = run.map((cell) => cellWidth(xml, cell));
+  const kind = widths[0]?.type;
+  const summed =
+    kind !== undefined && widths.every((width) => width !== null && width.type === kind)
+      ? { w: widths.reduce((total, width) => total + width!.w, 0), type: kind }
+      : null;
+
+  /* The first cell's own properties, with the span and the width it now has. */
+  const props = childRanges(xml, first).find((child) => localName(child.name) === 'tcPr') ?? null;
+  const kept: { local: string; text: string }[] = [];
+  if (props) {
+    for (const child of childRanges(xml, props)) {
+      const local = localName(child.name);
+      if (local === 'gridSpan' || CELL_RECORDED.has(local)) continue;
+      if (local === 'tcW' && summed) {
+        kept.push({ local, text: `<${w}tcW ${w}w="${summed.w}" ${w}type="${summed.type}"/>` });
+        continue;
+      }
+      kept.push({ local, text: xml.slice(child.start, child.end) });
+    }
+  }
+  /* `w:tcW` then `w:gridSpan`, which is the order the schema declares them in
+     and the order Word writes them in. */
+  const grid = span > 1 ? `<${w}gridSpan ${w}val="${span}"/>` : '';
+  const at = kept.findIndex((piece) => piece.local === 'tcW');
+  const inside =
+    at >= 0
+      ? kept.slice(0, at + 1).map((piece) => piece.text).join('') +
+        grid +
+        kept.slice(at + 1).map((piece) => piece.text).join('')
+      : grid + kept.map((piece) => piece.text).join('');
+  const tcPr = inside.length > 0 ? `<${w}tcPr>${inside}</${w}tcPr>` : '';
+
+  const body = run
+    .map((cell) => {
+      if (cellShowsNothing(xml, cell)) return '';
+      return childRanges(xml, cell)
+        .filter((child) => localName(child.name) !== 'tcPr')
+        .map((child) => (rewritten ? rewritten(child.start, child.end) : xml.slice(child.start, child.end)))
+        .join('');
+    })
+    .join('');
+
+  /* A cell has to hold a paragraph even when nothing in it showed anything. */
+  return `<${w}tc>${tcPr}${body || `<${w}p/>`}</${w}tc>`;
+}
+
+/** The range of the part a merge replaces: from the first of its cells to the last. */
+export function mergeRange(xml: string, row: RowSpan, merge: CellMerge): { from: number; to: number } | null {
+  const cells = cellsOf(xml, row);
+  const run = cells.slice(merge.from, merge.from + merge.count);
+  if (run.length < 2) return null;
+  return { from: run[0]!.start, to: run[run.length - 1]!.end };
+}
+
 /** Everything a save needs to know about the paragraphs the plan reshapes. */
 export interface Reshaping {
   paragraphs: ParagraphSpan[];
@@ -1449,6 +1640,8 @@ export interface Reshaping {
   rows?: RowSpan[];
   /** The rows the plan adds to a table, each after a row of the original part. */
   rowInserts?: TableRowInsert[];
+  /** Runs of cells the plan merges across, each in a row of the original part. */
+  merges?: CellMerge[];
 }
 
 /**
@@ -1544,6 +1737,31 @@ export function applyDocxEdits(
     from: Math.min(...cut.map((run) => run.text!.start)),
     to: paragraphByIndex.get(index)!.end,
   }));
+
+  /*
+   * The merges are settled next, and claim their cells the way a divided
+   * paragraph claims its range: one operation writes that stretch of the file,
+   * so nothing else may touch it, and a rewrite of a run inside it is applied
+   * within the text the merge writes rather than beside it. Each is re-judged
+   * here, because a caller of this function is not obliged to have asked first,
+   * and a merge that overlaps another — or a paragraph a removal or a division
+   * has already claimed — yields rather than fighting over the bytes.
+   */
+  const rowsGiven = reshaping?.rows ?? [];
+  const merges: { row: RowSpan; merge: CellMerge; from: number; to: number }[] = [];
+  for (const merge of reshaping?.merges ?? []) {
+    if (mergeRefusal(xml, rowsGiven, merge) !== null) continue;
+    const row = rowsGiven.find((one) => one.index === merge.row);
+    const range = row ? mergeRange(xml, row, merge) : null;
+    if (!row || !range) continue;
+    const overlaps =
+      merges.some((taken) => range.from < taken.to && taken.from < range.to) ||
+      claimed.some((taken) => range.from < taken.to && taken.from < range.to) ||
+      removed.some((span) => range.from < span.end && span.start < range.to);
+    if (overlaps) continue;
+    merges.push({ row, merge, ...range });
+    claimed.push(range);
+  }
 
   const typed = new Map(edits.map((edit) => [edit.index, edit.text]));
   const byText = new Map(runs.filter((run) => run.text).map((run) => [run.text!.start, run]));
@@ -1742,6 +1960,17 @@ export function applyDocxEdits(
         order,
       });
     });
+
+    /* The cells of a merge, written as the one cell they become — with any
+       rewriting inside them carried in, since those runs yielded to this. */
+    for (const taken of merges) {
+      operations.push({
+        at: taken.from,
+        end: taken.to,
+        text: mergeMarkup(xml, taken.row, taken.merge, carried),
+        order: 0,
+      });
+    }
 
     const firsts = new Set(joins.map((join) => join.first.index));
     for (const join of joins) {
