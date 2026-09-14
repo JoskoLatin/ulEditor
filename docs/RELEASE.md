@@ -150,6 +150,31 @@ git push origin v0.2.0
 The release is created as a **draft** — artefacts collect into it while the five
 builders run, and you publish it once you have downloaded and tried them.
 
+**Publishing is the step the updater depends on, and forgetting it is silent.**
+A draft is invisible to everybody who is not signed in as its author:
+`/releases/latest/` walks past it to the newest *published* release, so the
+manifest answers 404, and the program — which is written to say something only
+when there is something to say — says nothing. Nothing in the repository can see
+that, because every piece of the updater is correct; what is wrong is the state
+of a page on github.com. It happened here: v0.3.3, v0.4.0 and v0.5.0 were all
+built, signed and left as drafts, and for that whole stretch every installed
+copy asked once a day, got a 404, and correctly concluded there was nothing to
+report. The "Download the latest release" link served v0.3.2 for the same
+reason.
+
+So after publishing, ask from outside:
+
+```powershell
+pnpm verify:release-live
+```
+
+It makes the request an installed copy makes — **signed out**, at the URL
+compiled into the build — and requires the answer to be a manifest offering the
+newest tag the remote has, with every platform present, every signature a
+signature, and every artefact it names actually there. Signed out is the point:
+`gh` carries a token, sees the draft, and would report a healthy endpoint while
+everybody else got a 404.
+
 ## When one builder fails
 
 Re-running the failed job from the Actions page is right when the failure was the

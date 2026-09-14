@@ -225,7 +225,7 @@ State as of 9 September 2026.
 | **Search inside PDF, Word, Excel and e-books** (not in the plan) | **done** |
 | **Quick open by file name (`Ctrl+P`)** | **done** |
 | **A menu bar, and `Alt` to reach it** (not in the plan) | **done** — everything the program can do has a place a person can find it in, without knowing a shortcut first. `AltGr` is told apart from `Ctrl` whatever Windows reports, which is what a Croatian keyboard requires: `AltGr+Q` is a backslash, and it belongs in the document |
-| Auto-update, crash reporting, opt-in telemetry | **auto-update and crash reporting done; telemetry not started and still opt-in.** The updater needed no certificate and no backend: the release page is the backend, and the signature is what makes it safe. Crash reporting arrived at the same answer from the other side — a report is a **file**, with no endpoint to send it to, and [tools/verify-crash.mjs](../tools/verify-crash.mjs) fails the run if either crash module grows a `fetch` or a URL. The half that turned out to matter more was not the reporting: a React render that throws took `#root` from 12,725 characters to **zero**, and two real faults did it. Both are fixed, and a boundary around the whole editor group catches the next one |
+| Auto-update, crash reporting, opt-in telemetry | **auto-update and crash reporting done; telemetry not started and still opt-in.** The updater needed no certificate and no backend: the release page is the backend, and the signature is what makes it safe. Crash reporting arrived at the same answer from the other side — a report is a **file**, with no endpoint to send it to, and [tools/verify-crash.mjs](../tools/verify-crash.mjs) fails the run if either crash module grows a `fetch` or a URL. The half that turned out to matter more was not the reporting: a React render that throws took `#root` from 12,725 characters to **zero**, and two real faults did it. Both are fixed, and a boundary around the whole editor group catches the next one. **And the whole chain was correct and unreachable for three releases**: v0.3.3, v0.4.0 and v0.5.0 were built, signed and left as drafts, so `/releases/latest/` answered with v0.3.2 — a release older than the update key, carrying no `latest.json` at all. Every installed copy asked once a day, got a 404, and said nothing, which is precisely what it is written to do. Nothing in the repository could see it, because nothing in the repository was wrong; what was wrong was the state of a page. `pnpm verify:release-live` asks that page the question an installed copy asks, signed out, and is the one check here that would have caught it |
 | `editor-pdf` on pdfium instead of pdf.js | **not taken, and now on a measured basis.** `pnpm pdf:timing` over 457 real PDFs, sampled by size, in the application: **median 536 ms to the first page, worst 1051 ms**, and no relationship to file size — a 4.9 MB document opens as fast as a 2 kB one. The swap would cost a native library per platform in every installer and a rewrite of the text layer, the annotations, the redaction and the retyping, all of which are built on pdf.js. Half a second is not worth that |
 
 **Reading mode was not in the plan, and it made it into the contract.** It turned
@@ -691,10 +691,43 @@ pnpm fidelity      # round-trip pixel diff, threshold < 2% difference  (from pha
 
 **Performance budgets** (measured in CI, a PR fails if they are exceeded):
 
-- cold start < 1.5 s
-- opening a 10 MB PDF < 800 ms to the first page
-- scrolling through a 100k-row XLSX at 60 fps
-- desktop installer < 40 MB
+- cold start < 1.5 s — **not measured**, see below
+- opening a 10 MB PDF < 800 ms to the first page — **met**: 536 ms median, 1051 ms worst, over 457 real PDFs in the application (`pnpm pdf:timing`)
+- scrolling through a 100k-row XLSX at 60 fps — **met**: 16.7 ms median against a 16.7 ms frame (`pnpm verify:sheets`)
+- desktop installer **< 100 MB**, and under 25 MB for everything but the AppImage
+
+**The installer budget was 40 MB and was raised to 100 MB once it was measured**,
+which is the same rule this project applies everywhere else: a number nobody has
+measured is an opinion, and the answer to a measurement that refutes it is to
+say so rather than to keep the number. Measured on the published v0.5.0:
+
+| Artefact | Size |
+|---|---|
+| `_x64-setup.exe` (Windows, NSIS) | 19.3 MB |
+| `_x64_en-US.msi` (Windows) | 19.9 MB |
+| `_x64.dmg` / `_aarch64.dmg` (macOS) | 19.8 / 19.7 MB |
+| `_amd64.deb` / `.x86_64.rpm` (Linux) | 20.2 / 20.2 MB |
+| `_amd64.AppImage` (Linux) | **91.8 MB** |
+| `_android.apk` | 45.7 MB |
+
+Six of the seven desktop artefacts come in at about a fifth of the original
+budget. The AppImage sets the number alone, and for a reason that is packaging
+rather than this program: a `.deb` and an `.rpm` declare their dependencies and
+use the system's copies, while an AppImage carries what it needs — the GTK and
+WebKitGTK stack included — so that it runs on a distribution that has none of
+them. That is what an AppImage is for, and shrinking it means giving that up.
+The 40 MB in this row was written before any of the three Linux packages
+existed.
+
+**Android is not on this budget.** 45.7 MB is the release APK, against the
+145 MB debug APK recorded in [ADR 0001](adr/0001-runtime.md) — the measurement
+that ADR said was still needed before phase 4. Its own figure is set there, not
+here.
+
+**Cold start is still not measured**, and that is the last unmeasured budget:
+it needs a release build to start on a real machine, and `tauri build` on the
+development machine is blocked by Smart App Control (ADR 0001). A number from CI
+would be a number from a runner rather than from a computer somebody uses.
 
 **Manual verification at the end of phase 1:**
 

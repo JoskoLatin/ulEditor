@@ -649,6 +649,7 @@ pnpm fidelity         # a folder of real documents, edited and checked byte for 
 pnpm readback         # …and then opened by LibreOffice, which shares no code with us
 pnpm verify:word      # …and by Word itself, which is the reader that refuses (Windows)
 pnpm verify:updater-key # the private update key signs what the application's public key accepts
+pnpm verify:release-live # …and the endpoint an installed copy asks is answering, to somebody signed out
 pnpm verify:all       # all of the above
 
 pnpm verify:search           # project search, in the REAL desktop application
