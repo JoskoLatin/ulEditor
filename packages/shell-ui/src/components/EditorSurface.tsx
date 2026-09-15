@@ -93,7 +93,10 @@ function Pane({ tab, active, focused }: { tab: TabState; active: boolean; focuse
   }
 
   return (
-    <div className="mount" style={{ display: active ? 'flex' : 'none' }}>
+    /* Marked because one document in the window has the caret, and `Ctrl+A`
+       has to know which: selecting "everything" without it takes the tab bar,
+       the tree and the status line along with the text. */
+    <div className="mount" data-focused={focused ? 'true' : undefined} style={{ display: active ? 'flex' : 'none' }}>
       <div ref={ref} style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }} />
       {!tab.ready && (
         <div className="surface-loading">{t('Loading {name}…', { name: tab.name })}</div>

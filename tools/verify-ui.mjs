@@ -1587,6 +1587,74 @@ try {
     `${buttonCount} buttons${bareButtons.length ? ` — bare: ${bareButtons.join(', ')}` : ''}`,
   );
 
+  /*
+   * Select all — of the document, not of the program.
+   *
+   * Left to the browser, `Ctrl+A` selects everything in the window, and what
+   * comes up highlighted is the tab bar, the file tree and the menu labels
+   * alongside the text — everything except the chrome that happens to set
+   * `user-select: none`, which is what makes the result look arbitrary rather
+   * than total. A copy after it carries the lot.
+   *
+   * So what is asked is not "did something get selected" but **where the
+   * selection stops**: inside the document, and outside every part of the frame
+   * around it.
+   */
+  await dropFile(page, 'odabir.md', '# Naslov\n\nPrvi odlomak.\n\nDrugi odlomak.\n');
+  await page.waitForTimeout(700);
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Control+a');
+  await page.waitForTimeout(150);
+
+  const selected = await page.evaluate(() => {
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    /* The mount that HAS the caret, not the first one on the page: by this
+       point several documents are open, and each keeps its own hidden mount. */
+    const mine = document.querySelector('.mount[data-focused="true"]');
+    /*
+     * Asked by plain containment rather than by `Selection.containsNode`.
+     *
+     * This codebase has measured that API answering wrong before — the note in
+     * `sheet-grid.ts` about a range spanning table rows — and it does it here
+     * too: it reports `.tabbar` as partly contained by a range whose own common
+     * ancestor is inside the document. So the question is put a way that cannot
+     * be wrong about it: if the ancestor every boundary of the range shares
+     * sits inside the mount, then nothing outside the mount is in the range,
+     * and that is arithmetic rather than an opinion.
+     */
+    const ancestor = range.commonAncestorContainer;
+    const outside = (selector) => {
+      const element = document.querySelector(selector);
+      return element === null || !ancestor.contains(element);
+    };
+    return {
+      text: selection.toString().trim().slice(0, 40),
+      insideDocument: mine?.contains(ancestor) === true,
+      tabBar: !outside('.tabbar'),
+      tree: !outside('.sidebar'),
+      status: !outside('.statusbar'),
+      menu: !outside('.menubar'),
+    };
+  });
+
+  check(
+    'Ctrl+A selects the text of the document',
+    selected !== null && selected.text.length > 0,
+    selected ? JSON.stringify(selected.text) : '(nothing selected)',
+  );
+  check(
+    'and the selection stays inside the document',
+    selected?.insideDocument === true,
+    `commonAncestor inside .mount: ${selected?.insideDocument}`,
+  );
+  check(
+    'and takes no part of the frame with it',
+    selected !== null && !selected.tabBar && !selected.tree && !selected.status && !selected.menu,
+    selected ? `tab bar ${selected.tabBar}, tree ${selected.tree}, status ${selected.status}, menu ${selected.menu}` : '',
+  );
+
   check('no console errors', real.length === 0, real.slice(0, 3).join(' | '));
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message : String(err));

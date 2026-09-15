@@ -756,6 +756,32 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
         activeInstance()?.mergeCells?.();
       }
       break;
+    /*
+     * Select all — of the document, not of the program.
+     *
+     * Without this the key falls through to the browser's own, which selects
+     * everything in the window: the tab bar, the file tree, the status line and
+     * the menu labels all come up highlighted alongside the text, and a copy
+     * after it carries the lot. The chrome that sets `user-select: none` is
+     * spared, which is why the mess looks arbitrary rather than total.
+     *
+     * A text field keeps its own: an `input`, a `textarea` and every
+     * contenteditable — which is how CodeMirror and the retyped Word run are
+     * both reached — already mean the right thing by this key, and taking it
+     * from them would be taking select-all out of the editor that has one.
+     */
+    case 'a': {
+      if (inTextField) break;
+      const scope =
+        target?.closest<HTMLElement>('.mount, .split-mount') ??
+        document.querySelector<HTMLElement>('.mount[data-focused="true"]');
+      if (!scope) break;
+      event.preventDefault();
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.selectAllChildren(scope);
+      break;
+    }
     case 's':
       event.preventDefault();
       // Focus inside the panel below means it is what gets saved, not the tab above.

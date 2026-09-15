@@ -944,6 +944,17 @@ pub fn run() {
             let _ = app.emit("uleditor://open-paths", paths);
         }
         if let Some(window) = app.get_webview_window("main") {
+            /*
+             * Three calls, not one, and each answers a state the other two
+             * cannot. `set_focus` alone leaves a **minimised** window
+             * minimised — the document opens, the tab appears, and nothing
+             * comes up on the screen, which reads as the program having
+             * ignored the file. `unminimize` restores it, `show` handles a
+             * window hidden rather than minimised, and only then is there a
+             * window for the focus to go to.
+             */
+            let _ = window.unminimize();
+            let _ = window.show();
             let _ = window.set_focus();
         }
     }));
@@ -1085,6 +1096,18 @@ pub fn run() {
                     .collect();
                 if !paths.is_empty() {
                     let _ = _app.emit("uleditor://open-paths", paths);
+                    /* And the window comes up with it. This path had none of
+                    that at all: a file opened from Finder while the program was
+                    already running arrived in a tab nobody could see.
+                    `Manager` is already in scope from the top of the file —
+                    unlike `Emitter` above, which is not — so importing it here
+                    would be an unused import, and this crate is built with
+                    `-D warnings`. */
+                    if let Some(window) = _app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
             }
         });
