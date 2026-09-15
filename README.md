@@ -643,6 +643,7 @@ pnpm verify:join      # Backspace and Delete: two paragraphs joined, the first o
 pnpm verify:rows      # Ctrl+Enter in a cell: a row added, against the rows Word writes itself
 pnpm verify:merge     # cells merged across: the first cell's properties, every cell's content — against Word's own merge
 pnpm verify:cells     # Ctrl+M in the editor itself: the cells somebody selected, and the ones it refuses to take
+pnpm verify:formula   # what a formula reads, what it comes to, and what it admits it cannot work out
 pnpm verify:lines     # Enter, Backspace and Delete in the editor itself, every save compared with the page
 pnpm verify:table     # Ctrl+Enter in a cell in the editor itself, every save compared with the page
 pnpm verify:doc       # the old binary Word, read off a hand-built file (no browser)
