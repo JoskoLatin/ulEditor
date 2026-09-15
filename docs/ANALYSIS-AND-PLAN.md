@@ -638,6 +638,49 @@ did a row added to a table — the unit changed twice without either engine.
 What is left — a merged row, a recalculated total — is what phase 2 has left
 to do, and both change a grid rather than adding to one.
 
+**The merged row is done** — `Ctrl+M`, measured against Word's own merge and
+against what a real selection in a browser actually contains. What follows is
+about the other one.
+
+**And the recalculated total was measured before a line of it was written.**
+"Recalculate the totals" sounds like the five-hundred-function interpreter and
+the dependency graph Univer was in the plan to bring, so the same rule as
+everywhere else applies first: a number nobody has measured is an opinion.
+[tools/formula-census.mjs](../tools/formula-census.mjs) counts every `<f>` in a
+folder of real spreadsheets. Over one real `Documents`:
+
+| | |
+|---|---|
+| spreadsheets found | 32 — 18 scanned, 14 of them `.xls` and counted rather than scanned |
+| of those, holding any formula at all | **7 of 18** |
+| formulas in all | 372 |
+
+| Function | Formulas naming it | |
+|---|---|---|
+| `SUM` | 297 | **79.8%** |
+| `COUNTIFS` | 18 | 4.8% |
+| `SUMIFS` | 17 | 4.6% |
+| `SUBTOTAL` | 6 | 1.6% |
+| arithmetic only, no function | 5 | 1.3% |
+| `COUNTA`, `UNIQUE`, `FILTER`, `ROW` | 1 each | 0.3% each |
+
+81.2% reach a contiguous range; 12 formulas reach another sheet by name; one is
+an array formula; 28 are shared, 27 of those dependents carrying only an `si`.
+
+**Four formulas in five are a `SUM` over a range**, and `SUM` with plain
+arithmetic covers 81%. The next two by frequency are not the next two in
+difficulty: every one of the 35 `SUMIFS`/`COUNTIFS` reaches its data through a
+**structured table reference** — `SUMIFS(PodaciTable[Iznos], PodaciTable[Vrsta
+transakcije - oznaka], 5, …)` — which needs `xl/tables/*.xml` resolved before a
+criterion can even be evaluated, and all 35 are in one workbook.
+
+So the shape of the work is not an interpreter. It is `SUM` over a range, plain
+arithmetic, and **an honest answer for everything else**: a formula this program
+cannot work out, whose inputs the person has just changed, is shown as stale
+rather than as a number that is quietly no longer true. The workbook is already
+marked for full recalculation on save, so Excel settles it on opening; what is
+missing is that the view stops lying in the meantime.
+
 Output: **v0.5**
 
 ### Phase 3 — Web (months 10–14)

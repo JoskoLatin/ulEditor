@@ -63,6 +63,7 @@
     "fidelity": "node tools/fidelity.mjs",
     "readback": "node tools/verify-office-readback.mjs",
     "pdf:timing": "node tools/pdf-timing.mjs",
+    "formula:census": "node tools/formula-census.mjs",
     "verify:office-editing": "node tools/verify-office-editing.mjs",
     "verify:desktop-ocr": "node tools/verify-desktop-ocr.mjs",
     "verify:desktop-diagram": "node tools/verify-desktop-diagram.mjs",
