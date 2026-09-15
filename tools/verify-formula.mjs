@@ -28,7 +28,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { referencesOf, dependency, evaluate, parseA1 } = await import(
+const { referencesOf, dependency, evaluate, parseA1, recalculate } = await import(
   pathToFileURL(join(ROOT, 'packages/editor-office/src/formula.ts')).href
 );
 
@@ -121,6 +121,136 @@ check('a structured reference is refused', got('SUM(Tablica1[Iznos])') === null)
 check("another sheet's cells are refused", got("SUM('Drugi'!B2:B5)") === null);
 check('a total of nothing is nothing, not a refusal', got('SUM(Z1:Z9)') === 0, String(got('SUM(Z1:Z9)')));
 check('rubbish is refused', got('SUM(B2:B5') === null && got('') === null && got('B2 B3') === null);
+
+/* ── what changed because somebody typed ─────────────────────────────── */
+
+/**
+ * A price list, as the file holds it.
+ *
+ *        A          B            C
+ *  1   Artikl     Količina     (nothing)
+ *  2   Šećer      2
+ *  3   Čaj        3
+ *  4   Ukupno     =SUM(B2:B3)  → 5
+ *  5   PDV        =B4*0.25     → 1.25
+ *  6   Sve        =B4+B5       → 6.25
+ *  7   Drugdje    =SUMIFS(Tablica1[Iznos],…)  → 99
+ *  8   Sa strane  =SUM(D2:D3)  → 0
+ */
+const held = new Map([
+  ['0,0', { text: 'Artikl', kind: 'text' }],
+  ['0,1', { text: 'Količina', kind: 'text' }],
+  ['1,0', { text: 'Šećer', kind: 'text' }],
+  ['1,1', { text: '2', kind: 'number' }],
+  ['2,0', { text: 'Čaj', kind: 'text' }],
+  ['2,1', { text: '3', kind: 'number' }],
+  ['3,0', { text: 'Ukupno', kind: 'text' }],
+  ['3,1', { text: '5', kind: 'number', formula: 'SUM(B2:B3)' }],
+  ['4,1', { text: '1.25', kind: 'number', formula: 'B4*0.25' }],
+  ['5,1', { text: '6.25', kind: 'number', formula: 'B4+B5' }],
+  ['6,1', { text: '99', kind: 'number', formula: 'SUMIFS(Tablica1[Iznos],Tablica1[Vrsta],5)' }],
+  ['7,1', { text: '0', kind: 'number', formula: 'SUM(D2:D3)' }],
+]);
+
+const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed)));
+
+{
+  const out = after({ '1,1': '10' });
+  check('the total is worked out afresh', out.values.get('3,1') === 13, String(out.values.get('3,1')));
+  check('and so is the total that reads it', out.values.get('4,1') === 3.25, String(out.values.get('4,1')));
+  check('and the one that reads both', out.values.get('5,1') === 16.25, String(out.values.get('5,1')));
+  check(
+    'a formula reaching a column nobody touched is left alone',
+    !out.values.has('7,1') && !out.stale.has('7,1'),
+  );
+  check(
+    'a formula this cannot read is stale rather than quietly wrong',
+    out.stale.has('6,1'),
+    [...out.stale].join(' '),
+  );
+}
+
+{
+  /* A word typed where a number stood LOWERS the total rather than breaking
+     it, because SUM passes over text — which is Excel's own answer, and the
+     reason a total under a column of headings works at all. */
+  const out = after({ '1,1': 'nema' });
+  check('a word typed into a summed column lowers the total', out.values.get('3,1') === 3, String(out.values.get('3,1')));
+  check('and what reads that total follows it down', out.values.get('4,1') === 0.75, String(out.values.get('4,1')));
+
+  /* Arithmetic is the other rule: `=B4*0.25` over a word is #VALUE! in Excel,
+     so a word typed into a cell read that way is stale rather than counted. */
+  const arithmetic = new Map([
+    ['0,1', { text: '4', kind: 'number' }],
+    ['1,1', { text: '1', kind: 'number', formula: 'B1*0.25' }],
+    ['2,1', { text: '1', kind: 'number', formula: 'B2+1' }],
+  ]);
+  const word = recalculate(arithmetic, 'List1', new Map([['0,1', 'nema']]));
+  check('a word read by arithmetic is stale, not zero', word.stale.has('1,1') && !word.values.has('1,1'));
+  check('and what reads that is stale too', word.stale.has('2,1'), [...word.stale].join(' '));
+}
+
+{
+  /* The same sheet without the one formula this cannot read. */
+  const plain = new Map([...held].filter(([at]) => at !== '6,1'));
+  const out = recalculate(plain, 'List1', new Map([['0,0', 'Roba']]));
+  check(
+    'typing in a cell no formula reads changes nothing',
+    out.values.size === 0 && out.stale.size === 0,
+    `${out.values.size} worked out, ${out.stale.size} stale`,
+  );
+}
+
+{
+  /*
+   * And the cost of being honest, named rather than hidden: a formula this
+   * cannot read goes stale on ANY edit to the sheet, because there is no way
+   * to tell whether it read that cell. In the one real workbook that has them
+   * there are 35, so one keystroke marks all 35. The alternative is showing a
+   * number that may be wrong, and between annoying and wrong this picks
+   * annoying — but it is a cost, and the way out is resolving the table ranges
+   * out of `xl/tables/*.xml`, not a rule guessed here.
+   */
+  const out = after({ '0,0': 'Roba' });
+  check(
+    'a formula this cannot read goes stale on any edit at all',
+    out.stale.has('6,1') && out.stale.size === 1,
+    [...out.stale].join(' '),
+  );
+}
+
+{
+  /*
+   * A summary at the TOP, with its data below it — which is how a great many
+   * sheets are laid out, and the case one pass in document order cannot settle:
+   * B1 reads B2, and B2 is only worked out after B1 has already been looked at.
+   */
+  const summary = new Map([
+    ['0,1', { text: '5', kind: 'number', formula: 'B2*2' }],
+    ['1,1', { text: '5', kind: 'number', formula: 'SUM(B3:B4)' }],
+    ['2,1', { text: '2', kind: 'number' }],
+    ['3,1', { text: '3', kind: 'number' }],
+  ]);
+  const out = recalculate(summary, 'List1', new Map([['2,1', '10']]));
+  check('a total below its own summary still reaches it', out.values.get('1,1') === 13, String(out.values.get('1,1')));
+  check(
+    'and the summary above follows, which one pass could not do',
+    out.values.get('0,1') === 26,
+    String(out.values.get('0,1')),
+  );
+}
+
+{
+  /* A ring: B10 = B11, B11 = B10. Excel refuses to resolve one; this must stop
+     rather than go round for ever. */
+  const ring = new Map([
+    ['0,1', { text: '1', kind: 'number' }],
+    ['9,1', { text: '0', kind: 'number', formula: 'B12+B1' }],
+    ['11,1', { text: '0', kind: 'number', formula: 'B10' }],
+  ]);
+  const out = recalculate(ring, 'List1', new Map([['0,1', '5']]));
+  check('a ring of formulas stops rather than going round for ever', out.values.size + out.stale.size > 0);
+}
 
 /* ── and over real spreadsheets, if there are any ────────────────────── */
 

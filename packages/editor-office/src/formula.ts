@@ -381,3 +381,153 @@ export function evaluate(formula: string, valueAt: Lookup): number | null {
   /* Anything left over means the formula was not what it looked like. */
   return at === tokens.length && answer !== null && Number.isFinite(answer) ? answer : null;
 }
+
+/* ── keeping a sheet current after somebody types ────────────────────── */
+
+/** As much of a cell as recalculation is about. */
+export interface Held {
+  text: string;
+  kind: string;
+  formula?: string;
+}
+
+/** What a sheet looks like once the typing is taken into account. */
+export interface Recalculation {
+  /** Formula cells this worked out afresh, by `row,col`. */
+  values: Map<string, number>;
+  /**
+   * Formula cells whose shown number can no longer be trusted, by `row,col`.
+   *
+   * Three ways in, and the third is the one that makes this honest: a formula
+   * whose inputs changed and which this cannot work out; a formula holding a
+   * reference this cannot read while anything at all has changed; and a formula
+   * that reads a cell already stale, because a total of unreliable numbers is
+   * an unreliable number.
+   */
+  stale: Set<string>;
+}
+
+const key = (row: number, col: number) => `${row},${col}`;
+const parse = (text: string): number | null => {
+  if (text.trim() === '') return null;
+  const value = Number(text.replace(',', '.'));
+  return Number.isFinite(value) ? value : null;
+};
+
+/**
+ * What changed on a sheet because somebody typed into it.
+ *
+ * The question is not "what do the formulas come to" — it is **which of the
+ * numbers on the screen are no longer true**, and that is a different question
+ * with a more careful answer. A formula nothing has touched is left exactly
+ * alone: its cached result is still right and recomputing it would only risk
+ * disagreeing with Excel about a number nobody changed.
+ *
+ * **The cost of that is real and is named rather than hidden.** A formula this
+ * cannot read goes stale on *any* edit to the sheet, because there is no way to
+ * tell whether it read the cell that changed. In the one real workbook that has
+ * such formulas there are 35 of them, so a single keystroke marks all 35. The
+ * alternative is showing a number that may be wrong, and between annoying and
+ * wrong this picks annoying — but the way out is not a rule guessed here. It is
+ * resolving `Tablica1[Iznos]` into the range it stands for, which is a
+ * measurement away: the table definitions are in `xl/tables/*.xml`, in the
+ * archive the editor already has open.
+ *
+ * It settles by going round until nothing moves, because a total feeds a total:
+ * the sum of a column feeds the grand total under it, and one edit has to
+ * travel the whole way. A workbook whose formulas refer to each other in a ring
+ * would go round for ever, so the rounds are capped — a circular reference is
+ * something Excel itself refuses to resolve, and this stops rather than hangs.
+ */
+export function recalculate(
+  cells: ReadonlyMap<string, Held>,
+  sheetName: string,
+  typed: ReadonlyMap<string, string>,
+): Recalculation {
+  const values = new Map<string, number>();
+  const stale = new Set<string>();
+  /** Every cell whose value is not what the file says any more. */
+  const moved = new Set<string>(typed.keys());
+
+  /** What a cell is worth now: what was typed, what was worked out, or what the file holds. */
+  const valueAt: Lookup = (row, col) => {
+    const at = key(row, col);
+    const written = typed.get(at);
+    if (written !== undefined) return parse(written);
+    if (values.has(at)) return values.get(at)!;
+    const cell = cells.get(at);
+    if (!cell) return undefined;
+    if (cell.kind !== 'number') return null;
+    return parse(cell.text);
+  };
+
+  const formulas = [...cells].filter(([, cell]) => cell.formula !== undefined);
+  const settled = new Set<string>();
+
+  /* One round per link in the longest chain of totals, and no more. */
+  for (let round = 0; round < 64; round++) {
+    let changed = false;
+
+    for (const [at, cell] of formulas) {
+      if (settled.has(at) || typed.has(at)) continue;
+      const formula = cell.formula!;
+
+      /* Does anything that moved reach this formula at all? */
+      let reaches: Dependency = 'no';
+      for (const source of moved) {
+        const [row, col] = source.split(',').map(Number) as [number, number];
+        const answer = dependency(formula, sheetName, { row, col });
+        if (answer === 'reads') {
+          reaches = 'reads';
+          break;
+        }
+        if (answer === 'unknown') reaches = 'unknown';
+      }
+      if (reaches === 'no') continue;
+
+      /* A formula this cannot read may or may not have moved, and *may* is
+         reason enough to stop showing its number as current. There is no
+         separate branch for it: `evaluate` refuses exactly what `dependency`
+         could not read, so it comes out stale below by the one rule rather
+         than by two that agree. A branch here passed every check with and
+         without itself. */
+
+      /* A total of numbers that are themselves unreliable is unreliable, even
+         where every function in it is one this understands. */
+      const readsStale = referencesOf(formula).some((reference) => {
+        if (reference.sheet !== null && reference.sheet.toLowerCase() !== sheetName.toLowerCase()) return false;
+        for (const gone of stale) {
+          const [row, col] = gone.split(',').map(Number) as [number, number];
+          if (
+            row >= reference.from.row &&
+            row <= reference.to.row &&
+            col >= reference.from.col &&
+            col <= reference.to.col
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      settled.add(at);
+      changed = true;
+      const worked = readsStale ? null : evaluate(formula, valueAt);
+      if (worked === null) {
+        stale.add(at);
+        moved.add(at);
+        continue;
+      }
+      /* A number that did not move is not news, and saying so would put a
+         marker on a cell nobody changed. */
+      const [row, col] = at.split(',').map(Number) as [number, number];
+      const before = cells.get(key(row, col));
+      values.set(at, worked);
+      if (before === undefined || parse(before.text) !== worked) moved.add(at);
+    }
+
+    if (!changed) break;
+  }
+
+  return { values, stale };
+}
