@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-09-22. Prvi u ovom repou (`PROJEKT.md` dosad nije postojao).
+Izvještaj od 2026-09-23. Zamjenjuje onaj od 2026-09-22 (`e4881f6`).
 
 ## Jedna rečenica
 
@@ -13,14 +13,20 @@ OpenDocument i e-knjige — kao Tauri desktop aplikacija s Rust jezgrom
 Verzija: **0.5.0** (`Cargo.toml:9`, `package.json:3`, tag `v0.5.0`)
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Oba na `5223a01` (pushano 2026-09-22); nepushan je samo ovaj izvještaj.
-Zadnji rad: **2026-09-15** — `5223a01` "The window that stayed down, and the
-select-all that took the whole program".
+Oba na `5223a01` (pushano 2026-09-22); **2 commita nisu pushana** — `cddfb16` i ovaj izvještaj.
+Zadnji rad: **2026-09-23** — `cddfb16` "The total that follows the column, and
+the one that admits it cannot".
 Faza: **2 (Office)**, pri kraju — `docs/ANALYSIS-AND-PLAN.md:367`. Faza 3 (Web,
 WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Radi
 
+- **Pogled na tablicu više ne laže.** Pretipkana ćelija sredi list pod sobom:
+  `SUM` nad promijenjenim stupcem crta se s novim zbrojem u vlastitom formatu
+  broja, a svaka formula koju program ne zna izračunati označi se kao zastarjela
+  s objašnjenjem. 37 provjera, 11 namjerno pokvarenih verzija svaku od njih
+  obori; 6,3 µs po formuli po uređivanju (`cddfb16`,
+  `tools/verify-sheet-stale.mjs`).
 - **Release lanac je dostižan.** `pnpm verify:release-live` prolazi 14/14:
   `latest.json` odgovara odjavljenom zahtjevu HTTP 200, servira 0.5.0, potpis i
   artefakt postoje za sva četiri cilja (windows-x86_64, darwin-aarch64,
@@ -40,13 +46,12 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Nije gotovo
 
-- **`recalculate` nitko ne zove.** Izvezen je iz `formula.ts:442`, a jedini
-  poziv u repou je `tools/verify-formula.mjs`. Pretraga po
-  `packages/` i `apps/` ne nalazi poziv iz UI-ja. Commit `6ef397a` to i kaže:
-  „Nothing calls it yet." Pogled na tablicu i dalje pokazuje spremljeni rezultat.
-- **Plan zaostaje za kodom.** `docs/ANALYSIS-AND-PLAN.md:684` još piše „what is
-  missing is that the view stops lying in the meantime" i „Output: v0.5", iako
-  je v0.5.0 tagiran, a čisti dio posla napisan.
+- **Formula preko granice lista ne primjećuje promjenu.** `recalculate` dobiva
+  jedan list, pa šest formula u korpusu koje drugi list zovu imenom ne
+  zastarijevaju kad se taj list uredi (`cddfb16`).
+- **`SUMIFS` preko strukturirane reference tablice uvijek se samo označi**, nikad
+  izračuna — 35 ih je u jednom radnom listu, pa jedan pritisak tipke označi svih
+  35. Izlaz je razriješiti `xl/tables/*.xml` (`docs/ANALYSIS-AND-PLAN.md:671`).
 - **Installeri nisu potpisani** za Windows i macOS (`README.md:36`). Android APK
   jest. Ovo je kupnja certifikata, ne kod.
 - **Cold start nije izmjeren** — `docs/ANALYSIS-AND-PLAN.md:770` ga zove
@@ -57,10 +62,9 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Kartice
 
-todo | visok | Pozvati recalculate iz prikaza tablice u editor-office
-  » označiti zastarjele ćelije u gridu
-  » pokriti to u verify:formula ili novom verifieru
-todo | normalan | Uskladiti ANALYSIS-AND-PLAN.md s napisanim evaluatorom formula
+todo | visok | Razriješiti xl/tables/*.xml da se SUMIFS izračuna umjesto da se označi
+  » 35 formula u jednom radnom listu, sad ih jedan pritisak tipke sve označi
+todo | normalan | Proširiti recalculate na cijelu knjigu zbog formula preko lista
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 todo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore
@@ -80,5 +84,6 @@ Naslov: ulEditor — stanje
 - Zadnji posao su formule: cenzus nad stvarnim dokumentima odredio je oblik
   (79.8% je `SUM`), evaluator pokriva 86%, a ostalo se pošteno prijavljuje kao
   zastarjelo umjesto da prikazuje broj koji više nije istinit.
-- Jedino što stoji između faze 2 i kraja je poziv `recalculate` iz prikaza
-  tablice; sve izvan repoa (potpisivanje installera) čeka kupnju certifikata.
+- Faza 2 je time zatvorena u kodu: pogled na tablicu više ne pokazuje broj koji
+  je prestao biti točan. Ostaje `SUMIFS` preko tablica i formule preko granice
+  lista; sve izvan repoa (potpisivanje installera) čeka kupnju certifikata.
