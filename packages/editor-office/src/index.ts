@@ -63,7 +63,8 @@ import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, type Sheet, type Workbook } from './xlsx.js';
-import { SheetGrid, type GridCell } from './sheet-grid.js';
+import { recalculate, type Recalculation } from './formula.js';
+import { SheetGrid, shownFormula, type GridCell } from './sheet-grid.js';
 
 export { renderDocx } from './docx.js';
 export { columnName, readXlsx } from './xlsx.js';
@@ -2301,6 +2302,12 @@ class XlsxPreviewEditor implements EditorInstance {
 
   /** The retyped cells: `sheet:row,col` → what was typed. */
   #edits = new Map<string, string>();
+  /**
+   * What the typing did to each sheet's formulas, by sheet index — worked out
+   * when an edit lands rather than when a cell is drawn, because the grid asks
+   * `#shown` once per cell in view and this answers for the whole sheet at once.
+   */
+  #recalc = new Map<number, Recalculation>();
   #undoStack: Map<string, string>[] = [];
   #redoStack: Map<string, string>[] = [];
   #dirty = false;
@@ -2393,7 +2400,9 @@ class XlsxPreviewEditor implements EditorInstance {
     const edited = this.#edits.get(`${index}:${key}`);
     if (edited !== undefined) return { text: edited, kind: typedKind(edited) };
     const cell = this.workbook.sheets[index]?.cells.get(key);
-    return cell ? { text: cell.text, kind: cell.kind, formula: cell.formula } : undefined;
+    if (!cell) return undefined;
+    if (cell.formula === undefined) return { text: cell.text, kind: cell.kind };
+    return shownFormula(cell, key, this.#recalc.get(index));
   }
 
   unmount(): void {
@@ -2479,15 +2488,59 @@ class XlsxPreviewEditor implements EditorInstance {
     this.#undoStack.push(new Map(this.#edits));
     this.#redoStack = [];
     this.#edits.set(key, value);
+    this.#settle();
     this.#emitDirty();
   }
 
   #restore(edits: Map<string, string>): void {
     this.#edits = edits;
-    /* Only the cells in the page are drawn again; the rest are drawn from the
-       same edits whenever they scroll in. */
-    for (const view of this.#grids.values()) view.refresh();
+    this.#settle();
     this.#emitDirty();
+  }
+
+  /**
+   * Which numbers on the screen are no longer true, worked out again for every
+   * sheet somebody has typed into — and then the page drawn from the answer.
+   *
+   * It runs when an edit lands rather than when a cell is drawn. The grid asks
+   * `#shown` once per cell in view and scrolling asks it thousands of times a
+   * second, while a formula's dependants reach the whole sheet, so the answer
+   * is worked out once per edit and looked up per cell.
+   *
+   * **Redrawing is not optional here**, and this is the part an undo already
+   * knew: a cell typed into changes a total two rows below it, and only the
+   * typed cell is on screen having been changed. Without this the total sits
+   * there current-looking until it happens to be scrolled out of the window and
+   * back in.
+   *
+   * One sheet at a time, because `recalculate` is given one sheet's values.
+   * A formula on `Total` reading `Cashless!L7` does not go stale when `L7` is
+   * retyped on `Cashless` — `dependency` compares sheet names rather than
+   * following them, so a reference into another sheet is refused on the sheet
+   * that holds the formula and never seen from the sheet that was edited. Six
+   * such formulas exist in the measured corpus. Closing that is a pass over the
+   * workbook rather than a rule guessed here.
+   */
+  #settle(): void {
+    this.#recalc.clear();
+
+    const typed = new Map<number, Map<string, string>>();
+    for (const [at, value] of this.#edits) {
+      const cut = at.indexOf(':');
+      const index = Number(at.slice(0, cut));
+      let sheet = typed.get(index);
+      if (!sheet) typed.set(index, (sheet = new Map()));
+      sheet.set(at.slice(cut + 1), value);
+    }
+
+    for (const [index, cells] of typed) {
+      const sheet = this.workbook.sheets[index];
+      if (sheet) this.#recalc.set(index, recalculate(sheet.cells, sheet.name, cells));
+    }
+
+    /* Only the cells in the page are drawn again; the rest are drawn from the
+       same edits and the same answer whenever they scroll in. */
+    for (const view of this.#grids.values()) view.refresh();
   }
 
   #emitDirty(): void {

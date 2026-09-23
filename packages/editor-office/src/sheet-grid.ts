@@ -24,7 +24,10 @@
  * to be in view would change width under the person as they scrolled.
  */
 
-import { columnName, type Cell, type Merge, type Sheet } from './xlsx.js';
+import { t } from '@uleditor/i18n';
+
+import type { Recalculation } from './formula.js';
+import { columnName, formatNumber, type Cell, type Merge, type Sheet } from './xlsx.js';
 
 /** What a cell shows: the file's value, or what was typed over it. */
 export interface GridCell {
@@ -32,6 +35,52 @@ export interface GridCell {
   kind?: Cell['kind'];
   /** The formula behind the value, for the tooltip. */
   formula?: string;
+  /**
+   * The number shown is a formula's cached result whose inputs have since been
+   * retyped, and this cannot work the formula out. It is drawn as no longer
+   * current rather than removed: the old number is what the file holds and is
+   * still the best guess, but it must not go on looking like an answer.
+   */
+  stale?: boolean;
+}
+
+/**
+ * What a formula's cell shows once somebody has typed into the sheet.
+ *
+ * Three answers, and which one a cell gets is decided in `recalculate` rather
+ * than here — this only draws its conclusion:
+ *
+ * - **nothing moved that it reads** — the cached result is still right, and it
+ *   is left exactly as the file has it. Recomputing it would only risk
+ *   disagreeing with Excel about a number nobody changed;
+ * - **it moved and this can work it out** — the new number, written in the same
+ *   format the old one was. `recalculate` does not mark these stale, which is
+ *   why showing them is not optional: a `SUM` whose column has just changed and
+ *   which is neither updated nor marked is precisely the lying screen this work
+ *   exists to stop;
+ * - **it moved and this cannot work it out** — the old number, marked.
+ *
+ * The recalculated number is drawn and never written: the save path carries
+ * what was typed and nothing else, and the workbook is flagged for full
+ * recalculation so Excel settles every formula on opening.
+ */
+export function shownFormula(cell: Cell, key: string, recalculation: Recalculation | undefined): GridCell {
+  const base: GridCell = { text: cell.text, kind: cell.kind, formula: cell.formula };
+  if (!recalculation) return base;
+
+  const worked = recalculation.values.get(key);
+  if (worked !== undefined) {
+    /* A number is drawn again as a number, in the cell's own format. Anything
+       else is marked instead, and that is a refusal rather than an omission:
+       `recalculate` works in numbers, so a formula sitting in a date column
+       comes back as 45 678 where the file drew 12.3.2025, and a formula whose
+       cached result was an error has no format to be drawn in at all. Neither
+       is more honest than saying the number is no longer current. */
+    if (cell.kind !== 'number') return { ...base, stale: true };
+    return { ...base, text: formatNumber(worked, typeof cell.fmt === 'string' ? cell.fmt : undefined) };
+  }
+  if (recalculation.stale.has(key)) return { ...base, stale: true };
+  return base;
 }
 
 /** Rows drawn beyond the visible ones on each side, so a scroll is not a redraw. */
@@ -490,7 +539,14 @@ export class SheetGrid {
     td.textContent = cell?.text ?? '';
     if (cell?.kind) td.dataset.kind = cell.kind;
     else delete td.dataset.kind;
-    if (cell?.formula) td.title = `=${cell.formula}`;
+    if (cell?.stale) td.dataset.stale = 'true';
+    else delete td.dataset.stale;
+    if (cell?.stale) {
+      td.title = t(
+        'This number is out of date: a cell {formula} reads has been retyped, and this is not a formula it can work out. Excel settles it on opening.',
+        { formula: `=${cell.formula ?? ''}` },
+      );
+    } else if (cell?.formula) td.title = `=${cell.formula}`;
     else td.removeAttribute('title');
     if (ref === this.#hit) td.dataset.hit = 'true';
     else td.removeAttribute('data-hit');

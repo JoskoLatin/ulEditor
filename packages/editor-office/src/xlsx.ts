@@ -562,7 +562,10 @@ function cellOf(
       if (!Number.isFinite(number)) return { text: value, kind: 'text' };
       const code = styles.formats[styleIndex];
       if (isDateStyle(styles, styleIndex)) return { text: formatDate(number, code), kind: 'date' };
-      return { text: formatNumber(number, code), kind: 'number' };
+      /* The code is kept, not only applied: a formula worked out again after an
+         edit has to be written in the same hand as the number it replaces, or a
+         recalculated total arrives as 1234.5 in a column of 1.234,50. */
+      return { text: formatNumber(number, code), kind: 'number', fmt: code };
     }
   }
 }
@@ -819,7 +822,9 @@ export function readXlsx(bytes: Uint8Array): Workbook {
   if (tags(workbook, 'definedName').some((n) => (attr(n, 'name') ?? '').startsWith('_xlnm.'))) {
     notes.add('Filters and frozen panes are not applied.');
   }
-  notes.add('Formulas are not recalculated — the value stored in the file is shown.');
+  notes.add(
+    'Formulas are worked out again only where a cell they read has been retyped, and only SUM and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.',
+  );
 
   return { sheets, notes: [...notes], archive };
 }

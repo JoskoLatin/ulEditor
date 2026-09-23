@@ -678,8 +678,38 @@ So the shape of the work is not an interpreter. It is `SUM` over a range, plain
 arithmetic, and **an honest answer for everything else**: a formula this program
 cannot work out, whose inputs the person has just changed, is shown as stale
 rather than as a number that is quietly no longer true. The workbook is already
-marked for full recalculation on save, so Excel settles it on opening; what is
-missing is that the view stops lying in the meantime.
+marked for full recalculation on save, so Excel settles it on opening; what was
+missing was that the view stops lying in the meantime.
+
+**And the view has stopped.** A cell retyped now settles the sheet under it: a
+`SUM` whose column changed is redrawn with its new total, in the cell's own
+number format — the format code is kept beside the text the reader produced, or
+a recalculated total arrives as `2234.5` in a column of `1.234,50` — and every
+formula that cannot be worked out is marked instead, with a tooltip naming it
+and saying Excel will settle it on opening. **Which half a formula gets is not a
+choice made in the view**: `recalculate` leaves a total it can work out *out* of
+`stale`, so drawing only the marks would leave every `SUM` in the workbook
+looking current after its column moved — the exact failure this work exists to
+stop, and the one a "mark the stale ones" reading walks straight into.
+
+Three things are refused rather than guessed. A formula whose cached result is
+not a number — one sitting in a date column, one whose result was an error — is
+marked rather than redrawn, because `recalculate` works in numbers and would put
+`45678` where the file drew `12.3.2025`. The recalculated number is **drawn and
+never written**: the save carries what was typed and nothing else. And this is
+one sheet at a time, so the six formulas in the corpus reaching another sheet by
+name do not go stale when that sheet is edited — closing that is a pass over the
+workbook, not a rule guessed here.
+
+Measured: **6.3 µs a formula an edit**, linear — 6.8 ms for 1 000 formulas,
+twenty-eight times the most any real workbook here holds, and 62 ms once for
+10 000. It runs on the keystroke that ends the typing, never per frame and never
+per cell drawn, which is why the answer is worked out for a sheet and looked up
+per cell rather than the other way round. `tools/verify-sheet-stale.mjs`: 37
+checks, eleven deliberately broken builds each failing them. Its logic half runs
+in CI; its other half opens the file, types into it and reads the screen, and
+needs the development server — without one it says it did not run rather than
+passing quietly.
 
 Output: **v0.5**
 

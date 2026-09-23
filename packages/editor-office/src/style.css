@@ -312,6 +312,26 @@
   background-size: 5px 5px;
 }
 
+/* A number that is no longer true: a formula whose inputs were retyped and
+   which this cannot work out. Kept legible rather than hidden — the old number
+   is still what the file holds — but it must stop looking like an answer, so
+   it is dimmed and underlined where a current number is not, and its corner
+   dot turns from the formula colour to the warning one. */
+.ul-sheet td[data-stale='true'] {
+  color: var(--warn);
+  background-color: var(--warn-wash);
+  text-decoration: underline dotted var(--warn);
+  text-underline-offset: 2px;
+  background-image: linear-gradient(
+    to bottom left,
+    var(--warn) 0 5px,
+    transparent 5px
+  );
+  background-repeat: no-repeat;
+  background-position: top right;
+  background-size: 5px 5px;
+}
+
 .ul-sheet td[data-hit='true'] {
   outline: 2px solid var(--accent);
   outline-offset: -2px;

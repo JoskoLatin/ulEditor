@@ -86,6 +86,14 @@ jobs:
       - run: pnpm verify:docx
       - run: pnpm verify:xlsx
 
+      # Which numbers on the screen are no longer true. The half that matters
+      # is the one about the cell that is NOT marked: a SUM this can work out
+      # is deliberately absent from `stale`, so a view that only drew the marks
+      # would leave every total in the workbook looking current after its
+      # column changed. The reader-and-grid half of this needs a development
+      # server and says so when there is none; here it checks the logic.
+      - run: pnpm verify:stale
+
       # OpenDocument text, where the same surgery meets a format that keeps its
       # spacing in elements: two spaces typed after a full stop have to come
       # back out as two, and a piece emptied of its text has to keep its place
