@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-09-23. Zamjenjuje onaj od 2026-09-22 (`e4881f6`).
+Izvještaj od 2026-09-23. Zamjenjuje onaj od 2026-09-22 (`e4881f6`); dopunjen nakon `be4b50e`.
 
 ## Jedna rečenica
 
@@ -13,9 +13,9 @@ OpenDocument i e-knjige — kao Tauri desktop aplikacija s Rust jezgrom
 Verzija: **0.5.0** (`Cargo.toml:9`, `package.json:3`, tag `v0.5.0`)
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Oba na `5223a01` (pushano 2026-09-22); **2 commita nisu pushana** — `cddfb16` i ovaj izvještaj.
-Zadnji rad: **2026-09-23** — `cddfb16` "The total that follows the column, and
-the one that admits it cannot".
+Oba na `5223a01` (pushano 2026-09-22); **4 commita nisu pushana** — `cddfb16`, `be4b50e` i dva izvještaja.
+Zadnji rad: **2026-09-23** — `be4b50e` "What PodaciTable[Iznos] stands for, and
+the sheet it turned out to be on".
 Faza: **2 (Office)**, pri kraju — `docs/ANALYSIS-AND-PLAN.md:367`. Faza 3 (Web,
 WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
@@ -27,6 +27,12 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
   s objašnjenjem. 37 provjera, 11 namjerno pokvarenih verzija svaku od njih
   obori; 6,3 µs po formuli po uređivanju (`cddfb16`,
   `tools/verify-sheet-stale.mjs`).
+- **Strukturirana referenca na tablicu se razrješuje.** `xl/tables/*.xml` se
+  čita, pa `PodaciTable[Iznos]` postane pravokutnik. Mjerenje je promijenilo
+  zadatak: tablica je na listu `Podaci`, a svih 35 formula koje je čitaju na
+  listu `Cashless` — pa se nijedna ne može izračunati, ali se ni ne označava
+  krivo. Jedan pritisak tipke ondje je označavao **50 od 51** formule, sad
+  nijednu (`be4b50e`).
 - **Release lanac je dostižan.** `pnpm verify:release-live` prolazi 14/14:
   `latest.json` odgovara odjavljenom zahtjevu HTTP 200, servira 0.5.0, potpis i
   artefakt postoje za sva četiri cilja (windows-x86_64, darwin-aarch64,
@@ -49,9 +55,9 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 - **Formula preko granice lista ne primjećuje promjenu.** `recalculate` dobiva
   jedan list, pa šest formula u korpusu koje drugi list zovu imenom ne
   zastarijevaju kad se taj list uredi (`cddfb16`).
-- **`SUMIFS` preko strukturirane reference tablice uvijek se samo označi**, nikad
-  izračuna — 35 ih je u jednom radnom listu, pa jedan pritisak tipke označi svih
-  35. Izlaz je razriješiti `xl/tables/*.xml` (`docs/ANALYSIS-AND-PLAN.md:671`).
+- **`SUMIFS` se i dalje ne izračunava.** Sad je poznato zašto to nije rješivo na
+  ovoj razini: svih 35 je preko granice lista, a `recalculate` dobiva jedan list
+  (`be4b50e`).
 - **Installeri nisu potpisani** za Windows i macOS (`README.md:36`). Android APK
   jest. Ovo je kupnja certifikata, ne kod.
 - **Cold start nije izmjeren** — `docs/ANALYSIS-AND-PLAN.md:770` ga zove
@@ -62,9 +68,8 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Kartice
 
-todo | visok | Razriješiti xl/tables/*.xml da se SUMIFS izračuna umjesto da se označi
-  » 35 formula u jednom radnom listu, sad ih jedan pritisak tipke sve označi
-todo | normalan | Proširiti recalculate na cijelu knjigu zbog formula preko lista
+todo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
+  » otključava i onih 35 SUMIFS-a i 6 formula koje drugi list zovu imenom
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 todo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore
@@ -85,5 +90,6 @@ Naslov: ulEditor — stanje
   (79.8% je `SUM`), evaluator pokriva 86%, a ostalo se pošteno prijavljuje kao
   zastarjelo umjesto da prikazuje broj koji više nije istinit.
 - Faza 2 je time zatvorena u kodu: pogled na tablicu više ne pokazuje broj koji
-  je prestao biti točan. Ostaje `SUMIFS` preko tablica i formule preko granice
-  lista; sve izvan repoa (potpisivanje installera) čeka kupnju certifikata.
+  je prestao biti točan, a ne označava ni ono što nije dirano. Jedino što još
+  stoji je da se računa list po list; sve izvan repoa (potpisivanje installera)
+  čeka kupnju certifikata.
