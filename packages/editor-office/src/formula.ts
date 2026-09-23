@@ -52,6 +52,30 @@ export interface Reference {
 }
 
 /**
+ * A table declared in the workbook, as far as a formula needs one.
+ *
+ * `PodaciTable[Iznos]` is not a range until somebody says where `PodaciTable`
+ * begins and which of its columns is called `Iznos`, and nobody in this file
+ * can: the answer is in `xl/tables/*.xml`, a part of the archive this module
+ * never sees. So it is handed one of these instead of reaching for it, and the
+ * module stays what it is — arithmetic over text, with no idea what a zip is.
+ */
+export interface TableRange {
+  /** The sheet the table sits on, which is often not the sheet reading it. */
+  sheet: string;
+  /** The first and last row a `Name[Column]` covers, 0-based: the header row and any totals row left out. */
+  fromRow: number;
+  toRow: number;
+  /** The table's leftmost column, 0-based. */
+  fromCol: number;
+  /** Each declared column's name, lowercased, to its offset from `fromCol`. */
+  columns: ReadonlyMap<string, number>;
+}
+
+/** Tables by name, lowercased — a spreadsheet compares a table's name without case. */
+export type Tables = ReadonlyMap<string, TableRange>;
+
+/**
  * Whether a formula reads a particular cell.
  *
  * - `'reads'` — a reference this module understands covers that cell.
@@ -106,10 +130,56 @@ const UNREADABLE = [
   /#[A-Z/0-9]+[!?]/,
 ];
 
-/** Every rectangle a formula reads, as far as it can be read. */
-export function referencesOf(formula: string): Reference[] {
+/** `PodaciTable[Iznos]` — a table's name, then one plain column name in brackets. Nothing else. */
+const STRUCTURED = /([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*)\[([^[\]]*)\]/g;
+
+/**
+ * The ranges a formula's structured references stand for, and what is left of
+ * the formula once they have been taken out of it.
+ *
+ * **The rule is deliberately narrow, and the narrowness is the whole safety of
+ * this.** Only `Name[Column]` resolves, where `Name` is a declared table and
+ * `Column` is exactly one of its declared column names. Every other bracketed
+ * shape ECMA-376 allows — `[#All]`, `[#Headers]`, `[#Totals]`, `[#Data]`,
+ * `[@Column]` for this row, `[[A]:[B]]` for a span of columns, and the `'`
+ * escapes a name with a bracket in it carries — is left standing in `rest`,
+ * where `unreadable` finds it and the answer stays `'unknown'`.
+ *
+ * None of those occurs in the spreadsheets this was measured on; all 35
+ * structured references there are `PodaciTable[Column]`. The reason to refuse
+ * them anyway is the direction of the mistake. Everywhere else in this module a
+ * wrong answer costs a number marked out of date that was fine; here it would
+ * cost an `'unknown'` turned into a `'no'`, which is a stale total left on the
+ * screen with nothing at all to say that it is stale.
+ */
+function tableReferences(piece: string, tables: Tables): { found: Reference[]; rest: string } {
   const found: Reference[] = [];
-  for (const piece of outsideQuotes(formula)) {
+  const rest = piece.replace(STRUCTURED, (whole, name: string, column: string) => {
+    const table = tables.get(name.toLowerCase());
+    const offset = table?.columns.get(column.toLowerCase());
+    if (!table || offset === undefined) return whole;
+    const col = table.fromCol + offset;
+    found.push({
+      sheet: table.sheet,
+      from: { row: table.fromRow, col },
+      to: { row: table.toRow, col },
+    });
+    /* A space, not nothing: `A1[x]B2` must not become `A1B2`. */
+    return ' ';
+  });
+  return { found, rest };
+}
+
+/** Every rectangle a formula reads, as far as it can be read. */
+export function referencesOf(formula: string, tables?: Tables): Reference[] {
+  const found: Reference[] = [];
+  for (const whole of outsideQuotes(formula)) {
+    let piece = whole;
+    if (tables) {
+      const resolved = tableReferences(piece, tables);
+      found.push(...resolved.found);
+      piece = resolved.rest;
+    }
     for (const match of piece.matchAll(REFERENCE)) {
       const sheet = match[1] !== undefined ? match[1].replace(/''/g, "'") : (match[2] ?? null);
       const from = parseA1(match[3]!);
@@ -126,8 +196,10 @@ export function referencesOf(formula: string): Reference[] {
 }
 
 /** Whether anything in the formula is beyond what this module can read. */
-function unreadable(formula: string): boolean {
-  return outsideQuotes(formula).some((piece) => UNREADABLE.some((shape) => shape.test(piece)));
+function unreadable(formula: string, tables?: Tables): boolean {
+  return outsideQuotes(formula).some((piece) =>
+    UNREADABLE.some((shape) => shape.test(tables ? tableReferences(piece, tables).rest : piece)),
+  );
 }
 
 /**
@@ -142,10 +214,11 @@ export function dependency(
   formula: string,
   sheetName: string,
   at: { row: number; col: number },
+  tables?: Tables,
 ): Dependency {
-  if (unreadable(formula)) return 'unknown';
+  if (unreadable(formula, tables)) return 'unknown';
   const here = sheetName.toLowerCase();
-  for (const reference of referencesOf(formula)) {
+  for (const reference of referencesOf(formula, tables)) {
     if (reference.sheet !== null && reference.sheet.toLowerCase() !== here) continue;
     if (
       at.row >= reference.from.row &&
@@ -425,13 +498,17 @@ const parse = (text: string): number | null => {
  *
  * **The cost of that is real and is named rather than hidden.** A formula this
  * cannot read goes stale on *any* edit to the sheet, because there is no way to
- * tell whether it read the cell that changed. In the one real workbook that has
- * such formulas there are 35 of them, so a single keystroke marks all 35. The
- * alternative is showing a number that may be wrong, and between annoying and
- * wrong this picks annoying — but the way out is not a rule guessed here. It is
- * resolving `Tablica1[Iznos]` into the range it stands for, which is a
- * measurement away: the table definitions are in `xl/tables/*.xml`, in the
- * archive the editor already has open.
+ * tell whether it read the cell that changed.
+ *
+ * That used to be all 35 structured references in the one real workbook that
+ * has them, on every keystroke. Given `tables` it is none of them: the way out
+ * was never a rule guessed here but `Tablica1[Iznos]` resolved into the range
+ * it stands for, out of `xl/tables/*.xml`, and the measurement that followed
+ * was the surprise — the table those 35 read lives on a **different sheet**
+ * from the formulas reading it, so once resolved they do not read the edited
+ * sheet at all. What remains unreadable, and still goes stale on any edit, is
+ * every other bracketed shape: `[#Totals]`, `[@Column]`, a span of columns, or
+ * a table nobody declared.
  *
  * It settles by going round until nothing moves, because a total feeds a total:
  * the sum of a column feeds the grand total under it, and one edit has to
@@ -443,6 +520,7 @@ export function recalculate(
   cells: ReadonlyMap<string, Held>,
   sheetName: string,
   typed: ReadonlyMap<string, string>,
+  tables?: Tables,
 ): Recalculation {
   const values = new Map<string, number>();
   const stale = new Set<string>();
@@ -476,7 +554,7 @@ export function recalculate(
       let reaches: Dependency = 'no';
       for (const source of moved) {
         const [row, col] = source.split(',').map(Number) as [number, number];
-        const answer = dependency(formula, sheetName, { row, col });
+        const answer = dependency(formula, sheetName, { row, col }, tables);
         if (answer === 'reads') {
           reaches = 'reads';
           break;
@@ -494,7 +572,7 @@ export function recalculate(
 
       /* A total of numbers that are themselves unreliable is unreliable, even
          where every function in it is one this understands. */
-      const readsStale = referencesOf(formula).some((reference) => {
+      const readsStale = referencesOf(formula, tables).some((reference) => {
         if (reference.sheet !== null && reference.sheet.toLowerCase() !== sheetName.toLowerCase()) return false;
         for (const gone of stale) {
           const [row, col] = gone.split(',').map(Number) as [number, number];

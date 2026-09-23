@@ -40,8 +40,8 @@ function check(name, passed, detail = '') {
 
 /* ── what it reads ───────────────────────────────────────────────────── */
 
-const refs = (formula) =>
-  referencesOf(formula)
+const refs = (formula, tables) =>
+  referencesOf(formula, tables)
     .map((one) => `${one.sheet ?? ''}${one.sheet ? '!' : ''}${one.from.row},${one.from.col}:${one.to.row},${one.to.col}`)
     .join(' ');
 
@@ -322,6 +322,157 @@ if (folder) {
 } else {
   console.log('\n  No folder given, so this ran on the shapes above.');
   console.log('  Give it one to measure how much of real spreadsheets it can keep current.');
+}
+
+/* ── a structured reference, once somebody says what the table is ────── */
+
+/*
+ * `PodaciTable[Iznos]` is not a range until the table definition says where the
+ * table begins and which column is `Iznos`. Given that, `dependency` can answer
+ * precisely instead of shrugging — and answering precisely is the one move in
+ * this module that goes in the dangerous direction, because it turns an
+ * `'unknown'` into a `'no'`. A `'no'` that should have been `'unknown'` is a
+ * stale total sitting on the screen with nothing to say it is stale.
+ *
+ * So the checks that matter most below are the refusals: every bracketed shape
+ * ECMA-376 allows other than a plain declared column name must still come back
+ * `'unknown'`.
+ *
+ * The table here is the real one, measured: `PodaciTable`, A1:N5417 on the
+ * sheet `Podaci`, one header row, 14 columns — and the formulas that read it
+ * are on `Cashless`, which is the finding that made this worth doing.
+ */
+const podaci = {
+  sheet: 'Podaci',
+  fromRow: 1,
+  toRow: 5416,
+  fromCol: 0,
+  columns: new Map([
+    ['vrsta transakcije', 0],
+    ['vrsta transakcije - filter', 1],
+    ['vrsta transakcije - oznaka', 2],
+    ['iznos', 3],
+    ['način plaćanja', 11],
+  ]),
+};
+/* A table with no header row at all — `NarukviceKarticeTable`, B22:D25, real. */
+const narukvice = {
+  sheet: 'Cashless',
+  fromRow: 21,
+  toRow: 24,
+  fromCol: 1,
+  columns: new Map([
+    ['column1', 0],
+    ['column2', 1],
+    ['column3', 2],
+  ]),
+};
+const tables = new Map([
+  ['podacitable', podaci],
+  ['narukvicekarticetable', narukvice],
+]);
+
+const REAL = 'SUMIFS(PodaciTable[Iznos],PodaciTable[Vrsta transakcije - oznaka],5,PodaciTable[Način plaćanja],"Gotovina")';
+
+check(
+  'a declared column becomes the rectangle the table says it is',
+  refs(REAL, tables) === 'Podaci!1,3:5416,3 Podaci!1,2:5416,2 Podaci!1,11:5416,11',
+  refs(REAL, tables),
+);
+check(
+  'the table name is matched without case, as a spreadsheet matches it',
+  refs('SUM(podacitable[iznos])', tables) === 'Podaci!1,3:5416,3',
+  refs('SUM(podacitable[iznos])', tables),
+);
+check(
+  'a header row is left out of the range, and a table declaring none keeps its first row',
+  refs('SUM(NarukviceKarticeTable[Column2])', tables) === 'Cashless!21,2:24,2',
+  refs('SUM(NarukviceKarticeTable[Column2])', tables),
+);
+
+/* The whole point: the sheet the formula stands on is not the sheet it reads. */
+check(
+  'the real formula reads nothing at all on the sheet it is written on',
+  dependency(REAL, 'Cashless', at(6, 3), tables) === 'no',
+  dependency(REAL, 'Cashless', at(6, 3), tables),
+);
+check(
+  'and reads the table where the table actually is',
+  dependency(REAL, 'Podaci', at(100, 3), tables) === 'reads',
+  dependency(REAL, 'Podaci', at(100, 3), tables),
+);
+check(
+  'a cell below the table is not in it',
+  dependency(REAL, 'Podaci', at(5417, 3), tables) === 'no',
+  dependency(REAL, 'Podaci', at(5417, 3), tables),
+);
+check(
+  'and neither is the header row above the data',
+  dependency(REAL, 'Podaci', at(0, 3), tables) === 'no',
+  dependency(REAL, 'Podaci', at(0, 3), tables),
+);
+check(
+  'without the tables it is what it always was — unreadable',
+  dependency(REAL, 'Cashless', at(6, 3)) === 'unknown',
+  dependency(REAL, 'Cashless', at(6, 3)),
+);
+
+/* ── and everything else in brackets is still refused ────────────────── */
+
+for (const [shape, why] of [
+  ['SUM(PodaciTable[#All])', 'the whole table including its header'],
+  ['SUM(PodaciTable[#Headers])', 'the header row'],
+  ['SUM(PodaciTable[#Totals])', 'a totals row'],
+  ['SUM(PodaciTable[#Data])', 'the data body written out'],
+  ['SUM(PodaciTable[@Iznos])', 'this row only'],
+  ['SUM(PodaciTable[[Iznos]:[Operater]])', 'a span of columns'],
+  ['SUM(PodaciTable[Nepostojeci])', 'a column nobody declared'],
+  ['SUM(NepoznataTablica[Iznos])', 'a table nobody declared'],
+  ["SUM(PodaciTable['[Iznos])", 'an escaped bracket in a column name'],
+]) {
+  check(`refused, and so still unknown: ${why}`, dependency(shape, 'Cashless', at(6, 3), tables) === 'unknown', shape);
+}
+
+check(
+  'one refused reference makes the whole formula unknown, however many resolve beside it',
+  dependency('SUMIFS(PodaciTable[Iznos],PodaciTable[#Totals],5)', 'Cashless', at(6, 3), tables) === 'unknown',
+);
+check(
+  'a plain range beside a resolved one is still read',
+  dependency('SUM(PodaciTable[Iznos])+SUM(B2:B4)', 'Cashless', at(2, 1), tables) === 'reads',
+);
+check(
+  'working it out is still refused — SUMIFS is not arithmetic, tables or no tables',
+  evaluate(REAL, () => 1) === null,
+);
+
+/*
+ * A resolved reference is taken out of the text and a space left where it was,
+ * and the space is not decoration. Take it out leaving nothing and `A$` on one
+ * side joins `1` on the other into `A$1` — a reference to a cell the formula
+ * never named, which would then make the formula depend on a cell nobody wrote.
+ * No valid formula can be written this way, since a structured reference is an
+ * operand and an operand does not sit against `$`; the rule is kept because it
+ * costs one character and proving it unreachable costs an argument.
+ */
+check(
+  'taking a reference out cannot invent one that was never written',
+  refs('A$PodaciTable[Iznos]1', tables) === 'Podaci!1,3:5416,3',
+  refs('A$PodaciTable[Iznos]1', tables),
+);
+
+/* And a whole sheet: the 35 that used to be marked by any keystroke. */
+{
+  const cells = new Map([['0,0', { text: '1', kind: 'number' }]]);
+  for (let i = 0; i < 35; i++) cells.set(`${10 + i},3`, { text: '0', kind: 'number', formula: REAL });
+  const typed = new Map([['0,0', '2']]);
+  const before = recalculate(cells, 'Cashless', typed).stale.size;
+  const after = recalculate(cells, 'Cashless', typed, tables).stale.size;
+  check(
+    'one keystroke on the summary sheet marked all 35 and now marks none',
+    before === 35 && after === 0,
+    `${before} → ${after}`,
+  );
 }
 
 const failed = checks.filter((c) => !c.passed);

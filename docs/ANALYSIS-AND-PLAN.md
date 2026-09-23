@@ -701,12 +701,44 @@ one sheet at a time, so the six formulas in the corpus reaching another sheet by
 name do not go stale when that sheet is edited — closing that is a pass over the
 workbook, not a rule guessed here.
 
+**And the 35 that were always marked are not marked at all.** The plan for them
+said "resolving `Tablica1[Iznos]` into the range it stands for, which is a
+measurement away", and the measurement is what changed the job. `xl/tables/*.xml`
+is now read — `displayName`, `ref`, the header row, any totals row, each declared
+column — and handed to `formula.ts`, which stays what it was: arithmetic over
+text, with no idea what a zip is.
+
+The surprise was **where the table lives**. All 35 structured references are in
+one workbook and name `PodaciTable`, which sits on the sheet `Podaci`, while
+every formula reading it sits on `Cashless`. Resolved, they read nothing on the
+sheet they are written on — so the card on the board, "so that `SUMIFS` is worked
+out rather than marked", was answered by the measurement rather than by the code:
+**none of them becomes evaluable**, because every one is cross-sheet and
+`recalculate` is given one sheet. What they stop being is *wrongly marked*. One
+keystroke on that summary sheet used to mark **50 of its 51 formulas** — the 35
+directly, and fifteen more poisoned through them, because a total of unreliable
+numbers is unreliable. It now marks **none**, and a change something does read is
+still marked.
+
+Resolving is the one move here that goes in the dangerous direction: it turns an
+`'unknown'` into a `'no'`, and a `'no'` that should have been `'unknown'` is a
+stale total on screen with nothing to say so. So the rule is narrow and written
+down before the regex was: **only `Name[Column]`, where `Name` is a declared
+table and `Column` exactly one of its declared columns.** `[#All]`, `[#Headers]`,
+`[#Totals]`, `[#Data]`, `[@Column]`, `[[A]:[B]]` and the `'` escapes all stay
+unreadable. None occurs in the corpus; each is checked anyway, because what they
+would cost is the one thing this module exists to prevent.
+
 Measured: **6.3 µs a formula an edit**, linear — 6.8 ms for 1 000 formulas,
 twenty-eight times the most any real workbook here holds, and 62 ms once for
 10 000. It runs on the keystroke that ends the typing, never per frame and never
 per cell drawn, which is why the answer is worked out for a sheet and looked up
 per cell rather than the other way round. `tools/verify-sheet-stale.mjs`: 37
-checks, eleven deliberately broken builds each failing them. Its logic half runs
+checks, eleven deliberately broken builds each failing them; the tables are
+another 46 across the two harnesses and eleven more broken builds, one of which
+— a resolved reference removed leaving nothing rather than a space, so that `A$`
+and `1` join into a reference nobody wrote — survived until a check was written
+for it. Its logic half runs
 in CI; its other half opens the file, types into it and reads the screen, and
 needs the development server — without one it says it did not run rather than
 passing quietly.

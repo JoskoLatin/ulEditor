@@ -21,6 +21,7 @@
  *   node tools/verify-sheet-stale.mjs
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -322,6 +323,124 @@ ${body}`;
   });
 }
 
+/**
+ * Two sheets, as the real workbook is built: `Cashless` holds the summary
+ * formulas and `Podaci` holds the table they read. `PodaciTable` is A1:C4 with
+ * one header row, so its data is rows 2–4, and `Iznos` is its third column.
+ *
+ * This is the shape the whole change turns on. Before the table definitions were
+ * read, `SUMIFS(PodaciTable[Iznos],…)` was unreadable, so typing anywhere on
+ * `Cashless` marked it out of date — although it reads nothing on `Cashless` at
+ * all.
+ */
+function tableBook() {
+  const xml = (body) => `<?xml version="1.0"?>
+${body}`;
+  const sheet1 =
+    `<worksheet xmlns="${SHEET_NS}"><sheetData>` +
+    `<row r="1"><c r="A1" s="1"><v>100</v></c>` +
+    `<c r="B1" s="1"><f>SUMIFS(PodaciTable[Iznos],PodaciTable[Vrsta],5)</f><v>1234.5</v></c></row>` +
+    `<row r="2"><c r="A2" s="1"><v>200</v></c>` +
+    `<c r="B2" s="1"><f>SUM(A1:A2)</f><v>300</v></c></row>` +
+    `</sheetData></worksheet>`;
+  const sheet2 =
+    `<worksheet xmlns="${SHEET_NS}"><sheetData>` +
+    `<row r="1"><c r="A1" t="str"><v>Vrsta</v></c><c r="B1" t="str"><v>Operater</v></c>` +
+    `<c r="C1" t="str"><v>Iznos</v></c></row>` +
+    `<row r="2"><c r="A2"><v>5</v></c><c r="C2" s="1"><v>1000</v></c></row>` +
+    `<row r="3"><c r="A3"><v>5</v></c><c r="C3" s="1"><v>234.5</v></c></row>` +
+    `<row r="4"><c r="A4"><v>7</v></c><c r="C4" s="1"><v>99</v></c></row>` +
+    `</sheetData><tableParts count="2"><tablePart r:id="rIdT" xmlns:r="${REL_NS}"/>` +
+    `<tablePart r:id="rIdU" xmlns:r="${REL_NS}"/></tableParts></worksheet>`;
+  const table =
+    `<table xmlns="${SHEET_NS}" id="1" name="PodaciTable" displayName="PodaciTable" ref="A1:C4">` +
+    `<tableColumns count="3"><tableColumn id="1" name="Vrsta"/>` +
+    `<tableColumn id="2" name="Operater"/><tableColumn id="3" name="Iznos"/></tableColumns></table>`;
+  /*
+   * The same shape with a totals row under it. Excel puts a `SUBTOTAL` there,
+   * so counting it as data would make a column's own total one of the numbers
+   * that column adds up. No table in the measured corpus declares one, which is
+   * exactly why it is written out here: otherwise nothing would ever fail if
+   * the reader stopped subtracting it.
+   */
+  const totalled =
+    `<table xmlns="${SHEET_NS}" id="2" name="SaZbrojem" displayName="SaZbrojem" ref="E1:F5" totalsRowCount="1">` +
+    `<tableColumns count="2"><tableColumn id="1" name="Stavka"/>` +
+    `<tableColumn id="2" name="Cijena"/></tableColumns></table>`;
+
+  return zipSync({
+    '[Content_Types].xml': strToU8(
+      xml(
+        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+          `<Default Extension="xml" ContentType="application/xml"/>` +
+          `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>`,
+      ),
+    ),
+    'xl/workbook.xml': strToU8(
+      xml(
+        `<workbook xmlns="${SHEET_NS}" xmlns:r="${REL_NS}"><sheets>` +
+          `<sheet name="Cashless" sheetId="1" r:id="rId1"/>` +
+          `<sheet name="Podaci" sheetId="2" r:id="rId2"/></sheets></workbook>`,
+      ),
+    ),
+    'xl/_rels/workbook.xml.rels': strToU8(
+      xml(
+        `<Relationships xmlns="${PKG_REL_NS}">` +
+          `<Relationship Id="rId1" Type="${REL_NS}/worksheet" Target="worksheets/sheet1.xml"/>` +
+          `<Relationship Id="rId2" Type="${REL_NS}/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`,
+      ),
+    ),
+    'xl/worksheets/_rels/sheet2.xml.rels': strToU8(
+      xml(
+        `<Relationships xmlns="${PKG_REL_NS}">` +
+          `<Relationship Id="rIdT" Type="${REL_NS}/table" Target="../tables/table1.xml"/>` +
+          `<Relationship Id="rIdU" Type="${REL_NS}/table" Target="../tables/table2.xml"/></Relationships>`,
+      ),
+    ),
+    'xl/styles.xml': strToU8(
+      xml(
+        `<styleSheet xmlns="${SHEET_NS}">` +
+          `<numFmts count="1"><numFmt numFmtId="164" formatCode="${MONEY}"/></numFmts>` +
+          `<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`,
+      ),
+    ),
+    'xl/tables/table1.xml': strToU8(xml(table)),
+    'xl/tables/table2.xml': strToU8(xml(totalled)),
+    'xl/worksheets/sheet1.xml': strToU8(xml(sheet1)),
+    'xl/worksheets/sheet2.xml': strToU8(xml(sheet2)),
+  });
+}
+
+/**
+ * The one real workbook the census found structured references in. Absent on
+ * anybody else's machine, and the check that uses it says so rather than
+ * failing — the fixture above asks the same question of a file this repository
+ * writes itself.
+ */
+function findReal() {
+  const corpus = process.env.UL_CORPUS ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', 'Documents');
+  const walk = (dir, depth = 0) => {
+    if (depth > 6) return null;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const hit = walk(full, depth + 1);
+        if (hit) return hit;
+      } else if (/^Excel cashless izvjestaj .*\.xlsx$/i.test(entry.name)) {
+        return full;
+      }
+    }
+    return null;
+  };
+  return walk(corpus);
+}
+
 let reachable = true;
 try {
   await fetch(url, { signal: AbortSignal.timeout(2500) });
@@ -490,6 +609,163 @@ if (!reachable) {
       undone.a1 === '1.000,00' && undone.sum === '1.234,50' && undone.stale === 0,
       `A1 ${undone.a1} · B1 ${undone.sum} · ${undone.stale} marked`,
     );
+    /* ── the table definitions, and what reading them is worth ─────── */
+
+    const tabled = await page.evaluate(
+      async ({ root, b64 }) => {
+        const { readXlsx } = await import(`/@fs/${root}/packages/editor-office/src/xlsx.ts`);
+        const { recalculate, dependency } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+
+        const book = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+        const table = book.tables?.get('podacitable');
+        const totals = book.tables?.get('sazbrojem');
+        const cashless = book.sheets[0];
+        const formula = cashless.cells.get('0,1')?.formula ?? '';
+
+        /* One keystroke on the summary sheet, with the tables and without. */
+        const typed = new Map([['0,0', '150']]);
+        const without = recalculate(cashless.cells, cashless.name, typed);
+        const with_ = recalculate(cashless.cells, cashless.name, typed, book.tables);
+
+        return {
+          names: [...(book.tables?.keys() ?? [])],
+          range: table ? `${table.sheet}!${table.fromRow},${table.fromCol}–${table.toRow}` : null,
+          totalsRange: totals ? `${totals.sheet}!${totals.fromRow},${totals.fromCol}–${totals.toRow}` : null,
+          columns: table ? [...table.columns.entries()].map(([n, o]) => `${n}=${o}`).join(' ') : null,
+          before: [...without.stale],
+          after: [...with_.stale],
+          saysNo: dependency(formula, cashless.name, { row: 0, col: 0 }, book.tables),
+          saysUnknown: dependency(formula, cashless.name, { row: 0, col: 0 }),
+          plainSum: with_.values.has('1,1'),
+        };
+      },
+      { root: ROOT.split(sep).join('/'), b64: Buffer.from(tableBook()).toString('base64') },
+    );
+
+    check(
+      'the reader finds the tables the formulas name',
+      tabled.names.sort().join() === 'podacitable,sazbrojem',
+      `tables: ${tabled.names.join(', ') || 'none'}`,
+    );
+    check(
+      'a totals row is left out of the data, as its header row is',
+      tabled.totalsRange === 'Podaci!1,4–3',
+      `${tabled.totalsRange} (wanted Podaci!1,4–3, from E1:F5 with one header and one totals row)`,
+    );
+    check(
+      'and puts it on its own sheet, with its header row left out of the data',
+      tabled.range === 'Podaci!1,0–3',
+      `${tabled.range} (wanted Podaci!1,0–3)`,
+    );
+    check(
+      'and knows which column is which',
+      tabled.columns === 'vrsta=0 operater=1 iznos=2',
+      String(tabled.columns),
+    );
+    check(
+      'unreadable before, and precisely answered after',
+      tabled.saysUnknown === 'unknown' && tabled.saysNo === 'no',
+      `${tabled.saysUnknown} → ${tabled.saysNo}`,
+    );
+    check(
+      'a keystroke on the summary sheet marked the SUMIFS and now marks nothing',
+      tabled.before.join() === '0,1' && tabled.after.length === 0,
+      `${tabled.before.length} marked → ${tabled.after.length}`,
+    );
+    check(
+      'and the plain SUM beside it is still worked out as it was',
+      tabled.plainSum,
+      'B2 = SUM(A1:A2)',
+    );
+
+    /* ── and the real workbook, where the 35 of them actually are ──── */
+
+    const real = findReal();
+    if (!real) {
+      console.log(
+        [
+          '',
+          '  The real workbook was not found, so the figure above is the fixture one.',
+          '  Point UL_CORPUS at a folder holding one to measure it.',
+        ].join(String.fromCharCode(10)),
+      );
+    } else {
+      const measured = await page.evaluate(
+        async ({ root, b64 }) => {
+          const { readXlsx } = await import(`/@fs/${root}/packages/editor-office/src/xlsx.ts`);
+          const { recalculate } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+
+          const book = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+          /* The sheet holding the formulas, whichever it is called. */
+          const sheet = book.sheets.reduce((most, one) => {
+            const count = (all) => [...all.cells.values()].filter((c) => c.formula !== undefined).length;
+            return count(one) > count(most) ? one : most;
+          }, book.sheets[0]);
+
+          /* A cell on that sheet that is not itself a formula, and that no
+             formula on it reads — the keystroke that ought to mark nothing. */
+          const { dependency } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+          const formulaCells = [...sheet.cells.values()].filter((c) => c.formula !== undefined);
+          const readsIt = (key) => {
+            const [row, col] = key.split(',').map(Number);
+            return formulaCells.some((c) => dependency(c.formula, sheet.name, { row, col }, book.tables) === 'reads');
+          };
+          const innocent = [...sheet.cells].find(
+            ([key, cell]) => cell.formula === undefined && cell.kind === 'number' && !readsIt(key),
+          );
+          const typed = new Map([[innocent?.[0] ?? '0,0', '1']]);
+
+          /* And one that IS read, so the marking is shown not to have gone away.
+             On this workbook there is no plain cell to use: the totals read each
+             other, so what is read is itself a formula. Typing over one is not
+             something the editor offers, but `recalculate` is pure and the
+             question is only whether a changed cell still reaches what reads it. */
+          const watched = [...sheet.cells].find(([key]) => readsIt(key));
+          const watchedStale = watched
+            ? recalculate(sheet.cells, sheet.name, new Map([[watched[0], '1']]), book.tables).stale.size
+            : -1;
+
+          const formulas = [...sheet.cells.values()].filter((c) => c.formula !== undefined).length;
+          const structured = [...sheet.cells.values()].filter((c) => /[A-Za-z_][\w.]*\[/.test(c.formula ?? '')).length;
+
+          return {
+            sheet: sheet.name,
+            sheets: book.sheets.map((one) => one.name),
+            tables: [...(book.tables?.entries() ?? [])].map(([n, t]) => `${n}@${t.sheet}`),
+            formulas,
+            structured,
+            before: recalculate(sheet.cells, sheet.name, typed).stale.size,
+            after: recalculate(sheet.cells, sheet.name, typed, book.tables).stale.size,
+            watchedStale,
+          };
+        },
+        { root: ROOT.split(sep).join('/'), b64: readFileSync(real).toString('base64') },
+      );
+
+      console.log(
+        [
+          '',
+          `  ${real.split(sep).pop()}`,
+          `    sheets     ${measured.sheets.join(', ')}`,
+          `    tables     ${measured.tables.join(', ') || 'none'}`,
+          `    formulas   ${measured.formulas} on ${measured.sheet}, ${measured.structured} of them structured`,
+        ].join(String.fromCharCode(10)),
+      );
+      check(
+        'on the real workbook, a keystroke no formula reads used to mark almost every total and now marks none',
+        measured.before >= measured.structured && measured.after === 0,
+        `${measured.before} of ${measured.formulas} marked → ${measured.after}` +
+          ` · ${measured.structured} structured references stopped being unreadable, and stopped poisoning the totals above them`,
+      );
+      check(
+        'and a change a formula does read is still marked, so the marking has not simply gone',
+        measured.watchedStale > 0,
+        measured.watchedStale === -1
+          ? 'nothing on this sheet is read by anything — the check above is the whole answer'
+          : `${measured.watchedStale} marked`,
+      );
+    }
+
   } finally {
     await browser.close();
   }

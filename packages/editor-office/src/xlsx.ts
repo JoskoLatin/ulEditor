@@ -8,6 +8,7 @@
  */
 
 import { unescapeXml } from './docx-edit.js';
+import { parseA1, type TableRange } from './formula.js';
 import { attr, attrNum, openArchive, readRelationships, readText, readXml, tags, type Archive } from './ooxml.js';
 import { t } from '@uleditor/i18n';
 
@@ -48,6 +49,12 @@ export interface Sheet {
 export interface Workbook {
   sheets: Sheet[];
   notes: string[];
+  /**
+   * The tables declared in `xl/tables/*.xml`, by name lowercased, so a formula
+   * saying `PodaciTable[Iznos]` can be told which range that is. Absent for the
+   * formats that never declare one — the old binary `.xls`, and OpenDocument.
+   */
+  tables?: Map<string, TableRange>;
   /** The opened archive, kept for the save — see `xlsx-edit.ts`. Absent for the
    *  old binary format, which is never written back. */
   archive?: Archive;
@@ -774,6 +781,59 @@ function readSheet(xml: string, shared: string[], styles: StyleBook): ReadSheet 
   return { cells, rows: maxRow + 1, cols: maxCol + 1, merges, widths, truncated };
 }
 
+/**
+ * The tables a sheet declares, out of the parts its relationships point at.
+ *
+ * A table is what turns `PodaciTable[Iznos]` into a rectangle, and the three
+ * numbers that decide the rectangle are all optional in the file: `headerRowCount`
+ * defaults to 1 and is genuinely `0` in this corpus, `totalsRowCount` defaults
+ * to 0, and a table with no data rows at all is dropped rather than handed on as
+ * an empty range somebody would have to guard against.
+ *
+ * The name used is `displayName`, which is the one a formula writes; `name` is
+ * the same string in every file measured, but the specification lets them
+ * differ and it is `displayName` that formulas mean.
+ */
+function readTables(archive: Archive, sheetPath: string, sheetName: string, into: Map<string, TableRange>): void {
+  for (const rel of readRelationships(archive, sheetPath).values()) {
+    if (rel.external || !rel.type.endsWith('/table')) continue;
+    const doc = readXml(archive, rel.target);
+    if (!doc) continue;
+
+    for (const node of tags(doc, 'table')) {
+      const name = attr(node, 'displayName') ?? attr(node, 'name');
+      const ref = attr(node, 'ref');
+      if (!name || !ref) continue;
+
+      const [first, last] = ref.split(':');
+      const from = parseA1(first ?? '');
+      const to = parseA1(last ?? first ?? '');
+      if (!from || !to) continue;
+
+      const headerRows = attrNum(node, 'headerRowCount') ?? 1;
+      const totalsRows = attrNum(node, 'totalsRowCount') ?? 0;
+      const fromRow = Math.min(from.row, to.row) + headerRows;
+      const toRow = Math.max(from.row, to.row) - totalsRows;
+      if (fromRow > toRow) continue;
+
+      const columns = new Map<string, number>();
+      for (const [offset, column] of tags(node, 'tableColumn').entries()) {
+        const columnName = attr(column, 'name');
+        if (columnName) columns.set(columnName.toLowerCase(), offset);
+      }
+      if (columns.size === 0) continue;
+
+      into.set(name.toLowerCase(), {
+        sheet: sheetName,
+        fromRow,
+        toRow,
+        fromCol: Math.min(from.col, to.col),
+        columns,
+      });
+    }
+  }
+}
+
 export function readXlsx(bytes: Uint8Array): Workbook {
   const archive = openArchive(bytes);
   const workbook = readXml(archive, 'xl/workbook.xml');
@@ -789,6 +849,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
   const notes = new Set<string>();
 
   const sheets: Sheet[] = [];
+  const tables = new Map<string, TableRange>();
 
   for (const node of tags(workbook, 'sheet')) {
     const name = attr(node, 'name') ?? `List ${sheets.length + 1}`;
@@ -799,6 +860,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
 
     const read = readSheet(xml, shared, styles);
     if (read.truncated) notes.add(truncationNote());
+    readTables(archive, path, name, tables);
 
     sheets.push({
       name,
@@ -826,7 +888,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
     'Formulas are worked out again only where a cell they read has been retyped, and only SUM and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.',
   );
 
-  return { sheets, notes: [...notes], archive };
+  return { sheets, notes: [...notes], archive, tables };
 }
 
 /* The grid a sheet is drawn in lives in `sheet-grid.ts` — it draws only the rows in view. */

@@ -2535,7 +2535,7 @@ class XlsxPreviewEditor implements EditorInstance {
 
     for (const [index, cells] of typed) {
       const sheet = this.workbook.sheets[index];
-      if (sheet) this.#recalc.set(index, recalculate(sheet.cells, sheet.name, cells));
+      if (sheet) this.#recalc.set(index, recalculate(sheet.cells, sheet.name, cells, this.workbook.tables));
     }
 
     /* Only the cells in the page are drawn again; the rest are drawn from the
