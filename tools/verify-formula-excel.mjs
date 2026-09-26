@@ -117,8 +117,10 @@ writeFileSync(scriptFile, script);
 
 try {
   try {
+    /* By full path: looked up by name, Windows tries the working directory
+       first, and a `powershell.exe` dropped into a checkout would run here. */
     execFileSync(
-      'powershell.exe',
+      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile, file, answers, String(formulas.length)],
       { stdio: 'pipe', timeout: 120_000 },
     );

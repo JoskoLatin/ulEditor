@@ -32,17 +32,10 @@ import './ts-resolve.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const load = (file) => import(pathToFileURL(join(ROOT, 'packages/editor-office/src', file)).href);
 
-const { recalculate } = await load('formula.ts');
+const { recalculate, typedValue } = await load('formula.ts');
 const { shownFormula } = await load('sheet-grid.ts');
 const { formatNumber } = await load('xlsx.ts');
 const { typedKind } = await load('xlsx-edit.ts');
-
-/** `parse` inside `formula.ts` is private; this is its rule, and the check below is that it stays its rule. */
-const parse = (text) => {
-  if (text.trim() === '') return null;
-  const value = Number(text.replace(',', '.'));
-  return Number.isFinite(value) ? value : null;
-};
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -159,33 +152,43 @@ check(
 /* ── the two parsers have to agree about what was typed ──────────────── */
 
 /*
- * What a typed value is worth is decided twice: `numberOf` in the writer says
- * whether it goes into the file as a number, and `parse` in `formula.ts` says
- * whether a SUM may add it. They are separate functions with separate rules and
- * nothing links them, so if they ever part company the file and the screen say
+ * What a typed value is worth is decided twice: `cellXml` in the writer says
+ * what it goes into the file as, and `typedValue` in `formula.ts` says what a
+ * formula reads it as. If they part company the file and the screen say
  * different things about the same cell — the view lying in the other direction.
  *
- * `1.234,50` is the case that matters here, because it is how this corpus
- * writes money: both refuse it, so the cell becomes text in the file and SUM
- * passes over it on the screen. The check is that they keep agreeing.
+ * `1.234,50` is how this corpus writes money: both call it text, so SUM passes
+ * over it on the screen as Excel will in the file. The second half of the list
+ * is review's: JavaScript's `Number` reads `1e3`, `.5`, `+5`, `5.` and `0x10`
+ * as numbers and the writer saves every one as text; `15.6.2026` is a date in
+ * the file and was 0 on the screen; nothing typed is an empty cell.
  */
-for (const [value, isNumber] of [
-  ['2000', true],
-  ['1,5', true],
-  ['-3,25', true],
-  ['0', true],
-  ['1.234,50', false],
-  ['2.000,00', false],
-  ['1 000', false],
-  ['nema', false],
-  ['', false],
+const kindOf = (value) =>
+  value === undefined ? 'empty' : value === null ? 'date' : typeof value === 'number' ? 'number' : 'text';
+for (const [value, wanted] of [
+  ['2000', 'number'],
+  ['1,5', 'number'],
+  ['-3,25', 'number'],
+  ['0', 'number'],
+  ['1.234,50', 'text'],
+  ['2.000,00', 'text'],
+  ['1 000', 'text'],
+  ['nema', 'text'],
+  ['1e3', 'text'],
+  ['.5', 'text'],
+  ['+5', 'text'],
+  ['5.', 'text'],
+  ['0x10', 'text'],
+  ['15.6.2026', 'date'],
+  ['15.6.2026.', 'date'],
+  ['', 'empty'],
 ]) {
-  const save = typedKind(value) === 'number';
-  const read = parse(value) !== null;
+  const save = value === '' ? 'empty' : typedKind(value);
+  const read = kindOf(typedValue(value));
   check(
     `the writer and the formulas agree about ${JSON.stringify(value)}`,
-    save === isNumber && read === isNumber,
-    `file: ${save ? 'number' : 'text'} · SUM: ${read ? 'adds it' : 'passes over it'}`,
+    save === wanted && read === wanted,
+    `file: ${save} · formulas: ${read}`,
   );
 }
 
@@ -250,6 +253,30 @@ check(
   large < small * 15,
   `${large.toFixed(1)} ms for ten times as many — ${(large / small).toFixed(1)} times the cost`,
 );
+/*
+ * A formula this cannot read is reached by every change, and every one that
+ * goes stale is a change itself — so a table's calculated column, which Excel
+ * writes as `T[[#This Row],[X]]`, was once a few thousand formulas each
+ * re-read against a few thousand changes: 4,3 s a keystroke at 4 000 of them,
+ * and four times that for every doubling. What a formula reads is now worked
+ * out once per keystroke, not once per change.
+ */
+const unreadableCost = (count) => {
+  const cells = new Map([['0,0', { text: '1', kind: 'number', raw: 1 }]]);
+  for (let r = 1; r <= count; r++) {
+    cells.set(`${r},1`, { text: '0', kind: 'number', raw: 0, formula: 'SUBTOTAL(9,T[[#Totals],[Iznos]])' });
+  }
+  const started = performance.now();
+  const out = recalculate(cells, 'Veliki', new Map([['0,0', '2']]));
+  return { ms: performance.now() - started, marked: out.stale.size };
+};
+const unreadable4k = unreadableCost(4_000);
+check(
+  '4 000 formulas this cannot read, and one keystroke, is not a pause',
+  unreadable4k.ms < 250 && unreadable4k.marked === 4_000,
+  `${unreadable4k.ms.toFixed(0)} ms, ${unreadable4k.marked} marked (was 4 300 ms)`,
+);
+
 console.log(
   `
   ${small.toFixed(1)} µs a formula an edit. A sheet of 10 000 formulas costs ${large.toFixed(0)} ms once, on the keystroke that ends the typing — not per frame and not per cell drawn.`,
@@ -333,7 +360,12 @@ ${body}`;
  * `Cashless` marked it out of date — although it reads nothing on `Cashless` at
  * all.
  */
-function tableBook() {
+/**
+ * `twice` names things twice, the way a file Excel did not write can: the
+ * second table is `PODACITABLE` too, and `SaZbrojem`'s two columns are both
+ * `Cijena`. Neither may resolve — read through one map, the last one won.
+ */
+function tableBook({ twice = false } = {}) {
   const xml = (body) => `<?xml version="1.0"?>
 ${body}`;
   const sheet1 =
@@ -350,8 +382,10 @@ ${body}`;
     `<row r="2"><c r="A2"><v>5</v></c><c r="C2" s="1"><v>1000</v></c></row>` +
     `<row r="3"><c r="A3"><v>5</v></c><c r="C3" s="1"><v>234.5</v></c></row>` +
     `<row r="4"><c r="A4"><v>7</v></c><c r="C4" s="1"><v>99</v></c></row>` +
-    `</sheetData><tableParts count="2"><tablePart r:id="rIdT" xmlns:r="${REL_NS}"/>` +
-    `<tablePart r:id="rIdU" xmlns:r="${REL_NS}"/></tableParts></worksheet>`;
+    `</sheetData><tableParts count="${twice ? 3 : 2}"><tablePart r:id="rIdT" xmlns:r="${REL_NS}"/>` +
+    `<tablePart r:id="rIdU" xmlns:r="${REL_NS}"/>` +
+    (twice ? `<tablePart r:id="rIdV" xmlns:r="${REL_NS}"/>` : '') +
+    `</tableParts></worksheet>`;
   const table =
     `<table xmlns="${SHEET_NS}" id="1" name="PodaciTable" displayName="PodaciTable" ref="A1:C4">` +
     `<tableColumns count="3"><tableColumn id="1" name="Vrsta"/>` +
@@ -365,8 +399,11 @@ ${body}`;
    */
   const totalled =
     `<table xmlns="${SHEET_NS}" id="2" name="SaZbrojem" displayName="SaZbrojem" ref="E1:F5" totalsRowCount="1">` +
-    `<tableColumns count="2"><tableColumn id="1" name="Stavka"/>` +
+    `<tableColumns count="2"><tableColumn id="1" name="${twice ? 'CIJENA' : 'Stavka'}"/>` +
     `<tableColumn id="2" name="Cijena"/></tableColumns></table>`;
+  const again =
+    `<table xmlns="${SHEET_NS}" id="3" name="PODACITABLE" displayName="PODACITABLE" ref="H1:I3">` +
+    `<tableColumns count="2"><tableColumn id="1" name="Vrsta"/><tableColumn id="2" name="Iznos"/></tableColumns></table>`;
 
   return zipSync({
     '[Content_Types].xml': strToU8(
@@ -394,7 +431,9 @@ ${body}`;
       xml(
         `<Relationships xmlns="${PKG_REL_NS}">` +
           `<Relationship Id="rIdT" Type="${REL_NS}/table" Target="../tables/table1.xml"/>` +
-          `<Relationship Id="rIdU" Type="${REL_NS}/table" Target="../tables/table2.xml"/></Relationships>`,
+          `<Relationship Id="rIdU" Type="${REL_NS}/table" Target="../tables/table2.xml"/>` +
+          (twice ? `<Relationship Id="rIdV" Type="${REL_NS}/table" Target="../tables/table3.xml"/>` : '') +
+          `</Relationships>`,
       ),
     ),
     'xl/styles.xml': strToU8(
@@ -406,6 +445,7 @@ ${body}`;
     ),
     'xl/tables/table1.xml': strToU8(xml(table)),
     'xl/tables/table2.xml': strToU8(xml(totalled)),
+    ...(twice ? { 'xl/tables/table3.xml': strToU8(xml(again)) } : {}),
     'xl/worksheets/sheet1.xml': strToU8(xml(sheet1)),
     'xl/worksheets/sheet2.xml': strToU8(xml(sheet2)),
   });
@@ -698,6 +738,26 @@ if (!reachable) {
       'and the plain SUM beside it is still worked out as it was',
       tabled.plainSum,
       'B2 = SUM(A1:A2)',
+    );
+
+    const doubled = await page.evaluate(
+      async ({ root, b64 }) => {
+        const { readXlsx } = await import(`/@fs/${root}/packages/editor-office/src/xlsx.ts`);
+        const { dependency } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+        const book = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+        const formula = book.sheets[0].cells.get('0,1')?.formula ?? '';
+        return {
+          podaci: book.tables?.get('podacitable')?.columns.size ?? -1,
+          cijena: book.tables?.get('sazbrojem')?.columns.has('cijena') ?? null,
+          says: dependency(formula, book.sheets[0].name, { row: 1, col: 2, sheet: 'Podaci' }, book.tables),
+        };
+      },
+      { root: ROOT.split(sep).join('/'), b64: Buffer.from(tableBook({ twice: true })).toString('base64') },
+    );
+    check(
+      'a table named twice, or a column named twice, resolves to neither',
+      doubled.podaci === 0 && doubled.cijena !== true && doubled.says === 'unknown',
+      `PodaciTable ${doubled.podaci} columns · Cijena ${doubled.cijena} · SUMIFS ${doubled.says}`,
     );
 
     /* ── an edit on one sheet, and the formula on another ─────────── */

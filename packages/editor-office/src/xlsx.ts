@@ -44,6 +44,12 @@ export interface Sheet {
   cells: Map<string, Cell>;
   merges: Merge[];
   widths: Map<number, number>;
+  /**
+   * The first column that was not read, where the sheet went on past
+   * `MAX_COLS`. A formula reading beyond it reads cells nobody loaded, which
+   * are not empty just because they are not here.
+   */
+  readTo?: number;
 }
 
 export interface Workbook {
@@ -819,19 +825,29 @@ function readTables(archive: Archive, sheetPath: string, sheetName: string, into
       const toRow = Math.max(from.row, to.row) - totalsRows;
       if (fromRow > toRow) continue;
 
+      /* A name met twice — two columns, or two tables, the same but for case —
+         is one this cannot tell apart, so neither resolves: an empty column
+         list leaves `Name[Column]` unreadable, and its formula marked, rather
+         than read from whichever came last. Excel would not write such a file;
+         somebody else could. */
       const columns = new Map<string, number>();
+      const twice = new Set<string>();
       for (const [offset, column] of tags(node, 'tableColumn').entries()) {
-        const columnName = attr(column, 'name');
-        if (columnName) columns.set(columnName.toLowerCase(), offset);
+        const columnName = attr(column, 'name')?.toLowerCase();
+        if (!columnName) continue;
+        if (columns.has(columnName)) twice.add(columnName);
+        columns.set(columnName, offset);
       }
+      for (const name of twice) columns.delete(name);
       if (columns.size === 0) continue;
 
-      into.set(name.toLowerCase(), {
+      const key = name.toLowerCase();
+      into.set(key, {
         sheet: sheetName,
         fromRow,
         toRow,
         fromCol: Math.min(from.col, to.col),
-        columns,
+        columns: into.has(key) ? new Map() : columns,
       });
     }
   }
@@ -873,6 +889,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
       cells: read.cells,
       merges: read.merges,
       widths: read.widths,
+      ...(read.truncated ? { readTo: MAX_COLS } : {}),
     });
   }
 

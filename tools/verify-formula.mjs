@@ -112,6 +112,64 @@ check(
   'a formula already broken is unreadable, not unrelated',
   dependency('SUM(#REF!)', 'List1', at(4, 1)) === 'unknown',
 );
+/*
+ * Four shapes that used to answer `'no'` — a stale total left unmarked — all
+ * found by review rather than by the corpus, which has none of them.
+ */
+check(
+  'a defined name is admitted as unreadable, not read as reading nothing',
+  dependency('SUM(Iznosi)', 'List1', at(4, 1)) === 'unknown' &&
+    dependency('SUM(A1:A3,Iznosi)', 'List1', at(25, 25)) === 'unknown',
+);
+check(
+  'a reference written in lower case is a reference',
+  dependency('sum(a1:a5)', 'List1', at(2, 0)) === 'reads' && refs('sum(a1:a5)') === '0,0:4,0',
+  refs('sum(a1:a5)'),
+);
+check(
+  'but a name that merely ends like a cell is not one',
+  refs('SUM(Range1)') === '' && dependency('SUM(Range1)', 'List1', at(0, 4)) === 'unknown',
+  refs('SUM(Range1)') || 'no references',
+);
+check(
+  'a reference into another workbook is unreadable, not read as this one’s sheet of the same name',
+  dependency('SUM([1]Podaci!A1:A3)', 'List1', { row: 0, col: 0, sheet: 'Podaci' }) === 'unknown',
+);
+check(
+  'this row of a table, with no table named, is unreadable',
+  dependency('[@Iznos]*2', 'List1', at(0, 0)) === 'unknown',
+);
+check(
+  'the … the reader writes for a formula it could not recover is unreadable',
+  dependency('…', 'List1', at(0, 0)) === 'unknown',
+);
+check(
+  'and what is understood is still read precisely — functions, numbers, truth values',
+  dependency('IF(A1>1E3,SUM(B1:B3)*0.5,TRUE)', 'List1', at(9, 9)) === 'no' &&
+    dependency('_xlfn.XLOOKUP(A1,B1:B3,C1:C3)', 'List1', at(9, 9)) === 'no',
+);
+
+{
+  /* Scanned from every letter to the end, one long word cost 100 ms a call at
+     Excel's limit of 8 192 characters, and a formula past it is not Excel's. */
+  const word = 'a'.repeat(8_000);
+  const started = performance.now();
+  const answer = dependency(`SUM(${word})`, 'List1', at(0, 0));
+  const long = performance.now() - started;
+  const huge = performance.now();
+  const hugeAnswer = dependency(`SUM(A1)+${'a'.repeat(1_000_000)}`, 'List1', at(0, 0));
+  const hugeMs = performance.now() - huge;
+  check(
+    'a formula of one long word is read in a few milliseconds, not a tenth of a second',
+    answer === 'unknown' && long < 10,
+    `${long.toFixed(1)} ms`,
+  );
+  check(
+    'and one past Excel’s own limit is unreadable without being read',
+    hugeAnswer === 'unknown' && hugeMs < 5,
+    `${hugeMs.toFixed(2)} ms`,
+  );
+}
 check(
   'a table reference is unknown even when a plain range beside it misses',
   dependency('SUM(Z100:Z200)+SUM(Tablica1[Iznos])', 'List1', at(4, 1)) === 'unknown',
@@ -125,7 +183,7 @@ const sheet = new Map([
   ['2,1', 2],
   ['3,1', 3],
   ['4,1', 4],
-  ['1,2', null],
+  ['1,2', 'nema'],
 ]);
 const valueAt = (row, col) => (sheet.has(`${row},${col}`) ? sheet.get(`${row},${col}`) : undefined);
 const got = (formula) => evaluate(formula, valueAt);
@@ -133,6 +191,10 @@ const got = (formula) => evaluate(formula, valueAt);
 check('a sum over a range', got('SUM(B2:B5)') === 10, String(got('SUM(B2:B5)')));
 check('a sum over arguments', got('SUM(B2,B3,10)') === 13, String(got('SUM(B2,B3,10)')));
 check('a sum passes over text and empty cells', got('SUM(B2:D5)') === 10, String(got('SUM(B2:D5)')));
+check(
+  'a date or an error inside a SUM refuses it rather than being passed over',
+  evaluate('SUM(A1:A3)', (row) => (row === 1 ? null : 1)) === null,
+);
 check('arithmetic', got('B2+B3*2') === 5, String(got('B2+B3*2')));
 check('brackets change the order', got('(B2+B3)*2') === 6, String(got('(B2+B3)*2')));
 check('a minus in front', got('-B3+10') === 8, String(got('-B3+10')));
@@ -274,6 +336,65 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   ]);
   const out = recalculate(ring, 'List1', new Map([['0,1', '5']]));
   check('a ring of formulas stops rather than going round for ever', out.values.size + out.stale.size > 0);
+  check(
+    'and ends marked, because what a ring comes to is not an answer',
+    out.stale.has('9,1') && out.stale.has('11,1') && !out.values.has('9,1'),
+    `${[...out.stale].join(' ')} marked`,
+  );
+}
+
+{
+  /*
+   * A total that reads a subtotal and something worked out from that same
+   * subtotal, with the subtotal last in the file's order:
+   *
+   *    B1  =SUM(B10:B12)   105
+   *    B2  =B1+B3          131,25   — Ukupno
+   *    B3  =B1*0.25        26,25    — PDV
+   *
+   * B2 used to be settled against the old B3 and never looked at again when
+   * B3 moved a moment later: B10 retyped to 101 showed 132,25 as current.
+   * Excel: 132,5. Found by review, and it was already in 0.6.0.
+   */
+  const money = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
+  const ukupno = new Map([
+    ['0,1', money(105, 'SUM(B10:B12)')],
+    ['1,1', money(131.25, 'B1+B3')],
+    ['2,1', money(26.25, 'B1*0.25')],
+    ['9,1', money(100)],
+    ['10,1', money(3)],
+    ['11,1', money(2)],
+  ]);
+  const out = recalculate(ukupno, 'List1', new Map([['9,1', '101']]));
+  check(
+    'a total that reads a subtotal and a figure worked out from it waits for both',
+    out.values.get('1,1') === 132.5 && !out.stale.has('1,1'),
+    `B2 ${out.values.get('1,1')} (Excel: 132.5)`,
+  );
+
+  /* The same across two sheets: the subtotal on Podaci, the rest on Sazetak. */
+  const podaci = new Map([
+    ['6,11', money(105, 'SUM(L1:L3)')],
+    ['0,11', money(100)],
+    ['1,11', money(3)],
+    ['2,11', money(2)],
+  ]);
+  const sazetak = new Map([
+    ['0,0', money(131.25, 'Podaci!L7+A5')],
+    ['4,0', money(26.25, 'Podaci!L7*0.25')],
+  ]);
+  const across = recalculateBook(
+    [
+      { name: 'Podaci', cells: podaci },
+      { name: 'Sazetak', cells: sazetak },
+    ],
+    new Map([[0, new Map([['0,11', '101']])]]),
+  ).get(1);
+  check(
+    'and across two sheets',
+    across?.values.get('0,0') === 132.5,
+    `Sazetak!A1 ${across?.values.get('0,0')} (Excel: 132.5)`,
+  );
 }
 
 {
@@ -484,6 +605,46 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   );
 }
 
+{
+  /*
+   * A sheet the reader cut short at 256 columns: what lies past that was never
+   * read, and `SUM(A1:IW1)` over it came out as the first 256 columns' total,
+   * shown as current.
+   */
+  const wide = new Map([
+    ['0,0', { text: '1', kind: 'number', raw: 1 }],
+    ['1,0', { text: '1', kind: 'number', raw: 1, formula: 'SUM(A1:IW1)' }],
+    ['2,0', { text: '1', kind: 'number', raw: 1, formula: 'SUM(A1:B1)' }],
+  ]);
+  const cut = recalculateBook([{ name: 'Siroki', cells: wide, readTo: 256 }], new Map([[0, new Map([['0,0', '5']])]])).get(0);
+  check(
+    'on a sheet cut short, a total reaching past the cut is marked, and one inside it is worked out',
+    cut?.stale.has('1,0') && cut.values.get('2,0') === 5,
+    `${[...(cut?.stale ?? [])].join(' ')} marked · A3 ${cut?.values.get('2,0')}`,
+  );
+
+  /*
+   * Two sheets whose names differ only in a way lower-casing erases — `kilo`
+   * and `Kilo` written with the Kelvin sign. Read through one map, the second
+   * won, and a total read the wrong sheet's numbers as current: 2000 where the
+   * sheet it meant made it 10.
+   */
+  const number = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
+  const twice = recalculateBook(
+    [
+      { name: 'kilo', cells: new Map([['0,0', number(1)]]) },
+      { name: 'Kilo', cells: new Map([['0,0', number(1000)]]) },
+      { name: 'S', cells: new Map([['0,0', number(2, 'kilo!A1*2')]]) },
+    ],
+    new Map([[0, new Map([['0,0', '5']])]]),
+  ).get(2);
+  check(
+    'a sheet name that is two sheets at once is read from neither',
+    twice?.stale.has('0,0') && !twice.values.has('0,0'),
+    `S!A1 ${twice?.values.get('0,0') ?? 'marked'}`,
+  );
+}
+
 /* ── SUMIFS and COUNTIFS, as Excel answered them ─────────────────────── */
 
 /*
@@ -542,6 +703,21 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
     'a range too large to walk on a keystroke is refused, not walked',
     evaluate('SUM(A1:XFD1048576)', () => 1) === null && evaluate('SUM(A1:A1048576)', () => undefined) === 0,
   );
+  {
+    /* The cap is the formula's, not each reference's: sixteen whole-column
+       ranges were sixteen million lookups, and seconds on a keystroke. */
+    const column = (letter) => `${letter}1:${letter}1048576`;
+    const many = `SUM(${'ABCDEFGHIJKLMNOP'.split('').map(column).join(',')})`;
+    const started = performance.now();
+    const refused = evaluate(many, () => undefined);
+    const ms = performance.now() - started;
+    check('sixteen whole columns in one SUM are refused as a whole, quickly', refused === null && ms < 1_000, `${ms.toFixed(0)} ms`);
+    check(
+      'and a COUNTIFS over whole columns counts every range it reads',
+      evaluate(`COUNTIFS(${column('A')},1,${column('B')},1)`, () => 1) === null &&
+        evaluate('COUNTIFS(A1:A1000,1,B1:B1000,1)', () => 1) === 1000,
+    );
+  }
 }
 
 /* ── and over real spreadsheets, if there are any ────────────────────── */

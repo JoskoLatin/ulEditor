@@ -130,15 +130,30 @@ function outsideQuotes(text: string): string[] {
   return text.split(/("(?:[^"]|"")*")/).filter((_, at) => at % 2 === 0);
 }
 
+/*
+ * Every name below is bounded, and every match that can begin inside a name is
+ * told not to. Unbounded, a formula of one long word was scanned from each of
+ * its letters to the end — 100 ms a call at Excel's own limit of 8 192
+ * characters and four times that for every doubling, on a file nobody has to
+ * write by Excel. A sheet's name is at most 31 characters, doubled quotes and
+ * all 62 inside quotes; a table's or a column's at most 255.
+ */
+const NAME_START = String.raw`A-Za-z_\\À-￿`;
+const NAME_REST = String.raw`A-Za-z0-9_.\\À-￿`;
 /** A sheet name before a `!`, with the quotes a name with a space in it carries. */
-const SHEET = String.raw`(?:'((?:[^']|'')+)'|([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*))!`;
-const CELL = String.raw`\$?[A-Z]{1,3}\$?[0-9]{1,7}`;
-const REFERENCE = new RegExp(`(?:${SHEET})?(${CELL})(?::(${CELL}))?(?![A-Za-z0-9_(])`, 'g');
+const SHEET = String.raw`(?:'((?:[^']|''){1,62})'|(?<![${NAME_REST}])([${NAME_START}][${NAME_REST}]{0,30}))!`;
+/* Either case: a file written by a script says `sum(a1:a5)`, and read as
+   upper case only that was a formula reading nothing at all. */
+const CELL = String.raw`\$?[A-Za-z]{1,3}\$?[0-9]{1,7}`;
+const REFERENCE = new RegExp(
+  String.raw`(?<![${NAME_REST}$])(?:${SHEET})?(${CELL})(?::(${CELL}))?(?![A-Za-z0-9_(])`,
+  'g',
+);
 /* `M:M` and `2:4` — whole columns and whole rows. Nothing about them looks like
    `A1`, so without this a formula reading `Podaci!M:M` read nothing at all, and
    answered `'no'` for every cell in that column. */
 const LINES = new RegExp(
-  String.raw`(?<![A-Za-z0-9_.$:!'À-￿])(?:${SHEET})?(?:(\$?[A-Z]{1,3}):(\$?[A-Z]{1,3})|(\$?[0-9]{1,7}):(\$?[0-9]{1,7}))(?![A-Za-z0-9_.(!:])`,
+  String.raw`(?<![${NAME_REST}$:!'])(?:${SHEET})?(?:(\$?[A-Za-z]{1,3}):(\$?[A-Za-z]{1,3})|(\$?[0-9]{1,7}):(\$?[0-9]{1,7}))(?![${NAME_REST}(!:])`,
   'g',
 );
 /** The last row and column a sheet can have: 1 048 576 rows, XFD columns. */
@@ -147,20 +162,50 @@ const LAST_COL = 16_383;
 
 /** Anything this module knows it cannot read, each of which makes an answer `'unknown'`. */
 const UNREADABLE = [
-  /* `Tablica1[Iznos]` — a structured table reference, which needs the table
-     definition out of another part of the archive to become a range at all. */
-  /[A-Za-z_À-￿][A-Za-z0-9_.À-￿]*\[/,
+  /* A bracket left once the declared `Table[Column]`s are taken out: any other
+     structured shape — `[#Totals]`, `[@Iznos]` with no table named, a table
+     nobody declared — or another workbook, `[1]List1!A1`. */
+  /\[/,
   /* `#REF!`, `#VALUE!` and the rest: the formula is already broken. */
   /#[A-Z/0-9]+[!?]/,
   /* `SUM(Jan:Mar!B2)` — a span of sheets. Read as a reference it would be
      `Mar!B2` alone, and an edit to `B2` on `Feb` would be answered `'no'`.
      Quoted, the colon is inside the quotes, and a sheet's own name cannot
      hold one. */
-  new RegExp(`:${SHEET}|'(?:[^']|'')*:(?:[^']|'')*'!`),
+  new RegExp(`:${SHEET}|'(?:[^':]|''){0,62}:(?:[^']|''){0,62}'!`),
 ];
 
+/** Past Excel's own limit a formula is not something Excel wrote, and is not read at all. */
+const LONGEST_FORMULA = 8_192;
+
+/* What is taken out of a formula before asking whether any name is left in it. */
+const CALL = new RegExp(String.raw`(?<![${NAME_REST}])[${NAME_START}][${NAME_REST}]{0,254}\s*\(`, 'g');
+const NUMBER = /(?<![A-Za-z0-9_.])[0-9]+(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?/g;
+const TRUTH = new RegExp(String.raw`(?<![${NAME_REST}])(?:TRUE|FALSE)(?![${NAME_REST}(])`, 'gi');
+const LETTER = new RegExp(`[${NAME_START}]`);
+
+/**
+ * Whether a name is left once everything this module understands is taken out.
+ *
+ * `SUM(Iznosi)` over a defined name answered `'no'` to every cell, because
+ * nothing in it looked like `A1` — the direction that leaves a stale total on
+ * the screen unmarked. What a name stands for is in `xl/workbook.xml`, which
+ * this module does not see, so a name is admitted as unreadable rather than
+ * read as nothing. `…`, which the reader writes for a formula it could not
+ * recover, is caught the same way.
+ */
+function namesLeft(piece: string): boolean {
+  const rest = piece
+    .replace(REFERENCE, ' ')
+    .replace(LINES, ' ')
+    .replace(CALL, '(')
+    .replace(NUMBER, ' ')
+    .replace(TRUTH, ' ');
+  return LETTER.test(rest);
+}
+
 /** `PodaciTable[Iznos]` — a table's name, then one plain column name in brackets. Nothing else. */
-const STRUCTURED = /([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*)\[([^[\]]*)\]/g;
+const STRUCTURED = new RegExp(String.raw`(?<![${NAME_REST}])([${NAME_START}][${NAME_REST}]{0,254})\[([^[\]]{0,255})\]`, 'g');
 
 /**
  * The ranges a formula's structured references stand for, and what is left of
@@ -238,9 +283,20 @@ export function referencesOf(formula: string, tables?: Tables): Reference[] {
 
 /** Whether anything in the formula is beyond what this module can read. */
 function unreadable(formula: string, tables?: Tables): boolean {
-  return outsideQuotes(formula).some((piece) =>
-    UNREADABLE.some((shape) => shape.test(tables ? tableReferences(piece, tables).rest : piece)),
-  );
+  if (formula.length > LONGEST_FORMULA) return true;
+  return outsideQuotes(formula).some((whole) => {
+    const piece = tables ? tableReferences(whole, tables).rest : whole;
+    return UNREADABLE.some((shape) => shape.test(piece)) || namesLeft(piece);
+  });
+}
+
+/**
+ * Every rectangle a formula reads, or `null` where something in it cannot be
+ * read. `dependency` answers from this, and so does `recalculateBook` — worked
+ * out once per formula there — so the two cannot come to disagree.
+ */
+function readsOf(formula: string, tables?: Tables): Reference[] | null {
+  return unreadable(formula, tables) ? null : referencesOf(formula, tables);
 }
 
 /**
@@ -262,10 +318,11 @@ export function dependency(
   at: { row: number; col: number; sheet?: string },
   tables?: Tables,
 ): Dependency {
-  if (unreadable(formula, tables)) return 'unknown';
+  const reads = readsOf(formula, tables);
+  if (reads === null) return 'unknown';
   const here = sheetName.toLowerCase();
   const there = (at.sheet ?? sheetName).toLowerCase();
-  for (const reference of referencesOf(formula, tables)) {
+  for (const reference of reads) {
     if ((reference.sheet?.toLowerCase() ?? here) !== there) continue;
     if (
       at.row >= reference.from.row &&
@@ -289,7 +346,7 @@ type Token =
   | { kind: 'symbol'; text: string };
 
 /** `Name[Column]` at the start of the text — the one structured shape `tableReferences` resolves. */
-const STRUCTURED_HERE = /^([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*)\[([^[\]]*)\]/;
+const STRUCTURED_HERE = new RegExp(String.raw`^([${NAME_START}][${NAME_REST}]{0,254})\[([^[\]]{0,255})\]`);
 
 /** `null` where anything at all was not understood. */
 function tokenize(formula: string, tables?: Tables): Token[] | null {
@@ -365,7 +422,12 @@ function tokenize(formula: string, tables?: Tables): Token[] | null {
   return tokens;
 }
 
-/** The most cells one reference may cover and still be walked: one whole column. */
+/**
+ * The most cells one formula may read and still be worked out: one whole
+ * column's worth, across all its references together. Per reference, sixteen
+ * whole-column ranges in one `SUM` were sixteen million lookups — seconds, on
+ * the keystroke that ends the typing — and a formula can hold hundreds.
+ */
 const MOST_CELLS = 1_048_576;
 
 const areaOf = (ref: { from: { row: number; col: number }; to: { row: number; col: number } }) =>
@@ -521,17 +583,25 @@ export function evaluate(
     token.sheet === null ? valueAt : (elsewhere?.(token.sheet) ?? null);
 
   /**
-   * Every cell of a reference, in order, handed to `visit` one at a time;
-   * `false` where the sheet cannot be read or the range is too large to walk.
+   * Cells this formula has read so far, against `MOST_CELLS`.
    *
    * The cap is a keystroke's worth of work, not a rule about spreadsheets:
-   * `SUM(A1:XFD1048576)` is seventeen billion lookups, on the key that ends the
-   * typing. A whole column is a million and passes; above that the formula is
-   * refused, which marks it rather than freezing the program.
+   * `SUM(A1:XFD1048576)` is seventeen billion lookups. Past it the formula is
+   * refused, which marks it rather than freezing the program. A whole column
+   * written `A:A` never gets this far — it is not a reference the tokenizer
+   * builds — so a formula reading one is refused, and marked, before any cell
+   * is read.
    */
+  let walked = 0;
+  const budget = (cells: number): boolean => {
+    walked += cells;
+    return walked <= MOST_CELLS;
+  };
+
+  /** Every cell of a reference, in order, handed to `visit` one at a time; `false` where it cannot be read. */
   const spread = (token: Extract<Token, { kind: 'ref' }>, visit: (value: Value) => void): boolean => {
     const read = sheetOf(token);
-    if (!read || areaOf(token) > MOST_CELLS) return false;
+    if (!read || !budget(areaOf(token))) return false;
     for (let row = token.from.row; row <= token.to.row; row++) {
       for (let col = token.from.col; col <= token.to.col; col++) visit(read(row, col));
     }
@@ -570,7 +640,6 @@ export function evaluate(
     if (first?.kind !== 'ref') return null;
     const rows = first.to.row - first.from.row;
     const cols = first.to.col - first.from.col;
-    if (areaOf(first) > MOST_CELLS) return null;
     const sameShape = (ref: Extract<Token, { kind: 'ref' }>) =>
       ref.to.row - ref.from.row === rows && ref.to.col - ref.from.col === cols;
 
@@ -589,6 +658,8 @@ export function evaluate(
       readSum = sheetOf(sum);
       if (!readSum) return null;
     }
+    /* Every range is read in full, the summed one included. */
+    if (!budget(areaOf(first) * (pairs.length + (readSum ? 1 : 0)))) return null;
 
     let total = 0;
     for (let row = 0; row <= rows; row++) {
@@ -714,11 +785,15 @@ export function evaluate(
           if (argument?.kind === 'ref') {
             at++;
             /* Text and empty alike are passed over, which is what a total
-               under a column of headings depends on. */
+               under a column of headings depends on. A date is a number to
+               Excel and an error is an error; neither is something to pass
+               over quietly, so either refuses the total. */
+            let refused = false;
             const read = spread(argument, (value) => {
               if (typeof value === 'number') total += value;
+              else if (value === null) refused = true;
             });
-            if (!read) return null;
+            if (!read || refused) return null;
           } else {
             const value = expression();
             if (value === null) return null;
@@ -771,22 +846,41 @@ export interface Recalculation {
 export interface BookSheet {
   name: string;
   cells: ReadonlyMap<string, Held>;
+  /** The first column not read, on a sheet the reader cut short; a cell past it is unknown, not empty. */
+  readTo?: number;
 }
 
 const key = (row: number, col: number) => `${row},${col}`;
+/**
+ * What text, read the way the writer reads it, is as a number — or `null`.
+ *
+ * The writer's rule, `numberOf` in `xlsx-edit.ts`, and not JavaScript's:
+ * `Number` takes `1e3`, `.5`, `+5`, `5.` and `0x10` as numbers, and the writer
+ * saves every one of them as text. A total that counted them showed a number
+ * Excel would not show once the file was opened.
+ */
 const parse = (text: string): number | null => {
-  if (text.trim() === '') return null;
-  const value = Number(text.replace(',', '.'));
-  return Number.isFinite(value) ? value : null;
+  const normalized = text.trim().replace(',', '.');
+  return /^-?\d+(\.\d+)?$/.test(normalized) ? Number(normalized) : null;
 };
+
+/** `15.6.2026.` — what the writer saves as a date. */
+const TYPED_DATE = /^(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})\.?$/;
+
+/**
+ * What a typed value is to a formula, by the same decisions the writer makes
+ * when it saves it: nothing typed is an empty cell, a date is a date — which
+ * nothing here adds up — a number is a number, and anything else is text.
+ * `verify-sheet-stale` holds this and `typedKind` to agreeing.
+ */
+export function typedValue(written: string): Value {
+  if (written === '') return undefined;
+  if (TYPED_DATE.test(written.trim())) return null;
+  return parse(written) ?? written;
+}
 
 /** `index:row,col` — a cell anywhere in the workbook, keyed the way the editor keys its edits. */
 const place = (sheet: number, at: string) => `${sheet}:${at}`;
-const unplace = (placed: string): [number, number, number] => {
-  const cut = placed.indexOf(':');
-  const [row, col] = placed.slice(cut + 1).split(',').map(Number) as [number, number];
-  return [Number(placed.slice(0, cut)), row, col];
-};
 
 /**
  * What changed on one sheet because somebody typed into it.
@@ -843,11 +937,16 @@ export function recalculateBook(
 ): Map<number, Recalculation> {
   const values = new Map<string, number>();
   const stale = new Set<string>();
-  /** Every cell whose value is not what the file says any more. */
-  const moved = new Set<string>();
-  for (const [sheet, cells] of typed) for (const at of cells.keys()) moved.add(place(sheet, at));
 
-  const byName = new Map(sheets.map((sheet, index) => [sheet.name.toLowerCase(), index]));
+  /* Two sheets whose names are the same but for case — which is how this
+     compares them, and Excel does not write — cannot be told apart, so a
+     reference to either reads neither: `-1`, a sheet this workbook does not
+     have, and a formula naming it is marked rather than read off the wrong one. */
+  const byName = new Map<string, number>();
+  sheets.forEach((sheet, index) => {
+    const name = sheet.name.toLowerCase();
+    byName.set(name, byName.has(name) ? -1 : index);
+  });
 
   /** What a cell is worth now: what was typed, what was worked out, or what the file holds. */
   const lookups = sheets.map(
@@ -856,7 +955,9 @@ export function recalculateBook(
         const at = key(row, col);
         const written = typed.get(index)?.get(at);
         /* Typed text is text, as the writer saves it — `SUMIFS` reads the word. */
-        if (written !== undefined) return parse(written) ?? written;
+        if (written !== undefined) return typedValue(written);
+        /* Past where the reader stopped, a cell is not empty — it is unread. */
+        if (sheet.readTo !== undefined && col >= sheet.readTo) return null;
         const worked = values.get(place(index, at));
         if (worked !== undefined) return worked;
         const cell = sheet.cells.get(at);
@@ -871,82 +972,150 @@ export function recalculateBook(
   );
   const elsewhere = (name: string): Lookup | null => {
     const index = byName.get(name.toLowerCase());
-    return index === undefined ? null : lookups[index]!;
+    return index === undefined || index === -1 ? null : lookups[index]!;
   };
 
-  const formulas: [number, string, Held][] = [];
-  sheets.forEach((sheet, index) => {
-    for (const [at, cell] of sheet.cells) if (cell.formula !== undefined) formulas.push([index, at, cell]);
-  });
-  const settled = new Set<string>();
+  /** A rectangle a formula reads, its sheet already found; negative for a sheet the workbook does not have. */
+  interface Area {
+    on: number;
+    from: { row: number; col: number };
+    to: { row: number; col: number };
+  }
+  interface Place {
+    sheet: number;
+    row: number;
+    col: number;
+  }
+  const covers = (area: Area, cell: Place) =>
+    area.on === cell.sheet &&
+    cell.row >= area.from.row &&
+    cell.row <= area.to.row &&
+    cell.col >= area.from.col &&
+    cell.col <= area.to.col;
 
+  /** A formula's rectangles with their sheets found; `null` where it names a sheet that is two sheets at once. */
+  const areasOf = (references: Reference[] | null, index: number): Area[] | null => {
+    if (references === null) return null;
+    const areas: Area[] = [];
+    for (const reference of references) {
+      const on = reference.sheet === null ? index : (byName.get(reference.sheet.toLowerCase()) ?? -2);
+      if (on === -1) return null;
+      areas.push({ on, from: reference.from, to: reference.to });
+    }
+    return areas;
+  };
+
+  /* What each formula reads, worked out once rather than once per changed
+     cell per round — `dependency` re-read the formula every time it was asked,
+     and a workbook of a few thousand formulas made that seconds a keystroke.
+     `null` is a formula this cannot read, which any change at all reaches. */
+  const formulas: { index: number; at: string; here: string; place: Place; cell: Held; reads: Area[] | null }[] = [];
+  sheets.forEach((sheet, index) => {
+    for (const [at, cell] of sheet.cells) {
+      if (cell.formula === undefined) continue;
+      const [row, col] = at.split(',').map(Number) as [number, number];
+      formulas.push({
+        index,
+        at,
+        here: place(index, at),
+        place: { sheet: index, row, col },
+        cell,
+        reads: areasOf(readsOf(cell.formula, tables), index),
+      });
+    }
+  });
+
+  /**
+   * Every change, in the order it happened: a typed cell, a total that came
+   * out differently, a total that went stale. Append-only, and a total that
+   * changes twice is in it twice — each formula remembers how far down it has
+   * read, and is looked at again whenever something past that point reaches it.
+   *
+   * That is the difference from settling each formula once, which is what this
+   * did before, and what showed a wrong total as current: `B2 = B1 + B3` with
+   * `B3 = B1 * 0.25` was settled against the old `B3`, and never looked at
+   * again when `B3` moved later in the same round.
+   */
+  const changes: Place[] = [];
+  const staleCells: Place[] = [];
+  for (const [sheet, cells] of typed) {
+    for (const at of cells.keys()) {
+      const [row, col] = at.split(',').map(Number) as [number, number];
+      changes.push({ sheet, row, col });
+    }
+  }
+  const seen = new Map<string, number>();
+  const cached = (cell: Held) => (typeof cell.raw === 'number' ? cell.raw : parse(cell.text));
+  const readsStale = (reads: Area[] | null) =>
+    reads !== null && staleCells.some((gone) => reads.some((area) => covers(area, gone)));
+  const markStale = (formula: (typeof formulas)[number]) => {
+    stale.add(formula.here);
+    values.delete(formula.here);
+    staleCells.push(formula.place);
+  };
+
+  let moving: typeof formulas = [];
   /* One round per link in the longest chain of totals, and no more. */
   for (let round = 0; round < 64; round++) {
-    let changed = false;
+    moving = [];
 
-    for (const [index, at, cell] of formulas) {
-      const here = place(index, at);
-      if (settled.has(here) || typed.get(index)?.has(at)) continue;
-      const formula = cell.formula!;
-      const sheetName = sheets[index]!.name;
+    for (const formula of formulas) {
+      if (stale.has(formula.here) || typed.get(formula.index)?.has(formula.at)) continue;
+      const from = seen.get(formula.here) ?? 0;
+      if (from === changes.length) continue;
+      seen.set(formula.here, changes.length);
 
-      /* Does anything that moved reach this formula at all? */
-      let reaches: Dependency = 'no';
-      for (const source of moved) {
-        const [sheet, row, col] = unplace(source);
-        const answer = dependency(formula, sheetName, { row, col, sheet: sheets[sheet]!.name }, tables);
-        if (answer === 'reads') {
-          reaches = 'reads';
-          break;
-        }
-        if (answer === 'unknown') reaches = 'unknown';
+      /* Does anything that changed since this formula last looked reach it? */
+      let reaches = formula.reads === null;
+      for (let i = from; !reaches && i < changes.length; i++) {
+        const change = changes[i]!;
+        reaches = formula.reads!.some((area) => covers(area, change));
       }
-      if (reaches === 'no') continue;
+      if (!reaches) continue;
 
       /* A formula this cannot read may or may not have moved, and *may* is
          reason enough to stop showing its number as current. There is no
-         separate branch for it: `evaluate` refuses exactly what `dependency`
-         could not read, so it comes out stale below by the one rule rather
-         than by two that agree. A branch here passed every check with and
-         without itself. */
+         separate branch for it: `evaluate` refuses exactly what `readsOf`
+         could not read, so it comes out stale below by the one rule.
 
-      /* A total of numbers that are themselves unreliable is unreliable, even
+         A total of numbers that are themselves unreliable is unreliable, even
          where every function in it is one this understands — and wherever in
          the workbook those numbers are. */
-      const readsStale = referencesOf(formula, tables).some((reference) => {
-        const on = reference.sheet === null ? index : byName.get(reference.sheet.toLowerCase());
-        if (on === undefined) return false;
-        for (const gone of stale) {
-          const [sheet, row, col] = unplace(gone);
-          if (
-            sheet === on &&
-            row >= reference.from.row &&
-            row <= reference.to.row &&
-            col >= reference.from.col &&
-            col <= reference.to.col
-          ) {
-            return true;
-          }
-        }
-        return false;
-      });
-
-      settled.add(here);
-      changed = true;
-      const worked = readsStale ? null : evaluate(formula, lookups[index]!, elsewhere, tables);
+      const worked = readsStale(formula.reads)
+        ? null
+        : evaluate(formula.cell.formula!, lookups[formula.index]!, elsewhere, tables);
       if (worked === null) {
-        stale.add(here);
-        moved.add(here);
+        markStale(formula);
+        changes.push(formula.place);
+        moving.push(formula);
         continue;
       }
       /* A number that did not move is not news, and saying so would put a
          marker on a cell nobody changed. */
-      values.set(here, worked);
-      const before = typeof cell.raw === 'number' ? cell.raw : parse(cell.text);
-      if (before !== worked) moved.add(here);
+      const before = values.has(formula.here) ? values.get(formula.here) : cached(formula.cell);
+      values.set(formula.here, worked);
+      if (before !== worked) {
+        changes.push(formula.place);
+        moving.push(formula);
+      }
     }
 
-    if (!changed) break;
+    if (moving.length === 0) break;
+  }
+
+  /* Still moving after every round: a ring of formulas reading each other,
+     which Excel itself refuses to resolve. Whatever they came to last is not
+     an answer, and neither is anything that has read them. */
+  if (moving.length > 0) {
+    for (const formula of moving) if (!stale.has(formula.here)) markStale(formula);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const formula of formulas) {
+        if (stale.has(formula.here) || !values.has(formula.here) || !readsStale(formula.reads)) continue;
+        markStale(formula);
+        grew = true;
+      }
+    }
   }
 
   const answer = new Map<number, Recalculation>(
