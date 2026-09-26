@@ -938,6 +938,50 @@ function readsCached(formula: string, tables?: Tables): Reference[] | null {
   return reads;
 }
 
+/** A binary heap of formula numbers, smallest first — the file's order. */
+class Heap {
+  #items: number[] = [];
+  get size(): number {
+    return this.#items.length;
+  }
+  push(value: number): void {
+    const items = this.#items;
+    let at = items.length;
+    items.push(value);
+    while (at > 0) {
+      const parent = (at - 1) >> 1;
+      if (items[parent]! <= value) break;
+      items[at] = items[parent]!;
+      at = parent;
+    }
+    items[at] = value;
+  }
+  pop(): number {
+    const items = this.#items;
+    const top = items[0]!;
+    const last = items.pop()!;
+    if (items.length > 0) {
+      let at = 0;
+      for (;;) {
+        const left = 2 * at + 1;
+        if (left >= items.length) break;
+        const right = left + 1;
+        const child = right < items.length && items[right]! < items[left]! ? right : left;
+        if (items[child]! >= last) break;
+        items[at] = items[child]!;
+        at = child;
+      }
+      items[at] = last;
+    }
+    return top;
+  }
+  /** Everything in `other`, which is left empty. */
+  take(other: Heap): void {
+    this.#items = other.#items;
+    other.#items = [];
+  }
+}
+
 /**
  * What changed on one sheet because somebody typed into it.
  *
@@ -992,10 +1036,26 @@ export function recalculateBook(
   typed: ReadonlyMap<number, ReadonlyMap<string, string>>,
   tables?: Tables,
 ): Map<number, Recalculation> {
-  /* What each sheet's formulas came to and which went stale, by `row,col`,
-     one map per sheet so that a lookup builds one key rather than two. */
-  const values = sheets.map(() => new Map<string, number>());
+  /*
+   * What each sheet's formulas came to, and what was typed on it, by a number
+   * rather than by `row,col`: a formula reading a row of fifty cells reads
+   * fifty, ten thousand of them half a million, and building a string key and
+   * hashing it three times for each was most of a keystroke. The text of the
+   * key is built once, for the file's own cells, and only when nothing typed
+   * or worked out answers first. Typed text is read the writer's way once, not
+   * once a read.
+   */
+  const cellNumber = (row: number, col: number) => row * 16_384 + col;
+  const values = sheets.map(() => new Map<number, number>());
   const stale = sheets.map(() => new Set<string>());
+  const typedValues = sheets.map((_, index) => {
+    const own = new Map<number, Value>();
+    for (const [at, written] of typed.get(index) ?? []) {
+      const comma = at.indexOf(',');
+      own.set(cellNumber(Number(at.slice(0, comma)), Number(at.slice(comma + 1))), typedValue(written));
+    }
+    return own;
+  });
 
   /* Two sheets whose names are the same but for case — which is how this
      compares them, and Excel does not write — cannot be told apart, so a
@@ -1009,18 +1069,38 @@ export function recalculateBook(
 
   /** What a cell is worth now: what was typed, what was worked out, or what the file holds. */
   const lookups = sheets.map((sheet, index): Lookup => {
-    const written_ = typed.get(index);
+    const typedHere = typedValues[index]!;
     const worked_ = values[index]!;
+    /*
+     * The file's cells by number, built once a sheet has been read more times
+     * than it has cells — so building it always costs less than the reads it
+     * saves. Only for this keystroke: the editor rewrites cells in place after
+     * a save, and a copy kept longer would read a cell that is no longer there.
+     */
+    let byNumber: Map<number, Held> | null = null;
+    let reads = 0;
+    const threshold = Math.max(4_096, sheet.cells.size);
+    const cellAt = (row: number, col: number, at: number): Held | undefined => {
+      if (byNumber) return byNumber.get(at);
+      if (++reads > threshold) {
+        byNumber = new Map();
+        for (const [text, cell] of sheet.cells) {
+          const comma = text.indexOf(',');
+          byNumber.set(cellNumber(Number(text.slice(0, comma)), Number(text.slice(comma + 1))), cell);
+        }
+        return byNumber.get(at);
+      }
+      return sheet.cells.get(key(row, col));
+    };
     return (row, col) => {
-      const at = key(row, col);
-      const written = written_?.get(at);
+      const at = cellNumber(row, col);
       /* Typed text is text, as the writer saves it — `SUMIFS` reads the word. */
-      if (written !== undefined) return typedValue(written);
+      if (typedHere.size > 0 && typedHere.has(at)) return typedHere.get(at);
       /* Past where the reader stopped, a cell is not empty — it is unread. */
       if (sheet.readTo !== undefined && col >= sheet.readTo) return null;
       const worked = worked_.get(at);
       if (worked !== undefined) return worked;
-      const cell = sheet.cells.get(at);
+      const cell = cellAt(row, col, at);
       if (!cell) return undefined;
       if (cell.kind === 'text') return cell.text;
       if (cell.kind !== 'number') return null;
@@ -1101,18 +1181,25 @@ export function recalculateBook(
    *   (column, block) it covers;
    * - **tall** — a column or two down a long run of rows, `SUM(A1:A5000)` or
    *   `A:A` — under each column;
-   * - **wide** — more than `NARROW` columns — on its sheet's list.
-   * A change looks in its own (column, block), its column's tall list and its
-   * sheet's wide list, and nowhere else. A formula that cannot be read at all
-   * is reached by any change.
+   * - **wide** — more than `NARROW` columns — under each block of rows it
+   *   covers, `SUM(B5:AZ5)` under one; and where it covers more blocks than
+   *   that, a whole row or a whole sheet, on its sheet's short list of huge ones.
+   * A change looks in its own (column, block), its column's tall list, its
+   * block's wide list and its sheet's huge list, and nowhere else. A formula
+   * that cannot be read at all is reached by any change.
+   *
+   * Wide areas were one list a sheet, looked through on every change: ten
+   * thousand row totals over fifty columns, and one shared input typed, was
+   * two thirds of a second.
    */
   const NARROW = 32;
   const BLOCK = 64;
-  const MOST_BUCKETS = 64;
+  const MOST_BUCKETS = 16;
   type Filed = { formula: number; area: Area };
   const small = sheets.map(() => new Map<number, Filed[]>());
   const tall = sheets.map(() => new Map<number, Filed[]>());
-  const wide = sheets.map((): Filed[] => []);
+  const wide = sheets.map(() => new Map<number, Filed[]>());
+  const huge = sheets.map((): Filed[] => []);
   const file = (into: Map<number, Filed[]>, at: number, filed: Filed) => {
     const list = into.get(at);
     if (list) list.push(filed);
@@ -1124,21 +1211,22 @@ export function recalculateBook(
    * The index is bounded as a whole. A formula of 8 192 characters can name
    * two thousand ranges, and a file of thousands of them costs nothing to
    * send — filed without a limit, that is hundreds of millions of entries. A
-   * workbook of ten thousand ordinary formulas files well under a tenth of
+   * workbook of ten thousand ordinary formulas files well under half of
    * this. A formula past the limit is not filed at all: any change reaches it
    * and it is marked — the direction that costs a marker, never a wrong number.
+   * Two million was the first limit, and review measured a quarter of a
+   * gigabyte a keystroke filling it.
    */
-  const MOST_FILED = 2_000_000;
+  const MOST_FILED = 500_000;
   let filedLeft = MOST_FILED;
+  const blocksOf = (area: Area) => Math.floor(area.to.row / BLOCK) - Math.floor(area.from.row / BLOCK) + 1;
   const costOf = (reads: Area[]) => {
     let cost = 0;
     for (const area of reads) {
       const cols = area.to.col - area.from.col + 1;
-      if (cols > NARROW) cost += 1;
-      else {
-        const blocks = Math.floor(area.to.row / BLOCK) - Math.floor(area.from.row / BLOCK) + 1;
-        cost += cols * blocks > MOST_BUCKETS ? cols : cols * blocks;
-      }
+      const blocks = blocksOf(area);
+      if (cols > NARROW) cost += blocks > MOST_BUCKETS ? 1 : blocks;
+      else cost += cols * blocks > MOST_BUCKETS ? cols : cols * blocks;
     }
     return cost;
   };
@@ -1160,12 +1248,13 @@ export function recalculateBook(
       if (area.on < 0) continue;
       const filed = { formula: index, area };
       const cols = area.to.col - area.from.col + 1;
-      if (cols > NARROW) {
-        wide[area.on]!.push(filed);
-        continue;
-      }
       const first = Math.floor(area.from.row / BLOCK);
       const last = Math.floor(area.to.row / BLOCK);
+      if (cols > NARROW) {
+        if (last - first + 1 > MOST_BUCKETS) huge[area.on]!.push(filed);
+        else for (let block = first; block <= last; block++) file(wide[area.on]!, block, filed);
+        continue;
+      }
       if (cols * (last - first + 1) > MOST_BUCKETS) {
         for (let col = area.from.col; col <= area.to.col; col++) file(tall[area.on]!, col, filed);
         continue;
@@ -1176,18 +1265,30 @@ export function recalculateBook(
     }
   });
 
-  /* The formulas still to be worked out, in the order they were reached. A
-     formula reached again while it waits is not queued twice. */
-  const queue: number[] = [];
-  let head = 0;
+  /*
+   * The formulas still to be worked out, taken in passes down the file's
+   * order: one reached further down than the formula being worked out joins
+   * this pass, one reached above it waits for the next.
+   *
+   * The order is not a detail. Taken in the order they were reached, a total
+   * of the interest column under a 100-row repayment plan was worked out again
+   * for every row of the plan as it settled, ran out of goes at 64, and was
+   * marked on every keystroke. In passes it is worked out once, when the plan
+   * above it has settled — as each pass over the sheet used to do, without
+   * every formula asking about every change.
+   */
+  const now = new Heap();
+  const next = new Heap();
+  let cursor = -1;
   const queued = new Uint8Array(formulas.length);
   /* Reached by a number that is no longer true: whatever it comes to is not. */
   const poisoned = new Uint8Array(formulas.length);
   const done = new Uint8Array(formulas.length);
-  /* Times each has been worked out. A total feeds a total, so one may be
-     worked out again as the numbers under it settle — but a ring of formulas
-     reading each other never settles, and Excel itself refuses to resolve
-     one. Past `ROUNDS` a formula is marked rather than worked out again. */
+  /* Times each has been worked out — at most once a pass. A total feeds a
+     total, so one may be worked out again as the numbers under it settle, but
+     a ring of formulas reading each other never settles, and Excel itself
+     refuses to resolve one. Past `ROUNDS` a formula is marked rather than
+     worked out again. */
   const ROUNDS = 64;
   const worked = new Uint16Array(formulas.length);
   let unreadableReached = false;
@@ -1197,7 +1298,7 @@ export function recalculateBook(
     if (poison) poisoned[index] = 1;
     if (queued[index]) return;
     queued[index] = 1;
-    queue.push(index);
+    (index > cursor ? now : next).push(index);
   };
   const covers = (area: Area, row: number, col: number) =>
     row >= area.from.row && row <= area.to.row && col >= area.from.col && col <= area.to.col;
@@ -1210,7 +1311,10 @@ export function recalculateBook(
     for (const { formula, area } of tall[sheet]!.get(col) ?? []) {
       if (row >= area.from.row && row <= area.to.row) enqueue(formula, wentStale);
     }
-    for (const { formula, area } of wide[sheet]!) if (covers(area, row, col)) enqueue(formula, wentStale);
+    for (const { formula, area } of wide[sheet]!.get(Math.floor(row / BLOCK)) ?? []) {
+      if (covers(area, row, col)) enqueue(formula, wentStale);
+    }
+    for (const { formula, area } of huge[sheet]!) if (covers(area, row, col)) enqueue(formula, wentStale);
     if (!unreadableReached) {
       unreadableReached = true;
       for (const formula of unreadableFormulas) enqueue(formula, false);
@@ -1220,7 +1324,7 @@ export function recalculateBook(
     const formula = formulas[index]!;
     done[index] = 1;
     stale[formula.sheet]!.add(formula.at);
-    values[formula.sheet]!.delete(formula.at);
+    values[formula.sheet]!.delete(cellNumber(formula.row, formula.col));
     changed(formula.sheet, formula.row, formula.col, true);
   };
 
@@ -1232,8 +1336,14 @@ export function recalculateBook(
     }
   }
 
-  while (head < queue.length) {
-    const index = queue[head++]!;
+  for (;;) {
+    if (now.size === 0) {
+      if (next.size === 0) break;
+      now.take(next);
+      cursor = -1;
+    }
+    const index = now.pop();
+    cursor = index;
     queued[index] = 0;
     if (done[index]) continue;
     const formula = formulas[index]!;
@@ -1258,14 +1368,21 @@ export function recalculateBook(
     /* A number that did not move is not news, and saying so would put a
        marker on a cell nobody changed. */
     const mine = values[formula.sheet]!;
-    const before = mine.has(formula.at)
-      ? mine.get(formula.at)
+    const here = cellNumber(formula.row, formula.col);
+    const before = mine.has(here)
+      ? mine.get(here)
       : typeof formula.cell.raw === 'number'
         ? formula.cell.raw
         : parse(formula.cell.text);
-    mine.set(formula.at, answer);
+    mine.set(here, answer);
     if (before !== answer) changed(formula.sheet, formula.row, formula.col, false);
   }
 
-  return new Map<number, Recalculation>(sheets.map((_, index) => [index, { values: values[index]!, stale: stale[index]! }]));
+  return new Map<number, Recalculation>(
+    sheets.map((_, index) => {
+      const own = new Map<string, number>();
+      for (const [at, value] of values[index]!) own.set(key(Math.floor(at / 16_384), at % 16_384), value);
+      return [index, { values: own, stale: stale[index]! }];
+    }),
+  );
 }

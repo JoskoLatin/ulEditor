@@ -322,6 +322,19 @@ check(
     `${floodTime.toFixed(0)} ms · ${flooded.values.size} worked out, ${flooded.stale.size} marked`,
   );
 
+  /* Row totals wider than the index files by column, sharing one input:
+     looked through one list a sheet on every change, 10 000 of them were two
+     thirds of a second. What is left is the work itself — every one of them
+     reads its fifty cells again, half a million reads on the keystroke. */
+  const rows = new Map([['0,0', money(1)]]);
+  for (let r = 1; r <= 10_000; r++) rows.set(`${r},0`, money(1, `$A$1+SUM(B${r + 1}:AZ${r + 1})`));
+  const wideRows = keystroke(rows, new Map([['0,0', '2']]));
+  check(
+    '10 000 row totals across fifty columns, one shared input typed, settle in a tenth of a second',
+    wideRows < 100,
+    `${wideRows.toFixed(1)} ms (was 664 ms)`,
+  );
+
   check(
     'a running balance 5 000 rows long settles in a frame or two, not a third of a second',
     running < 50,

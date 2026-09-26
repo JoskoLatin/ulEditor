@@ -634,6 +634,52 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
 
 {
   /*
+   * A repayment plan: the balance down column B, the interest on it in C, the
+   * total interest and twice it beside the plan. Taken in the order they were
+   * reached, the total was worked out again for every row of the plan as it
+   * settled, ran out of goes at 64 and was marked on every keystroke — a
+   * 100-row plan, a 360-month one. Found by review; the answer here is worked
+   * out in plain JavaScript beside it.
+   */
+  const number = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
+  const plan = (months, totalOnTop) => {
+    const offset = totalOnTop ? 2 : 0;
+    const cells = new Map();
+    for (let m = 0; m < months; m++) {
+      const row = m + offset;
+      cells.set(`${row},0`, number(100));
+      cells.set(`${row},1`, number(0, m === 0 ? `100000-A${row + 1}` : `B${row}-A${row + 1}`));
+      cells.set(`${row},2`, number(0, `B${row + 1}*0.01`));
+    }
+    const at = totalOnTop ? 0 : months + 1;
+    cells.set(`${at},4`, number(0, `SUM(C${offset + 1}:C${offset + months})`));
+    cells.set(`${at},5`, number(0, `E${at + 1}*2`));
+    /* In the order of the file, row by row, as the reader hands cells over —
+       the total on top really comes first. */
+    const rowOf = (text) => Number(text.split(',')[0]);
+    const inOrder = new Map([...cells].sort(([a], [b]) => rowOf(a) - rowOf(b)));
+    const out = recalculate(inOrder, 'List1', new Map([[`${offset},0`, '250']]));
+    let balance = 100000;
+    let interest = 0;
+    for (let m = 0; m < months; m++) {
+      balance -= m === 0 ? 250 : 100;
+      interest += balance * 0.01;
+    }
+    const got = out.values.get(`${at},4`);
+    return { ok: got !== undefined && Math.abs(got - interest) < 1e-6 && Math.abs(out.values.get(`${at},5`) - 2 * interest) < 1e-6, got, want: interest };
+  };
+  for (const [months, onTop] of [[100, false], [360, false], [360, true]]) {
+    const result = plan(months, onTop);
+    check(
+      `the total interest of a ${months}-month plan${onTop ? ', written above it,' : ''} is worked out, not marked`,
+      result.ok,
+      `${result.got?.toFixed(2) ?? 'marked'} (wanted ${result.want.toFixed(2)})`,
+    );
+  }
+}
+
+{
+  /*
    * Who reads a changed cell is looked up in an index, filed three ways by the
    * shape of what a formula reads — small blocks, tall columns, wide rows — so
    * each way is asked here, at the edges where a filing could miss: the row
@@ -646,6 +692,7 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
     ['1,60', number(0, 'SUM(B1:B5000)')],
     ['2,60', number(0, 'SUM(C1:AZ3)')],
     ['3,60', number(0, 'SUM(D1:D2)')],
+    ['4,60', number(0, 'SUM(C3000:AZ9000)')],
   ]);
   const reach = (row, col) => {
     const out = recalculate(shapes, 'List1', new Map([[`${row},${col}`, '1']]));
@@ -655,7 +702,36 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   check('and not a row past its end', reach(70, 0) === '', reach(70, 0) || 'nothing');
   check('a tall area reaches deep down its column', reach(3_999, 1) === '1,60', reach(3_999, 1) || 'nothing');
   check('a wide area reaches far across its rows', reach(1, 50) === '2,60', reach(1, 50) || 'nothing');
+  check('and a huge one, wide and deep, reaches its far corner', reach(8_999, 51) === '4,60', reach(8_999, 51) || 'nothing');
   check('and none of them reaches a cell just outside them all', reach(5, 3) === '', reach(5, 3) || 'nothing');
+
+  /* A wide area over several blocks of rows is filed under each of them. */
+  const tallWide = new Map([['0,60', number(0, 'SUM(C100:AZ200)')]]);
+  const deep = recalculate(tallWide, 'List1', new Map([['150,40', '7']]));
+  check('a wide area reaches a row several blocks down it', deep.values.get('0,60') === 7, String(deep.values.get('0,60')));
+
+  /*
+   * Read often enough, a sheet's cells are looked up by number rather than by
+   * their `row,col` text — built partway through the keystroke, the moment the
+   * reads outnumber the cells. The totals have to come out the same either side
+   * of that moment.
+   */
+  const grid = new Map();
+  let whole = 0;
+  for (let r = 0; r < 100; r++) {
+    for (let c = 0; c < 60; c++) {
+      grid.set(`${r},${c}`, number(r + c));
+      whole += r + c;
+    }
+  }
+  for (let i = 0; i < 4; i++) grid.set(`${200 + i},0`, number(0, 'SUM($A$1:$BH$100)'));
+  const regrid = recalculate(grid, 'List1', new Map([['0,0', '1000']]));
+  const totals = [0, 1, 2, 3].map((i) => regrid.values.get(`${200 + i},0`));
+  check(
+    'totals read before and after the cells are indexed by number agree, and are right',
+    totals.every((total) => total === whole + 1000),
+    `${totals.join(' ')} (wanted ${whole + 1000})`,
+  );
 }
 
 {
