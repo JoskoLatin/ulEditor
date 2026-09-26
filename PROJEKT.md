@@ -81,7 +81,7 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
 gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
 ceka | visok | Izdati 0.6.1 — commit spreman i zelen (`91c7bb7`); čeka Joškov tag
-gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms (`de104a7`, čeka sigurnosni pregled)
+gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, sigurnosni pregled prolazi; ulazi u izdanje nakon 0.6.1)
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
