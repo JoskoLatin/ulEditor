@@ -39,3 +39,8 @@ tools/android-dev.log
 *.keystore
 keystore.properties
 .fidelity-run.txt
+
+# Claude upute: interni podaci (wiki, infrastruktura). Ne smiju na javni GitHub.
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
