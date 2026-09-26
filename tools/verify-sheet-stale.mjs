@@ -277,6 +277,58 @@ check(
   `${unreadable4k.ms.toFixed(0)} ms, ${unreadable4k.marked} marked (was 4 300 ms)`,
 );
 
+/*
+ * The shapes that used to be slow, each timed on one keystroke. Every
+ * formula used to look down the list of every change, which made each of
+ * these quadratic: half a second, a third of one, a tenth. Who reads a changed
+ * cell is now looked up rather than asked of every formula.
+ */
+{
+  const money = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
+  const keystroke = (cells, typed) => {
+    recalculate(cells, 'Veliki', typed);
+    const started = performance.now();
+    recalculate(cells, 'Veliki', typed);
+    return performance.now() - started;
+  };
+
+  const readers = new Map([['0,0', money(1)]]);
+  for (let r = 1; r <= 10_000; r++) readers.set(`${r},1`, money(1 + r, `A1+${r}`));
+  const allRead = keystroke(readers, new Map([['0,0', '2']]));
+
+  const balance = new Map();
+  for (let r = 0; r < 5_000; r++) {
+    balance.set(`${r},0`, money(1));
+    balance.set(`${r},1`, money(r + 1, r === 0 ? 'A1' : `B${r}+A${r + 1}`));
+  }
+  const running = keystroke(balance, new Map([['0,0', '2']]));
+
+  check(
+    '10 000 formulas all reading the typed cell settle in a few frames, not half a second',
+    allRead < 50,
+    `${allRead.toFixed(1)} ms (was 511 ms)`,
+  );
+  /* A file built to fill the index: 3 000 formulas of Excel's longest, each
+     naming two thousand ranges. It has to stay bounded in time and in memory,
+     and what does not fit is marked rather than left as it was. */
+  const hostile = new Map([['0,0', money(1)]]);
+  const long = `SUM(${Array.from({ length: 1_600 }, (_, i) => `A${i + 1}`).join(',')})`.slice(0, 8_190) + ')';
+  for (let r = 0; r < 3_000; r++) hostile.set(`${r},5`, money(0, long.replace(/,[^,]*\)$/, ')')));
+  const flooded = recalculate(hostile, 'Veliki', new Map([['0,0', '2']]));
+  const floodTime = keystroke(hostile, new Map([['0,0', '2']]));
+  check(
+    'a file built to fill the index is bounded, and what does not fit is marked',
+    floodTime < 3_000 && flooded.values.size + flooded.stale.size === 3_000,
+    `${floodTime.toFixed(0)} ms · ${flooded.values.size} worked out, ${flooded.stale.size} marked`,
+  );
+
+  check(
+    'a running balance 5 000 rows long settles in a frame or two, not a third of a second',
+    running < 50,
+    `${running.toFixed(1)} ms (was 320 ms)`,
+  );
+}
+
 console.log(
   `
   ${small.toFixed(1)} µs a formula an edit. A sheet of 10 000 formulas costs ${large.toFixed(0)} ms once, on the keystroke that ends the typing — not per frame and not per cell drawn.`,

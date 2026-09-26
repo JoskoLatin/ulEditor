@@ -634,6 +634,32 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
 
 {
   /*
+   * Who reads a changed cell is looked up in an index, filed three ways by the
+   * shape of what a formula reads — small blocks, tall columns, wide rows — so
+   * each way is asked here, at the edges where a filing could miss: the row
+   * just past a 64-row block, deep inside a tall column, far across a wide row.
+   * The totals sit in column BI, outside every range they read.
+   */
+  const number = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
+  const shapes = new Map([
+    ['0,60', number(0, 'SUM(A60:A70)')],
+    ['1,60', number(0, 'SUM(B1:B5000)')],
+    ['2,60', number(0, 'SUM(C1:AZ3)')],
+    ['3,60', number(0, 'SUM(D1:D2)')],
+  ]);
+  const reach = (row, col) => {
+    const out = recalculate(shapes, 'List1', new Map([[`${row},${col}`, '1']]));
+    return [...out.values.keys()].sort().join(' ');
+  };
+  check('a small area reaches across the edge of a block', reach(64, 0) === '0,60', reach(64, 0) || 'nothing');
+  check('and not a row past its end', reach(70, 0) === '', reach(70, 0) || 'nothing');
+  check('a tall area reaches deep down its column', reach(3_999, 1) === '1,60', reach(3_999, 1) || 'nothing');
+  check('a wide area reaches far across its rows', reach(1, 50) === '2,60', reach(1, 50) || 'nothing');
+  check('and none of them reaches a cell just outside them all', reach(5, 3) === '', reach(5, 3) || 'nothing');
+}
+
+{
+  /*
    * A sheet the reader cut short at 256 columns: what lies past that was never
    * read, and `SUM(A1:IW1)` over it came out as the first 256 columns' total,
    * shown as current.
