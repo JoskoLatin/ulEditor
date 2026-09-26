@@ -275,6 +275,40 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   check('a ring of formulas stops rather than going round for ever', out.values.size + out.stale.size > 0);
 }
 
+{
+  /*
+   * A number as the reader hands it over: formatted for a person, `1.000,00`,
+   * with the number itself beside it. Read from the text, that is not a number
+   * at all, and a SUM passed over it — retyping A2 showed 334,50 as the
+   * current total where Excel says 1.334,50. It shipped in 0.6.0.
+   */
+  const money = new Map([
+    ['0,0', { text: '1.000,00', kind: 'number', raw: 1000 }],
+    ['1,0', { text: '200,00', kind: 'number', raw: 200 }],
+    ['2,0', { text: '34,50', kind: 'number', raw: 34.5 }],
+    ['0,1', { text: '1.234,50', kind: 'number', raw: 1234.5, formula: 'SUM(A1:A3)' }],
+    ['1,1', { text: '1.234,50', kind: 'number', raw: 1234.5, formula: 'SUM(C1:C2)' }],
+    ['0,2', { text: '1.234,50', kind: 'number', raw: 1234.5 }],
+    ['0,3', { text: '1.234,50', kind: 'number', raw: 1234.5, formula: 'SUBTOTAL(9,B2)' }],
+  ]);
+  const out = recalculate(money, 'List1', new Map([['1,0', '300']]));
+  check(
+    'a number written with a thousands separator is still counted, from the number the file stores',
+    out.values.get('0,1') === 1334.5,
+    `${out.values.get('0,1')} (Excel: 1334.5)`,
+  );
+  check(
+    'and a total that came out the same is not news, so what reads it is not marked',
+    (() => {
+      /* C1 retyped to the value it had: B2 works out to what it was, and the
+         SUBTOTAL over B2 has nothing to be out of date about. */
+      const unchanged = recalculate(money, 'List1', new Map([['0,2', '1234.5']]));
+      return unchanged.values.get('1,1') === 1234.5 && !unchanged.stale.has('0,3');
+    })(),
+    'D1 = SUBTOTAL(9,B2)',
+  );
+}
+
 /* ── across the sheets of a workbook ─────────────────────────────────── */
 
 /*

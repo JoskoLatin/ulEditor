@@ -568,11 +568,14 @@ function cellOf(
       const number = Number(value);
       if (!Number.isFinite(number)) return { text: value, kind: 'text' };
       const code = styles.formats[styleIndex];
-      if (isDateStyle(styles, styleIndex)) return { text: formatDate(number, code), kind: 'date' };
+      if (isDateStyle(styles, styleIndex)) return { text: formatDate(number, code), kind: 'date', raw: number };
       /* The code is kept, not only applied: a formula worked out again after an
          edit has to be written in the same hand as the number it replaces, or a
-         recalculated total arrives as 1234.5 in a column of 1.234,50. */
-      return { text: formatNumber(number, code), kind: 'number', fmt: code };
+         recalculated total arrives as 1234.5 in a column of 1.234,50.
+         And the number is kept beside the text, because the text cannot be
+         read back: `1.000,00` is not a number to anything but a person, and a
+         total that read it from the text dropped it without a word. */
+      return { text: formatNumber(number, code), kind: 'number', fmt: code, raw: number };
     }
   }
 }

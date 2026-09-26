@@ -609,6 +609,28 @@ if (!reachable) {
       undone.a1 === '1.000,00' && undone.sum === '1.234,50' && undone.stale === 0,
       `A1 ${undone.a1} · B1 ${undone.sum} · ${undone.stale} marked`,
     );
+    /*
+     * A2 retyped rather than A1, so that A1 — 1000, drawn `1.000,00` — is read
+     * from the file rather than typed. Read from its text it is not a number,
+     * and the total came out 334,50, shown as current. 0.6.0 did that.
+     */
+    await page.locator('.ul-sheet-book:not([hidden]) td[data-ref="1,0"]').dblclick();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('300');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+    const thousands = await page.evaluate(() => {
+      const td = document.querySelector('.ul-sheet-book:not([hidden]) td[data-ref="0,1"]');
+      return { text: td?.textContent ?? null, stale: td?.dataset.stale ?? null };
+    });
+    check(
+      'an untouched 1.000,00 above the retyped cell is still in the total',
+      thousands.text === '1.334,50' && thousands.stale === null,
+      `B1 ${thousands.text} (Excel: 1.334,50)`,
+    );
+    await page.keyboard.press('Control+Z');
+    await page.waitForTimeout(150);
+
     /* ── the table definitions, and what reading them is worth ─────── */
 
     const tabled = await page.evaluate(

@@ -517,6 +517,8 @@ export interface Held {
   text: string;
   kind: string;
   formula?: string;
+  /** The value as the file stores it. Where it is a number it is the number — `text` is formatted for a person. */
+  raw?: number | string | boolean;
 }
 
 /** What a sheet looks like once the typing is taken into account. */
@@ -629,7 +631,10 @@ export function recalculateBook(
         const cell = sheet.cells.get(at);
         if (!cell) return undefined;
         if (cell.kind !== 'number') return null;
-        return parse(cell.text);
+        /* The stored number, not the text: `1.000,00` read back as text is not
+           a number, and SUM passed over it — a total a thousand short, shown
+           as current. The text is the fallback for a reader that keeps none. */
+        return typeof cell.raw === 'number' ? cell.raw : parse(cell.text);
       },
   );
   const elsewhere = (name: string): Lookup | null => {
@@ -705,7 +710,8 @@ export function recalculateBook(
       /* A number that did not move is not news, and saying so would put a
          marker on a cell nobody changed. */
       values.set(here, worked);
-      if (parse(cell.text) !== worked) moved.add(here);
+      const before = typeof cell.raw === 'number' ? cell.raw : parse(cell.text);
+      if (before !== worked) moved.add(here);
     }
 
     if (!changed) break;
