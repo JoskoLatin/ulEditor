@@ -1639,6 +1639,8 @@ button.status-item:hover {
  */
 .shell[data-reading="true"] .main {
   position: relative;
+  /* How far a paged flow keeps its last line above the dock. */
+  --reader-dock-clearance: 64px;
 }
 
 .reader {
@@ -1706,6 +1708,10 @@ button.status-item:hover {
 
 /* A finger, not a pointer: the targets grow to what a thumb reliably hits. */
 @media (pointer: coarse), (max-width: 720px) {
+  .shell[data-reading="true"] .main {
+    --reader-dock-clearance: 78px;
+  }
+
   .reader-dock {
     opacity: 0.8;
   }

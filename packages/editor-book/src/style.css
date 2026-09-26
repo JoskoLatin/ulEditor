@@ -177,7 +177,9 @@
    column. */
 .ul-book[data-flow='paged'] .ul-book-flow {
   column-fill: auto;
-  padding: 28px 0;
+  /* The bottom leaves room for the reading room's dock in the corner, which
+     would otherwise sit on the last line of the page. */
+  padding: 28px 0 var(--reader-dock-clearance, 28px);
 }
 
 /* The click zones along the edges for turning pages. Transparent — only the cursor shows. */
