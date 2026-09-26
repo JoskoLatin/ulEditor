@@ -52,11 +52,18 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Nije gotovo
 
-- **`SUMIFS` i `COUNTIFS` se i dalje ne izračunavaju — ali se sad označe.**
-  Preračun ide preko cijele radne knjige (`recalculateBook`, 2026-09-26): izmjena
-  iznosa u tablici na listu `Podaci` označi kao zastarjele 25 od 51 formule na
-  listu `Cashless` (17 izravnih čitača, 0 promašenih); prije nije označila
-  nijednu. Izračunati ih je sljedeći korak, a list više nije prepreka.
+- **`SUMIFS` i `COUNTIFS` se izračunavaju** (2026-09-26, `fb48e6c`) po pravilima
+  izmjerenima u samom Excelu (34 slučaja, `pnpm verify:formula-excel`). Na
+  stvarnom cashless izvještaju daju 0, isto kao Excel, jer podaci pišu
+  `G - gotovina` (crtica), a formule traže `G – gotovina` (duga crtica); s
+  istom crticom redak za gotovinu bio bi 36.047,20 € (5416 transakcija).
+  To je greška u Excel datoteci, ne u programu.
+- **Sigurnosni pregled** (dva kruga, `fc44088`, `2cb6c87`) našao je i
+  popravio grešku iz 0.6.0: zbroj koji čita međuzbroj i nešto izračunato iz
+  njega prikazivao je krivi broj kao točan. Uz to tri načina da datoteka
+  smrzne editor i desetak slučajeva u kojima se promjena ne primijeti.
+- **Zbroj je preskakao brojeve s točkom za tisućice** (`1.000,00`) — i to je
+  bilo u 0.6.0, popravljeno u `64641e9`.
 - Onih „šest formula koje drugi list zovu imenom" zapravo su na `Cashless` i
   zovu **vlastiti** list; pet `SUM`-ova se sad izračunava, sedam `SUBTOTAL`-a
   i sličnih se označi.
@@ -71,7 +78,9 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 ## Kartice
 
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
-todo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
+gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
+todo | visok | Izdati 0.6.1 — dvije greške iz 0.6.0 prikazuju krivi zbroj kao točan
+todo | nizak | Ubrzati preračun nakon masovne promjene (indeks po listu i stupcu; 10.000 formula ≈ 0,5 s)
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 todo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore
