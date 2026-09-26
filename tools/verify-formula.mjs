@@ -710,6 +710,20 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   const deep = recalculate(tallWide, 'List1', new Map([['150,40', '7']]));
   check('a wide area reaches a row several blocks down it', deep.values.get('0,60') === 7, String(deep.values.get('0,60')));
 
+  /* XFE1 — a column past XFD, which a reference may still name — is not
+     A2, whatever the cells are kept by: kept by row × 16 384 + column, the
+     two were one number, and this total read A2's 9 as XFE1's nothing. */
+  const past = new Map([
+    ['1,0', number(5)],
+    ['0,5', number(0, 'A2*0+XFE1')],
+  ]);
+  const beyond = recalculate(past, 'List1', new Map([['1,0', '9']]));
+  check(
+    'a column past the last one is not the next row’s cell',
+    beyond.values.get('0,5') === 0,
+    `A2*0+XFE1 → ${beyond.values.get('0,5')} (wanted 0)`,
+  );
+
   /*
    * Read often enough, a sheet's cells are looked up by number rather than by
    * their `row,col` text — built partway through the keystroke, the moment the

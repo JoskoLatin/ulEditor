@@ -1045,7 +1045,11 @@ export function recalculateBook(
    * or worked out answers first. Typed text is read the writer's way once, not
    * once a read.
    */
-  const cellNumber = (row: number, col: number) => row * 16_384 + col;
+  /* Wider than any column a reference can name: `parseA1` takes three
+     letters, up to ZZZ (18 277), past Excel's XFD. At 16 384 a column past
+     XFD was the next row's cell, and a total read a neighbour's number. */
+  const WIDEST = 32_768;
+  const cellNumber = (row: number, col: number) => row * WIDEST + col;
   const values = sheets.map(() => new Map<number, number>());
   const stale = sheets.map(() => new Set<string>());
   const typedValues = sheets.map((_, index) => {
@@ -1205,8 +1209,9 @@ export function recalculateBook(
     if (list) list.push(filed);
     else into.set(at, [filed]);
   };
-  /* A block number fits under 2^15 (1 048 576 / 64), so column and block make one number. */
-  const bucket = (col: number, block: number) => col * 32_768 + block;
+  /* A block number is under 2^18 even for the seven-digit rows a reference
+     may name, so column and block make one number without two meeting. */
+  const bucket = (col: number, block: number) => col * 262_144 + block;
   /*
    * The index is bounded as a whole. A formula of 8 192 characters can name
    * two thousand ranges, and a file of thousands of them costs nothing to
@@ -1381,7 +1386,7 @@ export function recalculateBook(
   return new Map<number, Recalculation>(
     sheets.map((_, index) => {
       const own = new Map<string, number>();
-      for (const [at, value] of values[index]!) own.set(key(Math.floor(at / 16_384), at % 16_384), value);
+      for (const [at, value] of values[index]!) own.set(key(Math.floor(at / WIDEST), at % WIDEST), value);
       return [index, { values: own, stale: stale[index]! }];
     }),
   );
