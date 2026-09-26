@@ -10,12 +10,12 @@ OpenDocument i e-knjige — kao Tauri desktop aplikacija s Rust jezgrom
 
 ## Verzija i faza
 
-Verzija: **0.5.0** (`Cargo.toml:9`, `package.json:3`, tag `v0.5.0`)
+Verzija: **0.6.1** u kodu (`91c7bb7`, 2026-09-26, CI zelen); tag `v0.6.1` još nije
+postavljen — to je objava izdanja i radi je Joško. Zadnji objavljeni: `v0.6.0`.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Oba na `5223a01` (pushano 2026-09-22); **4 commita nisu pushana** — `cddfb16`, `be4b50e` i dva izvještaja.
-Zadnji rad: **2026-09-23** — `be4b50e` "What PodaciTable[Iznos] stands for, and
-the sheet it turned out to be on".
+Zadnji rad: **2026-09-26** — preračun formula: cijela knjiga, `SUMIFS`, dva
+sigurnosna pregleda, ubrzanje.
 Faza: **2 (Office)**, pri kraju — `docs/ANALYSIS-AND-PLAN.md:367`. Faza 3 (Web,
 WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
@@ -72,18 +72,19 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 - **Cold start nije izmjeren** — `docs/ANALYSIS-AND-PLAN.md:770` ga zove
   „the last unmeasured budget".
 - **Telemetrija nije započeta** (i ostaje opt-in) — `docs/ANALYSIS-AND-PLAN.md:228`.
-- **`CLAUDE.md` u korijenu nije u gitu** — `git status` ga prijavljuje kao `??`.
-  Ne znam je li to namjerno.
+- ~~`CLAUDE.md` u korijenu nije u gitu~~ — riješeno (`af59b5d`): namjerno je
+  izvan gita, i `CLAUDE.md` i `AGENTS.md` su u `.gitignore`, jer opisuju wiki i
+  lokalnu infrastrukturu, a `origin` je javan.
 
 ## Kartice
 
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
 gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
-todo | visok | Izdati 0.6.1 — dvije greške iz 0.6.0 prikazuju krivi zbroj kao točan
-todo | nizak | Ubrzati preračun nakon masovne promjene (indeks po listu i stupcu; 10.000 formula ≈ 0,5 s)
+ceka | visok | Izdati 0.6.1 — commit spreman i zelen (`91c7bb7`); čeka Joškov tag
+gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms (`de104a7`, čeka sigurnosni pregled)
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
-todo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore
+gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
 todo | nizak | Započeti fazu 3 — prevesti ul-core u WASM
 
 ## Blokada
