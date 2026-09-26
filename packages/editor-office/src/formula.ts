@@ -168,6 +168,15 @@ const UNREADABLE = [
   /\[/,
   /* `#REF!`, `#VALUE!` and the rest: the formula is already broken. */
   /#[A-Z/0-9]+[!?]/,
+  /* Functions that read cells their text does not name: `OFFSET(A1,1,0,3,1)`
+     reads A2:A4, `INDIRECT("B"&C1)` whatever C1 spells, and a spilled range
+     `A1#` — `ANCHORARRAY(A1)` in the file — however far the spill reaches.
+     Read as their text, each answered 'no' to the cells it actually read. A
+     name defined as a LAMBDA and called like a function cannot be told from a
+     built-in one without `xl/workbook.xml`, which this module does not see;
+     that is a risk this knows it takes. */
+  /(?<![A-Za-z0-9_.])(?:_xlfn\.)?(?:OFFSET|INDIRECT|ANCHORARRAY)\s*\(/i,
+  /[A-Za-z]{1,3}\$?[0-9]{1,7}#/,
   /* `SUM(Jan:Mar!B2)` — a span of sheets. Read as a reference it would be
      `Mar!B2` alone, and an edit to `B2` on `Feb` would be answered `'no'`.
      Quoted, the colon is inside the quotes, and a sheet's own name cannot
@@ -182,7 +191,10 @@ const LONGEST_FORMULA = 8_192;
 const CALL = new RegExp(String.raw`(?<![${NAME_REST}])[${NAME_START}][${NAME_REST}]{0,254}\s*\(`, 'g');
 const NUMBER = /(?<![A-Za-z0-9_.])[0-9]+(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?/g;
 const TRUTH = new RegExp(String.raw`(?<![${NAME_REST}])(?:TRUE|FALSE)(?![${NAME_REST}(])`, 'gi');
-const LETTER = new RegExp(`[${NAME_START}]`);
+/* A quote or a `!` left over is a sheet named in a way this did not read —
+   a quoted name longer than any sheet can have, a name of digits alone — and
+   the reference after it would otherwise be taken for this sheet's. */
+const LETTER = new RegExp(`[${NAME_START}'!]`);
 
 /**
  * Whether a name is left once everything this module understands is taken out.
@@ -1111,7 +1123,9 @@ export function recalculateBook(
     for (let grew = true; grew; ) {
       grew = false;
       for (const formula of formulas) {
-        if (stale.has(formula.here) || !values.has(formula.here) || !readsStale(formula.reads)) continue;
+        /* Worked out or not: a formula the rounds never reached still reads a
+           number that is no longer true, and its own is no truer. */
+        if (stale.has(formula.here) || !readsStale(formula.reads)) continue;
         markStale(formula);
         grew = true;
       }

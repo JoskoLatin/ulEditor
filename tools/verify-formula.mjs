@@ -132,6 +132,17 @@ check(
   refs('SUM(Range1)') || 'no references',
 );
 check(
+  'a function that reads cells its text does not name is unreadable',
+  ['SUM(OFFSET(A1,1,0,3,1))', 'SUM(INDIRECT("B"&C1))', 'SUM(_xlfn.ANCHORARRAY(A1))', 'SUM(A1#)'].every(
+    (formula) => dependency(formula, 'List1', at(4, 1)) === 'unknown',
+  ),
+);
+check(
+  'a sheet named in a way this does not read is not taken for this sheet',
+  dependency(`SUM('${'1'.repeat(69)}'!A1:A3)`, 'List1', at(0, 0)) === 'unknown' &&
+    dependency('SUM(2024!A1:A3)', 'List1', at(0, 0)) === 'unknown',
+);
+check(
   'a reference into another workbook is unreadable, not read as this one’s sheet of the same name',
   dependency('SUM([1]Podaci!A1:A3)', 'List1', { row: 0, col: 0, sheet: 'Podaci' }) === 'unknown',
 );
@@ -336,6 +347,22 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   ]);
   const out = recalculate(ring, 'List1', new Map([['0,1', '5']]));
   check('a ring of formulas stops rather than going round for ever', out.values.size + out.stale.size > 0);
+  {
+    /* A chain longer than the rounds, running against the file's order:
+       A1 = A2+1 … A70 = A71+1, and A71 retyped. The rounds run out partway
+       up, and what they never reached was shown as current. */
+    const chain = new Map([['70,0', { text: '0', kind: 'number', raw: 0 }]]);
+    for (let r = 0; r < 70; r++) {
+      chain.set(`${r},0`, { text: String(70 - r), kind: 'number', raw: 70 - r, formula: `A${r + 2}+1` });
+    }
+    const long = recalculate(chain, 'List1', new Map([['70,0', '100']]));
+    const untouched = [...Array(70).keys()].filter((r) => !long.values.has(`${r},0`) && !long.stale.has(`${r},0`));
+    check(
+      'a chain longer than the rounds ends marked where they ran out, never shown as it was',
+      untouched.length === 0,
+      `${long.values.size} worked out, ${long.stale.size} marked, ${untouched.length} left as the file had them`,
+    );
+  }
   check(
     'and ends marked, because what a ring comes to is not an answer',
     out.stale.has('9,1') && out.stale.has('11,1') && !out.values.has('9,1'),
