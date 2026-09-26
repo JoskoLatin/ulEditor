@@ -888,7 +888,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
     notes.add('Filters and frozen panes are not applied.');
   }
   notes.add(
-    'Formulas are worked out again only where a cell they read has been retyped, and only SUM and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.',
+    'Formulas are worked out again only where a cell they read has been retyped, and only SUM, SUMIFS, COUNTIFS and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.',
   );
 
   return { sheets, notes: [...notes], archive, tables };

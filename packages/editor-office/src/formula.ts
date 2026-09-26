@@ -10,14 +10,21 @@
  * reference, `SUMIFS(PodaciTable[Iznos], …)`, which needs `xl/tables/*.xml`
  * resolved before a criterion can be evaluated, and all 35 sit in one workbook.
  *
- * So this works out `SUM` and arithmetic, and **refuses everything else out
- * loud** rather than guessing at it. `AVERAGE`, `MIN` and `MAX` are the same
- * shape as `SUM` and would cost ten lines; they are not here because the census
- * did not find them. Adding one is a measurement away, not a rewrite.
+ * So this works out `SUM`, arithmetic, and — given the workbook's tables and
+ * sheets — `SUMIFS` and `COUNTIFS`, and **refuses everything else out loud**
+ * rather than guessing at it. `AVERAGE`, `MIN` and `MAX` are the same shape as
+ * `SUM` and would cost ten lines; they are not here because the census did not
+ * find them. Adding one is a measurement away, not a rewrite.
  *
- * Run over the same real spreadsheets, that works out **296 of 344 formulas —
- * 86%**. Every one of the 48 it refuses was looked at rather than counted: 34
- * are the `SUMIFS`/`COUNTIFS` over a table, six are `SUBTOTAL`, two are
+ * A criterion's rules were measured the same way, in Excel itself rather than
+ * from memory — blanks, text that is a number, case, the locale — and every
+ * rule that was not measured is a refusal. `criterionOf` has them.
+ *
+ * Run over the same real spreadsheets with nothing but the formula in hand,
+ * `evaluate` works out **296 of 344 formulas — 86%**; the 34 over a table need
+ * the table, and `recalculateBook` is what hands it over. Every one of the 48
+ * refused that way was looked at rather than counted: 34 are the
+ * `SUMIFS`/`COUNTIFS` over a table, six are `SUBTOTAL`, two are
  * `COUNTA` and `ROW`, and the remaining six are **references with a sheet
  * named in them** — `SUM(Cashless!$L$7:$L$11)`. Looked at, every one of them is
  * on `Cashless` and names `Cashless`: its own sheet, spelled out. `evaluate` on
@@ -88,10 +95,16 @@ export type Tables = ReadonlyMap<string, TableRange>;
  */
 export type Dependency = 'reads' | 'no' | 'unknown';
 
-/** What a cell holds, as far as arithmetic is concerned. */
-export type Value = number | null | undefined;
+/**
+ * What a cell holds, as far as a formula is concerned: a number, the text of a
+ * text cell, `undefined` for no cell at all, and `null` for anything else — a
+ * date, a truth value, an error — which nothing here compares or adds.
+ *
+ * Text is carried rather than folded into `null` because `SUMIFS` has to read
+ * it: `"Gotovina"` is a criterion about words. Arithmetic still refuses it.
+ */
+export type Value = number | string | null | undefined;
 
-/** `undefined` — no such cell; `null` — a cell holding something that is not a number. */
 export type Lookup = (row: number, col: number) => Value;
 
 /** A1 → `{ row: 0, col: 0 }`; `null` for anything that is not a reference. */
@@ -270,12 +283,16 @@ export function dependency(
 
 type Token =
   | { kind: 'number'; value: number }
+  | { kind: 'string'; value: string }
   | { kind: 'ref'; sheet: string | null; from: { row: number; col: number }; to: { row: number; col: number } }
   | { kind: 'name'; text: string }
   | { kind: 'symbol'; text: string };
 
-/** `null` where anything at all was not understood — including a string, which SUM has no use for. */
-function tokenize(formula: string): Token[] | null {
+/** `Name[Column]` at the start of the text — the one structured shape `tableReferences` resolves. */
+const STRUCTURED_HERE = /^([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*)\[([^[\]]*)\]/;
+
+/** `null` where anything at all was not understood. */
+function tokenize(formula: string, tables?: Tables): Token[] | null {
   const tokens: Token[] = [];
   let at = 0;
   const text = formula;
@@ -289,6 +306,28 @@ function tokenize(formula: string): Token[] | null {
     if ('+-*/^(),:'.includes(ch)) {
       tokens.push({ kind: 'symbol', text: ch });
       at++;
+      continue;
+    }
+    /* A string is a word, which only a criterion has any use for; everywhere
+       else the parser refuses it. `""` inside one is a quote. */
+    if (ch === '"') {
+      const string = /^"((?:[^"]|"")*)"/.exec(text.slice(at));
+      if (!string) return null;
+      tokens.push({ kind: 'string', value: string[1]!.replace(/""/g, '"') });
+      at += string[0].length;
+      continue;
+    }
+    /* `PodaciTable[Iznos]`, where the table is declared: the column it names,
+       on the sheet the table is on. Anything else in brackets has already been
+       refused by `unreadable`. */
+    const structured = STRUCTURED_HERE.exec(text.slice(at));
+    if (structured) {
+      const table = tables?.get(structured[1]!.toLowerCase());
+      const offset = table?.columns.get(structured[2]!.toLowerCase());
+      if (!table || offset === undefined) return null;
+      const col = table.fromCol + offset;
+      tokens.push({ kind: 'ref', sheet: table.sheet, from: { row: table.fromRow, col }, to: { row: table.toRow, col } });
+      at += structured[0].length;
       continue;
     }
     /* A reference before a number, because `A1` begins with a letter and `1`
@@ -326,13 +365,113 @@ function tokenize(formula: string): Token[] | null {
   return tokens;
 }
 
+/** The most cells one reference may cover and still be walked: one whole column. */
+const MOST_CELLS = 1_048_576;
+
+const areaOf = (ref: { from: { row: number; col: number }; to: { row: number; col: number } }) =>
+  (ref.to.row - ref.from.row + 1) * (ref.to.col - ref.from.col + 1);
+
+/** Whether a cell meets a criterion; `null` where this cannot say, which refuses the whole formula. */
+type Criterion = (value: Value) => boolean | null;
+
+/** A whole number written out, with nothing a locale could read differently. */
+const PLAIN_INTEGER = /^-?[0-9]+$/;
+/** Digits with separators, a sign, a percent or a date's slashes — read by Excel through the locale. */
+const LOCALE_NUMBER = /^(?=.*[0-9])[\s+\-−0-9.,%/:eE]+$/;
+
+/**
+ * A `SUMIFS`/`COUNTIFS` criterion, as Excel 16 answered 34 cases over a sheet
+ * built to tell the rules apart (`tools/verify-formula-excel.mjs`):
+ *
+ * - **equal to a number** matches a number cell of that value, and a text cell
+ *   that is that whole number written out — `"5"` matches `5`. An empty cell
+ *   is not zero: `COUNTIFS(E:E, 0)` counted the three zeros and not the blanks.
+ * - **`>`, `<`, `>=`, `<=` a number** match number cells only; `"5"` as text is
+ *   not greater than 4.
+ * - **`<>`** is the other side of equality, blanks included — `"<>0"` counted
+ *   both blank cells, and `"<>Gotovina"` added the blank row in.
+ * - **equal to text** is case-insensitive and exact otherwise: `"= Gotovina"`
+ *   matched nothing, `"Gotovina "` was not matched by `"Gotovina"`, and an en
+ *   dash is not a hyphen. `""` is a blank cell, bare `"<>"` a cell that is not.
+ *
+ * Everything else is refused rather than guessed: wildcards (`*`, `?`, `~`),
+ * text compared with `>` or `<`, `TRUE`/`FALSE`, a criterion that is a cell,
+ * and any number written with a separator — `"5,0"` matched 5 and `"5.0"` did
+ * not, on this machine, because Excel reads it through the locale. A cell that
+ * is neither number, text nor blank (a date, an error) refuses it too.
+ */
+function criterionOf(token: Token): Criterion | null {
+  let operator: string;
+  let number: number | null = null;
+  let text: string | null = null;
+
+  if (token.kind === 'number') {
+    operator = '=';
+    number = token.value;
+  } else if (token.kind === 'string') {
+    operator = ['<>', '>=', '<=', '=', '>', '<'].find((one) => token.value.startsWith(one)) ?? '=';
+    const rest = token.value.slice(token.value.startsWith(operator) ? operator.length : 0);
+    if (/[*?~]/.test(rest)) return null;
+    if (PLAIN_INTEGER.test(rest)) number = Number(rest);
+    else if (LOCALE_NUMBER.test(rest) || /^(true|false)$/i.test(rest)) return null;
+    else text = rest.toLowerCase();
+  } else {
+    return null;
+  }
+
+  if (number !== null) {
+    const n = number;
+    const equal: Criterion = (value) => {
+      if (value === null) return null;
+      if (typeof value === 'number') return value === n;
+      if (typeof value === 'string') {
+        if (PLAIN_INTEGER.test(value)) return Number(value) === n;
+        return LOCALE_NUMBER.test(value) ? null : false;
+      }
+      return false;
+    };
+    const ordered = (compare: (value: number) => boolean): Criterion => (value) =>
+      value === null ? null : typeof value === 'number' && compare(value);
+    switch (operator) {
+      case '=':
+        return equal;
+      case '<>':
+        return (value) => {
+          const same = equal(value);
+          return same === null ? null : !same;
+        };
+      case '>':
+        return ordered((value) => value > n);
+      case '<':
+        return ordered((value) => value < n);
+      case '>=':
+        return ordered((value) => value >= n);
+      default:
+        return ordered((value) => value <= n);
+    }
+  }
+
+  if (operator !== '=' && operator !== '<>') return null;
+  const wanted = text!;
+  const equal: Criterion = (value) => {
+    if (value === null) return null;
+    if (wanted === '') return value === undefined || value === '';
+    return typeof value === 'string' && value.toLowerCase() === wanted;
+  };
+  if (operator === '=') return equal;
+  return (value) => {
+    const same = equal(value);
+    return same === null ? null : !same;
+  };
+}
+
 /**
  * Works the formula out, or answers `null` because it could not.
  *
  * `null` is not an error and it is not zero — it is "this program does not know
- * what this comes to", which is the only honest answer for a `SUMIFS` over a
- * table, a reference into another sheet, a function nobody measured, or a
- * division by zero. What the caller does with it is show the number it has as
+ * what this comes to", which is the only honest answer for a table nobody
+ * declared, a sheet nobody named, a function nobody measured, a criterion
+ * whose rules were not measured, or a division by zero. What the caller does with it is show the number it has as
  * **stale** rather than as current.
  *
  * Where a cell is read matters to what "not a number" means, and this follows
@@ -351,14 +490,18 @@ function tokenize(formula: string): Token[] | null {
  * on purpose: a `Lookup` that ignored the sheet it was asked about would add up
  * the right cells on the wrong sheet, and a number worked out that way is the
  * one failure worse than a number marked out of date.
+ *
+ * `tables` is what `PodaciTable[Iznos]` needs to become a range; without it
+ * every structured reference is refused, as it always was.
  */
 export function evaluate(
   formula: string,
   valueAt: Lookup,
   elsewhere?: (sheet: string) => Lookup | null,
+  tables?: Tables,
 ): number | null {
-  if (unreadable(formula)) return null;
-  const tokens = tokenize(formula);
+  if (unreadable(formula, tables)) return null;
+  const tokens = tokenize(formula, tables);
   if (tokens === null || tokens.length === 0) return null;
 
   let at = 0;
@@ -377,15 +520,96 @@ export function evaluate(
   const sheetOf = (token: Extract<Token, { kind: 'ref' }>): Lookup | null =>
     token.sheet === null ? valueAt : (elsewhere?.(token.sheet) ?? null);
 
-  /** Every cell of a reference, in order, however many there are; `null` where the sheet cannot be read. */
-  const spread = (token: Extract<Token, { kind: 'ref' }>): Value[] | null => {
+  /**
+   * Every cell of a reference, in order, handed to `visit` one at a time;
+   * `false` where the sheet cannot be read or the range is too large to walk.
+   *
+   * The cap is a keystroke's worth of work, not a rule about spreadsheets:
+   * `SUM(A1:XFD1048576)` is seventeen billion lookups, on the key that ends the
+   * typing. A whole column is a million and passes; above that the formula is
+   * refused, which marks it rather than freezing the program.
+   */
+  const spread = (token: Extract<Token, { kind: 'ref' }>, visit: (value: Value) => void): boolean => {
     const read = sheetOf(token);
-    if (!read) return null;
-    const out: Value[] = [];
+    if (!read || areaOf(token) > MOST_CELLS) return false;
     for (let row = token.from.row; row <= token.to.row; row++) {
-      for (let col = token.from.col; col <= token.to.col; col++) out.push(read(row, col));
+      for (let col = token.from.col; col <= token.to.col; col++) visit(read(row, col));
     }
-    return out;
+    return true;
+  };
+
+  /**
+   * `SUMIFS(sum, range, criterion, …)` or `COUNTIFS(range, criterion, …)`, the
+   * opening bracket already taken.
+   *
+   * Row by row rather than column by column: in the real workbook that is 34
+   * formulas over a table of 5 416 rows, each reading up to four columns, on the
+   * keystroke that ends the typing — and nothing is built up per column.
+   */
+  const conditional = (summing: boolean): number | null => {
+    const arguments_: Token[] = [];
+    for (;;) {
+      const argument = take();
+      if (!argument) return null;
+      if (argument.kind === 'symbol' && argument.text === '-' && peek()?.kind === 'number') {
+        arguments_.push({ kind: 'number', value: -(take() as { value: number }).value });
+      } else {
+        arguments_.push(argument);
+      }
+      if (symbol(',')) continue;
+      if (symbol(')')) break;
+      return null;
+    }
+
+    const sum = summing ? arguments_.shift() : undefined;
+    if (summing && sum?.kind !== 'ref') return null;
+    if (arguments_.length === 0 || arguments_.length % 2 !== 0) return null;
+
+    const pairs: { read: Lookup; from: { row: number; col: number }; test: Criterion }[] = [];
+    const first = arguments_[0];
+    if (first?.kind !== 'ref') return null;
+    const rows = first.to.row - first.from.row;
+    const cols = first.to.col - first.from.col;
+    if (areaOf(first) > MOST_CELLS) return null;
+    const sameShape = (ref: Extract<Token, { kind: 'ref' }>) =>
+      ref.to.row - ref.from.row === rows && ref.to.col - ref.from.col === cols;
+
+    for (let i = 0; i < arguments_.length; i += 2) {
+      const range = arguments_[i]!;
+      /* Excel answers `#VALUE!` to ranges of different shapes. */
+      if (range.kind !== 'ref' || !sameShape(range)) return null;
+      const read = sheetOf(range);
+      const test = criterionOf(arguments_[i + 1]!);
+      if (!read || !test) return null;
+      pairs.push({ read, from: range.from, test });
+    }
+    let readSum: Lookup | null = null;
+    if (sum?.kind === 'ref') {
+      if (!sameShape(sum)) return null;
+      readSum = sheetOf(sum);
+      if (!readSum) return null;
+    }
+
+    let total = 0;
+    for (let row = 0; row <= rows; row++) {
+      cell: for (let col = 0; col <= cols; col++) {
+        for (const pair of pairs) {
+          const matched = pair.test(pair.read(pair.from.row + row, pair.from.col + col));
+          if (matched === null) return null;
+          if (!matched) continue cell;
+        }
+        if (!readSum || sum?.kind !== 'ref') {
+          total++;
+          continue;
+        }
+        const value = readSum(sum.from.row + row, sum.from.col + col);
+        /* Text and empty cells in the summed column are passed over, as SUM
+           passes over them; a date or an error is not something to guess at. */
+        if (value === null) return null;
+        if (typeof value === 'number') total += value;
+      }
+    }
+    return total;
   };
 
   /** `null` anywhere below means the whole thing is unknown; it is never a value. */
@@ -465,6 +689,8 @@ export function evaluate(
       if (!read) return null;
       const value = read(token.from.row, token.from.col);
       if (value === undefined) return 0;
+      /* A word in arithmetic is `#VALUE!` in Excel, not nothing. */
+      if (typeof value === 'string') return null;
       return value;
     }
 
@@ -472,6 +698,11 @@ export function evaluate(
       const inside = expression();
       if (inside === null || !symbol(')')) return null;
       return inside;
+    }
+
+    if (token.kind === 'name' && (token.text === 'SUMIFS' || token.text === 'COUNTIFS')) {
+      if (!symbol('(')) return null;
+      return conditional(token.text === 'SUMIFS');
     }
 
     if (token.kind === 'name') {
@@ -482,13 +713,12 @@ export function evaluate(
           const argument = peek();
           if (argument?.kind === 'ref') {
             at++;
-            const values = spread(argument);
-            if (values === null) return null;
-            for (const value of values) {
-              /* Text and empty alike are passed over, which is what a total
-                 under a column of headings depends on. */
+            /* Text and empty alike are passed over, which is what a total
+               under a column of headings depends on. */
+            const read = spread(argument, (value) => {
               if (typeof value === 'number') total += value;
-            }
+            });
+            if (!read) return null;
           } else {
             const value = expression();
             if (value === null) return null;
@@ -625,11 +855,13 @@ export function recalculateBook(
       (row, col) => {
         const at = key(row, col);
         const written = typed.get(index)?.get(at);
-        if (written !== undefined) return parse(written);
+        /* Typed text is text, as the writer saves it — `SUMIFS` reads the word. */
+        if (written !== undefined) return parse(written) ?? written;
         const worked = values.get(place(index, at));
         if (worked !== undefined) return worked;
         const cell = sheet.cells.get(at);
         if (!cell) return undefined;
+        if (cell.kind === 'text') return cell.text;
         if (cell.kind !== 'number') return null;
         /* The stored number, not the text: `1.000,00` read back as text is not
            a number, and SUM passed over it — a total a thousand short, shown
@@ -701,7 +933,7 @@ export function recalculateBook(
 
       settled.add(here);
       changed = true;
-      const worked = readsStale ? null : evaluate(formula, lookups[index]!, elsewhere);
+      const worked = readsStale ? null : evaluate(formula, lookups[index]!, elsewhere, tables);
       if (worked === null) {
         stale.add(here);
         moved.add(here);

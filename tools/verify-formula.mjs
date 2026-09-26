@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unzipSync, strFromU8 } from 'fflate';
 
 import './ts-resolve.mjs';
+import { EXCEL_ANSWERS, EXCEL_DATA } from './formula-excel-cases.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { referencesOf, dependency, evaluate, parseA1, recalculate, recalculateBook } = await import(
@@ -466,15 +467,80 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   ];
   const inTable = recalculateBook(book, new Map([[1, new Map([['1,2', '9']])]]), tables).get(0);
   check(
-    'an amount retyped inside the table marks the SUMIFS on the sheet that reads it',
-    inTable?.stale.has('0,1') && inTable.stale.size === 1,
-    `Cashless: ${[...(inTable?.stale ?? [])].join(' ') || 'nothing'} marked`,
+    'an amount retyped inside the table reaches the SUMIFS on the sheet that reads it, and works it out',
+    inTable?.values.get('0,1') === 9 && inTable.stale.size === 0,
+    `Cashless!B1 ${inTable?.values.get('0,1')}${inTable?.stale.size ? ` · ${[...inTable.stale].join(' ')} marked` : ''}`,
+  );
+  const unlisted = recalculateBook(book, new Map([[1, new Map([['1,2', '9']])]])).get(0);
+  check(
+    'and without the table declared it is marked, never worked out',
+    unlisted?.stale.has('0,1') && !unlisted.values.has('0,1'),
   );
   const beside = recalculateBook(book, new Map([[1, new Map([['9,9', '9']])]]), tables).get(0);
   check(
     'and a cell on that sheet outside the table marks nothing',
     beside?.stale.size === 0 && beside.values.size === 0,
     `${beside?.stale.size} marked`,
+  );
+}
+
+/* ── SUMIFS and COUNTIFS, as Excel answered them ─────────────────────── */
+
+/*
+ * The rules of a criterion are not the kind to recall — blanks, text that is a
+ * number, case, the locale — so they were measured: this sheet was written to
+ * a file, opened in Excel 16, recalculated in full, and every answer read back
+ * (`tools/verify-formula-excel.mjs` does it again on any machine with Excel).
+ * `null` is where Excel has an answer this refuses to reproduce: a wildcard, a
+ * text comparison, a number written with a separator, or Excel's own #VALUE!.
+ *
+ *        A oznaka  B as text  C način          D iznos  E fee
+ *    2   5         "5"        Gotovina         10       0
+ *    3   5         "5"        gotovina         20
+ *    4   7         "7"        K – kartice      30       1.5
+ *    5   7         "7"        K - kartice      40       0
+ *    6   1         "1"                         50       2
+ *    7   5         "5"        Cashless         -5
+ *    8   0         "0"        Gotovina         "n/a"    0
+ *    9                        "Gotovina "               3
+ */
+{
+  const podaci = (row, col) => {
+    const value = EXCEL_DATA[row - 1]?.[col];
+    return value === null || value === undefined ? undefined : value;
+  };
+  const book = (name) => (name === 'Podaci' ? podaci : null);
+  for (const [formula, excel, ours = excel] of EXCEL_ANSWERS) {
+    const got = evaluate(formula, () => undefined, book);
+    check(
+      ours === null
+        ? excel === '#VALUE!'
+          ? `refused, where Excel answers #VALUE!: ${formula}`
+          : `refused where Excel reads it through rules not measured here: ${formula}`
+        : `as Excel answers: ${formula}`,
+      got === ours,
+      `${got} (Excel: ${excel})`,
+    );
+  }
+  check(
+    'a date or an error in a summed row refuses the formula rather than being passed over',
+    evaluate('SUMIFS(Podaci!D2:D3,Podaci!A2:A3,5)', () => undefined, () => (row, col) => (col === 3 ? null : 5)) === null,
+  );
+  check(
+    'a criterion that is a cell is refused rather than read',
+    evaluate('COUNTIFS(Podaci!A2:A9,Podaci!A2)', () => undefined, book) === null,
+  );
+  check(
+    'a date or an error in a criteria column refuses the formula',
+    evaluate('COUNTIFS(Podaci!A2:A3,5)', () => undefined, () => () => null) === null,
+  );
+  check(
+    'and a SUMIFS alone, handed no workbook, is refused as before',
+    evaluate('SUMIFS(Podaci!D2:D9,Podaci!A2:A9,5)', () => undefined) === null,
+  );
+  check(
+    'a range too large to walk on a keystroke is refused, not walked',
+    evaluate('SUM(A1:XFD1048576)', () => 1) === null && evaluate('SUM(A1:A1048576)', () => undefined) === 0,
   );
 }
 
@@ -668,8 +734,13 @@ check(
   dependency('SUM(PodaciTable[Iznos])+SUM(B2:B4)', 'Cashless', at(2, 1), tables) === 'reads',
 );
 check(
-  'working it out is still refused — SUMIFS is not arithmetic, tables or no tables',
-  evaluate(REAL, () => 1) === null,
+  'working it out needs the tables and the sheet they are on — without either it is refused',
+  evaluate(REAL, () => 1) === null && evaluate(REAL, () => 1, undefined, tables) === null,
+);
+check(
+  'and a bracketed shape the tables do not resolve is refused even with them',
+  evaluate('SUMIFS(PodaciTable[Iznos],PodaciTable[#Totals],5)', () => 1, () => () => 1, tables) === null &&
+    evaluate('SUM(PodaciTable[@Iznos])', () => 1, () => () => 1, tables) === null,
 );
 
 /*

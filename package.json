@@ -66,6 +66,7 @@
     "pdf:timing": "node tools/pdf-timing.mjs",
     "formula:census": "node tools/formula-census.mjs",
     "verify:formula": "node tools/verify-formula.mjs",
+    "verify:formula-excel": "node tools/verify-formula-excel.mjs",
     "verify:office-editing": "node tools/verify-office-editing.mjs",
     "verify:desktop-ocr": "node tools/verify-desktop-ocr.mjs",
     "verify:desktop-diagram": "node tools/verify-desktop-diagram.mjs",

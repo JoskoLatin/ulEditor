@@ -752,14 +752,16 @@ if (!reachable) {
       const td = (ref) => document.querySelector(`${book} td[data-ref="${ref}"]`);
       return {
         sumifs: td('0,1')?.dataset.stale ?? null,
+        sumifsText: td('0,1')?.textContent ?? null,
         sum: td('1,1')?.dataset.stale ?? null,
         sumText: td('1,1')?.textContent ?? null,
       };
     }, book);
+    /* The rows of type 5 are C2 and C3: 9 typed over 1000, and 234,5. */
     check(
-      'an amount retyped on Podaci marks the SUMIFS on Cashless, a sheet nobody typed into',
-      across.sumifs === 'true',
-      `Cashless!B1 stale=${across.sumifs}`,
+      'an amount retyped on Podaci works out the SUMIFS on Cashless, a sheet nobody typed into',
+      across.sumifs === null && across.sumifsText === '243,50',
+      `Cashless!B1 ${across.sumifsText}${across.sumifs ? ' (marked)' : ''} (wanted 243,50)`,
     );
     check(
       'and leaves the SUM beside it, which reads nothing on Podaci, alone',
@@ -822,22 +824,66 @@ if (!reachable) {
           const { recalculateBook, referencesOf } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
           const index = book.sheets.indexOf(sheet);
           const table = [...(book.tables?.values() ?? [])].find((one) => one.sheet !== sheet.name);
-          const across = { marked: -1, direct: 0, missed: 0 };
+          const across = { marked: -1, worked: 0, direct: 0, missed: 0, ifsWorked: 0, ifsWrong: [], ifsMarked: [], ms: -1 };
           if (table) {
             const on = book.sheets.findIndex((one) => one.name === table.sheet);
             const col = table.fromCol + (table.columns.get('iznos') ?? 0);
             const typedThere = new Map([[on, new Map([[`${table.fromRow},${col}`, '1']])]]);
-            const stale = recalculateBook(book.sheets, typedThere, book.tables).get(index).stale;
+            recalculateBook(book.sheets, typedThere, book.tables);
+            const started = performance.now();
+            const { stale, values } = recalculateBook(book.sheets, typedThere, book.tables).get(index);
+            across.ms = performance.now() - started;
             across.marked = stale.size;
+            across.worked = values.size;
             /* What reads that cell directly, by `dependency`'s own answer — each
-               one has to be among the marked; what reads them comes on top. */
+               one has to be worked out or marked; what reads them comes on top. */
             for (const [key, cell] of sheet.cells) {
               if (cell.formula === undefined) continue;
               const where = { row: table.fromRow, col, sheet: table.sheet };
               if (dependency(cell.formula, sheet.name, where, book.tables) === 'no') continue;
               across.direct++;
-              if (!stale.has(key)) across.missed++;
+              if (!stale.has(key) && !values.has(key)) across.missed++;
+              /* Excel's own answer to every SUMIFS here is 0 — see below — and
+                 an amount of 1 in a row no criterion matches does not move it. */
+              if (/IFS\(/.test(cell.formula)) {
+                if (values.has(key)) {
+                  across.ifsWorked++;
+                  if (values.get(key) !== cell.raw) across.ifsWrong.push(`${key}=${values.get(key)} (file ${cell.raw})`);
+                } else {
+                  across.ifsMarked.push(`${key} ${cell.formula.slice(0, 50)}`);
+                }
+              }
             }
+
+            /* Excel's 0 is honest, and the reason is in the data: every row's
+               "Fiskalno plaćanje" reads `G - gotovina`, with a hyphen, and the
+               formulas ask for `G – gotovina`, with an en dash. The same formula
+               asking for the hyphen has to find every row — or an evaluator
+               that answers 0 to everything would pass the check above. */
+            const lookupOf = (one) => (row, col) => {
+              const cell = one.cells.get(`${row},${col}`);
+              if (!cell) return undefined;
+              if (cell.kind === 'text') return cell.text;
+              return cell.kind === 'number' && typeof cell.raw === 'number' ? cell.raw : null;
+            };
+            const elsewhere = (name) => {
+              const one = book.sheets.find((s) => s.name.toLowerCase() === name.toLowerCase());
+              return one ? lookupOf(one) : null;
+            };
+            const { evaluate } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+            const ask = (formula) => evaluate(formula, lookupOf(sheet), elsewhere, book.tables);
+            across.hyphenSum = ask('SUMIFS(PodaciTable[Iznos],PodaciTable[Vrsta transakcije - oznaka],0,PodaciTable[Fiskalno plaćanje],"G - gotovina")');
+            across.hyphenCount = ask('COUNTIFS(PodaciTable[Vrsta transakcije - oznaka],0,PodaciTable[Fiskalno plaćanje],"G - gotovina")');
+            across.dashSum = ask('SUMIFS(PodaciTable[Iznos],PodaciTable[Vrsta transakcije - oznaka],0,PodaciTable[Fiskalno plaćanje],"G – gotovina")');
+
+            /* The worst keystroke there is: a type code, the column every one
+               of the 34 reads. */
+            const kind = table.fromCol + (table.columns.get('vrsta transakcije - oznaka') ?? 0);
+            const everywhere = new Map([[on, new Map([[`${table.fromRow},${kind}`, '5']])]]);
+            const begun = performance.now();
+            const worst = recalculateBook(book.sheets, everywhere, book.tables).get(index);
+            across.worstMs = performance.now() - begun;
+            across.worstReached = worst.values.size + worst.stale.size;
           }
 
           /* The formulas that name a sheet: each one reached through the first
@@ -897,10 +943,30 @@ if (!reachable) {
           ? 'nothing on this sheet is read by anything — the check above is the whole answer'
           : `${measured.watchedStale} marked`,
       );
+      const a = measured.across;
       check(
-        'an amount retyped inside the table marks the totals on the sheet reading it, which a sheet-at-a-time pass never looked at',
-        measured.across.direct > 0 && measured.across.missed === 0 && measured.across.marked >= measured.across.direct,
-        `${measured.across.marked} of ${measured.formulas} marked on ${measured.sheet} — ${measured.across.direct} read the cell directly, ${measured.across.missed} of those missed`,
+        'an amount retyped inside the table reaches every total on the sheet reading it — worked out or marked',
+        a.direct > 0 && a.missed === 0,
+        `${a.worked} worked out and ${a.marked} marked on ${measured.sheet} — ${a.direct} read the cell directly, ${a.missed} of those missed`,
+      );
+      check(
+        'and every SUMIFS and COUNTIFS among them is worked out to what Excel stored, over 5 416 rows',
+        a.ifsWorked > 0 && a.ifsWrong.length === 0,
+        `${a.ifsWorked} worked out` +
+          (a.ifsWrong.length ? ` · wrong: ${a.ifsWrong.join(', ')}` : '') +
+          (a.ifsMarked.length ? ` · still marked: ${a.ifsMarked.join(' | ')}` : ''),
+      );
+      check(
+        'which is 0 because the data says G - gotovina and the formulas ask for G – gotovina — asked with the hyphen, every row is found',
+        a.hyphenCount === 5416 && a.hyphenSum !== null && a.hyphenSum.toFixed(2) === '36047.20' && a.dashSum === 0,
+        `hyphen: ${a.hyphenCount} rows, ${a.hyphenSum?.toFixed(2)} · en dash: ${a.dashSum}`,
+      );
+      check(
+        /* Measured at 71 ms on the machine this was written on; the bound
+           leaves room for a slower one, and still rules out a pause. */
+        'and the keystroke every one of them reads settles inside a quarter of a second',
+        a.worstMs < 250,
+        `${a.worstMs.toFixed(1)} ms for ${a.worstReached} formulas over 5 416 rows · an amount: ${a.ms.toFixed(1)} ms`,
       );
       check(
         'every formula naming a sheet is reached by the cell it reads — worked out or marked, never left as it was',
