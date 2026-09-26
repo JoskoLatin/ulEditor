@@ -598,6 +598,8 @@ export function evaluate(
   valueAt: Lookup,
   elsewhere?: (sheet: string) => Lookup | null,
   tables?: Tables,
+  /** Cells the whole keystroke may still read, shared by every formula on it; see `recalculateBook`. */
+  allowance?: { left: number },
 ): number | null {
   const tokens = tokensCached(formula, tables);
   if (tokens === null || tokens.length === 0) return null;
@@ -631,7 +633,8 @@ export function evaluate(
   let walked = 0;
   const budget = (cells: number): boolean => {
     walked += cells;
-    return walked <= MOST_CELLS;
+    if (allowance) allowance.left -= cells;
+    return walked <= MOST_CELLS && (!allowance || allowance.left >= 0);
   };
 
   /** Every cell of a reference, in order, handed to `visit` one at a time; `false` where it cannot be read. */
@@ -1282,6 +1285,16 @@ export function recalculateBook(
    * above it has settled — as each pass over the sheet used to do, without
    * every formula asking about every change.
    */
+  /*
+   * Cells the keystroke may read, all its formulas together. Each formula is
+   * capped at a column's worth, but twenty thousand of them each reading one
+   * was a minute on a key — a file anybody can write. Past this the rest are
+   * marked rather than worked out: a marker, never a pause the program cannot
+   * come out of. Ten million is about half a second, and the real workbook
+   * with the most to read reads about one.
+   */
+  const allowance = { left: 10_000_000 };
+
   const now = new Heap();
   const next = new Heap();
   let cursor = -1;
@@ -1365,7 +1378,7 @@ export function recalculateBook(
       markStale(index);
       continue;
     }
-    const answer = evaluate(formula.cell.formula!, lookups[formula.sheet]!, elsewhere, tables);
+    const answer = evaluate(formula.cell.formula!, lookups[formula.sheet]!, elsewhere, tables, allowance);
     if (answer === null) {
       markStale(index);
       continue;

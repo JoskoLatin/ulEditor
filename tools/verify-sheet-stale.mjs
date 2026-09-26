@@ -335,6 +335,20 @@ check(
     `${wideRows.toFixed(1)} ms (was 664 ms)`,
   );
 
+  /* Twenty thousand formulas each reading a long column and one shared cell:
+     each within its own cap, together a minute on the key. The keystroke has
+     an allowance of its own, and what is past it is marked. */
+  const heavy = new Map([['0,1', money(1)]]);
+  for (let r = 0; r < 20_000; r++) heavy.set(`${r},3`, money(0, `SUM(A1:A60000)+$B$1`));
+  const started = performance.now();
+  const heavyOut = recalculate(heavy, 'Veliki', new Map([['0,1', '2']]));
+  const heavyMs = performance.now() - started;
+  check(
+    'a keystroke has one allowance of cells for all its formulas, and what is past it is marked',
+    heavyMs < 2_000 && heavyOut.stale.size > 0 && heavyOut.values.size + heavyOut.stale.size === 20_000,
+    `${heavyMs.toFixed(0)} ms · ${heavyOut.values.size} worked out, ${heavyOut.stale.size} marked (was about a minute)`,
+  );
+
   check(
     'a running balance 5 000 rows long settles in a frame or two, not a third of a second',
     running < 50,
