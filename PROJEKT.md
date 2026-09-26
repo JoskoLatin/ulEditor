@@ -52,12 +52,14 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Nije gotovo
 
-- **Formula preko granice lista ne primjećuje promjenu.** `recalculate` dobiva
-  jedan list, pa šest formula u korpusu koje drugi list zovu imenom ne
-  zastarijevaju kad se taj list uredi (`cddfb16`).
-- **`SUMIFS` se i dalje ne izračunava.** Sad je poznato zašto to nije rješivo na
-  ovoj razini: svih 35 je preko granice lista, a `recalculate` dobiva jedan list
-  (`be4b50e`).
+- **`SUMIFS` i `COUNTIFS` se i dalje ne izračunavaju — ali se sad označe.**
+  Preračun ide preko cijele radne knjige (`recalculateBook`, 2026-09-26): izmjena
+  iznosa u tablici na listu `Podaci` označi kao zastarjele 25 od 51 formule na
+  listu `Cashless` (17 izravnih čitača, 0 promašenih); prije nije označila
+  nijednu. Izračunati ih je sljedeći korak, a list više nije prepreka.
+- Onih „šest formula koje drugi list zovu imenom" zapravo su na `Cashless` i
+  zovu **vlastiti** list; pet `SUM`-ova se sad izračunava, sedam `SUBTOTAL`-a
+  i sličnih se označi.
 - **Installeri nisu potpisani** za Windows i macOS (`README.md:36`). Android APK
   jest. Ovo je kupnja certifikata, ne kod.
 - **Cold start nije izmjeren** — `docs/ANALYSIS-AND-PLAN.md:770` ga zove
@@ -68,8 +70,8 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Kartice
 
-todo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
-  » otključava i onih 35 SUMIFS-a i 6 formula koje drugi list zovu imenom
+gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
+todo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
 todo | normalan | Izmjeriti cold start i zapisati budžet u plan
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 todo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore

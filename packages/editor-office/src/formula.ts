@@ -18,14 +18,14 @@
  * Run over the same real spreadsheets, that works out **296 of 344 formulas —
  * 86%**. Every one of the 48 it refuses was looked at rather than counted: 34
  * are the `SUMIFS`/`COUNTIFS` over a table, six are `SUBTOTAL`, two are
- * `COUNTA` and `ROW`, and the remaining six are **references into another
- * sheet** — `SUM(Cashless!$L$7:$L$11)`. Those last are refused deliberately
- * even though the workbook is right there to read: refusing is the safe
- * direction, since it shows the total as stale rather than as a number, and
- * `dependency` below still tracks them properly, because it compares sheet
- * names rather than following them. A formula this cannot work out and a
- * formula this does not know about are two different things, and only the
- * second one is dangerous.
+ * `COUNTA` and `ROW`, and the remaining six are **references with a sheet
+ * named in them** — `SUM(Cashless!$L$7:$L$11)`. Looked at, every one of them is
+ * on `Cashless` and names `Cashless`: its own sheet, spelled out. `evaluate` on
+ * its own refuses any named sheet, its own included, and `recalculateBook`
+ * works them out, because it hands `evaluate` the workbook to look the name up
+ * in: a sheet is only readable where somebody said which sheets there are. A
+ * formula this cannot work out and a formula this does not know about are two
+ * different things, and only the second one is dangerous.
  *
  * The refusal is the load-bearing half. A total whose inputs have just changed
  * is **wrong**, and a view that goes on showing it is lying to the person
@@ -40,11 +40,12 @@
 /** One rectangle of cells a formula reads. */
 export interface Reference {
   /**
-   * The sheet named before the `!`, or `null` for this one.
+   * The sheet named before the `!`, or `null` for the one the formula is on.
    *
-   * Kept rather than followed: this module is given one sheet's values, and a
-   * reference into another is a reference it cannot read — which is an answer,
-   * not a failure.
+   * A name, not a sheet: whether it can be followed depends on who is asking.
+   * `recalculateBook` knows every sheet in the workbook; `evaluate` alone knows
+   * none, and refuses a reference it cannot follow — which is an answer, not a
+   * failure.
    */
   sheet: string | null;
   from: { row: number; col: number };
@@ -120,6 +121,16 @@ function outsideQuotes(text: string): string[] {
 const SHEET = String.raw`(?:'((?:[^']|'')+)'|([A-Za-z_À-￿][A-Za-z0-9_.À-￿]*))!`;
 const CELL = String.raw`\$?[A-Z]{1,3}\$?[0-9]{1,7}`;
 const REFERENCE = new RegExp(`(?:${SHEET})?(${CELL})(?::(${CELL}))?(?![A-Za-z0-9_(])`, 'g');
+/* `M:M` and `2:4` — whole columns and whole rows. Nothing about them looks like
+   `A1`, so without this a formula reading `Podaci!M:M` read nothing at all, and
+   answered `'no'` for every cell in that column. */
+const LINES = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.$:!'À-￿])(?:${SHEET})?(?:(\$?[A-Z]{1,3}):(\$?[A-Z]{1,3})|(\$?[0-9]{1,7}):(\$?[0-9]{1,7}))(?![A-Za-z0-9_.(!:])`,
+  'g',
+);
+/** The last row and column a sheet can have: 1 048 576 rows, XFD columns. */
+const LAST_ROW = 1_048_575;
+const LAST_COL = 16_383;
 
 /** Anything this module knows it cannot read, each of which makes an answer `'unknown'`. */
 const UNREADABLE = [
@@ -128,6 +139,11 @@ const UNREADABLE = [
   /[A-Za-z_À-￿][A-Za-z0-9_.À-￿]*\[/,
   /* `#REF!`, `#VALUE!` and the rest: the formula is already broken. */
   /#[A-Z/0-9]+[!?]/,
+  /* `SUM(Jan:Mar!B2)` — a span of sheets. Read as a reference it would be
+     `Mar!B2` alone, and an edit to `B2` on `Feb` would be answered `'no'`.
+     Quoted, the colon is inside the quotes, and a sheet's own name cannot
+     hold one. */
+  new RegExp(`:${SHEET}|'(?:[^']|'')*:(?:[^']|'')*'!`),
 ];
 
 /** `PodaciTable[Iznos]` — a table's name, then one plain column name in brackets. Nothing else. */
@@ -191,6 +207,18 @@ export function referencesOf(formula: string, tables?: Tables): Reference[] {
         to: { row: Math.max(from.row, to.row), col: Math.max(from.col, to.col) },
       });
     }
+    for (const match of piece.matchAll(LINES)) {
+      const sheet = match[1] !== undefined ? match[1].replace(/''/g, "'") : (match[2] ?? null);
+      if (match[3] !== undefined) {
+        const from = parseA1(`${match[3].replace('$', '')}1`)!.col;
+        const to = parseA1(`${match[4]!.replace('$', '')}1`)!.col;
+        found.push({ sheet, from: { row: 0, col: Math.min(from, to) }, to: { row: LAST_ROW, col: Math.max(from, to) } });
+      } else {
+        const from = Number(match[5]!.replace('$', '')) - 1;
+        const to = Number(match[6]!.replace('$', '')) - 1;
+        found.push({ sheet, from: { row: Math.min(from, to), col: 0 }, to: { row: Math.max(from, to), col: LAST_COL } });
+      }
+    }
   }
   return found;
 }
@@ -203,23 +231,29 @@ function unreadable(formula: string, tables?: Tables): boolean {
 }
 
 /**
- * Whether this formula, standing on this sheet, reads that cell.
+ * Whether this formula, standing on sheet `sheetName`, reads that cell — on
+ * `at.sheet`, or on the formula's own sheet when that is not given.
  *
- * A reference naming another sheet is not this sheet's — unless it names this
- * one, which a workbook of several sheets does often enough to matter. The
- * comparison is case-insensitive, because that is how a spreadsheet compares
- * sheet names.
+ * A reference with no sheet in it is the formula's own sheet's; one naming a
+ * sheet is that sheet's, and it may name the formula's own, which a workbook of
+ * several sheets does often enough to matter. The comparison is
+ * case-insensitive, because that is how a spreadsheet compares sheet names.
+ *
+ * A reference to a sheet that is not the cell's is `'no'` for that cell, even
+ * where no such sheet exists: nothing can be typed into a sheet that is not
+ * there, and `evaluate` refuses the reference when it comes to working it out.
  */
 export function dependency(
   formula: string,
   sheetName: string,
-  at: { row: number; col: number },
+  at: { row: number; col: number; sheet?: string },
   tables?: Tables,
 ): Dependency {
   if (unreadable(formula, tables)) return 'unknown';
   const here = sheetName.toLowerCase();
+  const there = (at.sheet ?? sheetName).toLowerCase();
   for (const reference of referencesOf(formula, tables)) {
-    if (reference.sheet !== null && reference.sheet.toLowerCase() !== here) continue;
+    if ((reference.sheet?.toLowerCase() ?? here) !== there) continue;
     if (
       at.row >= reference.from.row &&
       at.row <= reference.to.row &&
@@ -236,7 +270,7 @@ export function dependency(
 
 type Token =
   | { kind: 'number'; value: number }
-  | { kind: 'ref'; from: { row: number; col: number }; to: { row: number; col: number } }
+  | { kind: 'ref'; sheet: string | null; from: { row: number; col: number }; to: { row: number; col: number } }
   | { kind: 'name'; text: string }
   | { kind: 'symbol'; text: string };
 
@@ -263,13 +297,12 @@ function tokenize(formula: string): Token[] | null {
       text.slice(at),
     );
     if (reference) {
-      /* A reference to another sheet is not this module's to work out. */
-      if (reference[1] !== undefined || reference[2] !== undefined) return null;
       const from = parseA1(reference[3]!);
       const to = reference[4] ? parseA1(reference[4]) : from;
       if (!from || !to) return null;
       tokens.push({
         kind: 'ref',
+        sheet: reference[1] !== undefined ? reference[1].replace(/''/g, "'") : (reference[2] ?? null),
         from: { row: Math.min(from.row, to.row), col: Math.min(from.col, to.col) },
         to: { row: Math.max(from.row, to.row), col: Math.max(from.col, to.col) },
       });
@@ -310,8 +343,20 @@ function tokenize(formula: string): Token[] | null {
  * - **in arithmetic, an empty cell is zero and text is a refusal** — `=A1*2`
  *   over a word is `#VALUE!` in Excel, and a number here would be a number
  *   nobody could account for.
+ *
+ * `valueAt` is the formula's own sheet. A reference naming a sheet is read
+ * through `elsewhere`, which answers that sheet's `Lookup` or `null` where
+ * there is no such sheet — and **without `elsewhere` every such reference is
+ * refused**, including one naming the formula's own sheet. That is the default
+ * on purpose: a `Lookup` that ignored the sheet it was asked about would add up
+ * the right cells on the wrong sheet, and a number worked out that way is the
+ * one failure worse than a number marked out of date.
  */
-export function evaluate(formula: string, valueAt: Lookup): number | null {
+export function evaluate(
+  formula: string,
+  valueAt: Lookup,
+  elsewhere?: (sheet: string) => Lookup | null,
+): number | null {
   if (unreadable(formula)) return null;
   const tokens = tokenize(formula);
   if (tokens === null || tokens.length === 0) return null;
@@ -328,11 +373,17 @@ export function evaluate(formula: string, valueAt: Lookup): number | null {
     return false;
   };
 
-  /** Every cell of a reference, in order, however many there are. */
-  const spread = (token: Extract<Token, { kind: 'ref' }>): Value[] => {
+  /** The sheet a reference reads, or `null` where it cannot be read. */
+  const sheetOf = (token: Extract<Token, { kind: 'ref' }>): Lookup | null =>
+    token.sheet === null ? valueAt : (elsewhere?.(token.sheet) ?? null);
+
+  /** Every cell of a reference, in order, however many there are; `null` where the sheet cannot be read. */
+  const spread = (token: Extract<Token, { kind: 'ref' }>): Value[] | null => {
+    const read = sheetOf(token);
+    if (!read) return null;
     const out: Value[] = [];
     for (let row = token.from.row; row <= token.to.row; row++) {
-      for (let col = token.from.col; col <= token.to.col; col++) out.push(valueAt(row, col));
+      for (let col = token.from.col; col <= token.to.col; col++) out.push(read(row, col));
     }
     return out;
   };
@@ -410,7 +461,9 @@ export function evaluate(formula: string, valueAt: Lookup): number | null {
       /* A range standing alone in arithmetic is not something to add up — that
          is what SUM is for, and Excel calls it `#VALUE!`. */
       if (token.from.row !== token.to.row || token.from.col !== token.to.col) return null;
-      const value = valueAt(token.from.row, token.from.col);
+      const read = sheetOf(token);
+      if (!read) return null;
+      const value = read(token.from.row, token.from.col);
       if (value === undefined) return 0;
       return value;
     }
@@ -429,7 +482,9 @@ export function evaluate(formula: string, valueAt: Lookup): number | null {
           const argument = peek();
           if (argument?.kind === 'ref') {
             at++;
-            for (const value of spread(argument)) {
+            const values = spread(argument);
+            if (values === null) return null;
+            for (const value of values) {
               /* Text and empty alike are passed over, which is what a total
                  under a column of headings depends on. */
               if (typeof value === 'number') total += value;
@@ -480,6 +535,12 @@ export interface Recalculation {
   stale: Set<string>;
 }
 
+/** One sheet of a workbook, as far as recalculation is about. */
+export interface BookSheet {
+  name: string;
+  cells: ReadonlyMap<string, Held>;
+}
+
 const key = (row: number, col: number) => `${row},${col}`;
 const parse = (text: string): number | null => {
   if (text.trim() === '') return null;
@@ -487,34 +548,20 @@ const parse = (text: string): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
+/** `index:row,col` — a cell anywhere in the workbook, keyed the way the editor keys its edits. */
+const place = (sheet: number, at: string) => `${sheet}:${at}`;
+const unplace = (placed: string): [number, number, number] => {
+  const cut = placed.indexOf(':');
+  const [row, col] = placed.slice(cut + 1).split(',').map(Number) as [number, number];
+  return [Number(placed.slice(0, cut)), row, col];
+};
+
 /**
- * What changed on a sheet because somebody typed into it.
+ * What changed on one sheet because somebody typed into it.
  *
- * The question is not "what do the formulas come to" — it is **which of the
- * numbers on the screen are no longer true**, and that is a different question
- * with a more careful answer. A formula nothing has touched is left exactly
- * alone: its cached result is still right and recomputing it would only risk
- * disagreeing with Excel about a number nobody changed.
- *
- * **The cost of that is real and is named rather than hidden.** A formula this
- * cannot read goes stale on *any* edit to the sheet, because there is no way to
- * tell whether it read the cell that changed.
- *
- * That used to be all 35 structured references in the one real workbook that
- * has them, on every keystroke. Given `tables` it is none of them: the way out
- * was never a rule guessed here but `Tablica1[Iznos]` resolved into the range
- * it stands for, out of `xl/tables/*.xml`, and the measurement that followed
- * was the surprise — the table those 35 read lives on a **different sheet**
- * from the formulas reading it, so once resolved they do not read the edited
- * sheet at all. What remains unreadable, and still goes stale on any edit, is
- * every other bracketed shape: `[#Totals]`, `[@Column]`, a span of columns, or
- * a table nobody declared.
- *
- * It settles by going round until nothing moves, because a total feeds a total:
- * the sum of a column feeds the grand total under it, and one edit has to
- * travel the whole way. A workbook whose formulas refer to each other in a ring
- * would go round for ever, so the rounds are capped — a circular reference is
- * something Excel itself refuses to resolve, and this stops rather than hangs.
+ * `recalculateBook` with a workbook of one sheet. A reference naming any other
+ * sheet is one this has nothing to read for, so it is refused and the formula
+ * holding it marked, never worked out against the sheet it was given.
  */
 export function recalculate(
   cells: ReadonlyMap<string, Held>,
@@ -522,39 +569,95 @@ export function recalculate(
   typed: ReadonlyMap<string, string>,
   tables?: Tables,
 ): Recalculation {
+  return recalculateBook([{ name: sheetName, cells }], new Map([[0, typed]]), tables).get(0)!;
+}
+
+/**
+ * What changed across a workbook because somebody typed into it, sheet by
+ * sheet, by the sheet's index in `sheets`.
+ *
+ * The question is not "what do the formulas come to" — it is **which of the
+ * numbers on the screen are no longer true**, and that is a different question
+ * with a more careful answer. A formula nothing has touched is left exactly
+ * alone: its cached result is still right and recomputing it would only risk
+ * disagreeing with Excel about a number nobody changed.
+ *
+ * **It is the whole workbook rather than the sheet typed into**, because that
+ * is where the formulas reading a cell are. Worked out a sheet at a time, a
+ * total on `Sazetak` reading `Cashless!L7` never saw `L7` retyped — the pass
+ * over `Cashless` does not look at `Sazetak`, and the pass over `Sazetak` never
+ * ran, because nothing was typed there. Every one of the 35 `SUMIFS` in the
+ * measured corpus reads a table on another sheet, so the same gap left all 35
+ * showing their old totals, unmarked, when their table was edited.
+ *
+ * **The cost of that is real and is named rather than hidden.** A formula this
+ * cannot read goes stale on *any* edit to the workbook, because there is no way
+ * to tell whether it read the cell that changed. Given `tables`, that is none of
+ * the 35 structured references in the one real workbook that has them: what
+ * remains unreadable is every other bracketed shape — `[#Totals]`, `[@Column]`,
+ * a span of columns, a table nobody declared — and a span of sheets.
+ *
+ * It settles by going round until nothing moves, because a total feeds a total:
+ * the sum of a column feeds the grand total under it, and one edit has to
+ * travel the whole way, from sheet to sheet if that is where the totals are. A
+ * workbook whose formulas refer to each other in a ring would go round for
+ * ever, so the rounds are capped — a circular reference is something Excel
+ * itself refuses to resolve, and this stops rather than hangs.
+ */
+export function recalculateBook(
+  sheets: readonly BookSheet[],
+  typed: ReadonlyMap<number, ReadonlyMap<string, string>>,
+  tables?: Tables,
+): Map<number, Recalculation> {
   const values = new Map<string, number>();
   const stale = new Set<string>();
   /** Every cell whose value is not what the file says any more. */
-  const moved = new Set<string>(typed.keys());
+  const moved = new Set<string>();
+  for (const [sheet, cells] of typed) for (const at of cells.keys()) moved.add(place(sheet, at));
+
+  const byName = new Map(sheets.map((sheet, index) => [sheet.name.toLowerCase(), index]));
 
   /** What a cell is worth now: what was typed, what was worked out, or what the file holds. */
-  const valueAt: Lookup = (row, col) => {
-    const at = key(row, col);
-    const written = typed.get(at);
-    if (written !== undefined) return parse(written);
-    if (values.has(at)) return values.get(at)!;
-    const cell = cells.get(at);
-    if (!cell) return undefined;
-    if (cell.kind !== 'number') return null;
-    return parse(cell.text);
+  const lookups = sheets.map(
+    (sheet, index): Lookup =>
+      (row, col) => {
+        const at = key(row, col);
+        const written = typed.get(index)?.get(at);
+        if (written !== undefined) return parse(written);
+        const worked = values.get(place(index, at));
+        if (worked !== undefined) return worked;
+        const cell = sheet.cells.get(at);
+        if (!cell) return undefined;
+        if (cell.kind !== 'number') return null;
+        return parse(cell.text);
+      },
+  );
+  const elsewhere = (name: string): Lookup | null => {
+    const index = byName.get(name.toLowerCase());
+    return index === undefined ? null : lookups[index]!;
   };
 
-  const formulas = [...cells].filter(([, cell]) => cell.formula !== undefined);
+  const formulas: [number, string, Held][] = [];
+  sheets.forEach((sheet, index) => {
+    for (const [at, cell] of sheet.cells) if (cell.formula !== undefined) formulas.push([index, at, cell]);
+  });
   const settled = new Set<string>();
 
   /* One round per link in the longest chain of totals, and no more. */
   for (let round = 0; round < 64; round++) {
     let changed = false;
 
-    for (const [at, cell] of formulas) {
-      if (settled.has(at) || typed.has(at)) continue;
+    for (const [index, at, cell] of formulas) {
+      const here = place(index, at);
+      if (settled.has(here) || typed.get(index)?.has(at)) continue;
       const formula = cell.formula!;
+      const sheetName = sheets[index]!.name;
 
       /* Does anything that moved reach this formula at all? */
       let reaches: Dependency = 'no';
       for (const source of moved) {
-        const [row, col] = source.split(',').map(Number) as [number, number];
-        const answer = dependency(formula, sheetName, { row, col }, tables);
+        const [sheet, row, col] = unplace(source);
+        const answer = dependency(formula, sheetName, { row, col, sheet: sheets[sheet]!.name }, tables);
         if (answer === 'reads') {
           reaches = 'reads';
           break;
@@ -571,12 +674,15 @@ export function recalculate(
          without itself. */
 
       /* A total of numbers that are themselves unreliable is unreliable, even
-         where every function in it is one this understands. */
+         where every function in it is one this understands — and wherever in
+         the workbook those numbers are. */
       const readsStale = referencesOf(formula, tables).some((reference) => {
-        if (reference.sheet !== null && reference.sheet.toLowerCase() !== sheetName.toLowerCase()) return false;
+        const on = reference.sheet === null ? index : byName.get(reference.sheet.toLowerCase());
+        if (on === undefined) return false;
         for (const gone of stale) {
-          const [row, col] = gone.split(',').map(Number) as [number, number];
+          const [sheet, row, col] = unplace(gone);
           if (
+            sheet === on &&
             row >= reference.from.row &&
             row <= reference.to.row &&
             col >= reference.from.col &&
@@ -588,24 +694,33 @@ export function recalculate(
         return false;
       });
 
-      settled.add(at);
+      settled.add(here);
       changed = true;
-      const worked = readsStale ? null : evaluate(formula, valueAt);
+      const worked = readsStale ? null : evaluate(formula, lookups[index]!, elsewhere);
       if (worked === null) {
-        stale.add(at);
-        moved.add(at);
+        stale.add(here);
+        moved.add(here);
         continue;
       }
       /* A number that did not move is not news, and saying so would put a
          marker on a cell nobody changed. */
-      const [row, col] = at.split(',').map(Number) as [number, number];
-      const before = cells.get(key(row, col));
-      values.set(at, worked);
-      if (before === undefined || parse(before.text) !== worked) moved.add(at);
+      values.set(here, worked);
+      if (parse(cell.text) !== worked) moved.add(here);
     }
 
     if (!changed) break;
   }
 
-  return { values, stale };
+  const answer = new Map<number, Recalculation>(
+    sheets.map((_, index) => [index, { values: new Map(), stale: new Set() }]),
+  );
+  for (const [placed, value] of values) {
+    const cut = placed.indexOf(':');
+    answer.get(Number(placed.slice(0, cut)))!.values.set(placed.slice(cut + 1), value);
+  }
+  for (const placed of stale) {
+    const cut = placed.indexOf(':');
+    answer.get(Number(placed.slice(0, cut)))!.stale.add(placed.slice(cut + 1));
+  }
+  return answer;
 }

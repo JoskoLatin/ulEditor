@@ -678,6 +678,73 @@ if (!reachable) {
       'B2 = SUM(A1:A2)',
     );
 
+    /* ── an edit on one sheet, and the formula on another ─────────── */
+
+    /*
+     * The seam in `index.ts` again, now across sheets. Everything in
+     * `verify-formula.mjs` about workbooks is `recalculateBook` on its own; this
+     * is the program handing it the workbook and drawing the answer on a sheet
+     * nobody typed into. Worked out only for the sheets typed into, the SUMIFS
+     * on `Cashless` stays unmarked after its table on `Podaci` is edited.
+     */
+    await page.evaluate(
+      async ({ name, b64 }) => {
+        const file = new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name);
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        window.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+        const until = Date.now() + 10_000;
+        const twoSheets = () =>
+          [...document.querySelectorAll('.ul-sheet-book')].find(
+            (one) => one.querySelectorAll('.ul-sheet-tabs button').length === 2,
+          );
+        while (!twoSheets()) {
+          if (Date.now() > until) {
+            throw new Error(
+              `the two-sheet book never showed: ${[...document.querySelectorAll('.ul-sheet-book')]
+                .map((one) => `hidden=${one.hidden} tabs=${one.querySelectorAll('.ul-sheet-tabs button').length}`)
+                .join(' | ')}`,
+            );
+          }
+          await new Promise((settle) => setTimeout(settle, 20));
+        }
+        /* Every open book is in the page and none of them is `hidden` — the
+           panel around it is — so the one under test is marked rather than
+           picked out by what is showing. */
+        twoSheets().dataset.verify = 'across';
+        await new Promise((settle) => requestAnimationFrame(() => requestAnimationFrame(settle)));
+      },
+      { name: 'cashless.xlsx', b64: Buffer.from(tableBook()).toString('base64') },
+    );
+    const book = '.ul-sheet-book[data-verify="across"]';
+    await page.locator(`${book} .ul-sheet-tabs button`).nth(1).click();
+    await page.locator(`${book} td[data-ref="1,2"]`).dblclick();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('9');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+    await page.locator(`${book} .ul-sheet-tabs button`).nth(0).click();
+    await page.waitForTimeout(150);
+
+    const across = await page.evaluate((book) => {
+      const td = (ref) => document.querySelector(`${book} td[data-ref="${ref}"]`);
+      return {
+        sumifs: td('0,1')?.dataset.stale ?? null,
+        sum: td('1,1')?.dataset.stale ?? null,
+        sumText: td('1,1')?.textContent ?? null,
+      };
+    }, book);
+    check(
+      'an amount retyped on Podaci marks the SUMIFS on Cashless, a sheet nobody typed into',
+      across.sumifs === 'true',
+      `Cashless!B1 stale=${across.sumifs}`,
+    );
+    check(
+      'and leaves the SUM beside it, which reads nothing on Podaci, alone',
+      across.sum === null && across.sumText === '300,00',
+      `Cashless!B2 ${across.sumText} · stale=${across.sum}`,
+    );
+
     /* ── and the real workbook, where the 35 of them actually are ──── */
 
     const real = findReal();
@@ -728,6 +795,48 @@ if (!reachable) {
           const formulas = [...sheet.cells.values()].filter((c) => c.formula !== undefined).length;
           const structured = [...sheet.cells.values()].filter((c) => /[A-Za-z_][\w.]*\[/.test(c.formula ?? '')).length;
 
+          /* Across the workbook: an amount retyped inside the table, on the
+             sheet the table is on, and what that marks on the sheet reading it. */
+          const { recalculateBook, referencesOf } = await import(`/@fs/${root}/packages/editor-office/src/formula.ts`);
+          const index = book.sheets.indexOf(sheet);
+          const table = [...(book.tables?.values() ?? [])].find((one) => one.sheet !== sheet.name);
+          const across = { marked: -1, direct: 0, missed: 0 };
+          if (table) {
+            const on = book.sheets.findIndex((one) => one.name === table.sheet);
+            const col = table.fromCol + (table.columns.get('iznos') ?? 0);
+            const typedThere = new Map([[on, new Map([[`${table.fromRow},${col}`, '1']])]]);
+            const stale = recalculateBook(book.sheets, typedThere, book.tables).get(index).stale;
+            across.marked = stale.size;
+            /* What reads that cell directly, by `dependency`'s own answer — each
+               one has to be among the marked; what reads them comes on top. */
+            for (const [key, cell] of sheet.cells) {
+              if (cell.formula === undefined) continue;
+              const where = { row: table.fromRow, col, sheet: table.sheet };
+              if (dependency(cell.formula, sheet.name, where, book.tables) === 'no') continue;
+              across.direct++;
+              if (!stale.has(key)) across.missed++;
+            }
+          }
+
+          /* The formulas that name a sheet: each one reached through the first
+             cell it reads, and whether it then comes out worked or marked. */
+          const named = { worked: 0, marked: 0, missed: 0, shapes: [] };
+          for (const [key, cell] of sheet.cells) {
+            if (!/!/.test(cell.formula ?? '')) continue;
+            const first = referencesOf(cell.formula, book.tables)[0];
+            if (!first) continue;
+            const on = first.sheet === null ? index : book.sheets.findIndex((one) => one.name.toLowerCase() === first.sheet.toLowerCase());
+            const answer = recalculateBook(
+              book.sheets,
+              new Map([[on, new Map([[`${first.from.row},${first.from.col}`, '1']])]]),
+              book.tables,
+            ).get(index);
+            if (answer.values.has(key)) named.worked++;
+            else if (answer.stale.has(key)) named.marked++;
+            else named.missed++;
+            named.shapes.push(cell.formula.slice(0, 40));
+          }
+
           return {
             sheet: sheet.name,
             sheets: book.sheets.map((one) => one.name),
@@ -737,6 +846,8 @@ if (!reachable) {
             before: recalculate(sheet.cells, sheet.name, typed).stale.size,
             after: recalculate(sheet.cells, sheet.name, typed, book.tables).stale.size,
             watchedStale,
+            across,
+            named,
           };
         },
         { root: ROOT.split(sep).join('/'), b64: readFileSync(real).toString('base64') },
@@ -763,6 +874,16 @@ if (!reachable) {
         measured.watchedStale === -1
           ? 'nothing on this sheet is read by anything — the check above is the whole answer'
           : `${measured.watchedStale} marked`,
+      );
+      check(
+        'an amount retyped inside the table marks the totals on the sheet reading it, which a sheet-at-a-time pass never looked at',
+        measured.across.direct > 0 && measured.across.missed === 0 && measured.across.marked >= measured.across.direct,
+        `${measured.across.marked} of ${measured.formulas} marked on ${measured.sheet} — ${measured.across.direct} read the cell directly, ${measured.across.missed} of those missed`,
+      );
+      check(
+        'every formula naming a sheet is reached by the cell it reads — worked out or marked, never left as it was',
+        measured.named.missed === 0 && measured.named.worked + measured.named.marked > 0,
+        `${measured.named.worked} worked out, ${measured.named.marked} marked, ${measured.named.missed} missed`,
       );
     }
 

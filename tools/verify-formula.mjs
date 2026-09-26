@@ -28,7 +28,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { referencesOf, dependency, evaluate, parseA1, recalculate } = await import(
+const { referencesOf, dependency, evaluate, parseA1, recalculate, recalculateBook } = await import(
   pathToFileURL(join(ROOT, 'packages/editor-office/src/formula.ts')).href
 );
 
@@ -53,6 +53,29 @@ check('a range is one rectangle', refs('SUM(B2:B9)') === '1,1:8,1', refs('SUM(B2
 check('a range written backwards is the same rectangle', refs('SUM(B9:B2)') === '1,1:8,1', refs('SUM(B9:B2)'));
 check('two cells are two references', refs('A1+B1') === '0,0:0,0 0,1:0,1', refs('A1+B1'));
 check('a sheet name is kept, not followed', refs("'Drugi list'!A1") === 'Drugi list!0,0:0,0', refs("'Drugi list'!A1"));
+/*
+ * Whole columns and rows. `Podaci!M:M` is in the measured corpus — a
+ * `COUNTA(UNIQUE(FILTER(Podaci!M:M, Podaci!C:C=5, "")))` on `Cashless` — and
+ * nothing in it looks like `A1`, so it used to be read as reading nothing: an
+ * edit anywhere in column M answered `'no'`.
+ */
+check('a whole column is every row of it', refs('SUM($B:$C)') === '0,1:1048575,2', refs('SUM($B:$C)'));
+check('a whole row is every column of it', refs('SUM(2:4)') === '1,0:3,16383', refs('SUM(2:4)'));
+check(
+  'a whole column on another sheet keeps its sheet',
+  refs('COUNTA(FILTER(Podaci!M:M,Podaci!C:C=5,""))') === 'Podaci!0,12:1048575,12 Podaci!0,2:1048575,2',
+  refs('COUNTA(FILTER(Podaci!M:M,Podaci!C:C=5,""))'),
+);
+check('and an ordinary range is not also read as columns', refs('SUM(A1:B2)') === '0,0:1,1', refs('SUM(A1:B2)'));
+check(
+  'a column reference is read where it is, so an edit deep in it reaches the formula',
+  dependency('SUM(A:A)', 'List1', { row: 90_000, col: 0 }) === 'reads' &&
+    dependency('COUNTA(Podaci!M:M)', 'Cashless', { row: 5_000, col: 12, sheet: 'Podaci' }) === 'reads',
+);
+check(
+  'but working it out is still refused — a column is a million cells, not a SUM to guess at',
+  evaluate('SUM(A:A)', () => 1) === null,
+);
 check(
   'a reference inside a string is a word, not a reference',
   refs('IF(A1="B2",1,0)') === '0,0:0,0',
@@ -250,6 +273,175 @@ const after = (typed) => recalculate(held, 'List1', new Map(Object.entries(typed
   ]);
   const out = recalculate(ring, 'List1', new Map([['0,1', '5']]));
   check('a ring of formulas stops rather than going round for ever', out.values.size + out.stale.size > 0);
+}
+
+/* ── across the sheets of a workbook ─────────────────────────────────── */
+
+/*
+ * A formula reading another sheet is the one a sheet-at-a-time pass cannot
+ * see: the sheet typed into is not the sheet holding the formula, so the total
+ * sat there unmarked. Six plain `SUM`s in the measured corpus read another sheet
+ * by name, and all 35 `SUMIFS` read a table on another sheet.
+ */
+{
+  const drugi = (row, col) => (row === 1 && col === 1 ? 7 : undefined);
+  const books = (name) => (name.toLowerCase() === 'drugi list' || name === "Joško's" ? drugi : null);
+  check(
+    'given the workbook, another sheet is read',
+    evaluate("SUM('Drugi list'!B2:B5)+B2", valueAt, books) === 8,
+    String(evaluate("SUM('Drugi list'!B2:B5)+B2", valueAt, books)),
+  );
+  check(
+    'an escaped quote in a sheet name is unescaped before the sheet is looked up',
+    evaluate("'Joško''s'!B2*2", valueAt, books) === 14,
+    String(evaluate("'Joško''s'!B2*2", valueAt, books)),
+  );
+  check(
+    'a sheet the workbook does not have is refused, not read as empty',
+    evaluate('SUM(Nema!B2:B5)', valueAt, books) === null && evaluate('Nema!B2+1', valueAt, books) === null,
+  );
+  check(
+    'and without the workbook, even this sheet named is refused rather than guessed at',
+    evaluate("SUM('Drugi list'!B2:B5)", valueAt) === null,
+  );
+
+  const on = (row, col, sheet) => ({ row, col, sheet });
+  check(
+    'a total on one sheet reads the cell on the sheet it names',
+    dependency('SUM(Racun!A1:A3)', 'Sazetak', on(0, 0, 'racun')) === 'reads',
+  );
+  check(
+    'and not the same cell on its own sheet',
+    dependency('SUM(Racun!A1:A3)', 'Sazetak', on(0, 0, 'Sazetak')) === 'no',
+  );
+  check(
+    'a reference with no sheet in it is its own sheet, not the one typed into',
+    dependency('SUM(A1:A3)', 'Sazetak', on(0, 0, 'Racun')) === 'no',
+  );
+  check(
+    'a span of sheets is admitted as unreadable rather than read as its last sheet',
+    dependency('SUM(Jan:Mar!B2)', 'Sazetak', on(1, 1, 'Feb')) === 'unknown' &&
+      dependency("SUM('Jan:Mar'!B2)", 'Sazetak', on(1, 1, 'Feb')) === 'unknown',
+  );
+}
+
+{
+  /*
+   * Two sheets that read each other.
+   *
+   *   Racun    A1..A3  1000, 200, 34.5     B1 =SUM(A1:A3)  B3 =SUBTOTAL(9,A1:A3)
+   *            D1      =Sazetak!A1+1       — back again, a third hop
+   *   Sazetak  A1      =SUM(Racun!A1:A3)*2
+   *            A2      =Racun!B3+1         — reads a number this cannot keep current
+   *            A3      =SUM(C1:C2)         — reads nothing anybody touched
+   *            B1      =Racun!C1+Racun!A1, and Racun C1 =Sazetak!B1 — a ring across the two
+   */
+  const racun = new Map([
+    ['0,0', { text: '1000', kind: 'number' }],
+    ['1,0', { text: '200', kind: 'number' }],
+    ['2,0', { text: '34.5', kind: 'number' }],
+    ['0,1', { text: '1234.5', kind: 'number', formula: 'SUM(A1:A3)' }],
+    ['2,1', { text: '1234.5', kind: 'number', formula: 'SUBTOTAL(9,A1:A3)' }],
+    ['0,2', { text: '0', kind: 'number', formula: 'Sazetak!B1' }],
+    ['0,3', { text: '2470', kind: 'number', formula: 'Sazetak!A1+1' }],
+  ]);
+  const sazetak = new Map([
+    ['0,0', { text: '2469', kind: 'number', formula: 'SUM(Racun!A1:A3)*2' }],
+    ['1,0', { text: '1235.5', kind: 'number', formula: 'Racun!B3+1' }],
+    ['2,0', { text: '0', kind: 'number', formula: 'SUM(C1:C2)' }],
+    ['0,1', { text: '0', kind: 'number', formula: 'Racun!C1+Racun!A1' }],
+    /* B3 here is empty; B3 on Racun is the SUBTOTAL that goes stale. */
+    ['3,0', { text: '2469', kind: 'number', formula: 'B3+A1' }],
+  ]);
+  const book = [
+    { name: 'Racun', cells: racun },
+    { name: 'Sazetak', cells: sazetak },
+  ];
+  const out = recalculateBook(book, new Map([[0, new Map([['0,0', '2000']])]]));
+  const first = out.get(0);
+  const second = out.get(1);
+
+  check('every sheet gets an answer, not only the one typed into', first !== undefined && second !== undefined);
+  check(
+    'a total on another sheet follows the cell it reads',
+    second?.values.get('0,0') === 4469 && !second?.stale.has('0,0'),
+    `Sazetak!A1 ${second?.values.get('0,0')}${second?.stale.has('0,0') ? ' (marked)' : ''}`,
+  );
+  check(
+    'and a total reading that one, back on the first sheet, follows it again',
+    first?.values.get('0,3') === 4470,
+    String(first?.values.get('0,3')),
+  );
+  check(
+    'a number on another sheet that cannot be kept current makes what reads it stale too',
+    first?.stale.has('2,1') && second?.stale.has('1,0') && !second?.values.has('1,0'),
+    `Racun: ${[...(first?.stale ?? [])].join(' ')} · Sazetak: ${[...(second?.stale ?? [])].join(' ')}`,
+  );
+  check(
+    'and a cell of the same address on a different sheet is not the stale one',
+    second?.values.get('3,0') === 4469 && !second?.stale.has('3,0'),
+    `Sazetak!A4 ${second?.values.get('3,0')}${second?.stale.has('3,0') ? ' (marked)' : ''}`,
+  );
+  check(
+    'a formula on the other sheet over cells nobody touched is left alone',
+    !second?.values.has('2,0') && !second?.stale.has('2,0'),
+  );
+  check(
+    'a ring running through two sheets stops rather than going round for ever',
+    second?.values.has('0,1') || second?.stale.has('0,1'),
+  );
+
+  /* E1 reads A1 here and a cell on a sheet this one call knows nothing about. */
+  const both = new Map([...racun, ['0,4', { text: '1000', kind: 'number', formula: 'Sazetak!A1*0+A1' }]]);
+  const alone = recalculate(both, 'Racun', new Map([['0,0', '2000']]));
+  check(
+    'one sheet on its own has no other sheet to read, so a formula naming one is marked, never worked out',
+    alone.stale.has('0,4') && !alone.values.has('0,4') && alone.values.get('0,1') === 2234.5,
+    `${[...alone.stale].join(' ')} marked`,
+  );
+}
+
+{
+  /*
+   * The real shape: the `SUMIFS` on `Cashless`, the table it reads on `Podaci`.
+   * Resolving the table said which sheet the 35 of them read; this is the edit
+   * on that sheet, which no pass over `Cashless` ever looked at.
+   */
+  const tables = new Map([
+    [
+      'podacitable',
+      { sheet: 'Podaci', fromRow: 1, toRow: 3, fromCol: 0, columns: new Map([['vrsta', 0], ['iznos', 2]]) },
+    ],
+  ]);
+  const book = [
+    {
+      name: 'Cashless',
+      cells: new Map([
+        ['0,0', { text: '100', kind: 'number' }],
+        ['0,1', { text: '1234.5', kind: 'number', formula: 'SUMIFS(PodaciTable[Iznos],PodaciTable[Vrsta],5)' }],
+        ['1,1', { text: '100', kind: 'number', formula: 'SUM(A1:A1)' }],
+      ]),
+    },
+    {
+      name: 'Podaci',
+      cells: new Map([
+        ['1,0', { text: '5', kind: 'number' }],
+        ['1,2', { text: '1000', kind: 'number' }],
+      ]),
+    },
+  ];
+  const inTable = recalculateBook(book, new Map([[1, new Map([['1,2', '9']])]]), tables).get(0);
+  check(
+    'an amount retyped inside the table marks the SUMIFS on the sheet that reads it',
+    inTable?.stale.has('0,1') && inTable.stale.size === 1,
+    `Cashless: ${[...(inTable?.stale ?? [])].join(' ') || 'nothing'} marked`,
+  );
+  const beside = recalculateBook(book, new Map([[1, new Map([['9,9', '9']])]]), tables).get(0);
+  check(
+    'and a cell on that sheet outside the table marks nothing',
+    beside?.stale.size === 0 && beside.values.size === 0,
+    `${beside?.stale.size} marked`,
+  );
 }
 
 /* ── and over real spreadsheets, if there are any ────────────────────── */

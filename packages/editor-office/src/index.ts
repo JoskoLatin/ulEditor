@@ -63,7 +63,7 @@ import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
 import { columnName, readXlsx, type Sheet, type Workbook } from './xlsx.js';
-import { recalculate, type Recalculation } from './formula.js';
+import { recalculateBook, type Recalculation } from './formula.js';
 import { SheetGrid, shownFormula, type GridCell } from './sheet-grid.js';
 
 export { renderDocx } from './docx.js';
@@ -2513,13 +2513,10 @@ class XlsxPreviewEditor implements EditorInstance {
    * there current-looking until it happens to be scrolled out of the window and
    * back in.
    *
-   * One sheet at a time, because `recalculate` is given one sheet's values.
-   * A formula on `Total` reading `Cashless!L7` does not go stale when `L7` is
-   * retyped on `Cashless` — `dependency` compares sheet names rather than
-   * following them, so a reference into another sheet is refused on the sheet
-   * that holds the formula and never seen from the sheet that was edited. Six
-   * such formulas exist in the measured corpus. Closing that is a pass over the
-   * workbook rather than a rule guessed here.
+   * The whole workbook in one pass, and an answer for every sheet rather than
+   * for the ones typed into: a total on `Sazetak` reading `Cashless!L7` is on
+   * a sheet nobody touched, and it is exactly the number that stops being true
+   * when `L7` is retyped.
    */
   #settle(): void {
     this.#recalc.clear();
@@ -2533,9 +2530,10 @@ class XlsxPreviewEditor implements EditorInstance {
       sheet.set(at.slice(cut + 1), value);
     }
 
-    for (const [index, cells] of typed) {
-      const sheet = this.workbook.sheets[index];
-      if (sheet) this.#recalc.set(index, recalculate(sheet.cells, sheet.name, cells, this.workbook.tables));
+    if (typed.size > 0) {
+      for (const [index, answer] of recalculateBook(this.workbook.sheets, typed, this.workbook.tables)) {
+        this.#recalc.set(index, answer);
+      }
     }
 
     /* Only the cells in the page are drawn again; the rest are drawn from the
