@@ -1633,12 +1633,105 @@ button.status-item:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.reader {
+/*
+ * The controls float over the text instead of taking a row above it, so the
+ * page runs the full height of the window. `.main` is their anchor.
+ */
+.shell[data-reading="true"] .main {
   position: relative;
+}
+
+.reader {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
   z-index: 5;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: calc(100% - 28px);
+}
+
+.reader-dock {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--chrome) 88%, transparent);
+  box-shadow: var(--shadow-lg);
+  /* Present, but not competing with the text until it is reached for. */
+  opacity: 0.55;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.reader-dock:hover,
+.reader-dock:focus-within,
+.reader[data-expanded="true"] .reader-dock {
+  opacity: 1;
+}
+
+.reader-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reader-dock-btn:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.reader-dock-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.reader-dock-btn[data-active="true"] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+/* A finger, not a pointer: the targets grow to what a thumb reliably hits. */
+@media (pointer: coarse), (max-width: 720px) {
+  .reader-dock {
+    opacity: 0.8;
+  }
+
+  .reader-dock-btn {
+    min-width: 44px;
+    height: 44px;
+    font-size: var(--fs-md);
+  }
+
+  .reader-dock-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* What used to be the bar across the top, now a card above the dock. */
+.reader-card {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 28px));
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
   background: var(--chrome);
-  border-bottom: 1px solid var(--rule);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
 .reader-bar {
@@ -1751,22 +1844,13 @@ button.status-item:hover {
 
 /* ── the reading room panels ─────────────────────────────────────────── */
 
+/* Inside the card, above the bar — the dock is at the bottom, so it opens upward. */
 .reader-panel {
-  position: absolute;
-  top: 100%;
-  right: 10px;
-  z-index: 6;
-  max-height: min(62vh, 520px);
+  max-height: min(52vh, 460px);
   overflow-y: auto;
   padding: 8px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
+  border-bottom: 1px solid var(--rule);
   background: var(--overlay);
-  box-shadow: var(--shadow-lg);
-}
-
-.reader-outline {
-  width: min(380px, 80vw);
 }
 
 .reader-outline button {
@@ -1810,7 +1894,6 @@ button.status-item:hover {
 .reader-type {
   display: grid;
   gap: 12px;
-  width: min(340px, 88vw);
   padding: 14px;
 }
 

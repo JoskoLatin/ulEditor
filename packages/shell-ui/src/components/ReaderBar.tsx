@@ -1,14 +1,17 @@
 /**
- * The reading room bar.
+ * The reading room controls.
  *
- * The only control visible in reading mode. Everything it offers leads back into
- * the text: the contents, the typography, the progress. It deliberately carries
- * nothing about the file — saving, tabs and the tree are invisible in this mode
- * because they play no part in reading.
+ * The only control visible in reading mode, and kept to a small dock in the
+ * bottom right corner — text size down and up, more, and out — so that the
+ * screen holds the text and nothing else. The rest (the title, turning pages,
+ * the contents, the typography, the progress) sits behind the dots. Everything
+ * it offers leads back into the text; it deliberately carries nothing about the
+ * file — saving, tabs and the tree are invisible in this mode because they play
+ * no part in reading.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { ReadingFlow, ReadingTint } from '@uleditor/plugin-sdk';
+import type { ReadingFlow, ReadingProgress, ReadingTint } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
 import { useShell } from '../shell/context.js';
@@ -20,8 +23,9 @@ import {
   readerPage,
   readerSeek,
   useReading,
+  type ReaderPanel,
 } from '../shell/reading.js';
-import { IconArrow, IconClose, IconList, IconType } from './Icons.js';
+import { IconArrow, IconClose, IconList, IconMore, IconType } from './Icons.js';
 
 /** Functions, not constants: the translation has to happen at render time. */
 const tints = (): { id: ReadingTint; label: string }[] => [
@@ -35,21 +39,101 @@ const flows = (): { id: ReadingFlow; label: string }[] => [
   { id: 'scroll', label: t('Scroll') },
 ];
 
+/** The bounds of the size slider in the Layout panel — the buttons stop where it does. */
+const MIN_SIZE = 14;
+const MAX_SIZE = 30;
+
 export function ReaderBar() {
   const shell = useShell();
   const title = useReading((s) => s.title);
   const panel = useReading((s) => s.panel);
   const setPanel = useReading((s) => s.setPanel);
   const progress = useReading((s) => s.progress);
+  const fontSize = useReading((s) => s.options.fontSize);
+  const patch = useReading((s) => s.patchOptions);
+  // Collapsed by default: what is on the screen is the text and nothing else,
+  // with the whole bar one tap away behind the dots.
+  const [expanded, setExpanded] = useState(false);
+
+  const resize = (delta: number) => {
+    const next = Math.min(MAX_SIZE, Math.max(MIN_SIZE, fontSize + delta));
+    if (next === fontSize) return;
+    patch({ fontSize: next });
+    persistReadingOptions(shell);
+  };
+
+  const toggleExpanded = () => {
+    if (expanded && panel !== 'none') setPanel(panel);
+    setExpanded(!expanded);
+  };
 
   return (
-    <div className="reader">
-      <div className="reader-bar">
-        <button className="reader-btn" onClick={exitReading} title={t('Leave reading mode (Esc)')}>
-          <IconClose size={14} />
-          <span>{t('Close')}</span>
-        </button>
+    <div className="reader" data-expanded={expanded}>
+      {expanded && (
+        <div className="reader-card">
+          {panel === 'outline' && <OutlinePanel />}
+          {panel === 'type' && <TypePanel onCommit={() => persistReadingOptions(shell)} />}
+          <ReaderChrome title={title} panel={panel} setPanel={setPanel} progress={progress} />
+        </div>
+      )}
 
+      <div className="reader-dock">
+        <button
+          className="reader-dock-btn"
+          onClick={() => resize(-1)}
+          disabled={fontSize <= MIN_SIZE}
+          title={t('Smaller text')}
+          aria-label={t('Smaller text')}
+        >
+          A−
+        </button>
+        <button
+          className="reader-dock-btn"
+          onClick={() => resize(1)}
+          disabled={fontSize >= MAX_SIZE}
+          title={t('Larger text')}
+          aria-label={t('Larger text')}
+        >
+          A+
+        </button>
+        <button
+          className="reader-dock-btn"
+          data-active={expanded}
+          onClick={toggleExpanded}
+          title={t('More')}
+          aria-label={t('More')}
+          aria-expanded={expanded}
+        >
+          <IconMore size={16} />
+        </button>
+        <button
+          className="reader-dock-btn reader-exit"
+          onClick={exitReading}
+          title={t('Leave reading mode (Esc)')}
+          aria-label={t('Leave reading mode (Esc)')}
+        >
+          <IconClose size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** What used to be the bar across the top: now the contents of the card behind the dots. */
+function ReaderChrome({
+  title,
+  panel,
+  setPanel,
+  progress,
+}: {
+  title: string;
+  panel: ReaderPanel;
+  setPanel: (panel: ReaderPanel) => void;
+  progress: ReadingProgress;
+}) {
+  return (
+    <>
+      <div className="reader-bar">
         <div className="reader-title">{title}</div>
 
         <div className="reader-nav">
@@ -91,10 +175,7 @@ export function ReaderBar() {
           <span className="reader-left">{t('~{n} min left', { n: progress.minutesLeft })}</span>
         )}
       </div>
-
-      {panel === 'outline' && <OutlinePanel />}
-      {panel === 'type' && <TypePanel onCommit={() => persistReadingOptions(shell)} />}
-    </div>
+    </>
   );
 }
 

@@ -106,6 +106,37 @@ try {
 
   check('the book contents sidebar is hidden while reading', !(await page.locator('.ul-book-toc').isVisible()));
 
+  /* — only the text, and a small dock in the corner — */
+  check('the reading bar is folded away on entry', !(await page.locator('.reader-bar').isVisible()));
+  const dock = await page.locator('.reader-dock').boundingBox();
+  const viewport = page.viewportSize();
+  check(
+    'the dock sits in the bottom right corner',
+    dock !== null && dock.x + dock.width > viewport.width - 40 && dock.y + dock.height > viewport.height - 40,
+    dock ? `${Math.round(dock.x)},${Math.round(dock.y)} ${Math.round(dock.width)}×${Math.round(dock.height)}` : 'none',
+  );
+  const bookBox = await page.locator('.ul-book').boundingBox();
+  check(
+    'the text takes the whole height of the window',
+    bookBox !== null && bookBox.y <= 1 && bookBox.height >= viewport.height - 1,
+    bookBox ? `y=${bookBox.y} h=${bookBox.height}` : 'none',
+  );
+
+  const bookSize = () =>
+    page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.ul-book-view')).fontSize));
+  const sizeStart = await bookSize();
+  await page.locator('.reader-dock-btn', { hasText: 'A+' }).click();
+  await page.waitForTimeout(250);
+  const sizeUp = await bookSize();
+  await page.locator('.reader-dock-btn', { hasText: 'A−' }).click();
+  await page.waitForTimeout(250);
+  const sizeDown = await bookSize();
+  check('A+ makes the text larger', sizeUp > sizeStart, `${sizeStart} → ${sizeUp}`);
+  check('A− makes it smaller again', sizeDown === sizeStart, `${sizeUp} → ${sizeDown}`);
+
+  await page.locator('.reader-dock-btn[aria-label="More"]').click();
+  check('the dots unfold the reading bar', await page.locator('.reader-bar').isVisible());
+
   const flow = await page.locator('.ul-book').getAttribute('data-flow');
   check('the default flow is pages', flow === 'paged', `data-flow=${flow}`);
 
@@ -224,6 +255,7 @@ try {
   await page.waitForSelector('.reader', { timeout: 10000 });
   const docxReading = await page.locator('.ul-office').getAttribute('data-reading');
   check('Word can be read like a book', docxReading === 'true');
+  await page.locator('.reader-dock-btn[aria-label="More"]').click();
   await page.locator('.reader-btn', { hasText: 'Contents' }).click();
   const docxOutline = await page.locator('.reader-outline button').count();
   check('the contents come from the document headings', docxOutline === 3, `${docxOutline} headings`);
@@ -269,6 +301,32 @@ try {
   const xlsxHits = await search(page, 'uniqueexcel');
   check('the search crosses the sheets', xlsxHits === 1, `${xlsxHits} hits`);
 
+  /* ── Markdown in the reading room ──────────────────────────────────── */
+
+  await dropFile(page, 'notes.md', '# Notes\n\nA paragraph to read.\n\n## Second\n\nMore text.\n');
+  await page.waitForSelector('.mount:visible .ul-md', { timeout: 15000 });
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForSelector('.mount:visible .ul-md-reading', { timeout: 10000 });
+  {
+    const viewport = page.viewportSize();
+    const layer = await page.locator('.mount:visible .ul-md-reading').boundingBox();
+    check(
+      'Markdown is read across the whole window',
+      layer !== null && layer.y <= 1 && layer.height >= viewport.height - 1 && layer.width >= viewport.width - 1,
+      layer ? `${Math.round(layer.width)}×${Math.round(layer.height)} at y=${layer.y}` : 'none',
+    );
+    check('the source is out of sight while reading', !(await page.locator('.mount:visible .cm-editor').isVisible()) ||
+      (await page.evaluate(() => {
+        const layer = document.querySelector('.mount:not([style*="none"]) .ul-md-reading');
+        const hit = document.elementFromPoint(40, 40);
+        return layer?.contains(hit) ?? false;
+      })));
+    await page.screenshot({ path: resolve(SHOTS, 'markdown-reading.png') });
+    await page.locator('.reader-exit').click();
+    await page.waitForTimeout(300);
+    check('the corner button leaves reading mode', await page.locator('.tabbar').isVisible());
+  }
+
   /* ── a PDF in the reading room ─────────────────────────────────────── */
 
   await dropFile(page, 'booklet.pdf', new TextEncoder().encode(makeMultiPagePdf(5)));
@@ -282,6 +340,7 @@ try {
     !(await page.locator('.mount:visible .ul-pdf-toolbar').isVisible()),
   );
 
+  await page.locator('.reader-dock-btn[aria-label="More"]').click();
   await page.locator('.reader-nav button').nth(1).click();
   await page.waitForTimeout(600);
   const pdfLabel = await page.locator('.reader-status span').first().innerText();

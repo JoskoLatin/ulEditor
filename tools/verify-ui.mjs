@@ -248,6 +248,28 @@ try {
   check('the Markdown preview renders', previewTitle.trim() === 'ulEditor', previewTitle.trim());
   check('a table in the preview', (await page.locator('.ul-md-preview table').count()) === 1);
 
+  // The line between source and preview is a handle: dragged to a third, the
+  // source takes a third; dragged back, it takes more than half.
+  {
+    const mdBox = await page.locator('.ul-md').boundingBox();
+    const line = await page.locator('.ul-md-divider').boundingBox();
+    const dragTo = async (fraction) => {
+      const now = await page.locator('.ul-md-divider').boundingBox();
+      await page.mouse.move(now.x + now.width / 2, now.y + now.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(mdBox.x + mdBox.width * fraction, now.y + now.height / 2, { steps: 6 });
+      await page.mouse.up();
+      return (await page.locator('.ul-md-source').boundingBox()).width / mdBox.width;
+    };
+    const narrow = await dragTo(0.3);
+    check('dragging the divider narrows the source', Math.abs(narrow - 0.3) < 0.03, narrow.toFixed(3));
+    const wide = await dragTo(0.7);
+    check('dragging it back widens the source', Math.abs(wide - 0.7) < 0.03, wide.toFixed(3));
+    await page.locator('.ul-md-divider').dblclick({ position: { x: 0, y: line.height / 2 } });
+    const middle = (await page.locator('.ul-md-source').boundingBox()).width / mdBox.width;
+    check('a double click puts it back in the middle', Math.abs(middle - 0.5) < 0.03, middle.toFixed(3));
+  }
+
   /* — PDF — */
   await dropFile(page, 'dokument.pdf', makePdf());
   await page.waitForSelector('.ul-pdf', { timeout: 20000 });

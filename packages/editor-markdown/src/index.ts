@@ -85,6 +85,8 @@ class MarkdownEditor implements EditorInstance {
   #savedText: string;
   #dirty = false;
   #mode: MarkdownViewMode;
+  /** The source's share of the width in split mode — see `#applySplit`. */
+  #splitRatio = 0.5;
   /** Prevents a feedback loop when we synchronise the scroll of two panes. */
   #syncing = false;
 
@@ -139,6 +141,8 @@ class MarkdownEditor implements EditorInstance {
 
     this.#root = root;
     this.#preview = inner;
+    this.#applySplit(this.host.settings.get<number>('markdown.splitRatio', 0.5));
+    this.#wireDivider(divider);
 
     this.#view = new EditorView({
       state: EditorState.create({
@@ -172,6 +176,57 @@ class MarkdownEditor implements EditorInstance {
     this.#themeSub = this.host.theme.onDidChange(() => this.#renderPreview());
     this.#renderPreview();
     this.#emitStatus();
+  }
+
+  /**
+   * The share of the width the source takes in split mode. Set as two custom
+   * properties rather than an inline `grid-template-columns`, which would beat
+   * the `data-mode` rules and leave the source-only and preview-only views
+   * stuck in split.
+   */
+  #applySplit(ratio: number): void {
+    const clamped = Math.min(0.85, Math.max(0.15, Number.isFinite(ratio) ? ratio : 0.5));
+    this.#root?.style.setProperty('--ul-md-a', `${clamped}fr`);
+    this.#root?.style.setProperty('--ul-md-b', `${1 - clamped}fr`);
+    this.#splitRatio = clamped;
+  }
+
+  /** Dragging the line between the panes; a double click puts it back in the middle. */
+  #wireDivider(divider: HTMLElement): void {
+    divider.addEventListener('pointerdown', (event) => {
+      if (this.#mode !== 'split' || event.button !== 0) return;
+      event.preventDefault();
+      const root = this.#root;
+      if (!root) return;
+
+      divider.setPointerCapture(event.pointerId);
+      divider.dataset.dragging = 'true';
+      // While dragging, text must not be selectable, otherwise the cursor
+      // "sticks" — the same handling as the shell's own resizers.
+      const previousSelect = document.body.style.userSelect;
+      document.body.style.userSelect = 'none';
+
+      const move = (e: PointerEvent) => {
+        const box = root.getBoundingClientRect();
+        if (box.width > 0) this.#applySplit((e.clientX - box.left) / box.width);
+      };
+      const up = () => {
+        document.body.style.userSelect = previousSelect;
+        delete divider.dataset.dragging;
+        divider.removeEventListener('pointermove', move);
+        divider.removeEventListener('pointerup', up);
+        divider.removeEventListener('pointercancel', up);
+        this.host.settings.set('markdown.splitRatio', this.#splitRatio);
+      };
+      divider.addEventListener('pointermove', move);
+      divider.addEventListener('pointerup', up);
+      divider.addEventListener('pointercancel', up);
+    });
+
+    divider.addEventListener('dblclick', () => {
+      this.#applySplit(0.5);
+      this.host.settings.set('markdown.splitRatio', 0.5);
+    });
   }
 
   /** Proportional syncing — enough without a source↔output mapping. */

@@ -168,6 +168,13 @@ export const IconSort = (p: IconProps) => (
   </Svg>
 );
 
+/** Three dots — "there is more here than is shown". */
+export const IconMore = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.4 8h.1M8 8h.1M12.6 8h.1" strokeWidth="2.2" />
+  </Svg>
+);
+
 export const IconArrow = ({ dir = 'left', ...p }: IconProps & { dir?: 'left' | 'right' }) => (
   <Svg {...p}>
     {dir === 'left' ? <path d="M10 3 5 8l5 5" /> : <path d="m6 3 5 5-5 5" />}

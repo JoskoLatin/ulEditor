@@ -20,6 +20,13 @@ import type { ReadingOptions, ReadingProgress } from '@uleditor/plugin-sdk';
 export const COLUMN_GAP = 56;
 /** Below this width a two-column layout becomes narrower than a comfortable measure. */
 const TWO_COLUMN_MIN = 1180;
+/**
+ * The least margin either side of the page. Without it a window narrower than
+ * the measure — a phone, or a laptop with two columns — runs the text into the
+ * glass. It goes on the width, not as padding, because padding would enter the
+ * page-turn step.
+ */
+const PAGE_MARGIN = 24;
 
 const WORDS_PER_MINUTE = 220;
 
@@ -97,8 +104,9 @@ export class PagedFlow {
     // back into the decision that produced it.
     const available = view.parentElement?.clientWidth ?? view.clientWidth;
     const columns = available >= TWO_COLUMN_MIN ? 2 : 1;
-    view.style.maxWidth =
+    const measure =
       columns === 2 ? `calc(var(--book-measure) * 2 + ${COLUMN_GAP}px)` : 'var(--book-measure)';
+    view.style.maxWidth = `min(${measure}, calc(100% - ${PAGE_MARGIN * 2}px))`;
 
     const width = view.clientWidth;
     const height = view.clientHeight;

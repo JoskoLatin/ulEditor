@@ -9,7 +9,8 @@
   /* The anchor for the reading layer raised above the editor. */
   position: relative;
   display: grid;
-  grid-template-columns: 1fr 1px 1fr;
+  /* The two shares are set by dragging the divider — see `#applySplit`. */
+  grid-template-columns: var(--ul-md-a, 1fr) 1px var(--ul-md-b, 1fr);
   height: 100%;
   min-height: 0;
   background: var(--ground);
@@ -34,7 +35,25 @@
 }
 
 .ul-md-divider {
+  position: relative;
   background: var(--rule);
+  transition: background 120ms ease;
+}
+
+/* One pixel is the line; the handle is wider, so it can be found with a mouse
+   and with a finger. */
+.ul-md[data-mode='split'] .ul-md-divider::after {
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ul-md[data-mode='split'] .ul-md-divider:hover,
+.ul-md-divider[data-dragging='true'] {
+  background: var(--accent);
 }
 
 .ul-md-preview {
