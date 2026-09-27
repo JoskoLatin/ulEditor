@@ -107,6 +107,50 @@ go through an independent security review first.
    one answer.
 6. A hand-written service worker, registered only on the web; a check that a
    reload offline still opens a `.docx`. *(security: what it caches)*
+   **Done (2026-09-27)**: `packages/shell-ui/sw/sw.js`, filled in at build
+   time by `sw/plugin.ts` with its version and precache list, and registered
+   from `host/offline.ts` on the web only. The precache is index.html, the
+   entry and each editor with what they import statically: 29 files,
+   3.53 MB on disk. The PDF worker, its fonts, the diagrams, the image module
+   and OCR are kept on first use. It keeps only same-origin GETs without a
+   query that answered `ok`; `/assets/` cache-first, `/wasm/` and `/ocr/`
+   network-first (their names do not change between builds), and a page
+   offline or behind a 5xx gets this build's own index.html. No
+   `skipWaiting`: a deploy reaches a person once every ulEditor tab is
+   closed.
+   The security review said NE the first time: Cache Storage is shared with
+   every page on the origin, so one script that ran there once could leave
+   its own code to be served on every start, past redeploys and rollbacks,
+   and nothing could switch the worker off from the server. Now the build
+   writes the SHA-256 of every file it serves into sw.js, and nothing kept
+   is served unless its bytes match; the version covers those digests and
+   the Caddyfile's `header` block. `sw/off.js`, shipped as /sw.js by
+   `tools/deploy-web.ps1 -ServiceWorkerOff`, deletes ulEditor's caches and
+   unregisters. Caddy answers a missing `/sw.js`, `/wasm/*` or `/ocr/*`
+   with a 404 instead of index.html.
+   The second round said PROLAZI, with two findings fixed before the first
+   deploy. Headers kept beside a body were served with it, so an entry could
+   carry a `Refresh` to another site: every answer from the cache now gets
+   the Caddyfile's headers instead. And one that predates the worker, from
+   step 7: `/assets/` is sent immutable for a year, so wrong bytes the
+   server sent once stay in the browser's HTTP cache after it is clean. A
+   name in `/assets/` that the build knows is now answered only with its
+   own bytes — asked for again past the HTTP cache if not, refused if still
+   not.
+   The third round said PROLAZI and found the same true of any path: a
+   server in the wrong hands chooses the Cache-Control, so it can pin the
+   page or a module in the HTTP cache for a year. The page is now always
+   asked for past that cache (700 bytes), and a `/wasm/` or `/ocr/` file
+   that is not this build's is asked for once more past it. The off switch
+   does not reach the HTTP cache; after a known compromise the person clears
+   the site's data and the cached files too.
+   `tools/verify-web-offline.mjs` (32 checks) stops the server, clears the
+   browser's HTTP cache and reloads, and a `.docx` never opened before has
+   to open; it also poisons the cache, plants headers, has the server send
+   wrong and pinned bytes and a 502, and throws the off switch. Of 34
+   deliberate breakages it catches 29; the five it cannot see are layers
+   under the check on read (the write-side digest, the query guard,
+   `!response.ok`, both origin guards, the delete before install).
 7. `deploy/web/`: compose and Caddyfile — pinned image, read-only, no
    capabilities, CSP header equal to the desktop one minus `ipc:`. A check
    that the served header matches and `isSecureContext` is true. *(security,
@@ -131,3 +175,4 @@ go through an independent security review first.
   the instance may fall back to read-only.
 - What the service worker precaches: `dist/assets` is 37 MB, OCR 16 MB of it.
   Precache stays under 5 MB; OCR and the PDF worker are cached on first use.
+  *Measured at step 6: 3.53 MB.*

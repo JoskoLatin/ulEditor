@@ -103,7 +103,8 @@ gotovo | normalan | Faza 3, korak 3 — ul-image u WASM, 361 KB gzip, wasm-bindg
 gotovo | visok | Faza 3, korak 4 — uređivanje slika u pregledniku, u workeru (najdulji zastoj 67 ms na 12 MP); tri sigurnosna kruga: NE / NE / PROLAZI (`8e87389`, `e580185`, `9bc2548`)
 gotovo | normalan | Faza 3, korak 5 — drukčije od ADR-a: TS i Rust detektor ostaju, CI paritet (70 369 datoteka, 0 razlika; nađen i popravljen off-by-one za WebP)
 gotovo | normalan | Granica memorije za slike: 512 MiB, zadano u `image` crateu i koliko je desktop imao prije; TIFF 256 MiB, JPEG/WebP vršno do ~3×
-todo | normalan | Faza 3, korak 6 — service worker, rad bez mreže (u repou)
+gotovo | normalan | Faza 3, korak 6 — service worker: ponovno učitavanje bez mreže otvara .docx; precache 3,53 MB; svaki bajt iz cachea provjeren SHA-256 iz builda; gašenje `deploy-web.ps1 -ServiceWorkerOff`; sigurnosni pregled NE / PROLAZI / PROLAZI (`pnpm verify:web-offline`, 32 provjere, 29/34 mutacija)
+todo | visok | Deploy weba nakon koraka 6 — novi Caddyfile (404 za /sw.js, /wasm/, /ocr/) i worker idu zajedno; bez tog deploya uleditor.truss ne radi offline
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
 ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — dira zajednički compose, Joškova odluka

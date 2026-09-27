@@ -11,7 +11,13 @@
 #
 #   pwsh tools/deploy-web.ps1            # build and deploy
 #   pwsh tools/deploy-web.ps1 -SkipBuild # deploy what is already built
-param([switch]$SkipBuild)
+#   pwsh tools/deploy-web.ps1 -ServiceWorkerOff
+#       ship sw/off.js as /sw.js: every browser that has the service worker
+#       deletes ulEditor's caches, unregisters it and reloads its tabs from
+#       the server. Deleting sw.js does not do that. It does not reach the
+#       browser's HTTP cache — see sw/off.js. A later plain deploy brings the
+#       worker back.
+param([switch]$SkipBuild, [switch]$ServiceWorkerOff)
 
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot/.."
@@ -31,8 +37,16 @@ try {
         node tools/ocr-assets.mjs; if ($LASTEXITCODE) { throw 'ocr-assets failed' }
         pnpm --filter '@uleditor/shell-ui' build; if ($LASTEXITCODE) { throw 'the build failed' }
     }
-    foreach ($needed in 'index.html', 'wasm/ul_image_bg.wasm', 'ocr/manifest.json') {
+    foreach ($needed in 'index.html', 'sw.js', 'wasm/ul_image_bg.wasm', 'ocr/manifest.json') {
         if (-not (Test-Path "packages/shell-ui/dist/$needed")) { throw "dist has no $needed — build first" }
+    }
+
+    # Into the bundle only: dist keeps the real worker, so a later -SkipBuild
+    # does not ship the off switch again by accident.
+    $worker = [IO.File]::ReadAllBytes("$root/packages/shell-ui/dist/sw.js")
+    if ($ServiceWorkerOff) {
+        Copy-Item packages/shell-ui/sw/off.js packages/shell-ui/dist/sw.js -Force
+        Write-Host 'shipping the off switch as /sw.js'
     }
 
     $bundle = Join-Path ([IO.Path]::GetTempPath()) 'uleditor-web.tgz'
@@ -40,7 +54,9 @@ try {
     # `C:` in the path as the name of a remote host. No source maps: they
     # carry the source as it stood in the working tree, committed or not.
     & "$env:SystemRoot\System32\tar.exe" -czf $bundle --exclude '*.map' -C packages/shell-ui/dist .
-    if ($LASTEXITCODE) { throw 'packing dist failed' }
+    $packed = $LASTEXITCODE
+    [IO.File]::WriteAllBytes("$root/packages/shell-ui/dist/sw.js", $worker)
+    if ($packed) { throw 'packing dist failed' }
 
     # Into a directory of the stack's own, not /tmp with names anyone could
     # guess.
@@ -105,12 +121,14 @@ echo "container: $state"
 [ "$state" = healthy ] || { echo "the container is not healthy" >&2; exit 1; }
 status() { curl -sk --resolve uleditor.truss:443:127.0.0.1 -o /dev/null -w '%{http_code}' "https://uleditor.truss$1"; }
 headers() { curl -sk --resolve uleditor.truss:443:127.0.0.1 -o /dev/null -D - "https://uleditor.truss$1"; }
-for path in / /wasm/ul_image_bg.wasm; do
+for path in / /sw.js /wasm/ul_image_bg.wasm; do
   code=$(status "$path")
   echo "$path $code"
   [ "$code" = 200 ] || { echo "$path answered $code" >&2; exit 1; }
 done
-[ "$(status /assets/missing-00000000.js)" = 404 ] || { echo "a missing asset is not a 404" >&2; exit 1; }
+for path in /assets/missing-00000000.js /wasm/missing.wasm /ocr/missing.js; do
+  [ "$(status $path)" = 404 ] || { echo "missing $path is not a 404" >&2; exit 1; }
+done
 headers / | grep -i -E '^content-security-policy|^cache-control'
 headers /wasm/ul_image_bg.wasm | grep -i '^content-type'
 true #

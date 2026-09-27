@@ -77,7 +77,10 @@ const PICKER = () => {
 };
 
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+/* Without the service worker: this watches and refuses the module's own
+   requests, and a worker in between answers them where Playwright cannot see.
+   The worker has its own check, tools/verify-web-offline.mjs. */
+const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
 const page = await context.newPage();
 const errors = [];
 const external = [];

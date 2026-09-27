@@ -48,7 +48,25 @@
 		}
 	}
 
-	# Everything else, index.html and the WebAssembly, is asked again each time.
+	# The service worker, the WebAssembly and OCR keep one name across builds,
+	# so they are asked again each time. One that does not exist is a 404 too:
+	# index.html under the name of a module would be run, or kept, as one — and
+	# a missing sw.js answered with a page reads to the browser as a broken
+	# update, not an absent worker.
+	@public path /sw.js /wasm/* /ocr/*
+	handle @public {
+		@present file
+		handle @present {
+			header Cache-Control "no-cache"
+			file_server
+		}
+		handle {
+			header Cache-Control "no-store"
+			respond "Not found" 404
+		}
+	}
+
+	# Everything else is the page itself, asked again each time.
 	handle {
 		header Cache-Control "no-cache"
 		try_files {path} /index.html

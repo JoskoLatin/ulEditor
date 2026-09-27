@@ -42,6 +42,7 @@
     "verify:wasm": "node tools/verify-wasm.mjs",
     "verify:formats-parity": "node tools/verify-formats-parity.mjs",
     "verify:web-csp": "node tools/verify-web-csp.mjs",
+    "verify:web-offline": "node tools/verify-web-offline.mjs",
     "deploy:web": "pwsh tools/deploy-web.ps1",
     "verify:clipboard": "node tools/verify-clipboard.mjs",
     "verify:crash": "node tools/verify-crash.mjs",

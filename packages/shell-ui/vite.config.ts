@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 import tauri from '../../apps/desktop/src-tauri/tauri.conf.json' with { type: 'json' };
+import { serviceWorker } from './sw/plugin';
 
 /*
  * The version comes from the same file the installers and the APK read, so the
@@ -24,7 +25,7 @@ declare const process: { env: Record<string, string | undefined> };
 const mobileHost = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serviceWorker()],
   define: {
     __APP_VERSION__: JSON.stringify(version),
   },

@@ -15,6 +15,7 @@ import '@uleditor/editor-3d/style.css';
 
 import { App } from './App.js';
 import { createShell } from './host/index.js';
+import { keepForOffline } from './host/offline.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
 import { watchClipboard } from './shell/clipboard.js';
@@ -339,3 +340,7 @@ void checkOnStart(shell);
  * see `shell/clipboard.ts`.
  */
 watchClipboard(shell);
+
+/* A reload without a network still opens a document — in the browser only;
+   see `host/offline.ts`. */
+if (shell.platform === 'web') keepForOffline();
