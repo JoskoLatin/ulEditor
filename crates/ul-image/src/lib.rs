@@ -205,6 +205,11 @@ pub struct Written {
 /// frame larger than its screen is held to the same allowance by the decoder,
 /// and a resize is checked for what its passes allocate — the picture stays
 /// viewable either way.
+///
+/// What it does not hold: a progressive JPEG keeps its coefficients while it
+/// decodes, and the JPEG and WebP decoders take no allocation limit from
+/// `image`. Those two can reach about twice this at their peak. Bounded, and
+/// in a browser a worker that runs out is replaced — but not this number.
 pub const MOST_BYTES: u64 = 400_000_000;
 
 /// No side longer than JPEG's own maximum. Strict, and passed to every
@@ -234,22 +239,74 @@ fn decoding(err: image::ImageError) -> ImageError {
     }
 }
 
+/// Whether every chunk a WebP declares lies inside the file.
+///
+/// The WebP decoder reads a metadata chunk — the Exif that holds the
+/// orientation, an ICC profile — by allocating the size the chunk declares
+/// and then filling it, and `image` gives it no limit to check that size
+/// against. A file of a hundred bytes can declare an Exif chunk of four
+/// gigabytes. All the bytes are already in memory, so the honest bound is
+/// the file itself: a chunk that claims more than is there is not read.
+fn webp_chunks_fit(bytes: &[u8]) -> bool {
+    let word = |at: usize| -> Option<usize> {
+        let b = bytes.get(at..at + 4)?;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    // RIFF, its size, WEBP; then chunks of a fourcc, a size and the data,
+    // padded to an even length.
+    let Some(riff) = word(4) else { return false };
+    if riff.saturating_add(8) > bytes.len() {
+        return false;
+    }
+    let mut at = 12;
+    while at + 8 <= bytes.len() {
+        let Some(size) = word(at + 4) else {
+            return false;
+        };
+        let end = (at + 8).saturating_add(size).saturating_add(size & 1);
+        if end > bytes.len() && (at + 8).saturating_add(size) > bytes.len() {
+            return false;
+        }
+        at = end;
+    }
+    true
+}
+
 /// Opens a decoder with the limits on, and refuses the picture if what it
 /// will allocate is past them — all from the header, before any pixels.
 fn open(bytes: &[u8]) -> Result<impl ImageDecoder + '_, ImageError> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|err| ImageError::Decode(err.to_string()))?;
+    let format = reader.format();
+    if format == Some(ImageFormat::WebP) && !webp_chunks_fit(bytes) {
+        return Err(ImageError::Decode(
+            "a WebP chunk claims more bytes than the file holds".to_string(),
+        ));
+    }
 
     let mut limits = Limits::default();
     limits.max_image_width = Some(LONGEST_SIDE);
     limits.max_image_height = Some(LONGEST_SIDE);
     limits.max_alloc = Some(MOST_BYTES);
-    reader.limits(limits);
+    reader.limits(limits.clone());
 
-    let decoder = reader.into_decoder().map_err(decoding)?;
+    let mut decoder = reader.into_decoder().map_err(decoding)?;
     let (width, height) = decoder.dimensions();
     fits(&format!("{width}×{height}"), decoder.total_bytes())?;
+
+    // The budget is for the whole decode, not for each buffer in it. A GIF
+    // reserves its frame, and a TIFF its strip buffer, from the limit it was
+    // given — on top of the picture they are filling. So those two are given
+    // what is left once the picture is counted: a 1×1 screen with a huge
+    // frame, or a screen and a frame that are each the whole budget, are
+    // refused rather than held twice. PNG counts the picture itself and keeps
+    // the full limit; JPEG and WebP take none from `image` to reduce.
+    if matches!(format, Some(ImageFormat::Gif | ImageFormat::Tiff)) {
+        let mut rest = limits;
+        rest.max_alloc = Some(MOST_BYTES.saturating_sub(decoder.total_bytes()));
+        decoder.set_limits(rest).map_err(decoding)?;
+    }
     Ok(decoder)
 }
 
@@ -662,6 +719,55 @@ mod tests {
         assert_eq!((read.width, read.height), (2, 4));
         let (_, written) = apply(&tagged, &Ops::default()).unwrap();
         assert_eq!((written.width, written.height), (read.width, read.height));
+    }
+
+    #[test]
+    fn a_webp_chunk_claiming_more_than_the_file_is_not_read() {
+        // RIFF/WEBP, a VP8X header for a 100×100 canvas with Exif flagged,
+        // then an Exif chunk that declares four gigabytes and holds eight bytes.
+        let mut webp = b"RIFF".to_vec();
+        webp.extend_from_slice(&0u32.to_le_bytes()); // patched below
+        webp.extend_from_slice(b"WEBPVP8X");
+        webp.extend_from_slice(&10u32.to_le_bytes());
+        webp.extend_from_slice(&[0x08, 0, 0, 0]); // flags: Exif
+        webp.extend_from_slice(&[99, 0, 0, 99, 0, 0]); // 100×100, less one
+        webp.extend_from_slice(b"EXIF");
+        webp.extend_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        webp.extend_from_slice(&[0; 8]);
+        let riff = (webp.len() - 8) as u32;
+        webp[4..8].copy_from_slice(&riff.to_le_bytes());
+        // Refused by the look at the chunks, not by a decoder that allocated
+        // first and failed after: on 64-bit the allocation can even succeed.
+        let refused = info(&webp);
+        assert!(
+            matches!(&refused, Err(ImageError::Decode(why)) if why.contains("claims more bytes")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_gif_screen_and_frame_are_one_budget_not_two() {
+        // A screen that is the whole budget on its own, 10 000 × 10 000 RGBA,
+        // and a frame just as large beside it: each fits, the two do not.
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend_from_slice(&10_000u16.to_le_bytes());
+        gif.extend_from_slice(&10_000u16.to_le_bytes());
+        gif.extend_from_slice(&[0x80, 0, 0, 0, 0, 0, 255, 255, 255]);
+        gif.push(0x2C);
+        gif.extend_from_slice(&[1, 0, 0, 0]); // at 1,0: not the screen itself
+        gif.extend_from_slice(&10_000u16.to_le_bytes());
+        gif.extend_from_slice(&10_000u16.to_le_bytes());
+        gif.extend_from_slice(&[0, 2, 0, 0x3B]);
+        let as_png = Ops {
+            encoding: Some(Encoding::Png),
+            ..Ops::default()
+        };
+        let result = apply(&gif, &as_png);
+        assert!(
+            matches!(result, Err(ImageError::TooLarge(_))),
+            "{:?}",
+            result.map(|r| r.1)
+        );
     }
 
     #[test]

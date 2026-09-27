@@ -37,8 +37,10 @@ class ImageWorker {
     worker.onmessage = (event: MessageEvent<ImageResponse>) => {
       const pending = this.#pending.get(event.data.id);
       this.#pending.delete(event.data.id);
-      if (!event.data.ok && event.data.trapped) this.#end();
       pending?.resolve(event.data);
+      /* Whatever else was waiting was waiting on the instance that just
+         died; it fails now rather than never. */
+      if (!event.data.ok && event.data.trapped) this.#fail(new Error(event.data.error));
     };
     worker.onerror = (event) => {
       event.preventDefault();

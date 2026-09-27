@@ -90,6 +90,26 @@ page.on('request', (request) => {
   }
 });
 
+/**
+ * The pane showing a picture `width` pixels wide, once it is in front — marked,
+ * so the clicks that follow go to it and not to a tab being hidden beside it.
+ * With three pictures open, `.ul-img:visible` can catch one on its way out.
+ */
+async function paneOf(width, mark) {
+  await page.waitForFunction(
+    ([w, m]) => {
+      const pane = [...document.querySelectorAll('.ul-img')].find(
+        (p) => p.offsetParent !== null && p.querySelector('img')?.naturalWidth === w,
+      );
+      if (pane) pane.dataset.underTest = m;
+      return !!pane;
+    },
+    [width, mark],
+    { timeout: 30_000 },
+  );
+  return page.locator(`.ul-img[data-under-test="${mark}"]`);
+}
+
 /** What the folder holds, read out of it rather than through the application. */
 const onDisk = () =>
   page.evaluate(async () => {
@@ -202,16 +222,46 @@ try {
     check('and it really is a JPEG', head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff, head.map((b) => b.toString(16)).join(' '));
   }
 
+  /* ── and a second change of format does not replace what the first wrote ─ */
+
+  if (hasJpeg) {
+    const jpegBefore = (await onDisk())['slika.jpg'];
+    await page.keyboard.press('Control+p');
+    await page.locator('.palette input').fill('slika.png');
+    await page.locator('.palette-item').first().waitFor({ timeout: 10_000 });
+    await page.keyboard.press('Enter');
+    // The PNG as the crop left it, 16 × 18, and in front. The JPEG beside it
+    // is 16 wide too, so the tab has to say which one is in front first.
+    await page
+      .locator('.tab.active, .tab[data-active="true"]', { hasText: 'slika.png' })
+      .first()
+      .waitFor({ timeout: 15_000 });
+    const again = await paneOf(16, 'png-again');
+    await again.locator('.ul-img-format').waitFor();
+    await again.locator('.ul-img-rotate-right').click();
+    await again.locator('.ul-img-format').selectOption('jpeg');
+    await page.keyboard.press('Control+s');
+    const said = await page
+      .locator('.toast', { hasText: 'already exists' })
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    const jpegAfter = (await onDisk())['slika.jpg'];
+    check(
+      'a plain save does not replace a file that already has the name',
+      said && jpegAfter?.size === jpegBefore?.size,
+      `${jpegBefore?.size} → ${jpegAfter?.size} bytes${said ? ', and it says so' : ', nothing said'}`,
+    );
+  }
+
   /* ── a photograph, and the page keeps drawing while it is written ─── */
 
   await page.keyboard.press('Control+p');
   await page.locator('.palette input').fill('fotografija');
   await page.locator('.palette-item').first().waitFor({ timeout: 10_000 });
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => [...document.querySelectorAll('.ul-img img')].some((i) => i.naturalWidth === 4000), null, {
-    timeout: 30_000,
-  });
-  const photo = page.locator('.ul-img:visible');
+  const photo = await paneOf(4000, 'photo');
   await photo.locator('.ul-img-rotate-right').waitFor();
   const photoBefore = (await onDisk())['fotografija.jpg']?.size;
   await page.evaluate(() => {

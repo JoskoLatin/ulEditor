@@ -31,7 +31,11 @@ function load(base: string): Promise<UlImage> {
     const module = (await import(/* @vite-ignore */ new URL('ul_image.js', base).href)) as UlImage;
     await module.default({ module_or_path: new URL('ul_image_bg.wasm', base) });
     return module;
-  })();
+  })().catch((err: unknown) => {
+    // A fetch that failed once is not the answer for ever.
+    glue = null;
+    throw err;
+  });
   return glue;
 }
 

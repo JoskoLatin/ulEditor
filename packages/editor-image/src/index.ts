@@ -209,10 +209,23 @@ class ImageEditor implements EditorInstance {
 
     this.#natural = { width: img.naturalWidth, height: img.naturalHeight };
 
-    /* What the file is, from the side that will have to write it. The browser
-       has already told us the size; this adds the two things it cannot know —
-       whether the format can be written at all, and whether the picture is
-       stored sideways with a tag saying which way is up. */
+    this.#buildOverlay();
+
+    this.#resize = new ResizeObserver(() => {
+      if (this.#fit) this.#applyZoom();
+    });
+    this.#resize.observe(stage);
+
+    stage.addEventListener('wheel', this.#onWheel, { passive: false });
+    this.#applyZoom();
+
+    /* What the file is, from the side that will have to write it — asked
+       after the picture is drawn and fitted, not before: in a browser the
+       first ask starts a worker and compiles the module, and the picture
+       should not wait on that. The browser has already told us the size;
+       this adds the two things it cannot know — whether the format can be
+       written at all, and whether the picture is stored sideways with a tag
+       saying which way is up. */
     if (this.host.images.available()) {
       try {
         this.#info = await this.host.images.info(this.doc.uri);
@@ -228,17 +241,9 @@ class ImageEditor implements EditorInstance {
         // only decides which tools to draw.
         this.#info = null;
       }
+      // The buttons and the bar again, now that the format is known.
+      this.#applyZoom();
     }
-
-    this.#buildOverlay();
-
-    this.#resize = new ResizeObserver(() => {
-      if (this.#fit) this.#applyZoom();
-    });
-    this.#resize.observe(stage);
-
-    stage.addEventListener('wheel', this.#onWheel, { passive: false });
-    this.#applyZoom();
   }
 
   #buildToolbar(): HTMLElement {
@@ -833,6 +838,22 @@ class ImageEditor implements EditorInstance {
     /* A "save as" was given a name by the person, and that name wins. A plain
        save follows the format: unchanged, it writes the same file. */
     const uri = target?.uri ?? targetFor(this.doc.uri, this.#effectiveEncoding());
+    /* A change of format writes beside the original, under a name nobody
+       typed. If a file already has that name it is somebody's, and a plain
+       save does not get to replace it; "save as" asks, and that is the way. */
+    if (!target && uri !== this.doc.uri) {
+      const taken = await this.host.fs.stat(uri).then(
+        () => true,
+        () => false,
+      );
+      if (taken) {
+        throw new Error(
+          t('{name} already exists. Use Save as to replace it or to choose another name.', {
+            name: uri.slice(Math.max(uri.lastIndexOf('/'), uri.lastIndexOf('\\')) + 1),
+          }),
+        );
+      }
+    }
     const written = await images.write(this.doc.uri, uri, this.#plan());
 
     this.#rotate = 0;
