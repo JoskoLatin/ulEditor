@@ -105,7 +105,7 @@ gotovo | normalan | Faza 3, korak 5 — drukčije od ADR-a: TS i Rust detektor o
 gotovo | normalan | Granica memorije za slike: 512 MiB, zadano u `image` crateu i koliko je desktop imao prije; TIFF 256 MiB, JPEG/WebP vršno do ~3×
 todo | normalan | Faza 3, korak 6 — service worker, rad bez mreže (u repou)
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
-ceka | visok | DNS zapis uleditor.truss → 192.168.3.10 na routeru 192.168.3.1 — Joško
+gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
 ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — dira zajednički compose, Joškova odluka
 todo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje stranice (u repou)
 
