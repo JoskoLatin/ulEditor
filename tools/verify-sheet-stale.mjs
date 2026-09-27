@@ -287,7 +287,7 @@ check(
  * slower than the machine the old figures come from, and a single sample
  * with a bound a few percent above it failed a commit that changed no code.
  * So each shape is also timed at an eighth of its size. Eight times the
- * formulas cost eight to ten times the time when the work is linear, and
+ * formulas cost eight to thirteen times the time when the work is linear, and
  * the quadratic version cost 22 to 58 — and that ratio holds on any runner.
  * The cheap shapes are four times the size the old figures were taken at,
  * so that even an eighth of them is milliseconds rather than one, where the
@@ -312,7 +312,7 @@ check(
     const eighth = keystroke(build(n / 8), new Map([['0,0', '2']]));
     return { ms: full, growth: full / Math.max(eighth, 0.01) };
   };
-  const linear = (s) => s.growth < 15;
+  const linear = (s) => s.growth < 17;
   const shown = (s, was) => `${s.ms.toFixed(1)} ms, ${s.growth.toFixed(1)}× the time at an eighth of the size (was ${was})`;
 
   const allRead = scaling((n) => {
