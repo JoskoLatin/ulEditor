@@ -192,8 +192,9 @@ pub struct Written {
 }
 
 /// The most memory one picture may take, decoded or on its way through a
-/// resize: four hundred megabytes — 100 megapixels of 8-bit RGBA, half that at
-/// 16 bits a channel, a quarter as floating point.
+/// resize: 512 MiB, which is the `image` crate's own default and what the
+/// desktop had before this was counted — about 130 megapixels of 8-bit RGBA,
+/// half that at 16 bits a channel, a quarter as floating point.
 ///
 /// In bytes, not pixels, because the file chooses both. The size is in the
 /// header and so is the depth: a TIFF of two hundred bytes can declare
@@ -207,7 +208,7 @@ pub struct Written {
 /// viewable either way.
 ///
 /// A TIFF is held to half of it: its strip buffer and the picture share the
-/// budget, so a TIFF opens up to 200 MB decoded — 50 megapixels of RGBA.
+/// budget, so a TIFF opens up to 256 MiB decoded — about 67 megapixels of RGBA.
 ///
 /// What it does not hold: a progressive JPEG keeps its coefficients while it
 /// decodes, and the JPEG and WebP decoders take no allocation limit from
@@ -215,7 +216,7 @@ pub struct Written {
 /// twice for an ordinary 4:2:0 JPEG, three times for a progressive 4:4:4 one.
 /// Bounded, and in a browser a worker that runs out is replaced — but not
 /// this number.
-pub const MOST_BYTES: u64 = 400_000_000;
+pub const MOST_BYTES: u64 = 512 * 1024 * 1024;
 
 /// No side longer than JPEG's own maximum. Strict, and passed to every
 /// decoder, some of which would otherwise accept any width at all.
@@ -659,14 +660,14 @@ mod tests {
     #[test]
     fn a_gif_frame_larger_than_its_screen_is_held_to_the_same_limit() {
         // A 1×1 screen passes any look at the header; the frame inside it
-        // claims 11 000 × 11 000, which is 484 MB of RGBA. Thirty-odd bytes.
+        // claims 12 000 × 12 000, which is 576 MB of RGBA. Thirty-odd bytes.
         let mut gif = b"GIF89a".to_vec();
         gif.extend_from_slice(&[1, 0, 1, 0, 0x80, 0, 0]); // screen 1×1, two colours
         gif.extend_from_slice(&[0, 0, 0, 255, 255, 255]);
         gif.push(0x2C); // image descriptor
         gif.extend_from_slice(&[0, 0, 0, 0]); // at 0,0
-        gif.extend_from_slice(&11_000u16.to_le_bytes());
-        gif.extend_from_slice(&11_000u16.to_le_bytes());
+        gif.extend_from_slice(&12_000u16.to_le_bytes());
+        gif.extend_from_slice(&12_000u16.to_le_bytes());
         gif.extend_from_slice(&[0, 2, 0, 0x3B]); // no palette, LZW 2, no data, end
         assert!(info(&gif).is_ok(), "the header is a 1×1 picture");
         // Saved as a PNG, which is what the editor does with a GIF.
@@ -684,11 +685,11 @@ mod tests {
 
     #[test]
     fn a_wide_picture_made_much_smaller_does_not_hold_its_width_in_floats() {
-        // Straight into Lanczos, the first pass would hold 30 000 columns at a
-        // thousand rows in f32: 480 MB, for a result of 10 × 1 000. Brought
+        // Straight into Lanczos, the first pass would hold 40 000 columns at a
+        // thousand rows in f32: 640 MB, for a result of 10 × 1 000. Brought
         // down to twice the target first, it is a few hundred kilobytes.
         let wide = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-            30_000,
+            40_000,
             2,
             image::Rgba([0, 0, 255, 255]),
         ));
