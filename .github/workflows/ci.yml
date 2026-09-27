@@ -17,6 +17,9 @@ jobs:
   frontend:
     name: Frontend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # The browser build edits pictures with ul-image as WebAssembly, built once
+    # in the wasm job below and handed over rather than built three times.
+    needs: wasm
     strategy:
       fail-fast: false
       matrix:
@@ -130,6 +133,10 @@ jobs:
       # here, and the check below runs against the same files the installer
       # ships.
       - run: node tools/ocr-assets.mjs
+      - uses: actions/download-artifact@v7
+        with:
+          name: wasm
+          path: packages/shell-ui/public/wasm
       - run: pnpm --filter @uleditor/shell-ui build
 
       # host/ is the one place that knows the platform, and the web build must
@@ -177,6 +184,10 @@ jobs:
           # What the browser build offers has to do something there: no library
           # it cannot scan, and a Ctrl+P that lists the folder that is open.
           node tools/verify-web-views.mjs --url http://localhost:5273
+          # A picture edited in the tab by the WebAssembly build — the window
+          # and the bytes agree, and a photograph is written off the main
+          # thread without the page stopping for 200 ms.
+          node tools/verify-web-image.mjs --url http://localhost:5273
           # OCR cannot be faked: an image is drawn with known text in it, put
           # through recognition, and the text has to come back. It runs on one
           # runner rather than three because nothing in it is platform-specific
@@ -316,12 +327,12 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # Proof the same core also goes into a browser — phase 3 depends on it.
-      - run: cargo build -p ul-formats --target wasm32-unknown-unknown --release
+      - run: cargo build --locked -p ul-formats --target wasm32-unknown-unknown --release
       # And the image transforms with it. They are only reachable through a Tauri
       # command today, so nothing would notice a dependency that cannot be built
       # for the web — until phase 3, when it would be a rewrite rather than a
       # fix. `image` was chosen with its features cut down for this reason.
-      - run: cargo build -p ul-image --target wasm32-unknown-unknown --release
+      - run: cargo build --locked -p ul-image --target wasm32-unknown-unknown --release
 
       # Phase 3 (ADR 0002): ul-image runs in the browser, through glue that
       # wasm-bindgen writes. The CLI has to be the crate's exact version, so it
@@ -338,3 +349,8 @@ jobs:
       # A picture turned in the browser build, and its pixels read where they
       # landed; a header claiming too much refused before it is allocated.
       - run: node tools/verify-wasm.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wasm
+          path: packages/shell-ui/public/wasm/
+          retention-days: 1

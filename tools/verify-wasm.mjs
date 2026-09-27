@@ -103,7 +103,7 @@ check(
 /* ── a quarter turn, clockwise ───────────────────────────────────────── */
 
 const applied = glue.imageApply(png, { rotate: 90, encoding: 'bmp' });
-const out = applied.bytes;
+const out = applied.takeBytes();
 const written = applied.written;
 applied.free();
 const bmp = readBmp(out);

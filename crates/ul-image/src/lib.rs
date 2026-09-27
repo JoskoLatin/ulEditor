@@ -38,7 +38,7 @@ use std::path::Path;
 
 use image::imageops::FilterType;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -55,7 +55,7 @@ pub enum ImageError {
     Crop(String),
     #[error("a size of zero has no picture in it")]
     EmptySize,
-    /// Past [`MOST_PIXELS`], going in or coming out.
+    /// Past [`MOST_BYTES`], going in, coming out or on the way.
     #[error("the image is too large to edit: {0}")]
     TooLarge(String),
     #[error("file system error: {0}")]
@@ -191,26 +191,66 @@ pub struct Written {
     pub lossy: bool,
 }
 
-/// The most pixels a picture may have, read or written: 100 megapixels, four
-/// hundred megabytes decoded, twice the largest photograph in the documents
-/// this was measured against.
+/// The most memory one picture may take, decoded or on its way through a
+/// resize: four hundred megabytes — 100 megapixels of 8-bit RGBA, half that at
+/// 16 bits a channel, a quarter as floating point.
 ///
-/// Not a matter of taste. The size is in the header, which is whatever the
-/// file says, and decoding allocates for it before a pixel is read; a turn or a
-/// resize allocates again. On desktop an oversized file is an error, but in a
-/// browser tab running this as WebAssembly, running out of memory aborts the
-/// whole instance. So the header is read first and the picture refused, and a
-/// resize is held to the same bound — the picture stays viewable either way.
-pub const MOST_PIXELS: u64 = 100_000_000;
+/// In bytes, not pixels, because the file chooses both. The size is in the
+/// header and so is the depth: a TIFF of two hundred bytes can declare
+/// 10 000 × 10 000 pixels of 32-bit float RGBA, which is 1.6 GB before a pixel
+/// is read, and a limit counted in pixels lets it through. On desktop an
+/// allocation that fails aborts the editor; in a browser tab running this as
+/// WebAssembly it kills the instance. So the decoder is opened with limits of
+/// its own and asked what it will need before it is let at the pixels, a GIF
+/// frame larger than its screen is held to the same allowance by the decoder,
+/// and a resize is checked for what its passes allocate — the picture stays
+/// viewable either way.
+pub const MOST_BYTES: u64 = 400_000_000;
 
-fn within(width: u32, height: u32) -> Result<(), ImageError> {
-    if u64::from(width) * u64::from(height) > MOST_PIXELS {
+/// No side longer than JPEG's own maximum. Strict, and passed to every
+/// decoder, some of which would otherwise accept any width at all.
+const LONGEST_SIDE: u32 = 65_535;
+
+/// `imageops::resize` samples in `f32` RGBA: sixteen bytes a pixel, whatever
+/// the picture's own depth.
+const RESAMPLE_BYTES_PER_PIXEL: u64 = 16;
+
+fn fits(what: &str, bytes: u64) -> Result<(), ImageError> {
+    if bytes > MOST_BYTES {
         return Err(ImageError::TooLarge(format!(
-            "{width}×{height} is more than {} megapixels",
-            MOST_PIXELS / 1_000_000
+            "{what} would take {} MB, and the most is {} MB",
+            bytes / 1_000_000,
+            MOST_BYTES / 1_000_000
         )));
     }
     Ok(())
+}
+
+/// A decoder's own refusal of a size is the same refusal as ours.
+fn decoding(err: image::ImageError) -> ImageError {
+    match err {
+        image::ImageError::Limits(_) => ImageError::TooLarge(err.to_string()),
+        other => ImageError::Decode(other.to_string()),
+    }
+}
+
+/// Opens a decoder with the limits on, and refuses the picture if what it
+/// will allocate is past them — all from the header, before any pixels.
+fn open(bytes: &[u8]) -> Result<impl ImageDecoder + '_, ImageError> {
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|err| ImageError::Decode(err.to_string()))?;
+
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(LONGEST_SIDE);
+    limits.max_image_height = Some(LONGEST_SIDE);
+    limits.max_alloc = Some(MOST_BYTES);
+    reader.limits(limits);
+
+    let decoder = reader.into_decoder().map_err(decoding)?;
+    let (width, height) = decoder.dimensions();
+    fits(&format!("{width}×{height}"), decoder.total_bytes())?;
+    Ok(decoder)
 }
 
 fn guess(bytes: &[u8]) -> Option<ImageFormat> {
@@ -223,21 +263,10 @@ fn guess(bytes: &[u8]) -> Option<ImageFormat> {
 /// asked for the orientation first, since that is metadata and has to be read
 /// before the pixels are handed over.
 fn decode(bytes: &[u8]) -> Result<(DynamicImage, bool), ImageError> {
-    let reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|err| ImageError::Decode(err.to_string()))?;
-
-    let mut decoder = reader
-        .into_decoder()
-        .map_err(|err| ImageError::Decode(err.to_string()))?;
-
-    let (width, height) = decoder.dimensions();
-    within(width, height)?;
-
+    let mut decoder = open(bytes)?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
 
-    let mut image =
-        DynamicImage::from_decoder(decoder).map_err(|err| ImageError::Decode(err.to_string()))?;
+    let mut image = DynamicImage::from_decoder(decoder).map_err(decoding)?;
 
     let reoriented = orientation != Orientation::NoTransforms;
     if reoriented {
@@ -246,16 +275,32 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, bool), ImageError> {
     Ok((image, reoriented))
 }
 
-/// What the file is, without transforming anything.
+/// What the file is, without transforming anything — and without decoding it.
+///
+/// The header holds all of it: the size, the orientation and the format. It
+/// used to decode every pixel for those three facts, which in a browser was a
+/// quarter of a second for a 12-megapixel photograph and a second for a
+/// 50-megapixel one, just to open it. A file whose pixels are damaged behind a
+/// sound header now opens as editable and fails when it is written, saying
+/// that it could not be read.
 pub fn info(bytes: &[u8]) -> Result<Info, ImageError> {
     let format = guess(bytes);
-    let (image, reoriented) = decode(bytes)?;
+    let mut decoder = open(bytes)?;
+    let (width, height) = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let (width, height) = match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (height, width),
+        _ => (width, height),
+    };
     let encoding = format.and_then(Encoding::from_format);
     Ok(Info {
-        width: image.width(),
-        height: image.height(),
+        width,
+        height,
         encoding,
-        reoriented,
+        reoriented: orientation != Orientation::NoTransforms,
         editable: encoding.is_some(),
     })
 }
@@ -324,7 +369,26 @@ pub fn apply(bytes: &[u8], ops: &Ops) -> Result<(Vec<u8>, Written), ImageError> 
         if size.width == 0 || size.height == 0 {
             return Err(ImageError::EmptySize);
         }
-        within(size.width, size.height)?;
+        let target = format!("{}×{}", size.width, size.height);
+        fits(
+            &target,
+            u64::from(size.width)
+                * u64::from(size.height)
+                * u64::from(image.color().bytes_per_pixel()),
+        )?;
+        // The first pass of the resize holds the source's width at the
+        // target's height, in f32. A large photograph made much smaller would
+        // spend most of that on columns about to be thrown away, so it is
+        // first brought down to twice the target by whole-pixel averaging,
+        // which allocates only its result, and Lanczos does the rest.
+        let pass =
+            |width: u32| u64::from(width) * u64::from(size.height) * RESAMPLE_BYTES_PER_PIXEL;
+        if pass(image.width()) > MOST_BYTES && image.width() / 2 > size.width {
+            let width = size.width.saturating_mul(2);
+            let height = image.height().min(size.height.saturating_mul(2));
+            image = image.thumbnail_exact(width, height);
+        }
+        fits(&format!("resizing to {target}"), pass(image.width()))?;
         // Lanczos3 rather than the cheaper filters: this is a photograph being
         // made smaller, which is the case where a nearest-neighbour resize is
         // visibly worse and nobody can say why.
@@ -426,8 +490,8 @@ mod wasm {
         serde_wasm_bindgen::to_value(&info).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// The encoded bytes and what they hold, as two getters — one allocation
-    /// for the picture, and no second copy of it inside a serialised object.
+    /// The encoded bytes and what they hold — the picture handed over once,
+    /// and no second copy of it inside a serialised object.
     #[wasm_bindgen]
     pub struct Applied {
         bytes: Vec<u8>,
@@ -436,9 +500,11 @@ mod wasm {
 
     #[wasm_bindgen]
     impl Applied {
-        #[wasm_bindgen(getter)]
-        pub fn bytes(&self) -> Vec<u8> {
-            self.bytes.clone()
+        /// Hands the picture over rather than copying it: the one copy left
+        /// is the one out of WebAssembly memory into the page.
+        #[wasm_bindgen(js_name = takeBytes)]
+        pub fn take_bytes(&mut self) -> Vec<u8> {
+            std::mem::take(&mut self.bytes)
         }
 
         #[wasm_bindgen(getter)]
@@ -510,6 +576,92 @@ mod tests {
             apply(&bytes, &Ops::default()),
             Err(ImageError::TooLarge(_))
         ));
+    }
+
+    #[test]
+    fn the_limit_is_counted_in_bytes_not_pixels() {
+        // 9 000 × 9 000 is 81 megapixels, under a hundred — but as 16-bit RGBA
+        // it is 648 MB. The file chooses the depth, so the depth counts.
+        let mut bytes = corner_png();
+        bytes[16..20].copy_from_slice(&9_000u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&9_000u32.to_be_bytes());
+        bytes[24] = 16;
+        let crc = crc32(&bytes[12..29]);
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        assert!(matches!(info(&bytes), Err(ImageError::TooLarge(_))));
+    }
+
+    #[test]
+    fn a_gif_frame_larger_than_its_screen_is_held_to_the_same_limit() {
+        // A 1×1 screen passes any look at the header; the frame inside it
+        // claims 11 000 × 11 000, which is 484 MB of RGBA. Thirty-odd bytes.
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend_from_slice(&[1, 0, 1, 0, 0x80, 0, 0]); // screen 1×1, two colours
+        gif.extend_from_slice(&[0, 0, 0, 255, 255, 255]);
+        gif.push(0x2C); // image descriptor
+        gif.extend_from_slice(&[0, 0, 0, 0]); // at 0,0
+        gif.extend_from_slice(&11_000u16.to_le_bytes());
+        gif.extend_from_slice(&11_000u16.to_le_bytes());
+        gif.extend_from_slice(&[0, 2, 0, 0x3B]); // no palette, LZW 2, no data, end
+        assert!(info(&gif).is_ok(), "the header is a 1×1 picture");
+        // Saved as a PNG, which is what the editor does with a GIF.
+        let as_png = Ops {
+            encoding: Some(Encoding::Png),
+            ..Ops::default()
+        };
+        let result = apply(&gif, &as_png);
+        assert!(
+            matches!(result, Err(ImageError::TooLarge(_))),
+            "{:?}",
+            result.map(|r| r.1)
+        );
+    }
+
+    #[test]
+    fn a_wide_picture_made_much_smaller_does_not_hold_its_width_in_floats() {
+        // Straight into Lanczos, the first pass would hold 30 000 columns at a
+        // thousand rows in f32: 480 MB, for a result of 10 × 1 000. Brought
+        // down to twice the target first, it is a few hundred kilobytes.
+        let wide = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            30_000,
+            2,
+            image::Rgba([0, 0, 255, 255]),
+        ));
+        let mut out = Cursor::new(Vec::new());
+        wide.write_to(&mut out, ImageFormat::Png).unwrap();
+        let ops = Ops {
+            resize: Some(Size {
+                width: 10,
+                height: 1_000,
+            }),
+            ..Ops::default()
+        };
+        let (_, written) = apply(&out.into_inner(), &ops).unwrap();
+        assert_eq!((written.width, written.height), (10, 1_000));
+    }
+
+    #[test]
+    fn a_sideways_photograph_reads_the_way_up_it_will_be_written() {
+        // A 4×2 JPEG whose Exif says "turn a quarter clockwise": the size
+        // `info` reads from the header has to be the size `apply` writes.
+        let mut jpeg = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 2, image::Rgb([9, 9, 9])))
+            .write_to(&mut jpeg, ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg = jpeg.into_inner();
+        let mut exif = b"Exif\0\0II*\0\x08\0\0\0\x01\0".to_vec();
+        exif.extend_from_slice(&[0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0]);
+        let mut tagged = jpeg[..2].to_vec();
+        tagged.extend_from_slice(&[0xFF, 0xE1]);
+        tagged.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        tagged.extend_from_slice(&exif);
+        tagged.extend_from_slice(&jpeg[2..]);
+
+        let read = info(&tagged).unwrap();
+        assert!(read.reoriented);
+        assert_eq!((read.width, read.height), (2, 4));
+        let (_, written) = apply(&tagged, &Ops::default()).unwrap();
+        assert_eq!((written.width, written.height), (read.width, read.height));
     }
 
     #[test]

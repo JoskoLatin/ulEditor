@@ -254,8 +254,29 @@ export class BrowserFileSystem implements VirtualFileSystem {
     }
   }
 
+  /**
+   * The handle for a file about to be written, made in its folder if the file
+   * is new — an image saved in another format, or a copy saved beside the
+   * original. Only in a folder the person opened: a file opened on its own
+   * has no folder here to write a sibling into.
+   */
+  async #writableHandle(uri: Uri): Promise<FsFileHandle> {
+    if (this.#handles.has(uri)) return this.#fileHandle(uri);
+    const slash = uri.lastIndexOf('/');
+    const parentUri = uri.slice(0, slash);
+    const name = uri.slice(slash + 1);
+    const parent = this.#handles.get(parentUri);
+    if (!parent || parent.kind !== 'directory' || !name || name === '.' || name === '..') {
+      throw new Error(t('A new file can only be written into a folder that is open.'));
+    }
+    await this.#ensureWritable(parent);
+    const handle = await parent.getFileHandle(name, { create: true });
+    this.#register(uri, handle, parentUri);
+    return handle;
+  }
+
   async writeBytes(uri: Uri, data: Uint8Array, _opts?: WriteOptions): Promise<void> {
-    const handle = this.#fileHandle(uri);
+    const handle = await this.#writableHandle(uri);
     await this.#ensureWritable(handle);
     const writable = await handle.createWritable();
     // A copy into a fresh ArrayBuffer — writable does not accept views onto a SharedArrayBuffer.

@@ -302,27 +302,6 @@ export class NoLanguageServers implements LanguageService {
 }
 
 /**
- * Image transforms live in `crates/ul-image`, which the web build has no route
- * to yet — the wasm build of the core arrives in phase 3. Until then the
- * pictures open, zoom and go through OCR in a browser, and the tools that would
- * write a file back are not drawn at all: an editor asks `available()` rather
- * than guessing from the platform.
- */
-export class NoImageEditing implements ImageService {
-  available(): boolean {
-    return false;
-  }
-
-  async info(_source: Uri): Promise<ImageInfo> {
-    throw new Error(t('Image editing needs the desktop application.'));
-  }
-
-  async write(_source: Uri, _target: Uri, _ops: ImageOps): Promise<ImageWritten> {
-    throw new Error(t('Image editing needs the desktop application.'));
-  }
-}
-
-/**
  * Conversion runs LibreOffice, which a browser cannot start. The desktop build
  * uses `TauriConversion`; here the service exists and says no, rather than
  * leaving an editor to guess from the platform.

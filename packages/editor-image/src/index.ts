@@ -10,8 +10,9 @@
  * a hundred and sixty megabytes for a picture CSS can turn for nothing.
  *
  * So the tools are drawn only where the transforms exist. `host.images` answers
- * that, and in a browser it answers no — the picture still opens, zooms and goes
- * through OCR, and what cannot be done is not offered.
+ * that — on desktop over a command, in a browser as WebAssembly in a worker —
+ * and where it answers no, the picture still opens, zooms and goes through OCR,
+ * and what cannot be done is not offered.
  */
 
 import {
@@ -308,9 +309,9 @@ class ImageEditor implements EditorInstance {
     this.#ocrButton = ocr;
 
     /* The tools that write a file are drawn only where there is something to
-       write it with. In a browser `host.images` says no, and the bar keeps the
-       zoom, the OCR and the readout — rather than offering four buttons that
-       would each end in the same apology. */
+       write it with. Where `host.images` says no, the bar keeps the zoom, the
+       OCR and the readout — rather than offering four buttons that would each
+       end in the same apology. */
     const editing = this.host.images.available() ? this.#buildEditingTools(button, sep) : [];
 
     bar.append(

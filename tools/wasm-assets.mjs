@@ -40,11 +40,14 @@ function run(command, args) {
 }
 
 const lock = await readFile(resolve(ROOT, 'Cargo.lock'), 'utf8');
-const wanted = /\[\[package\]\]\s*name = "wasm-bindgen"\s*version = "([^"]+)"/.exec(lock)?.[1];
-if (!wanted) {
-  console.error('Cargo.lock names no wasm-bindgen — nothing to match the CLI against');
+/* Exactly one: with two versions locked, which one the glue must match is a
+   question, and picking the first would answer it silently. */
+const locked = [...lock.matchAll(/\[\[package\]\]\s*name = "wasm-bindgen"\s*version = "([^"]+)"/g)].map((m) => m[1]);
+if (locked.length !== 1) {
+  console.error(`Cargo.lock holds ${locked.length} versions of wasm-bindgen (${locked.join(', ')}) — it has to be exactly one`);
   process.exit(1);
 }
+const wanted = locked[0];
 
 const cli = spawnSync('wasm-bindgen', ['--version'], { encoding: 'utf8' });
 const have = /wasm-bindgen (\S+)/.exec(cli.stdout ?? '')?.[1];
@@ -61,7 +64,7 @@ await mkdir(OUT, { recursive: true });
 
 const manifest = { wasmBindgen: wanted, files: {} };
 for (const { crate, file } of CRATES) {
-  const build = run('cargo', ['build', '-p', crate, '--target', TARGET, '--release']);
+  const build = run('cargo', ['build', '--locked', '-p', crate, '--target', TARGET, '--release']);
   if (build.status !== 0) {
     console.error(build.stderr);
     process.exit(1);

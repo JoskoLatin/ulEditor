@@ -19,13 +19,13 @@ import { isLocale, type Locale } from '@uleditor/i18n';
 import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
 import { TauriImages } from './tauri-images.js';
+import { WasmImages } from './wasm-images.js';
 import { TauriConversion } from './tauri-convert.js';
 import { TauriLanguageServers } from './tauri-lsp.js';
 import { EditorRegistry } from './registry.js';
 import {
   Commands,
   NoConversion,
-  NoImageEditing,
   NoLanguageServers,
   Notifications,
   Settings,
@@ -74,6 +74,7 @@ export function createShell(): Shell {
   const preference = settings.get<ThemePreference>('theme', 'system');
   const stored = settings.get<string>('locale', 'en');
   const desktop = isTauri();
+  const fs = desktop ? new TauriFileSystem() : new BrowserFileSystem();
 
   /* Desktop goes through Rust: the webview's own `window.open` would put the
      page inside another webview, not in the person's browser. */
@@ -86,7 +87,7 @@ export function createShell(): Shell {
       };
 
   return {
-    fs: desktop ? new TauriFileSystem() : new BrowserFileSystem(),
+    fs,
     commands: new Commands(),
     theme: new Themes(preference),
     settings,
@@ -94,9 +95,9 @@ export function createShell(): Shell {
     /* LibreOffice, and only for the drawings nothing else reads. On the web
        there is nothing to reach, and `NoConversion` says so. */
     convert: desktop ? new TauriConversion() : new NoConversion(),
-    /* The transforms are in Rust, so they exist where Rust does. The web build
-       keeps the viewer and is told to say so. */
-    images: desktop ? new TauriImages() : new NoImageEditing(),
+    /* The transforms are in Rust either way: over a command on desktop, where
+       the bytes stay out of the webview, and as WebAssembly in a browser. */
+    images: desktop ? new TauriImages() : new WasmImages(fs),
     /* A language server is a process; a browser starts none, and says so. */
     language: desktop ? new TauriLanguageServers() : new NoLanguageServers(),
     registry: new EditorRegistry(),

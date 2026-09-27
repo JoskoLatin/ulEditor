@@ -202,6 +202,7 @@
   "Browsing archives is not planned — ulEditor opens documents, it does not pack them.": "Pregled arhiva nije u planu — ulEditor otvara dokumente, ne pakira ih.",
   "Supported files": "Podržane datoteke",
   "The browser did not grant permission to write this file.": "Preglednik nije dao dozvolu za pisanje u ovu datoteku.",
+  "A new file can only be written into a folder that is open.": "Nova datoteka može se zapisati samo u otvorenu mapu.",
   "This browser cannot open files.": "Preglednik ne podržava otvaranje datoteka.",
   "This browser cannot open folders.": "Preglednik ne podržava otvaranje mape.",
   "The file is open read-only.": "Datoteka je otvorena samo za čitanje.",
