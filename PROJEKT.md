@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-09-27. Zamjenjuje onaj od 2026-09-23; dopunjen nakon `d6a0c99`.
+Izvještaj od 2026-09-27. Zamjenjuje onaj od 2026-09-23; dopunjen nakon `9bc2548`.
 
 ## Jedna rečenica
 
@@ -91,14 +91,21 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
 gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
-ceka | visok | Izdati 0.6.2 — commit spreman (`a43c1d7`, nosi i 0.6.1 i ubrzanje); čeka Joškov tag
+ceka | visok | Izdati 0.6.2 — čeka Joškov tag: `a43c1d7` (0.6.1 + ubrzanje) ili HEAD (uz to faza 3 i nove granice slika, koje diraju i desktop)
 gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, ulazi u 0.6.2)
 gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
 gotovo | normalan | Potvrditi ADR 0002 (faza 3: ul-image/ul-formats u WASM, ne ul-core; backend kasnije) — prihvaćen 2026-09-27
 gotovo | normalan | Faza 3, korak 2 — Tauri API samo kroz host/native.ts, web bundle ga više ne učitava (`8e98feb`, `pnpm verify:host`, CI zelen)
-ceka | normalan | Faza 3, korak 3 — ul-image u WASM; traži wasm-bindgen-cli 0.2.127 kao novi alat u CI-ju, čeka Joškovo da
+gotovo | normalan | Web: bez Library kartice u pregledniku, Ctrl+P lista otvorenu mapu, Quick Open rangira po imenu (`c3bbb80`)
+gotovo | normalan | Faza 3, korak 3 — ul-image u WASM, 361 KB gzip, wasm-bindgen-cli 0.2.127 pinan iz Cargo.lock (`261fed8`)
+gotovo | visok | Faza 3, korak 4 — uređivanje slika u pregledniku, u workeru (najdulji zastoj 67 ms na 12 MP); tri sigurnosna kruga: NE / NE / PROLAZI (`8e87389`, `e580185`, `9bc2548`)
+gotovo | normalan | Faza 3, korak 5 — drukčije od ADR-a: TS i Rust detektor ostaju, CI paritet (70 369 datoteka, 0 razlika; nađen i popravljen off-by-one za WebP)
+ceka | normalan | Granica memorije za slike: MOST_BYTES 400 MB, TIFF strop 200 MB (desktop je prije imao 512 MiB), JPEG/WebP vršno do ~3× — Joškova odluka
+todo | normalan | Faza 3, korak 6 — service worker, rad bez mreže (u repou)
+ceka | normalan | Faza 3, korak 7 — deploy na server (compose, Caddy, CSP header) — čeka Joškovo da i cilj na serveru
+todo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje stranice (u repou)
 
 ## Blokada
 
