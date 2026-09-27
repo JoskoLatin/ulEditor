@@ -288,12 +288,15 @@ check(
  * with a bound a few percent above it failed a commit that changed no code.
  * So each shape is also timed at an eighth of its size. Eight times the
  * formulas cost eight to ten times the time when the work is linear, and
- * the quadratic version cost 22 to 39 — and that ratio holds on any runner.
- * Every time is the best of five keystrokes.
+ * the quadratic version cost 22 to 58 — and that ratio holds on any runner.
+ * The cheap shapes are four times the size the old figures were taken at,
+ * so that even an eighth of them is milliseconds rather than one, where the
+ * Windows runner's noise alone once read as 15 times. Every time is the best
+ * of seven keystrokes.
  */
 {
   const money = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
-  const keystroke = (cells, typed, rounds = 5) => {
+  const keystroke = (cells, typed, rounds = 7) => {
     recalculate(cells, 'Veliki', typed);
     let best = Infinity;
     for (let i = 0; i < rounds; i++) {
@@ -310,13 +313,13 @@ check(
     return { ms: full, growth: full / Math.max(eighth, 0.01) };
   };
   const linear = (s) => s.growth < 15;
-  const shown = (s, was) => `${s.ms.toFixed(1)} ms, ${s.growth.toFixed(1)}× the time at an eighth of the size (was ${was} ms)`;
+  const shown = (s, was) => `${s.ms.toFixed(1)} ms, ${s.growth.toFixed(1)}× the time at an eighth of the size (was ${was})`;
 
   const allRead = scaling((n) => {
     const readers = new Map([['0,0', money(1)]]);
     for (let r = 1; r <= n; r++) readers.set(`${r},1`, money(1 + r, `A1+${r}`));
     return readers;
-  }, 10_000);
+  }, 40_000);
 
   const running = scaling((n) => {
     const balance = new Map();
@@ -325,12 +328,12 @@ check(
       balance.set(`${r},1`, money(r + 1, r === 0 ? 'A1' : `B${r}+A${r + 1}`));
     }
     return balance;
-  }, 5_000);
+  }, 20_000);
 
   check(
-    '10 000 formulas all reading the typed cell settle in a few frames, not half a second',
-    allRead.ms < 250 && linear(allRead),
-    shown(allRead, 511),
+    '40 000 formulas all reading the typed cell grow with their number and not with its square',
+    allRead.ms < 1_000 && linear(allRead),
+    shown(allRead, '511 ms at 10 000'),
   );
   /* A file built to fill the index: 3 000 formulas of Excel's longest, each
      naming two thousand ranges. It has to stay bounded in time and in memory,
@@ -358,7 +361,7 @@ check(
   check(
     '10 000 row totals across fifty columns, one shared input typed, grow with the rows and not with their square',
     wideRows.ms < 500 && linear(wideRows),
-    shown(wideRows, 664),
+    shown(wideRows, '664 ms'),
   );
 
   /* Twenty thousand formulas each reading a long column and one shared cell:
@@ -376,9 +379,9 @@ check(
   );
 
   check(
-    'a running balance 5 000 rows long settles in a frame or two, not a third of a second',
-    running.ms < 160 && linear(running),
-    shown(running, 320),
+    'a running balance 20 000 rows long grows with its length and not with its square',
+    running.ms < 600 && linear(running),
+    shown(running, '320 ms at 5 000'),
   );
 }
 
