@@ -111,6 +111,12 @@ go through an independent security review first.
    capabilities, CSP header equal to the desktop one minus `ipc:`. A check
    that the served header matches and `isSecureContext` is true. *(security,
    whole step)*
+   **Done (2026-09-27)**: deploy/web/, `tools/deploy-web.ps1`, and
+   `tools/verify-web-csp.mjs`, which serves the build under the policy read
+   from deploy/web/Caddyfile and drives the worker, the module, pdf.js and
+   OCR. The container needs `NET_BIND_SERVICE` back: the image's caddy
+   binary carries it as a file capability, and under no-new-privileges exec
+   is refused without it. The name needs a DNS record on the router.
 8. The workspace root survives a reload.
 
 ## To measure before committing

@@ -104,7 +104,8 @@ gotovo | visok | Faza 3, korak 4 — uređivanje slika u pregledniku, u workeru 
 gotovo | normalan | Faza 3, korak 5 — drukčije od ADR-a: TS i Rust detektor ostaju, CI paritet (70 369 datoteka, 0 razlika; nađen i popravljen off-by-one za WebP)
 gotovo | normalan | Granica memorije za slike: 512 MiB, zadano u `image` crateu i koliko je desktop imao prije; TIFF 256 MiB, JPEG/WebP vršno do ~3×
 todo | normalan | Faza 3, korak 6 — service worker, rad bez mreže (u repou)
-ceka | normalan | Faza 3, korak 7 — deploy na server (compose, Caddy, CSP header) — čeka Joškovo da i cilj na serveru
+gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
+ceka | visok | DNS zapis uleditor.truss → 192.168.3.10 na routeru 192.168.3.1 — Joško
 todo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje stranice (u repou)
 
 ## Blokada

@@ -1,0 +1,43 @@
+# ulEditor, the browser build — the static `dist` and the headers it needs.
+#
+# Served inside the container on plain :8080; TLS is the shared Caddy's job, which
+# reverse-proxies uleditor.truss here over the `proxy` network (ADR 0002,
+# step 7). This file is the one place the web build's policy lives, and
+# tools/verify-web-csp.mjs serves the build with the policy read from here.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	root * /srv/site
+	encode zstd gzip
+
+	header {
+		# The desktop policy in tauri.conf.json, less what only Tauri has
+		# (ipc:, ipc.localhost), plus what a page on the open web should say
+		# about being framed and where forms go. Google Fonts stays: a PDF
+		# line in a font the screen lacks can be fetched for display, and
+		# only when the person presses the button that says so.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy same-origin
+		-Server
+	}
+
+	# Vite names every asset by its content, so it never changes under a name.
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	# Everything else, index.html and the WebAssembly, is asked again each time.
+	@rest not path /assets/*
+	header @rest Cache-Control "no-cache"
+
+	# `instantiateStreaming` wants this exact type.
+	@wasm path *.wasm
+	header @wasm Content-Type application/wasm
+
+	try_files {path} /index.html
+	file_server
+}

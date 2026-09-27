@@ -200,6 +200,10 @@ jobs:
           # a minute of recognition each time.
           if [ "$RUNNER_OS" = "Linux" ]; then
             node tools/verify-ocr.mjs --url http://localhost:5273
+            # The same build under the policy deploy/web/Caddyfile serves it
+            # with: the image worker, the module, pdf.js and OCR, and not one
+            # violation. Linux only for the same minute of recognition.
+            node tools/verify-web-csp.mjs
           fi
         shell: bash
 

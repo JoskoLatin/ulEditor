@@ -1,0 +1,39 @@
+# ulEditor, the browser build, on the server at /opt/stacks/uleditor.
+#
+# A static site and nothing else: no ports of its own (the shared Caddy
+# reaches it over `proxy`), read-only everywhere, one capability, and the
+# same pinned Caddy image the server already runs. `site/` is the built
+# `packages/shell-ui/dist`, put there by tools/deploy-web.ps1.
+services:
+  uleditor:
+    image: caddy:2.11.4-alpine
+    container_name: uleditor
+    restart: unless-stopped
+    read_only: true
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/site:ro
+    tmpfs:
+      - /data
+      - /config
+    networks:
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The one capability back, and only because the image's caddy binary
+    # carries it as a file capability: under no-new-privileges a binary that
+    # asks for one it cannot have is refused at exec ("operation not
+    # permitted"). The shared Caddy on this server is set the same way.
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  proxy:
+    external: true
