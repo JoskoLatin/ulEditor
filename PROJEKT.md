@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-09-23. Zamjenjuje onaj od 2026-09-22 (`e4881f6`); dopunjen nakon `be4b50e`.
+Izvještaj od 2026-09-27. Zamjenjuje onaj od 2026-09-23; dopunjen nakon `d6a0c99`.
 
 ## Jedna rečenica
 
@@ -10,16 +10,29 @@ OpenDocument i e-knjige — kao Tauri desktop aplikacija s Rust jezgrom
 
 ## Verzija i faza
 
-Verzija: **0.6.1** u kodu (`91c7bb7`, 2026-09-26, CI zelen); tag `v0.6.1` još nije
-postavljen — to je objava izdanja i radi je Joško. Zadnji objavljeni: `v0.6.0`.
+Verzija: **0.6.2** u kodu (`a43c1d7`, 2026-09-27). 0.6.1 nikad nije označen, pa
+0.6.2 nosi i nju i ubrzanje preračuna — jedno izdanje umjesto dva. Tag `v0.6.2`
+postavlja Joško. Zadnji objavljeni: `v0.6.0`.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Zadnji rad: **2026-09-26** — preračun formula: cijela knjiga, `SUMIFS`, dva
-sigurnosna pregleda, ubrzanje.
+Zadnji rad: **2026-09-27** — cold start izmjeren (474 ms), vremenski testovi
+preračuna više ne ovise o brzini CI runnera.
 Faza: **2 (Office)**, pri kraju — `docs/ANALYSIS-AND-PLAN.md:367`. Faza 3 (Web,
 WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 ## Radi
+
+- **Cold start je izmjeren** — zadnji neizmjereni budžet iz plana. Instalirana
+  0.6.0, od pokretanja procesa do prvog iscrtavanja ljuske: **474 ms** medijan,
+  603–807 ms pri prvom pokretanju s praznim profilom, 1 104 ms na jednoj jezgri;
+  budžet je 1,5 s (`pnpm cold-start`, `tools/cold-start.mjs`,
+  `docs/ANALYSIS-AND-PLAN.md:799`). Ne mjeri start nakon ponovnog pokretanja
+  računala (prazan file cache).
+- **Vremenski testovi preračuna više ne padaju na sporom runneru.** Test je
+  dvaput srušio CI na kodu koji se nije mijenjao (101 ms naspram praga 100;
+  macOS runner 221 ms). Sad se mjeri kako vrijeme raste s veličinom (osmina
+  prema cijelom: sadašnji kod 8–13×, stari kvadratni 22–58×), što vrijedi na
+  svakom stroju (`d0c2fb1`, `b6517bd`); CI zelen na sva tri runnera.
 
 - **Pogled na tablicu više ne laže.** Pretipkana ćelija sredi list pod sobom:
   `SUM` nad promijenjenim stupcem crta se s novim zbrojem u vlastitom formatu
@@ -69,8 +82,6 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
   i sličnih se označi.
 - **Installeri nisu potpisani** za Windows i macOS (`README.md:36`). Android APK
   jest. Ovo je kupnja certifikata, ne kod.
-- **Cold start nije izmjeren** — `docs/ANALYSIS-AND-PLAN.md:770` ga zove
-  „the last unmeasured budget".
 - **Telemetrija nije započeta** (i ostaje opt-in) — `docs/ANALYSIS-AND-PLAN.md:228`.
 - ~~`CLAUDE.md` u korijenu nije u gitu~~ — riješeno (`af59b5d`): namjerno je
   izvan gita, i `CLAUDE.md` i `AGENTS.md` su u `.gitignore`, jer opisuju wiki i
@@ -80,9 +91,9 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
 gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
-ceka | visok | Izdati 0.6.1 — commit spreman i zelen (`91c7bb7`); čeka Joškov tag
-gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, sigurnosni pregled prolazi; ulazi u izdanje nakon 0.6.1)
-todo | normalan | Izmjeriti cold start i zapisati budžet u plan
+ceka | visok | Izdati 0.6.2 — commit spreman (`a43c1d7`, nosi i 0.6.1 i ubrzanje); čeka Joškov tag
+gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, ulazi u 0.6.2)
+gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
 todo | nizak | Započeti fazu 3 — prevesti ul-core u WASM
@@ -102,6 +113,7 @@ Naslov: ulEditor — stanje
   (79.8% je `SUM`), evaluator pokriva 86%, a ostalo se pošteno prijavljuje kao
   zastarjelo umjesto da prikazuje broj koji više nije istinit.
 - Faza 2 je time zatvorena u kodu: pogled na tablicu više ne pokazuje broj koji
-  je prestao biti točan, a ne označava ni ono što nije dirano. Jedino što još
-  stoji je da se računa list po list; sve izvan repoa (potpisivanje installera)
-  čeka kupnju certifikata.
+  je prestao biti točan, a ne označava ni ono što nije dirano. Računa se cijela
+  knjiga, i svi budžeti iz plana su izmjereni i ispunjeni (cold start 474 ms od
+  1,5 s). Izvan repoa čekaju tag za 0.6.2 i kupnja certifikata; sljedeće u kodu
+  je faza 3 (Web, WASM).
