@@ -132,6 +132,11 @@ jobs:
       - run: node tools/ocr-assets.mjs
       - run: pnpm --filter @uleditor/shell-ui build
 
+      # host/ is the one place that knows the platform, and the web build must
+      # not load the Tauri API at all: checked in the source, and in the chunks
+      # the built page loads before anything decides to load more.
+      - run: pnpm verify:host
+
       # Annotations are checked without a browser: the written PDF is parsed
       # again and inspected for real annotation objects.
       - run: pnpm verify:pdf

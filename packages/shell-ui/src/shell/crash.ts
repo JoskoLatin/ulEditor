@@ -27,11 +27,10 @@
  * ceiling per session — after it, the console and nothing else.
  */
 
-import { invoke } from '@tauri-apps/api/core';
-
 import { t } from '@uleditor/i18n';
 
-import type { Shell } from '../host/index.js';
+import { isTauri, type Shell } from '../host/index.js';
+import { native } from '../host/native.js';
 import { adoptDropped } from './actions.js';
 
 /**
@@ -145,14 +144,16 @@ export function record(error: unknown, context: CrashContext): void {
   if (written >= MOST) return;
   written++;
 
-  try {
-    void invoke('record_crash', { text }).catch(() => {
+  /* The browser build has nowhere to write, and asking would load the Tauri
+     API into a tab that has no use for it. The console line stands on its own. */
+  if (!isTauri()) return;
+  void native
+    .core()
+    .then(({ invoke }) => invoke('record_crash', { text }))
+    .catch(() => {
       /* Nowhere to write and nothing to say about it. The console line above
-         already happened, and it is the only report a browser build ever had. */
+         already happened. */
     });
-  } catch {
-    // No Tauri here — the browser build. The console line stands on its own.
-  }
 }
 
 /**
@@ -210,6 +211,7 @@ export function watchForPastCrashes(shell: Shell): void {
 
   void (async () => {
     try {
+      const { invoke } = await native.core();
       const reports = await invoke<string[]>('take_crash_reports');
       if (!Array.isArray(reports) || reports.length === 0) return;
 

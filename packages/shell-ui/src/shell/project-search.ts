@@ -21,6 +21,7 @@ import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
+import { native } from '../host/native.js';
 
 /** Above this the second pass takes longer than anyone waits. */
 const MAX_DOCUMENTS = 60;
@@ -303,7 +304,7 @@ async function searchViaCore(
   state: { caseSensitive: boolean; wholeWord: boolean },
   query: string,
 ): Promise<RustOutcome> {
-  const { invoke } = await import('@tauri-apps/api/core');
+  const { invoke } = await native.core();
   return invoke<RustOutcome>('search_workspace', {
     query: {
       query,

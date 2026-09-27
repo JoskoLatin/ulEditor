@@ -20,6 +20,7 @@ import { create } from 'zustand';
 import { type FormatId, type Uri } from '@uleditor/plugin-sdk';
 
 import { isTauri } from '../host/tauri-fs.js';
+import { native } from '../host/native.js';
 
 export interface LibraryItem {
   uri: Uri;
@@ -97,7 +98,7 @@ export async function scanLibrary(): Promise<void> {
   useLibrary.setState({ phase: 'scanning', error: null });
 
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await native.core();
     const scan = await invoke<RawScan>('scan_library', { limit: 2000 });
 
     /*

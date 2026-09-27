@@ -269,9 +269,12 @@ check(
   'the check on start is silent, and at most once a day',
   updates.includes('silent: true') && updates.includes('24 * 60 * 60 * 1000'),
 );
+/* Through host/native.ts, which holds every Tauri import of the shell as a
+   dynamic one — verify-host.mjs checks that for all of them, in the bundle too. */
 check(
   'the plugin is imported dynamically, so the web bundle never holds it',
-  updates.includes("await import('@tauri-apps/plugin-updater')"),
+  updates.includes('await native.updater()') &&
+    read('packages/shell-ui/src/host/native.ts').includes("updater: () => import('@tauri-apps/plugin-updater')"),
 );
 
 /* Where the signatures are read from.

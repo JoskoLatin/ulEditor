@@ -15,6 +15,7 @@ import { detectByName } from '../host/detect.js';
 import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon, IconSearch } from './Icons.js';
 import { FORMATS } from '@uleditor/plugin-sdk';
+import { native } from '../host/native.js';
 
 /** Above this the list stops being useful and the fetch stops being cheap. */
 const MAX_FILES = 20000;
@@ -86,7 +87,7 @@ export function QuickOpen() {
 
     void (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await native.core();
         const stats = await invoke<{ uri: string; name: string }[]>('list_files', {
           limit: MAX_FILES,
         });

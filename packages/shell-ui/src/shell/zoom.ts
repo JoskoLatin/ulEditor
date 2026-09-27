@@ -19,6 +19,7 @@
  */
 
 import type { Shell } from '../host/index.js';
+import { native } from '../host/native.js';
 
 /**
  * The browser's own ladder. Steps rather than a free factor because a person
@@ -40,7 +41,7 @@ export function zoomFactor(shell: Shell): number {
 }
 
 async function apply(factor: number): Promise<void> {
-  const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+  const { getCurrentWebview } = await native.webview();
   await getCurrentWebview().setZoom(factor);
 }
 

@@ -24,6 +24,7 @@
 import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
+import { native } from '../host/native.js';
 
 /** How often the check on start actually checks. */
 const EVERY = 24 * 60 * 60 * 1000;
@@ -113,7 +114,7 @@ export async function checkForUpdates(shell: Shell, options: { silent?: boolean 
     /* A dynamic import, like every other Tauri API here: the web build must not
        pull the plugin into its bundle, and it would fail at load rather than at
        use if it did. */
-    const { check } = await import('@tauri-apps/plugin-updater');
+    const { check } = await native.updater();
     const update = (await check()) as Available | null;
     shell.settings.set(LAST_CHECK, Date.now());
     checking?.dispose();
@@ -206,7 +207,7 @@ async function install(shell: Shell, update: Available): Promise<void> {
        missing. Asking for one either way is harmless, and being wrong about
        which platform does what would leave somebody looking at a version that
        has already been replaced underneath them. */
-    const { relaunch } = await import('@tauri-apps/plugin-process');
+    const { relaunch } = await native.process();
     await relaunch();
   } catch (err) {
     progress.dispose();

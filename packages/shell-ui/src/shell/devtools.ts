@@ -16,6 +16,7 @@
  */
 
 import type { Shell } from '../host/index.js';
+import { native } from '../host/native.js';
 
 /**
  * Read once at startup and kept in a plain variable, because `when()` on a
@@ -28,7 +29,7 @@ export function watchDevtools(shell: Shell): void {
   if (shell.platform !== 'desktop') return;
   void (async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+      const { invoke } = await native.core();
       devtoolsAvailable = await invoke<boolean>('devtools_available');
     } catch {
       // An older core without the command: the entry stays hidden, which is the
@@ -39,7 +40,7 @@ export function watchDevtools(shell: Shell): void {
 
 export async function openDevtools(): Promise<void> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await native.core();
     await invoke('open_devtools');
   } catch {
     // Nothing to report: a build without the inspector never offers this.

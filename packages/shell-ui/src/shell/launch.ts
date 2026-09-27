@@ -22,6 +22,7 @@
  */
 
 import type { Shell } from '../host/index.js';
+import { native } from '../host/native.js';
 import { adoptDropped } from './actions.js';
 
 /** Named like a URL so it cannot collide with an event from a plugin. */
@@ -49,8 +50,8 @@ export function watchLaunchPaths(shell: Shell): () => void {
   void (async () => {
     try {
       const [{ invoke }, { listen }] = await Promise.all([
-        import('@tauri-apps/api/core'),
-        import('@tauri-apps/api/event'),
+        native.core(),
+        native.event(),
       ]);
 
       const stop = await listen<string[]>(OPEN_PATHS, (event) => void open(shell, event.payload));

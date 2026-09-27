@@ -20,6 +20,7 @@ import {
   IconUndo,
   IconWindowClose,
 } from './Icons.js';
+import { native } from '../host/native.js';
 
 /**
  * macOS keeps its own title bar, and its window buttons with it.
@@ -50,7 +51,7 @@ function WindowControls() {
     let cancelled = false;
 
     void (async () => {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow } = await native.window();
       const win = getCurrentWindow();
       const read = () => void win.isMaximized().then((v) => !cancelled && setMaximised(v));
       read();
@@ -69,7 +70,7 @@ function WindowControls() {
 
   const act = (name: 'minimize' | 'toggleMaximize') => {
     void (async () => {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const { getCurrentWindow } = await native.window();
       await getCurrentWindow()[name]();
     })();
   };

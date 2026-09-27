@@ -18,6 +18,7 @@ import type { Shell } from '../host/index.js';
 import { useWorkspace } from '../state/workspace.js';
 import { useScratch } from './scratch.js';
 import { saveSession } from './session.js';
+import { native } from '../host/native.js';
 
 /**
  * The language, chosen once and restored on the next start.
@@ -84,7 +85,7 @@ export async function requestExit(shell: Shell): Promise<void> {
   saveSession(shell);
 
   if (shell.platform === 'desktop') {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow } = await native.window();
     await getCurrentWindow().close();
     return;
   }

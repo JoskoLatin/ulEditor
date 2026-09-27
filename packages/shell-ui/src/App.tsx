@@ -25,6 +25,7 @@ import { Sidebar, SidebarResizer, SidebarScrim } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { TitleBar } from './components/TitleBar.js';
 import { Toasts } from './components/Toasts.js';
+import { native } from './host/native.js';
 
 export function App({ shell }: { shell: Shell }) {
   const sidebarVisible = useWorkspace((s) => s.sidebarVisible);
@@ -108,7 +109,7 @@ export function App({ shell }: { shell: Shell }) {
     let cancelled = false;
 
     void (async () => {
-      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      const { getCurrentWebview } = await native.webview();
       const stop = await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload;
         if (payload.type === 'over') setDropActive(true);
