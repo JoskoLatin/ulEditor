@@ -9,6 +9,7 @@
 
 import { create } from 'zustand';
 import type { DocumentHandle, EditorInstance, FormatId, Uri } from '@uleditor/plugin-sdk';
+import { isTauri } from '../host/tauri-fs.js';
 
 export interface TreeNode {
   uri: Uri;
@@ -92,7 +93,8 @@ export interface FindQuery {
 }
 
 /**
- * On a narrow screen the library is the default view, on a wide one the explorer.
+ * On a narrow screen the library is the default view, on a wide one — and in a
+ * browser — the explorer.
  *
  * This is a matter of habit rather than size: on a phone you reach a document by
  * having the program find it, on a computer by opening a folder you already know.
@@ -101,6 +103,8 @@ export interface FindQuery {
  */
 function defaultSidebarView(): SidebarView {
   if (typeof window === 'undefined') return 'explorer';
+  /* A browser has no library to offer — see shell/views.ts. */
+  if (!isTauri()) return 'explorer';
   return window.matchMedia('(max-width: 720px)').matches ? 'library' : 'explorer';
 }
 

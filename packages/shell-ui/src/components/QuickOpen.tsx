@@ -1,7 +1,7 @@
 /**
  * Quick open by file name (`Ctrl+P`).
  *
- * The list comes from Rust once per open, not from the tree: the tree loads
+ * The list comes from Rust once per open — in a browser from the VFS — not from the tree: the tree loads
  * lazily, so a file in a folder the user has never expanded would be invisible —
  * and that is exactly the one they look for most.
  */
@@ -9,6 +9,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@uleditor/i18n';
 
+import type { Shell } from '../host/index.js';
 import { useShell } from '../shell/context.js';
 import { openUri } from '../shell/actions.js';
 import { detectByName } from '../host/detect.js';
@@ -20,6 +21,33 @@ import { native } from '../host/native.js';
 /** Above this the list stops being useful and the fetch stops being cheap. */
 const MAX_FILES = 20000;
 const MAX_SHOWN = 60;
+/** Every file whose own name holds the query ranks above every one that needs its path to. */
+const NAME_MATCH = 1000;
+
+/**
+ * The browser's list: the open folders walked through the VFS, which skips the
+ * same noise the Rust walk does. Without it `Ctrl+P` in a browser opened an
+ * empty palette and answered "No matching file." to every name.
+ */
+async function listViaVfs(
+  shell: Shell,
+  limit: number,
+  stopped: () => boolean,
+): Promise<{ uri: string; name: string }[]> {
+  const found: { uri: string; name: string }[] = [];
+  const visit = async (uri: string): Promise<void> => {
+    for (const entry of await shell.fs.readDirectory(uri)) {
+      if (found.length >= limit || stopped()) return;
+      if (entry.kind === 'directory') await visit(entry.uri);
+      else found.push({ uri: entry.uri, name: entry.name });
+    }
+  };
+  for (const root of await shell.fs.roots()) {
+    if (found.length >= limit || stopped()) break;
+    await visit(root.uri);
+  }
+  return found;
+}
 
 interface Entry {
   uri: string;
@@ -80,17 +108,17 @@ export function QuickOpen() {
       setSelected(0);
       return;
     }
-    if (shell.platform !== 'desktop') return;
-
     let cancelled = false;
     setLoading(true);
 
     void (async () => {
       try {
-        const { invoke } = await native.core();
-        const stats = await invoke<{ uri: string; name: string }[]>('list_files', {
-          limit: MAX_FILES,
-        });
+        const stats =
+          shell.platform === 'desktop'
+            ? await (await native.core()).invoke<{ uri: string; name: string }[]>('list_files', {
+                limit: MAX_FILES,
+              })
+            : await listViaVfs(shell, MAX_FILES, () => cancelled);
         if (cancelled) return;
 
         const prefixes = roots.map((root) => root.uri);
@@ -118,8 +146,12 @@ export function QuickOpen() {
     const found = [];
     for (const entry of files) {
       const label = `${entry.hint}${entry.name}`;
-      const positions = fuzzy(label, query);
-      if (positions) found.push({ entry, label, positions, rank: score(entry, positions, entry.name.length) });
+      /* The name first. Matched over the whole label, the letters are taken
+         from the left, so "sales" spent its s and a on a folder called
+         `ul-search` and `module.ts` ranked above `sales.xlsx`. */
+      const inName = fuzzy(entry.name, query);
+      const positions = inName ? inName.map((p) => p + entry.hint.length) : fuzzy(label, query);
+      if (positions) found.push({ entry, label, positions, rank: score(entry, positions, entry.name.length) + (inName ? NAME_MATCH : 0) });
     }
     found.sort((a, b) => b.rank - a.rank);
     return found.slice(0, MAX_SHOWN);

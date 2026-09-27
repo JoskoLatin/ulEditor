@@ -37,6 +37,7 @@
     "verify:release-live": "node tools/verify-release-live.mjs",
     "verify:stale": "node tools/verify-sheet-stale.mjs",
     "verify:host": "node tools/verify-host.mjs",
+    "verify:web-views": "node tools/verify-web-views.mjs",
     "verify:clipboard": "node tools/verify-clipboard.mjs",
     "verify:crash": "node tools/verify-crash.mjs",
     "verify:search": "node tools/verify-project-search.mjs",
