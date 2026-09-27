@@ -75,7 +75,7 @@ try {
   await page.waitForSelector('.ul-img img', { timeout: 30000 });
   check('the image is open in the application', true);
 
-  await page.locator('.ul-img-select').selectOption('eng');
+  await page.locator('.ul-img-language').selectOption('eng');
   await page.locator('.ul-img-ocr').click();
 
   let recognised = true;

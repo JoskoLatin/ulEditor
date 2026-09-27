@@ -293,7 +293,7 @@ class ImageEditor implements EditorInstance {
        the button because it is chosen before each run rather than in settings —
        the same image often holds both languages. */
     const language = document.createElement('select');
-    language.className = 'ul-img-select';
+    language.className = 'ul-img-select ul-img-language';
     language.title = t('Recognition language');
     for (const entry of OCR_LANGUAGES) {
       const option = document.createElement('option');

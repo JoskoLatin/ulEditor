@@ -124,13 +124,13 @@ try {
   const ocrButton = page.locator('.ul-img-ocr');
   check('the image viewer offers OCR', await ocrButton.isVisible());
 
-  const languages = await page.locator('.ul-img-select option').allInnerTexts();
+  const languages = await page.locator('.ul-img-language option').allInnerTexts();
   check('the recognition language can be chosen', languages.length === 2, languages.join(', '));
 
   /* ── recognition ───────────────────────────────────────────────────── */
 
   // The English model is smaller and enough for Latin script without diacritics.
-  await page.locator('.ul-img-select').selectOption('eng');
+  await page.locator('.ul-img-language').selectOption('eng');
   await ocrButton.click();
 
   // Recognition is given three minutes, because a runner is slow and the model

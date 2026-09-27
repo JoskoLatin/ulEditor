@@ -108,7 +108,7 @@ try {
       [dataUrl, name],
     );
     await page.waitForSelector('.ul-img img', { timeout: 20000 });
-    await page.locator('.ul-img-select').selectOption('hrv');
+    await page.locator('.ul-img-language').selectOption('hrv');
     await page.locator('.ul-img-ocr').click();
     await page.waitForSelector('.split .cm-content', { timeout: 240000 });
     const text = await page.locator('.split .cm-content').innerText();
