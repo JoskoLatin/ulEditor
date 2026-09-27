@@ -282,31 +282,55 @@ check(
  * formula used to look down the list of every change, which made each of
  * these quadratic: half a second, a third of one, a tenth. Who reads a changed
  * cell is now looked up rather than asked of every formula.
+ *
+ * A time alone cannot say which: the macOS runner is four to eight times
+ * slower than the machine the old figures come from, and a single sample
+ * with a bound a few percent above it failed a commit that changed no code.
+ * So each shape is also timed at an eighth of its size. Eight times the
+ * formulas cost eight to ten times the time when the work is linear, and
+ * the quadratic version cost 22 to 39 — and that ratio holds on any runner.
+ * Every time is the best of five keystrokes.
  */
 {
   const money = (value, formula) => ({ text: String(value), kind: 'number', raw: value, ...(formula ? { formula } : {}) });
-  const keystroke = (cells, typed) => {
+  const keystroke = (cells, typed, rounds = 5) => {
     recalculate(cells, 'Veliki', typed);
-    const started = performance.now();
-    recalculate(cells, 'Veliki', typed);
-    return performance.now() - started;
+    let best = Infinity;
+    for (let i = 0; i < rounds; i++) {
+      const started = performance.now();
+      recalculate(cells, 'Veliki', typed);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
   };
+  /** The time at `n`, and how many times the time at an eighth of `n` it is. */
+  const scaling = (build, n) => {
+    const full = keystroke(build(n), new Map([['0,0', '2']]));
+    const eighth = keystroke(build(n / 8), new Map([['0,0', '2']]));
+    return { ms: full, growth: full / Math.max(eighth, 0.01) };
+  };
+  const linear = (s) => s.growth < 15;
+  const shown = (s, was) => `${s.ms.toFixed(1)} ms, ${s.growth.toFixed(1)}× the time at an eighth of the size (was ${was} ms)`;
 
-  const readers = new Map([['0,0', money(1)]]);
-  for (let r = 1; r <= 10_000; r++) readers.set(`${r},1`, money(1 + r, `A1+${r}`));
-  const allRead = keystroke(readers, new Map([['0,0', '2']]));
+  const allRead = scaling((n) => {
+    const readers = new Map([['0,0', money(1)]]);
+    for (let r = 1; r <= n; r++) readers.set(`${r},1`, money(1 + r, `A1+${r}`));
+    return readers;
+  }, 10_000);
 
-  const balance = new Map();
-  for (let r = 0; r < 5_000; r++) {
-    balance.set(`${r},0`, money(1));
-    balance.set(`${r},1`, money(r + 1, r === 0 ? 'A1' : `B${r}+A${r + 1}`));
-  }
-  const running = keystroke(balance, new Map([['0,0', '2']]));
+  const running = scaling((n) => {
+    const balance = new Map();
+    for (let r = 0; r < n; r++) {
+      balance.set(`${r},0`, money(1));
+      balance.set(`${r},1`, money(r + 1, r === 0 ? 'A1' : `B${r}+A${r + 1}`));
+    }
+    return balance;
+  }, 5_000);
 
   check(
     '10 000 formulas all reading the typed cell settle in a few frames, not half a second',
-    allRead < 50,
-    `${allRead.toFixed(1)} ms (was 511 ms)`,
+    allRead.ms < 250 && linear(allRead),
+    shown(allRead, 511),
   );
   /* A file built to fill the index: 3 000 formulas of Excel's longest, each
      naming two thousand ranges. It has to stay bounded in time and in memory,
@@ -315,7 +339,7 @@ check(
   const long = `SUM(${Array.from({ length: 1_600 }, (_, i) => `A${i + 1}`).join(',')})`.slice(0, 8_190) + ')';
   for (let r = 0; r < 3_000; r++) hostile.set(`${r},5`, money(0, long.replace(/,[^,]*\)$/, ')')));
   const flooded = recalculate(hostile, 'Veliki', new Map([['0,0', '2']]));
-  const floodTime = keystroke(hostile, new Map([['0,0', '2']]));
+  const floodTime = keystroke(hostile, new Map([['0,0', '2']]), 1);
   check(
     'a file built to fill the index is bounded, and what does not fit is marked',
     floodTime < 3_000 && flooded.values.size + flooded.stale.size === 3_000,
@@ -326,13 +350,15 @@ check(
      looked through one list a sheet on every change, 10 000 of them were two
      thirds of a second. What is left is the work itself — every one of them
      reads its fifty cells again, half a million reads on the keystroke. */
-  const rows = new Map([['0,0', money(1)]]);
-  for (let r = 1; r <= 10_000; r++) rows.set(`${r},0`, money(1, `$A$1+SUM(B${r + 1}:AZ${r + 1})`));
-  const wideRows = keystroke(rows, new Map([['0,0', '2']]));
+  const wideRows = scaling((n) => {
+    const rows = new Map([['0,0', money(1)]]);
+    for (let r = 1; r <= n; r++) rows.set(`${r},0`, money(1, `$A$1+SUM(B${r + 1}:AZ${r + 1})`));
+    return rows;
+  }, 10_000);
   check(
-    '10 000 row totals across fifty columns, one shared input typed, settle in a tenth of a second',
-    wideRows < 100,
-    `${wideRows.toFixed(1)} ms (was 664 ms)`,
+    '10 000 row totals across fifty columns, one shared input typed, grow with the rows and not with their square',
+    wideRows.ms < 500 && linear(wideRows),
+    shown(wideRows, 664),
   );
 
   /* Twenty thousand formulas each reading a long column and one shared cell:
@@ -351,8 +377,8 @@ check(
 
   check(
     'a running balance 5 000 rows long settles in a frame or two, not a third of a second',
-    running < 50,
-    `${running.toFixed(1)} ms (was 320 ms)`,
+    running.ms < 160 && linear(running),
+    shown(running, 320),
   );
 }
 
