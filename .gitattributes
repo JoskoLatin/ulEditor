@@ -1,0 +1,3 @@
+# Files that are copied to the Linux server as they are: LF, whatever the
+# checkout does to everything else.
+deploy/** text eol=lf
