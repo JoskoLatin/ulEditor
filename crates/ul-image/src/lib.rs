@@ -206,10 +206,15 @@ pub struct Written {
 /// and a resize is checked for what its passes allocate — the picture stays
 /// viewable either way.
 ///
+/// A TIFF is held to half of it: its strip buffer and the picture share the
+/// budget, so a TIFF opens up to 200 MB decoded — 50 megapixels of RGBA.
+///
 /// What it does not hold: a progressive JPEG keeps its coefficients while it
 /// decodes, and the JPEG and WebP decoders take no allocation limit from
-/// `image`. Those two can reach about twice this at their peak. Bounded, and
-/// in a browser a worker that runs out is replaced — but not this number.
+/// `image`. Those two can reach up to about three times this at their peak —
+/// twice for an ordinary 4:2:0 JPEG, three times for a progressive 4:4:4 one.
+/// Bounded, and in a browser a worker that runs out is replaced — but not
+/// this number.
 pub const MOST_BYTES: u64 = 400_000_000;
 
 /// No side longer than JPEG's own maximum. Strict, and passed to every
@@ -258,13 +263,16 @@ fn webp_chunks_fit(bytes: &[u8]) -> bool {
     if riff.saturating_add(8) > bytes.len() {
         return false;
     }
+    // Only as far as the RIFF says the file goes, which is as far as the
+    // decoder reads: whatever trails it is not a chunk.
+    let len = bytes.len().min(riff.saturating_add(8));
     let mut at = 12;
-    while at + 8 <= bytes.len() {
+    while at + 8 <= len {
         let Some(size) = word(at + 4) else {
             return false;
         };
         let end = (at + 8).saturating_add(size).saturating_add(size & 1);
-        if end > bytes.len() && (at + 8).saturating_add(size) > bytes.len() {
+        if end > len && (at + 8).saturating_add(size) > len {
             return false;
         }
         at = end;

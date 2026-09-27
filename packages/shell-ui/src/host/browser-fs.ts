@@ -269,6 +269,17 @@ export class BrowserFileSystem implements VirtualFileSystem {
     if (!parent || parent.kind !== 'directory' || !name || name === '.' || name === '..') {
       throw new Error(t('A new file can only be written into a folder that is open.'));
     }
+    /* Unknown here is not the same as absent there: a file made outside the
+       program after the folder was listed has no entry in this map, and
+       `create: true` would hand it back and truncate it. So the folder is
+       asked, and a file that is already there is refused like any other. */
+    const existing = await parent.getFileHandle(name).then(
+      () => true,
+      () => false,
+    );
+    if (existing) {
+      throw new Error(t('{name} already exists. Use Save as to replace it or to choose another name.', { name }));
+    }
     await this.#ensureWritable(parent);
     const handle = await parent.getFileHandle(name, { create: true });
     this.#register(uri, handle, parentUri);

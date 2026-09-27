@@ -432,7 +432,7 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
         || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
         || bytes.starts_with(b"GIF8")
         || bytes.starts_with(b"BM")
-        || (bytes.starts_with(b"RIFF") && bytes.len() > 12 && &bytes[8..12] == b"WEBP");
+        || (bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP");
     if is_image {
         return Detection::new(FormatId::Image, DetectedVia::Magic);
     }
@@ -518,6 +518,15 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shortest WebP header there is — twelve bytes, `RIFF`, a size and
+    /// `WEBP` — is still one. The browser's detector said so and this said
+    /// "by extension"; `verify-formats-parity.mjs` found the difference.
+    #[test]
+    fn twelve_bytes_are_enough_for_webp() {
+        let d = detect("x.bin", b"RIFF    WEBP");
+        assert_eq!((d.format, d.via), (FormatId::Image, DetectedVia::Magic));
+    }
 
     #[test]
     fn scripts_and_configuration_name_a_language() {

@@ -97,6 +97,14 @@ go through an independent security review first.
    WASM instance. *(security: untrusted image bytes in the tab)*
 5. Format detection on the web through WASM, after a parity check against the
    TypeScript detector over the real document corpus finds no disagreement.
+   **Done differently (2026-09-27).** The parity check ran over 70 369 real
+   files and found no disagreement; a twelve-byte specimen found one, an
+   off-by-one in the Rust WebP rule, now fixed. The swap was then not made:
+   the TypeScript detector is also what `fidelity.mjs`, `verify-doc.mjs` and
+   four other Node checks classify their corpus with, and moving it to WASM
+   would make each of them need Rust and `wasm-bindgen` to start. Both
+   detectors stay, and `tools/verify-formats-parity.mjs` in CI holds them to
+   one answer.
 6. A hand-written service worker, registered only on the web; a check that a
    reload offline still opens a `.docx`. *(security: what it caches)*
 7. `deploy/web/`: compose and Caddyfile — pinned image, read-only, no

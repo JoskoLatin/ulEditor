@@ -46,8 +46,22 @@ const scope = self as unknown as {
 
 scope.onmessage = async (event) => {
   const request = event.data;
+  let module: UlImage;
   try {
-    const module = await load(request.base);
+    module = await load(request.base);
+  } catch (err) {
+    /* A module that failed to load is remembered by the worker's module map,
+       and asking again here would be answered from it. Reported as a trap,
+       so the page ends this worker and the next request gets a fresh one. */
+    scope.postMessage({
+      id: request.id,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      trapped: true,
+    });
+    return;
+  }
+  try {
     const bytes = new Uint8Array(request.bytes);
     if (request.op === 'info') {
       scope.postMessage({ id: request.id, ok: true, info: module.imageInfo(bytes) });

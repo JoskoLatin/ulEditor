@@ -77,7 +77,8 @@ const PICKER = () => {
 };
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+const page = await context.newPage();
 const errors = [];
 const external = [];
 const wasmFrom = [];
@@ -253,6 +254,31 @@ try {
       said && jpegAfter?.size === jpegBefore?.size,
       `${jpegBefore?.size} → ${jpegAfter?.size} bytes${said ? ', and it says so' : ', nothing said'}`,
     );
+
+    /* And one the program has never seen: made beside it by something else,
+       after the folder was listed. Not knowing it is not the same as it not
+       being there. */
+    await page.evaluate(async () => {
+      const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('slike');
+      const out = await (await root.getFileHandle('slika.webp', { create: true })).createWritable();
+      await out.write('not mine to replace');
+      await out.close();
+    });
+    await page.locator('.toast .toast-close, .toast button').first().click().catch(() => {});
+    await again.locator('.ul-img-format').selectOption('webp');
+    await page.keyboard.press('Control+s');
+    const saidAgain = await page
+      .locator('.toast', { hasText: 'slika.webp already exists' })
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    const foreign = (await onDisk())['slika.webp'];
+    check(
+      'nor one made outside the program after the folder was read',
+      saidAgain && foreign?.size === 'not mine to replace'.length,
+      `${foreign?.size} bytes${saidAgain ? ', and it says so' : ', nothing said'}`,
+    );
   }
 
   /* ── a photograph, and the page keeps drawing while it is written ─── */
@@ -289,6 +315,50 @@ try {
     longest < 200,
     `longest frame ${longest} ms over a ${saveMs} ms save`,
   );
+
+  /* ── a module that failed to arrive once is fetched again ─────────── */
+
+  {
+    // The same context, so the same origin-private folder.
+    const fresh = await context.newPage();
+    let refused = 0;
+    // The glue, not the module: a failed import() is what a worker remembers.
+    await fresh.route('**/wasm/ul_image.js', (route) => {
+      if (refused++ === 0) return route.abort();
+      return route.continue();
+    });
+    await fresh.goto(url);
+    await fresh.waitForSelector('.shell', { timeout: 30_000 });
+    /* The folder is the one already written; the picker hands it back. */
+    await fresh.evaluate(() => {
+      window.showDirectoryPicker = async () =>
+        (await navigator.storage.getDirectory()).getDirectoryHandle('slike');
+    });
+    await fresh.keyboard.press('Control+k');
+    await fresh.getByText('fotografija.jpg').first().waitFor({ timeout: 10_000 });
+    await fresh.keyboard.press('Control+p');
+    await fresh.locator('.palette input').fill('slika.png');
+    await fresh.locator('.palette-item').first().waitFor({ timeout: 10_000 });
+    await fresh.keyboard.press('Enter');
+    await fresh.waitForSelector('.ul-img img', { timeout: 30_000 });
+    const sizeOf = () =>
+      fresh.evaluate(async () => {
+        const root = await (await navigator.storage.getDirectory()).getDirectoryHandle('slike');
+        return (await (await root.getFileHandle('slika.png')).getFile()).size;
+      });
+    // The first ask, at opening, is the one refused.
+    await until(async () => refused > 0, 10_000);
+    const before = await sizeOf();
+    await fresh.locator('.ul-img:visible .ul-img-rotate-right').click();
+    await fresh.keyboard.press('Control+s');
+    const recovered = await until(async () => (await sizeOf()) !== before, 20_000);
+    check(
+      'a module that failed to load is fetched again on the next edit',
+      refused >= 2 && recovered,
+      `${refused} fetches, ${before} → ${await sizeOf()} bytes`,
+    );
+    await fresh.close();
+  }
 
   check(
     'the module came from the application itself',

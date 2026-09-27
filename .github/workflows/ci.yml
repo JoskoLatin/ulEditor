@@ -144,6 +144,11 @@ jobs:
       # the built page loads before anything decides to load more.
       - run: pnpm verify:host
 
+      # What a file is gets decided in Rust on desktop and in TypeScript in the
+      # browser. The two have to give the same answer, and this is what holds
+      # them to it (ADR 0002, step 5).
+      - run: pnpm verify:formats-parity
+
       # Annotations are checked without a browser: the written PDF is parsed
       # again and inspected for real annotation objects.
       - run: pnpm verify:pdf

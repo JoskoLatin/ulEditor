@@ -30,8 +30,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(ROOT, 'packages/shell-ui/public/wasm');
 const TARGET = 'wasm32-unknown-unknown';
 
-/** The crates the browser gets, and the name each one's glue is served under. */
-const CRATES = [{ crate: 'ul-image', file: 'ul_image' }];
+/**
+ * The crates built, and the name each one's glue is served under. `ul-formats`
+ * is not used by the page — detection there stays in TypeScript — but it is
+ * what `verify-formats-parity.mjs` holds the TypeScript detector to, and at
+ * 19 KB it rides along rather than getting a build of its own.
+ */
+const CRATES = [
+  { crate: 'ul-image', file: 'ul_image' },
+  { crate: 'ul-formats', file: 'ul_formats' },
+];
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
