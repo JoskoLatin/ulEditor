@@ -1,7 +1,6 @@
 # ADR 0002 — Phase 3, the web target: what goes to WASM, and what does not
 
-**Status:** proposed — it corrects the written plan on a reading of the code,
-without a spike; it becomes accepted when Joško says so
+**Status:** accepted 2026-09-27 — the backend's place is to be decided when it comes
 **Date:** 2026-09-27
 **Context:** phase 3 (Web), [ANALYSIS-AND-PLAN.md § Phase 3](../ANALYSIS-AND-PLAN.md)
 

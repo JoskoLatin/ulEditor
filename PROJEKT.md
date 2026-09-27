@@ -96,7 +96,7 @@ gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 
 gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
-ceka | normalan | Potvrditi ADR 0002 (faza 3: ul-image/ul-formats u WASM, ne ul-core; backend kasnije) — status proposed, čeka Joška
+gotovo | normalan | Potvrditi ADR 0002 (faza 3: ul-image/ul-formats u WASM, ne ul-core; backend kasnije) — prihvaćen 2026-09-27
 gotovo | normalan | Faza 3, korak 2 — Tauri API samo kroz host/native.ts, web bundle ga više ne učitava (`8e98feb`, `pnpm verify:host`, CI zelen)
 ceka | normalan | Faza 3, korak 3 — ul-image u WASM; traži wasm-bindgen-cli 0.2.127 kao novi alat u CI-ju, čeka Joškovo da
 
