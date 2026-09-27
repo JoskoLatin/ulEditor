@@ -747,6 +747,8 @@ Output: **v0.5**
 
 ### Phase 3 — Web (months 10–14)
 
+> Corrected by [ADR 0002](adr/0002-web-target.md) (proposed): `ul-core` stays native, `ul-image` and `ul-formats` go to WASM, image editing in the browser is the first slice, and the conversion backend and OPFS move out of this phase.
+
 - `ul-core` → WASM; File System Access API + drag & drop; OPFS for a local cache
 - PDF.js instead of pdfium on the web
 - An optional self-hosted backend (Docker) for heavy conversions — LibreOffice does not go into WASM
