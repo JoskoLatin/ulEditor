@@ -64,6 +64,7 @@
     "fidelity": "node tools/fidelity.mjs",
     "readback": "node tools/verify-office-readback.mjs",
     "pdf:timing": "node tools/pdf-timing.mjs",
+    "cold-start": "node tools/cold-start.mjs",
     "formula:census": "node tools/formula-census.mjs",
     "verify:formula": "node tools/verify-formula.mjs",
     "verify:formula-excel": "node tools/verify-formula-excel.mjs",

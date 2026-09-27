@@ -796,7 +796,7 @@ pnpm fidelity      # round-trip pixel diff, threshold < 2% difference  (from pha
 
 **Performance budgets** (measured in CI, a PR fails if they are exceeded):
 
-- cold start < 1.5 s — **not measured**, see below
+- cold start < 1.5 s — **met**: 474 ms median to the first frame of the shell, 603–807 ms on the very first launch, on the installed release (`pnpm cold-start`), see below
 - opening a 10 MB PDF < 800 ms to the first page — **met**: 536 ms median, 1051 ms worst, over 457 real PDFs in the application (`pnpm pdf:timing`)
 - scrolling through a 100k-row XLSX at 60 fps — **met**: 16.7 ms median against a 16.7 ms frame (`pnpm verify:sheets`)
 - desktop installer **< 100 MB**, and under 25 MB for everything but the AppImage
@@ -829,10 +829,29 @@ existed.
 that ADR said was still needed before phase 4. Its own figure is set there, not
 here.
 
-**Cold start is still not measured**, and that is the last unmeasured budget:
-it needs a release build to start on a real machine, and `tauri build` on the
-development machine is blocked by Smart App Control (ADR 0001). A number from CI
-would be a number from a runner rather than from a computer somebody uses.
+**Cold start was the last unmeasured budget**, left so because it needs a
+release build on a real machine: `tauri build` on the development machine is
+blocked by Smart App Control (ADR 0001), and a number from CI would be a number
+from a runner rather than from a computer somebody uses. The installer the
+updater hands out is both, so [tools/cold-start.mjs](../tools/cold-start.mjs)
+starts that — the installed v0.6.0 — on a scratch profile, and times from the
+process being started to the first contentful paint, which with an empty
+`#root` is React's first render of the shell. Ten starts:
+
+| | To the first frame | Of which, before the page begins loading |
+|---|---|---|
+| First launch, empty WebView2 profile | 603–807 ms | 331 ms |
+| Every launch after it | **474 ms** median, 462–496 ms | 306 ms |
+| The same, pinned to one CPU core | 1 104 ms median; first launch 1 414 ms | 476 ms |
+
+A third of the budget, and within it on a single core. Two thirds of every
+start happen before a line of the application's JavaScript runs — the process,
+WebView2 and its renderer — which is where a slower start would be looked for
+first. The one-core row is also how the measurement was shown to be one: a
+start that is really slower reads as slower, where a harness that timed its
+own attaching would not have moved. What it does not measure is a start after a
+reboot, with nothing in the file cache; there is no way to empty that cache
+without administrator rights, and the figure is not presented as one.
 
 **Manual verification at the end of phase 1:**
 
