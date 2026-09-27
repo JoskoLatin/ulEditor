@@ -1,12 +1,13 @@
 # ulEditor, the browser build, on the server at /opt/stacks/uleditor.
 #
 # A static site and nothing else: no ports of its own (the shared Caddy
-# reaches it over `proxy`), read-only everywhere, one capability, and the
-# same pinned Caddy image the server already runs. `site/` is the built
-# `packages/shell-ui/dist`, put there by tools/deploy-web.ps1.
+# reaches it over `proxy`), read-only everywhere, one capability, bounded in
+# processes and memory, and the same Caddy the server already runs, pinned to
+# its digest. `site/` is the built `packages/shell-ui/dist`, put there by
+# tools/deploy-web.ps1.
 services:
   uleditor:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: uleditor
     restart: unless-stopped
     read_only: true
@@ -14,8 +15,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv/site:ro
     tmpfs:
-      - /data
-      - /config
+      - /data:size=16m
+      - /config:size=16m
     networks:
       - proxy
     security_opt:
@@ -28,6 +29,8 @@ services:
     # permitted"). The shared Caddy on this server is set the same way.
     cap_add:
       - NET_BIND_SERVICE
+    pids_limit: 64
+    mem_limit: 128m
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 30s
