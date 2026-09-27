@@ -55,6 +55,9 @@ pub enum ImageError {
     Crop(String),
     #[error("a size of zero has no picture in it")]
     EmptySize,
+    /// Past [`MOST_PIXELS`], going in or coming out.
+    #[error("the image is too large to edit: {0}")]
+    TooLarge(String),
     #[error("file system error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -188,6 +191,28 @@ pub struct Written {
     pub lossy: bool,
 }
 
+/// The most pixels a picture may have, read or written: 100 megapixels, four
+/// hundred megabytes decoded, twice the largest photograph in the documents
+/// this was measured against.
+///
+/// Not a matter of taste. The size is in the header, which is whatever the
+/// file says, and decoding allocates for it before a pixel is read; a turn or a
+/// resize allocates again. On desktop an oversized file is an error, but in a
+/// browser tab running this as WebAssembly, running out of memory aborts the
+/// whole instance. So the header is read first and the picture refused, and a
+/// resize is held to the same bound — the picture stays viewable either way.
+pub const MOST_PIXELS: u64 = 100_000_000;
+
+fn within(width: u32, height: u32) -> Result<(), ImageError> {
+    if u64::from(width) * u64::from(height) > MOST_PIXELS {
+        return Err(ImageError::TooLarge(format!(
+            "{width}×{height} is more than {} megapixels",
+            MOST_PIXELS / 1_000_000
+        )));
+    }
+    Ok(())
+}
+
 fn guess(bytes: &[u8]) -> Option<ImageFormat> {
     image::guess_format(bytes).ok()
 }
@@ -205,6 +230,9 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, bool), ImageError> {
     let mut decoder = reader
         .into_decoder()
         .map_err(|err| ImageError::Decode(err.to_string()))?;
+
+    let (width, height) = decoder.dimensions();
+    within(width, height)?;
 
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
 
@@ -274,7 +302,11 @@ pub fn apply(bytes: &[u8], ops: &Ops) -> Result<(Vec<u8>, Written), ImageError> 
         // checked against the picture rather than trusted: a crop that runs off
         // the edge would otherwise be silently clamped, and the person would get
         // a different rectangle than the one they drew.
-        if rect.x + rect.width > image.width() || rect.y + rect.height > image.height() {
+        // In u64, so that a rectangle placed near u32::MAX cannot wrap round
+        // to a small number and pass.
+        if u64::from(rect.x) + u64::from(rect.width) > u64::from(image.width())
+            || u64::from(rect.y) + u64::from(rect.height) > u64::from(image.height())
+        {
             return Err(ImageError::Crop(format!(
                 "{}×{} at {},{} does not fit in {}×{}",
                 rect.width,
@@ -292,6 +324,7 @@ pub fn apply(bytes: &[u8], ops: &Ops) -> Result<(Vec<u8>, Written), ImageError> 
         if size.width == 0 || size.height == 0 {
             return Err(ImageError::EmptySize);
         }
+        within(size.width, size.height)?;
         // Lanczos3 rather than the cheaper filters: this is a photograph being
         // made smaller, which is the case where a nearest-neighbour resize is
         // visibly worse and nobody can say why.
@@ -373,6 +406,57 @@ pub fn encoding_for_name(name: &str) -> Option<Encoding> {
     }
 }
 
+/// The same two functions, for the browser build.
+///
+/// On desktop the bytes never enter the webview; in a browser there is nowhere
+/// else for them to be, so the page reads the file, hands the bytes over and
+/// writes back what comes out. The limits above are what make that safe to do
+/// with a file somebody else made: an instance that runs out of memory aborts.
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    fn fail(err: super::ImageError) -> JsValue {
+        JsValue::from_str(&err.to_string())
+    }
+
+    #[wasm_bindgen(js_name = imageInfo)]
+    pub fn image_info(bytes: &[u8]) -> Result<JsValue, JsValue> {
+        let info = super::info(bytes).map_err(fail)?;
+        serde_wasm_bindgen::to_value(&info).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The encoded bytes and what they hold, as two getters — one allocation
+    /// for the picture, and no second copy of it inside a serialised object.
+    #[wasm_bindgen]
+    pub struct Applied {
+        bytes: Vec<u8>,
+        written: super::Written,
+    }
+
+    #[wasm_bindgen]
+    impl Applied {
+        #[wasm_bindgen(getter)]
+        pub fn bytes(&self) -> Vec<u8> {
+            self.bytes.clone()
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn written(&self) -> Result<JsValue, JsValue> {
+            serde_wasm_bindgen::to_value(&self.written)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+    }
+
+    #[wasm_bindgen(js_name = imageApply)]
+    pub fn image_apply(bytes: &[u8], ops: JsValue) -> Result<Applied, JsValue> {
+        let ops: super::Ops =
+            serde_wasm_bindgen::from_value(ops).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let (bytes, written) = super::apply(bytes, &ops).map_err(fail)?;
+        Ok(Applied { bytes, written })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,9 +473,75 @@ mod tests {
         out.into_inner()
     }
 
+    /// PNG's CRC-32, bit by bit — four lines rather than a dependency.
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
     fn pixel_at(bytes: &[u8], x: u32, y: u32) -> [u8; 4] {
         let image = image::load_from_memory(bytes).unwrap().to_rgba8();
         image.get_pixel(x, y).0
+    }
+
+    #[test]
+    fn a_header_past_the_limit_is_refused_before_decoding() {
+        // A real PNG header claiming 20 000 × 20 000, with no pixels behind it:
+        // the refusal has to come from the header, not from an allocation.
+        let mut bytes = corner_png();
+        bytes[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&20_000u32.to_be_bytes());
+        // The chunk's checksum covers its type and data, and the decoder
+        // checks it — without a fresh one this is a corrupt file, not a big one.
+        let crc = crc32(&bytes[12..29]);
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        assert!(matches!(info(&bytes), Err(ImageError::TooLarge(_))));
+        assert!(matches!(
+            apply(&bytes, &Ops::default()),
+            Err(ImageError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn a_resize_past_the_limit_is_refused() {
+        let ops = Ops {
+            resize: Some(Size {
+                width: 20_000,
+                height: 20_000,
+            }),
+            ..Ops::default()
+        };
+        assert!(matches!(
+            apply(&corner_png(), &ops),
+            Err(ImageError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn a_crop_near_the_end_of_u32_does_not_wrap_into_the_picture() {
+        let ops = Ops {
+            crop: Some(Rect {
+                x: u32::MAX,
+                y: 0,
+                width: 2,
+                height: 1,
+            }),
+            ..Ops::default()
+        };
+        assert!(matches!(
+            apply(&corner_png(), &ops),
+            Err(ImageError::Crop(_))
+        ));
     }
 
     #[test]

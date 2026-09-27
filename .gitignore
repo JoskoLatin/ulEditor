@@ -26,6 +26,7 @@ tools/screenshots/
 
 # OCR assets are copied out of node_modules on every build (tools/ocr-assets.mjs).
 packages/shell-ui/public/ocr/
+packages/shell-ui/public/wasm/
 
 # Output of the elevated Android build (tools/android-dev.ps1).
 tools/android-dev.log

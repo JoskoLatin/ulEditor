@@ -38,6 +38,8 @@
     "verify:stale": "node tools/verify-sheet-stale.mjs",
     "verify:host": "node tools/verify-host.mjs",
     "verify:web-views": "node tools/verify-web-views.mjs",
+    "wasm": "node tools/wasm-assets.mjs",
+    "verify:wasm": "node tools/verify-wasm.mjs",
     "verify:clipboard": "node tools/verify-clipboard.mjs",
     "verify:crash": "node tools/verify-crash.mjs",
     "verify:search": "node tools/verify-project-search.mjs",

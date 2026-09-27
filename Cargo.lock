@@ -4550,7 +4550,9 @@ version = "0.6.2"
 dependencies = [
  "image",
  "serde",
+ "serde-wasm-bindgen",
  "thiserror 2.0.20",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -322,3 +322,19 @@ jobs:
       # for the web — until phase 3, when it would be a rewrite rather than a
       # fix. `image` was chosen with its features cut down for this reason.
       - run: cargo build -p ul-image --target wasm32-unknown-unknown --release
+
+      # Phase 3 (ADR 0002): ul-image runs in the browser, through glue that
+      # wasm-bindgen writes. The CLI has to be the crate's exact version, so it
+      # is read out of Cargo.lock rather than written here a second time; both
+      # tools below use nothing but Node's own modules.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: wasm-bindgen CLI, the version Cargo.lock holds
+        run: |
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - run: node tools/wasm-assets.mjs
+      # A picture turned in the browser build, and its pixels read where they
+      # landed; a header claiming too much refused before it is allocated.
+      - run: node tools/verify-wasm.mjs
