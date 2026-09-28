@@ -313,10 +313,16 @@ try {
     return Math.round(window.__longestFrame);
   });
   check('a 12-megapixel photograph is turned and written', photoSaved, `${saveMs} ms`);
+  /* Judged against the save itself, not a fixed 200 ms: the macOS runner once
+     drew a 313 ms frame over a 2069 ms save on unchanged code. Off the main
+     thread the longest frame is 1% of the save on the Ubuntu runner, 6% here
+     and 15% at the macOS runner's worst; the same save done on the main
+     thread stops the page for 81% of it (1333 ms of 1645). The line is 40%,
+     and a whole second stays as a loose fence. */
   check(
-    'and the page never stops drawing for 200 ms while it is',
-    longest < 200,
-    `longest frame ${longest} ms over a ${saveMs} ms save`,
+    'and the page keeps drawing while it is, not stopping for most of the save',
+    longest < saveMs * 0.4 && longest < 1000,
+    `longest frame ${longest} ms over a ${saveMs} ms save — ${Math.round((100 * longest) / saveMs)}%`,
   );
 
   /* ── a module that failed to arrive once is fetched again ─────────── */

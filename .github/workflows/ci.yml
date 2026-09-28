@@ -195,7 +195,7 @@ jobs:
           node tools/verify-web-roots.mjs --url http://localhost:5273
           # A picture edited in the tab by the WebAssembly build — the window
           # and the bytes agree, and a photograph is written off the main
-          # thread without the page stopping for 200 ms.
+          # thread: the page never stops for most of the save.
           node tools/verify-web-image.mjs --url http://localhost:5273
           # The service worker: installed, then the server is stopped and the
           # page reloaded, and a .docx never opened before has to open. Also

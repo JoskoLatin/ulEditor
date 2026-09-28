@@ -107,7 +107,7 @@ gotovo | normalan | Granica memorije za slike: 512 MiB, zadano u `image` crateu 
 gotovo | normalan | Faza 3, korak 6 — service worker: ponovno učitavanje bez mreže otvara .docx; precache 3,53 MB; svaki bajt iz cachea provjeren SHA-256 iz builda; gašenje `deploy-web.ps1 -ServiceWorkerOff`; sigurnosni pregled NE / PROLAZI / PROLAZI (`pnpm verify:web-offline`, 32 provjere, 29/34 mutacija)
 gotovo | visok | Deploy weba nakon koraka 6 i 8 — uleditor.truss:8443 poslužuje /sw.js i WASM (200), nepoznato 404, CSP na mjestu (2026-09-28); `deploy-web.ps1` sad prati port 8443 i prepoznaje blok po `reverse_proxy uleditor:8080`
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
-todo | nizak | Vremenski test spremanja slike pada na sporom macOS runneru (313 ms naspram praga 200, ponovljen 123 ms) — mjeriti omjer kao kod preračuna
+gotovo | nizak | Vremenski test spremanja slike pada na sporom macOS runneru (313 ms naspram praga 200) — sad najdulji okvir < 40% trajanja spremanja: worker 1–15%, isto spremanje na glavnoj niti 81% (mutant pada), 2026-09-29
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
 todo | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — Joško rekao da (2026-09-28), zaseban zadatak na serveru jer dira zajednički compose
 gotovo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje: handle u IndexedDB, dopuštenje samo na klik; sigurnosni pregled PROLAZI, četiri nalaza popravljena (`pnpm verify:web-roots`, 23 provjere)
