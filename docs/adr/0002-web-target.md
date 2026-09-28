@@ -182,7 +182,13 @@ go through an independent security review first.
    and a save meant for one could land in the other; and a stored record is
    used only if its uri is the one its handle's name gives, the name shown
    being always the handle's own.
-   **Open, and the owner's to decide:** a stored handle is a standing
+   **Decided by the owner (2026-09-28): accepted.** The standing capability
+   below exists only after the owner picks "Allow on every visit" in Chrome; the program never asks without a click; the policy keeps
+   `script-src 'self'` (`pnpm verify:web-csp`); the site is on the LAN and
+   the tailnet only, with one person using it. A click before a granted
+   folder opens would not help — a hostile script ignores the interface —
+   so the choice was only this or the picker on every visit.
+   The question as it stood: a stored handle is a standing
    capability of the origin. Once Chrome keeps the permission — "Allow on
    every visit", or an installed app — any script that later runs on
    uleditor.truss (the premise of step 6's first finding: a server in the

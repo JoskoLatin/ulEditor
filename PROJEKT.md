@@ -11,8 +11,9 @@ OpenDocument i e-knjige — kao Tauri desktop aplikacija s Rust jezgrom
 ## Verzija i faza
 
 Verzija: **0.6.2** u kodu (`a43c1d7`, 2026-09-27). 0.6.1 nikad nije označen, pa
-0.6.2 nosi i nju i ubrzanje preračuna — jedno izdanje umjesto dva. Tag `v0.6.2`
-postavlja Joško. Zadnji objavljeni: `v0.6.0`.
+0.6.2 nosi i nju i ubrzanje preračuna — jedno izdanje umjesto dva. Zadnji
+objavljeni: **`v0.6.2`** na `0da06a0` (2026-09-28), `pnpm verify:release-live`
+14/14 — kanal za ažuriranje nudi 0.6.2 na sva četiri cilja.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
 Zadnji rad: **2026-09-27** — cold start izmjeren (474 ms), vremenski testovi
@@ -94,7 +95,7 @@ gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knji
 gotovo | visok | Izdati 0.6.2 — tag `v0.6.2` na `0da06a0` (HEAD: 0.6.1, ubrzanje, faza 3, granice slika, novi start desktopa), 2026-09-28
 gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, ulazi u 0.6.2)
 gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
-ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
+ceka | nizak | Kupiti certifikat za potpisivanje Windows i macOS installera — odgođeno 2026-09-28 dok installere koristi samo Joško; vratiti se kad ulEditor ide drugima
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
 gotovo | normalan | Potvrditi ADR 0002 (faza 3: ul-image/ul-formats u WASM, ne ul-core; backend kasnije) — prihvaćen 2026-09-27
 gotovo | normalan | Faza 3, korak 2 — Tauri API samo kroz host/native.ts, web bundle ga više ne učitava (`8e98feb`, `pnpm verify:host`, CI zelen)
@@ -108,10 +109,10 @@ gotovo | visok | Deploy weba nakon koraka 6 i 8 — uleditor.truss:8443 poslužu
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
 todo | nizak | Vremenski test spremanja slike pada na sporom macOS runneru (313 ms naspram praga 200, ponovljen 123 ms) — mjeriti omjer kao kod preračuna
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
-ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — dira zajednički compose, Joškova odluka
+todo | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — Joško rekao da (2026-09-28), zaseban zadatak na serveru jer dira zajednički compose
 gotovo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje: handle u IndexedDB, dopuštenje samo na klik; sigurnosni pregled PROLAZI, četiri nalaza popravljena (`pnpm verify:web-roots`, 23 provjere)
 gotovo | normalan | Desktop: dok program radi (i pri ponovnom učitavanju prozora) sve ostaje; nakon zatvaranja start je prazan uz „Vrati prošlu sesiju" (početni ekran i paleta); datoteka otvorena izvana dok radi ide u novu karticu; na telefonu obnova ostaje automatska (`pnpm verify:session-desktop`, 13 provjera)
-ceka | visok | Odluka: spremljeni handle mape je trajna ovlast origina ako Chrome zapamti dopuštenje ("Allow on every visit" / instalirana aplikacija) — prihvatiti, ili umjesto spremanja otvarati kroz picker (jedan klik po posjetu) — Joško
+gotovo | visok | Odluka: spremljeni handle mape kao trajna ovlast origina — prihvaćeno 2026-09-28, zapisano u ADR 0002 (korak 8)
 
 ## Blokada
 
