@@ -16,7 +16,7 @@ import type {
 } from '@uleditor/plugin-sdk';
 import { isLocale, type Locale } from '@uleditor/i18n';
 
-import { BrowserFileSystem, hasFileSystemAccess } from './browser-fs.js';
+import { BrowserFileSystem, hasFileSystemAccess, type WaitingRoot } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
 import { TauriImages } from './tauri-images.js';
 import { WasmImages } from './wasm-images.js';
@@ -44,6 +44,9 @@ export type ShellFileSystem = VirtualFileSystem & {
     documents: DocumentHandle[];
     directories: DirectoryEntry[];
   }>;
+  /** The web keeps its folders across a reload; see `BrowserFileSystem`. */
+  restoreRoots?(): Promise<{ ready: DirectoryEntry[]; waiting: WaitingRoot[] }>;
+  forgetRoot?(uri: Uri): Promise<void>;
 };
 
 export type Platform = 'desktop' | 'web';

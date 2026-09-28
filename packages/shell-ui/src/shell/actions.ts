@@ -305,6 +305,7 @@ export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
   } catch (err) {
     setTree(tree.filter((n) => n.uri !== root.uri));
     forget(shell, root.uri);
+    void shell.fs.forgetRoot?.(root.uri);
     shell.notify.show('error', t('Could not read the folder: {reason}', { reason: describe(err) }));
   }
 }
@@ -321,6 +322,7 @@ export function removeRoot(shell: Shell, root: TreeNode): void {
   const { tree, setTree } = useWorkspace.getState();
   setTree(tree.filter((node) => node.uri !== root.uri));
   forget(shell, root.uri);
+  void shell.fs.forgetRoot?.(root.uri);
 }
 
 /**
@@ -336,6 +338,7 @@ export async function openRecentFolder(shell: Shell, root: { uri: Uri; name: str
     await addRoot(shell, root);
   } catch (err) {
     forget(shell, root.uri);
+    void shell.fs.forgetRoot?.(root.uri);
     shell.notify.show('error', t('Could not open the folder: {reason}', { reason: describe(err) }));
   }
 }

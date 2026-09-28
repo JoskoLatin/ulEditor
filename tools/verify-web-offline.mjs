@@ -387,6 +387,26 @@ try {
   check('nothing threw in the page', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   // The server back, with the off switch as /sw.js.
+  // The records, not the database: the tab the switch reloads opens it again,
+  // empty, looking for folders to bring back.
+  const databases = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const open = indexedDB.open('uleditor');
+          open.onsuccess = () => {
+            const db = open.result;
+            if (!db.objectStoreNames.contains('roots')) return resolve([]);
+            const keys = db.transaction('roots').objectStore('roots').getAllKeys();
+            keys.onsuccess = () => {
+              db.close();
+              resolve(keys.result);
+            };
+          };
+          open.onerror = () => resolve(['unreadable']);
+        }),
+    );
+  const keptBefore = await databases();
   off = true;
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
   await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r?.update()));
@@ -414,6 +434,12 @@ try {
     `${leftover.join(', ')}; ${settled.registrations} registrations`,
   );
   check('and leaves another’s alone', leftover.includes('someone-else'));
+  const keptAfter = await databases();
+  check(
+    'and deletes the folders kept across visits',
+    keptBefore.length > 0 && keptAfter.length === 0,
+    `${JSON.stringify(keptBefore)} → ${JSON.stringify(keptAfter)}`,
+  );
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message.split('\n')[0] : String(err));
 } finally {

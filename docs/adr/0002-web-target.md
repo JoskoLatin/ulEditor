@@ -162,6 +162,34 @@ go through an independent security review first.
    binary carries it as a file capability, and under no-new-privileges exec
    is refused without it. The name needs a DNS record on the router.
 8. The workspace root survives a reload.
+   **Done (2026-09-28)**: `host/root-store.ts` keeps each opened folder's
+   `FileSystemDirectoryHandle` in IndexedDB, under its uri, and nothing read
+   from it; a folder taken off the tree, refused by the browser, or deleted
+   since is dropped. On the next visit (`restoreSession`, web branch) a
+   folder the browser still allows — Chrome's "allow on every visit" —
+   comes back shut, as on desktop. One it would ask about is offered in a
+   notice whose button is the only thing that asks: `session.ts` had said
+   the web would rather restore nothing than open with permission dialogs,
+   and it still never does. Tabs are not restored on the web.
+   `tools/verify-web-roots.mjs` plays both answers, with a
+   `requestPermission` that throws without a person's gesture as Chrome's
+   does.
+   The security review (on Opus; Fable was at its limit) said PROLAZI, with
+   four findings fixed before commit: the notice also offers "Forget", so a
+   folder nobody wants back does not stay stored for good; the off switch
+   deletes the stored folders too; one folder keeps one uri and another of
+   the same name gets `~2` — before, the second took over the first's uri,
+   and a save meant for one could land in the other; and a stored record is
+   used only if its uri is the one its handle's name gives, the name shown
+   being always the handle's own.
+   **Open, and the owner's to decide:** a stored handle is a standing
+   capability of the origin. Once Chrome keeps the permission — "Allow on
+   every visit", or an installed app — any script that later runs on
+   uleditor.truss (the premise of step 6's first finding: a server in the
+   wrong hands, or a dependency) reads and writes every remembered folder
+   without a click. Before step 8 it could reach only the folder picked in
+   that visit. The alternative is to store nothing and reopen through
+   `showDirectoryPicker({ id })`, one click in the picker per visit.
 
 ## To measure before committing
 

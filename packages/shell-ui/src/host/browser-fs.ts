@@ -21,6 +21,15 @@ import type {
 import { getLocale, t } from '@uleditor/i18n';
 
 import { detect, detectByName } from './detect.js';
+import { dropRoot, storeRoot, storedRoots } from './root-store.js';
+
+/** A folder from the last visit that the browser will ask about again. */
+export interface WaitingRoot {
+  uri: Uri;
+  name: string;
+  /** Asks the browser, from a person's click; the folder, or null if not given. */
+  grant(): Promise<DirectoryEntry | null>;
+}
 
 /* ── minimalne deklaracije FSA API-ja ────────────────────────────────── */
 
@@ -32,6 +41,11 @@ interface FsHandleBase {
   name: string;
   queryPermission?(desc?: FsPermissionDescriptor): Promise<PermissionState>;
   requestPermission?(desc?: FsPermissionDescriptor): Promise<PermissionState>;
+  isSameEntry?(other: FsHandleBase): Promise<boolean>;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 interface FsWritable {
   write(data: BufferSource | Blob | string): Promise<void>;
@@ -321,18 +335,93 @@ export class BrowserFileSystem implements VirtualFileSystem {
   async pickDirectory(): Promise<DirectoryEntry | null> {
     if (!picker.showDirectoryPicker) throw new Error(t('This browser cannot open folders.'));
     const handle = await picker.showDirectoryPicker({ mode: 'readwrite' });
-    const uri = `ul:/${handle.name}`;
+    const uri = await this.#rootUri(handle);
+    // Kept for the next visit (host/root-store.ts); the permission is not.
+    void storeRoot({ uri, name: handle.name, handle });
+    return this.#adoptRoot(uri, handle);
+  }
+
+  /**
+   * One folder, one uri. The same folder picked again keeps the uri it had;
+   * another folder with the same name gets `~2`. Two folders under one uri
+   * would hand one's files to the other — `ul:/docs/a.md` read from one and
+   * saved into the other — and a kept record would carry that to every visit.
+   */
+  async #rootUri(handle: FsDirectoryHandle): Promise<Uri> {
+    const known = new Map<Uri, FsHandle>();
+    for (const stored of await storedRoots()) known.set(stored.uri, stored.handle as FsHandle);
+    for (const root of this.#roots) {
+      const open = this.#handles.get(root);
+      if (open) known.set(root, open);
+    }
+    for (const [uri, other] of known) {
+      if (await other.isSameEntry?.(handle).catch(() => false)) return uri;
+    }
+    const base = `ul:/${handle.name}`;
+    let uri = base;
+    for (let n = 2; known.has(uri) || this.#handles.has(uri); n++) uri = `${base}~${n}`;
+    return uri;
+  }
+
+  #adoptRoot(uri: Uri, handle: FsDirectoryHandle): DirectoryEntry {
     this.#register(uri, handle, null);
     if (!this.#roots.includes(uri)) this.#roots.push(uri);
-    return {
-      uri,
-      name: handle.name,
-      parent: null,
-      kind: 'directory',
-      size: 0,
-      modified: null,
-      readonly: false,
-    };
+    return { uri, name: handle.name, parent: null, kind: 'directory', size: 0, modified: null, readonly: false };
+  }
+
+  /** A folder taken off the tree is not brought back on the next visit. */
+  async forgetRoot(uri: Uri): Promise<void> {
+    this.#roots = this.#roots.filter((r) => r !== uri);
+    await dropRoot(uri);
+  }
+
+  /**
+   * The folders open at the last visit (ADR 0002, step 8), by what the browser
+   * still allows. Where it still grants access — Chrome's "allow on every
+   * visit" — the folder is back at once. Where it would ask, nothing asks by
+   * itself: the folder waits, and `grant()` is for a click on a button that
+   * says what it is for, since the browser's prompt needs a person's gesture
+   * anyway and a program that opens with permission dialogs is worse than one
+   * that opens empty. A folder the browser has refused is forgotten.
+   */
+  async restoreRoots(): Promise<{ ready: DirectoryEntry[]; waiting: WaitingRoot[] }> {
+    const ready: DirectoryEntry[] = [];
+    const waiting: WaitingRoot[] = [];
+    if (!hasFileSystemAccess()) return { ready, waiting };
+    for (const stored of await storedRoots()) {
+      const handle = stored.handle as FsDirectoryHandle;
+      /* The name shown is the handle's own, never the record's, and the record's
+         uri has to be the one this code would give that name: a record written
+         by anything else on the origin — "projekt" over a handle to the whole
+         home folder — is thrown away, not offered. */
+      const own = `ul:/${handle.name}`;
+      const ours = stored.uri === own || new RegExp(`^${escapeRegExp(own)}~\\d+$`).test(stored.uri);
+      if (handle.kind !== 'directory' || !handle.queryPermission || !handle.requestPermission || !ours) {
+        await dropRoot(stored.uri);
+        continue;
+      }
+      const state = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'denied' as const);
+      if (state === 'granted') {
+        ready.push(this.#adoptRoot(stored.uri, handle));
+      } else if (state === 'prompt') {
+        const request = handle.requestPermission.bind(handle);
+        waiting.push({
+          uri: stored.uri,
+          name: handle.name,
+          grant: async () => {
+            // First, before anything else is awaited: the browser only asks
+            // while the click that led here still counts as a gesture.
+            const answer = await request({ mode: 'readwrite' }).catch(() => 'prompt' as const);
+            if (answer === 'granted') return this.#adoptRoot(stored.uri, handle);
+            if (answer === 'denied') await dropRoot(stored.uri);
+            return null;
+          },
+        });
+      } else {
+        await dropRoot(stored.uri);
+      }
+    }
+    return { ready, waiting };
   }
 
   async pickSaveTarget(suggestedName: string, extensions?: string[]): Promise<Uri | null> {

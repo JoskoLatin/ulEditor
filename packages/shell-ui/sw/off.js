@@ -7,8 +7,8 @@
  * deployed as /sw.js by `tools/deploy-web.ps1 -ServiceWorkerOff`.
  *
  * It takes over at once, which sw.js deliberately does not: there is nothing
- * left for an open tab to lose. It deletes ulEditor's caches (no one else's),
- * unregisters, and reloads each open tab, which then comes from the server —
+ * left for an open tab to lose. It deletes ulEditor's caches (no one else's)
+ * and the folders it kept across visits, unregisters, and reloads each open tab, which then comes from the server —
  * by way of the browser's HTTP cache, which this cannot clear: any file the
  * server once sent wrong, with a long Cache-Control, stays there. After a
  * known compromise the person also clears the site's data and the browser's
@@ -23,6 +23,13 @@ self.addEventListener('activate', (event) => {
     (async () => {
       const names = await caches.keys();
       await Promise.all(names.filter((n) => n.startsWith('uleditor-')).map((n) => caches.delete(n)));
+      // The folders kept across visits (host/root-store.ts) go too: a handle
+      // left there is access to somebody's folder for whatever runs here next.
+      // Not waited on past "blocked" — it completes once open tabs let go.
+      await new Promise((done) => {
+        const request = indexedDB.deleteDatabase('uleditor');
+        request.onsuccess = request.onerror = request.onblocked = done;
+      });
       await self.registration.unregister();
       const tabs = await self.clients.matchAll({ type: 'window' });
       await Promise.all(tabs.map((tab) => tab.navigate(tab.url).catch(() => {})));

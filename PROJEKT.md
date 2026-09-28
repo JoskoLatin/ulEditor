@@ -108,7 +108,8 @@ todo | visok | Deploy weba nakon koraka 6 — novi Caddyfile (404 za /sw.js, /wa
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
 ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — dira zajednički compose, Joškova odluka
-todo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje stranice (u repou)
+gotovo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje: handle u IndexedDB, dopuštenje samo na klik; sigurnosni pregled PROLAZI, četiri nalaza popravljena (`pnpm verify:web-roots`, 23 provjere)
+ceka | visok | Odluka: spremljeni handle mape je trajna ovlast origina ako Chrome zapamti dopuštenje ("Allow on every visit" / instalirana aplikacija) — prihvatiti, ili umjesto spremanja otvarati kroz picker (jedan klik po posjetu) — Joško
 
 ## Blokada
 

@@ -189,6 +189,10 @@ jobs:
           # What the browser build offers has to do something there: no library
           # it cannot scan, and a Ctrl+P that lists the folder that is open.
           node tools/verify-web-views.mjs --url http://localhost:5273
+          # The folder that was open comes back after a reload — at once where
+          # the browser still allows it, from a button where it would ask, and
+          # never by a permission prompt nobody pressed for (ADR 0002, step 8).
+          node tools/verify-web-roots.mjs --url http://localhost:5273
           # A picture edited in the tab by the WebAssembly build — the window
           # and the bytes agree, and a photograph is written off the main
           # thread without the page stopping for 200 ms.

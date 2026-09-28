@@ -6,10 +6,11 @@
  * Tuesday" — once a tab is closed, the only way back is the file dialog and
  * remembering where the thing lives. That is the gap this fills.
  *
- * **Desktop only**, and for the same reason the session restore is: on the web a
- * `Uri` is a key to a `FileSystemHandle` that is valid inside one visit. A list
- * of them written to storage would look like history and reopen nothing, which
- * is worse than not offering it.
+ * **Desktop only**: on the web a `Uri` is a key to a `FileSystemHandle` that is
+ * valid inside one visit. A list of them written to storage would look like
+ * history and reopen nothing, which is worse than not offering it. The web
+ * brings back only the folders that were open, whose handles the host keeps
+ * (see `restoreSession`).
  *
  * Nothing here is a cache of content — only a path, a name and when it was last
  * opened. Kept in settings beside everything else, so it travels with the rest
