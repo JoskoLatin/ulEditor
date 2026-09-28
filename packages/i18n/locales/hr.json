@@ -188,6 +188,7 @@
   "{name} was open last time. The browser asks before the program may read it again.": "Mapa {name} bila je otvorena prošli put. Preglednik pita prije nego što je program ponovno smije čitati.",
   "Open {name} again": "Ponovno otvori {name}",
   "Forget {name}": "Zaboravi {name}",
+  "Restore last session": "Vrati prošlu sesiju",
   "The screen does not have this font — get it": "Ekran nema ovaj font — nabavi ga",
   "{name} is now drawn with its own letterforms.": "{name} se sada iscrtava vlastitim slovima.",
   "{name} is not on Google Fonts — opening a search for it.": "{name} nije na Google Fonts — otvaram pretragu.",

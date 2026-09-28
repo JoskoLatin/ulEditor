@@ -1,9 +1,9 @@
 /**
  * Session restore.
  *
- * A program that opens empty after you closed a window with twelve tabs is a demo,
- * not a tool. The tree roots, the open tabs and which one was active are
- * remembered.
+ * The tree roots, the open tabs and which one was active are remembered — and
+ * on desktop offered back at the next start rather than imposed on it; see
+ * `restoreSession`.
  *
  * **On the web, only the folders.** There a `Uri` is a key to a
  * `FileSystemHandle` valid within one visit. The folders' handles are kept in
@@ -17,11 +17,13 @@
 import type { Uri } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
-import type { Shell } from '../host/index.js';
+import { isHandheld, type Shell } from '../host/index.js';
 import { selectActiveTabId, useWorkspace, type GroupId } from '../state/workspace.js';
 import { addRoot, openRecentFolder, openUri } from './actions.js';
 
 const KEY = 'session.workspace';
+/** The last run's session, set aside at a start until it is restored or replaced. */
+export const PREVIOUS = 'session.previous';
 /** Above this, restoring takes longer than anyone wants to wait for startup. */
 const MAX_TABS = 24;
 
@@ -32,7 +34,7 @@ const MAX_TABS = 24;
  * shape, so it is read either way — a person who updates the program should not
  * lose the session they had open when they did.
  */
-interface StoredSession {
+export interface StoredSession {
   roots: Uri[];
   tabs: Array<Uri | { uri: Uri; group: GroupId }>;
   active: Uri | null;
@@ -56,15 +58,70 @@ export function saveSession(shell: Shell): void {
 }
 
 /**
- * Restores the previous session. Files deleted or moved in the meantime are
- * skipped without a fuss — a session restore must not bury the user in errors for
- * something they did not ask for.
+ * What the window finds when it comes up.
+ *
+ * **While the program runs, nothing is lost.** The window reloads itself — a
+ * change of language does — and comes back as it was. That is told apart from
+ * a start by `sessionStorage`, which survives a reload of the window and not
+ * the end of the process.
+ *
+ * **A start begins empty.** The last run's folders and tabs are set aside and
+ * offered — "Restore last session" on the welcome screen and in the palette —
+ * rather than laid over whatever the person started the program to do. They
+ * stay offered until a run that had something open ends and takes their place.
+ *
+ * On a phone a start is not a choice: Android ends an app in the background
+ * whenever it likes, and coming back to it is not starting over. There the
+ * session comes back on its own, as it always did.
  */
 export async function restoreSession(shell: Shell): Promise<void> {
   if (shell.platform !== 'desktop') return restoreWebFolders(shell);
 
   const session = shell.settings.get<StoredSession | null>(KEY, null);
+  if (wasRunning() || isHandheld()) {
+    if (session) await restoreFrom(shell, session);
+    return;
+  }
+  if (session && holdsAnything(session)) shell.settings.set(PREVIOUS, session);
+  shell.settings.set(KEY, null);
+}
+
+/** The last run's session, if one is waiting to be restored. */
+export function previousSession(shell: Shell): StoredSession | null {
+  const session = shell.settings.get<StoredSession | null>(PREVIOUS, null);
+  return session && holdsAnything(session) ? session : null;
+}
+
+/** Brings back the last run's folders and tabs, beside whatever is open now. */
+export async function restorePreviousSession(shell: Shell): Promise<void> {
+  const session = previousSession(shell);
   if (!session) return;
+  shell.settings.set(PREVIOUS, null);
+  await restoreFrom(shell, session);
+}
+
+function holdsAnything(session: StoredSession): boolean {
+  return (session.roots?.length ?? 0) > 0 || (session.tabs?.length ?? 0) > 0;
+}
+
+const RUNNING = 'uleditor.running';
+/** Whether this window has come up before in this run of the program; marks it if not. */
+function wasRunning(): boolean {
+  try {
+    if (sessionStorage.getItem(RUNNING)) return true;
+    sessionStorage.setItem(RUNNING, '1');
+  } catch {
+    // No sessionStorage: every load counts as a start, which loses nothing.
+  }
+  return false;
+}
+
+/**
+ * Restores a stored session. Files deleted or moved in the meantime are
+ * skipped without a fuss — a session restore must not bury the user in errors for
+ * something they did not ask for.
+ */
+async function restoreFrom(shell: Shell, session: StoredSession): Promise<void> {
 
   /* The folders come back collapsed: the person did not just ask for any of
      them, and a morning tree of roots reads better as a shelf than as last

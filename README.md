@@ -610,8 +610,13 @@ an image is a demo, not a tool.
 
 The default is **English**; Croatian is selected in settings (`Ctrl+,`). Changing
 it reloads the window: the PDF, book and Office views build DOM directly, so
-swapping strings on the fly would mean tearing down every open document — and the
-session is restored on start anyway.
+swapping strings on the fly would mean tearing down every open document — and a
+reload while the program runs brings every folder and tab back as it was.
+
+A start, after the program was closed, opens empty: the last session is offered
+by "Restore last session" on the welcome screen and in the palette, not laid over
+whatever the program was started to do. On a phone, where the system ends apps in
+the background, the session still comes back on its own.
 
 Translations are keyed by **the English source text**, not by abstract
 identifiers. An untranslated string therefore falls back to readable English

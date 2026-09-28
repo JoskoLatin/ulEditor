@@ -18,6 +18,7 @@
     "verify:tree": "node tools/verify-tree.mjs",
     "verify:menu": "node tools/verify-menu.mjs",
     "verify:tree-desktop": "node tools/verify-tree-desktop.mjs",
+    "verify:session-desktop": "node tools/verify-session-desktop.mjs",
     "i18n:template": "node tools/i18n-template.mjs",
     "verify:pdf": "node tools/verify-pdf-annotations.mjs && node tools/verify-pdf-pages.mjs && node tools/verify-pdf-text.mjs && node tools/verify-pdf-redact.mjs && node tools/verify-pdf-retype.mjs && node tools/verify-pdf-edit.mjs",
     "icons": "node tools/make-icons.mjs",

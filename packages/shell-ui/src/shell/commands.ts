@@ -23,6 +23,7 @@ import { canRead, exitReading, readerPage, toggleReading, useReading } from './r
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
 import { clearRecent, hasRecent } from './recent.js';
+import { previousSession, restorePreviousSession } from './session.js';
 import { devtoolsAvailable, openDevtools, watchDevtools } from './devtools.js';
 import { canUpdate, checkForUpdates, checksOnStart, setChecksOnStart } from './updates.js';
 
@@ -349,6 +350,13 @@ export function registerCommands(shell: Shell): () => void {
 
     /* Somewhere to clear it. A list of what you have opened is a small piece of
        history about you, and a program that keeps one owes you a way to say no. */
+    shell.commands.register({
+      id: 'file.restoreSession',
+      title: t('Restore last session'),
+      category: t('File'),
+      when: () => previousSession(shell) !== null,
+      run: () => restorePreviousSession(shell),
+    }),
     shell.commands.register({
       id: 'file.forgetRecent',
       title: t('Forget recently opened files'),

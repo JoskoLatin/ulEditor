@@ -22,7 +22,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
  * Brings the application up and returns the attached page.
  *
- * @param {{ port?: number, timeoutMs?: number }} [opts]
+ * @param {{ port?: number, timeoutMs?: number, profile?: string }} [opts]
  */
 /**
  * Whether an ulEditor is already running, and would swallow the one we start.
@@ -58,6 +58,7 @@ export async function startDesktop(opts = {}) {
 
   if (alreadyRunning()) throw new Error(ALREADY_RUNNING);
 
+  let profile;
   const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
     cwd: ROOT,
     shell: true,
@@ -66,8 +67,9 @@ export async function startDesktop(opts = {}) {
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
       /* A scratch profile. Settings live in the WebView2 localStorage, and
          without this the checks run in the person's own — every fixture they
-         open lands in the real recent list and the real session. */
-      WEBVIEW2_USER_DATA_FOLDER: await mkdtemp(join(tmpdir(), 'ul-profile-')),
+         open lands in the real recent list and the real session. A check that
+         restarts the program passes the one it got back, to start again in it. */
+      WEBVIEW2_USER_DATA_FOLDER: (profile = opts.profile ?? (await mkdtemp(join(tmpdir(), 'ul-profile-')))),
     },
     /* Silent, unless somebody is trying to find out why a check fails.
        `UL_DESKTOP_LOG=1` lets the application's own output through, which is
@@ -85,7 +87,7 @@ export async function startDesktop(opts = {}) {
       const context = browser.contexts()[0];
       const page = context?.pages()[0] ?? (await context.waitForEvent('page'));
       await page.waitForSelector('.shell', { timeout: 30000 });
-      return { app, browser, page };
+      return { app, browser, page, profile };
     } catch (err) {
       lastError = err;
       await new Promise((r) => setTimeout(r, 1500));

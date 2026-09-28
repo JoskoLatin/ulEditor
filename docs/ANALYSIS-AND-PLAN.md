@@ -866,5 +866,5 @@ without administrator rights, and the figure is not presented as one.
 5. Open a `.md` → the live preview follows typing
 6. Open a `.docx` and an `.xlsx` → the read-only preview renders
 7. `Ctrl+Shift+P` → the command palette finds commands from every loaded plugin
-8. Close and reopen → the session is restored
+8. Close and reopen → it opens empty, and "Restore last session" brings the tabs and folders back
 9. Package an installer, install it on a clean machine, repeat 1–8

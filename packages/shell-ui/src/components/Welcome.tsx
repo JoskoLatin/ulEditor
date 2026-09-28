@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FORMATS } from '@uleditor/plugin-sdk';
 
 import { t } from '@uleditor/i18n';
@@ -6,6 +6,7 @@ import { t } from '@uleditor/i18n';
 import { useShell } from '../shell/context.js';
 import { openFiles, openFolder, openRecentFolder, openUri } from '../shell/actions.js';
 import { hasRecent, recentFiles, recentFolders } from '../shell/recent.js';
+import { PREVIOUS, previousSession, restorePreviousSession } from '../shell/session.js';
 import { useWorkspace } from '../state/workspace.js';
 import { FormatIcon, IconFolderOpen } from './Icons.js';
 import { detectByName } from '../host/detect.js';
@@ -176,6 +177,17 @@ export function Welcome() {
    */
   const folders = recentFolders(shell);
   const files = recentFiles(shell);
+  /* The last run's folders and tabs, set aside at the start (shell/session.ts).
+     Gone once pressed — restoring only folders leaves this screen up. */
+  const [previous, setPrevious] = useState(() => previousSession(shell));
+  /* Watched rather than read once: this screen is drawn before the start sets
+     the last session aside, and read then, it would find nothing to offer. */
+  useEffect(() => {
+    const watching = shell.settings.onDidChange(({ key }) => {
+      if (key === PREVIOUS) setPrevious(previousSession(shell));
+    });
+    return () => watching.dispose();
+  }, [shell]);
 
   return (
     <div className="surface welcome-surface">
@@ -195,6 +207,17 @@ export function Welcome() {
           <div className="welcome-col">
             <h3>{t('Start')}</h3>
             <div className="welcome-list">
+              {previous ? (
+                <button
+                  className="welcome-action welcome-restore"
+                  onClick={() => {
+                    setPrevious(null);
+                    void restorePreviousSession(shell);
+                  }}
+                >
+                  {t('Restore last session')}
+                </button>
+              ) : null}
               <button className="welcome-action" onClick={() => void openFolder(shell)}>
                 {t('Open folder')} <span className="k">Ctrl K</span>
               </button>
@@ -211,8 +234,8 @@ export function Welcome() {
           </div>
 
           {/*
-            Where you were. The session brings back the tabs of the last run on
-            its own; this is for the document from last week, whose folder
+            Where you were. The last run's tabs are one button away, above; this
+            is for the document from last week, whose folder
             nobody remembers. Absent on the web, where a stored path reopens
             nothing — see shell/recent.ts.
           */}

@@ -51,6 +51,15 @@ export type ShellFileSystem = VirtualFileSystem & {
 
 export type Platform = 'desktop' | 'web';
 
+/**
+ * A phone or tablet. The Tauri build there is `desktop` to everything else —
+ * the same core, the same file system — but the system ends it in the
+ * background at will, so a start there is often a return, not a new day.
+ */
+export function isHandheld(): boolean {
+  return /Android|iPhone|iPad/i.test(navigator.userAgent);
+}
+
 export interface Shell extends EditorHost {
   readonly fs: ShellFileSystem;
   /**
