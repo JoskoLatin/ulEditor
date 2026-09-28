@@ -91,7 +91,7 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 
 gotovo | visok | Proširiti recalculate s jednog lista na cijelu radnu knjigu
 gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knjizi)
-ceka | visok | Izdati 0.6.2 — čeka Joškov tag: `a43c1d7` (0.6.1 + ubrzanje) ili HEAD (uz to faza 3 i nove granice slika, koje diraju i desktop)
+gotovo | visok | Izdati 0.6.2 — tag `v0.6.2` na `0da06a0` (HEAD: 0.6.1, ubrzanje, faza 3, granice slika, novi start desktopa), 2026-09-28
 gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, ulazi u 0.6.2)
 gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
 ceka | normalan | Kupiti certifikat za potpisivanje Windows i macOS installera
@@ -104,8 +104,9 @@ gotovo | visok | Faza 3, korak 4 — uređivanje slika u pregledniku, u workeru 
 gotovo | normalan | Faza 3, korak 5 — drukčije od ADR-a: TS i Rust detektor ostaju, CI paritet (70 369 datoteka, 0 razlika; nađen i popravljen off-by-one za WebP)
 gotovo | normalan | Granica memorije za slike: 512 MiB, zadano u `image` crateu i koliko je desktop imao prije; TIFF 256 MiB, JPEG/WebP vršno do ~3×
 gotovo | normalan | Faza 3, korak 6 — service worker: ponovno učitavanje bez mreže otvara .docx; precache 3,53 MB; svaki bajt iz cachea provjeren SHA-256 iz builda; gašenje `deploy-web.ps1 -ServiceWorkerOff`; sigurnosni pregled NE / PROLAZI / PROLAZI (`pnpm verify:web-offline`, 32 provjere, 29/34 mutacija)
-todo | visok | Deploy weba nakon koraka 6 — novi Caddyfile (404 za /sw.js, /wasm/, /ocr/) i worker idu zajedno; bez tog deploya uleditor.truss ne radi offline
+gotovo | visok | Deploy weba nakon koraka 6 i 8 — uleditor.truss:8443 poslužuje /sw.js i WASM (200), nepoznato 404, CSP na mjestu (2026-09-28); `deploy-web.ps1` sad prati port 8443 i prepoznaje blok po `reverse_proxy uleditor:8080`
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
+todo | nizak | Vremenski test spremanja slike pada na sporom macOS runneru (313 ms naspram praga 200, ponovljen 123 ms) — mjeriti omjer kao kod preračuna
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
 ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `internal` mreža caddy↔uleditor — dira zajednički compose, Joškova odluka
 gotovo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje: handle u IndexedDB, dopuštenje samo na klik; sigurnosni pregled PROLAZI, četiri nalaza popravljena (`pnpm verify:web-roots`, 23 provjere)

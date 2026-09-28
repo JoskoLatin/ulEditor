@@ -1,4 +1,4 @@
-# Puts the browser build on the server: https://uleditor.truss (ADR 0002, step 7).
+# Puts the browser build on the server: https://uleditor.truss:8443 (ADR 0002, step 7).
 #
 # Builds the WebAssembly, the OCR assets and the shell; ships the built `dist`
 # (without source maps)
@@ -91,11 +91,14 @@ echo "deployed: $(du -sh site | cut -f1)"
 # state it would not start from: a change that does not validate, or does not
 # reload, is put back. With cp, into the same inode — the file is a single-file
 # bind mount, and after an mv the container would go on seeing the old one.
+# Present is whatever block proxies to this container, however its address is
+# written: the sites moved to :8443 on 2026-09-28, and the list that redirects
+# the old portless links names uleditor.truss too without serving it.
 shared=/opt/stacks/caddy/Caddyfile
-if ! grep -q '^uleditor.truss {' "$shared"; then
+if ! grep -q 'reverse_proxy uleditor:8080' "$shared"; then
   bak="$shared.bak-$(date +%Y%m%d-%H%M%S)"
   cp "$shared" "$bak"
-  printf '\nuleditor.truss {\n\ttls internal\n\treverse_proxy uleditor:8080\n}\n' >> "$shared"
+  printf '\nuleditor.truss:8443 {\n\ttls internal\n\treverse_proxy uleditor:8080\n}\n' >> "$shared"
   if ! docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null \
     || ! docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
     cp "$bak" "$shared"
@@ -119,8 +122,9 @@ for i in $(seq 1 20); do
 done
 echo "container: $state"
 [ "$state" = healthy ] || { echo "the container is not healthy" >&2; exit 1; }
-status() { curl -sk --resolve uleditor.truss:443:127.0.0.1 -o /dev/null -w '%{http_code}' "https://uleditor.truss$1"; }
-headers() { curl -sk --resolve uleditor.truss:443:127.0.0.1 -o /dev/null -D - "https://uleditor.truss$1"; }
+site=uleditor.truss:8443
+status() { curl -sk --resolve $site:127.0.0.1 -o /dev/null -w '%{http_code}' "https://$site$1"; }
+headers() { curl -sk --resolve $site:127.0.0.1 -o /dev/null -D - "https://$site$1"; }
 for path in / /sw.js /wasm/ul_image_bg.wasm; do
   code=$(status "$path")
   echo "$path $code"
