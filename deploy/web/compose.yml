@@ -1,7 +1,7 @@
 # ulEditor, the browser build, on the server at /opt/stacks/uleditor.
 #
 # A static site and nothing else: no ports of its own (the shared Caddy
-# reaches it over `proxy`), read-only everywhere, one capability, bounded in
+# reaches it over `caddy-uleditor`), read-only everywhere, one capability, bounded in
 # processes and memory, and the same Caddy the server already runs, pinned to
 # its digest. `site/` is the built `packages/shell-ui/dist`, put there by
 # tools/deploy-web.ps1.
@@ -17,8 +17,15 @@ services:
     tmpfs:
       - /data:size=16m
       - /config:size=16m
+    # Only the shared Caddy is on this network, and it is internal: no route
+    # out, and over the network none of the other containers on `proxy` can
+    # reach this one or be reached from it. It does not stand against a
+    # container holding the docker socket (dockge): that one is root on the
+    # host and can exec into this or connect it anywhere.
+    # Created once, outside both stacks, so the shared Caddy never depends
+    # on this stack being up; tools/deploy-web.ps1 refuses to deploy without it.
     networks:
-      - proxy
+      - caddy-uleditor
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -38,5 +45,5 @@ services:
       retries: 3
 
 networks:
-  proxy:
+  caddy-uleditor:
     external: true

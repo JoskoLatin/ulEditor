@@ -73,6 +73,22 @@ true #
 set -eu
 dir=/opt/stacks/uleditor
 in="$dir/incoming"
+
+# The container's one network is made once, by hand, outside both stacks
+# (ADR 0002, step 7). Not made here: a network the shared Caddy is not on
+# would take the site down, and joining the Caddy to it is a change to the
+# shared stack, not to this one. Checked before anything on the host is
+# touched, so a refused deploy leaves the site as it was.
+net=caddy-uleditor
+if [ "$(docker network inspect -f '{{.Internal}}' $net 2>/dev/null)" != true ]; then
+  echo "$net is missing or not internal: docker network create --internal $net" >&2
+  exit 1
+fi
+if ! docker network inspect -f '{{range .Containers}}{{println .Name}}{{end}}' $net | grep -qx caddy; then
+  echo "the shared Caddy is not on $net: docker network connect $net caddy, and list it in /opt/stacks/caddy/compose.yml" >&2
+  exit 1
+fi
+
 install -m 0644 "$in/compose.yml" "$dir/compose.yml"
 install -m 0644 "$in/Caddyfile" "$dir/Caddyfile"
 rm -rf "$dir/site.new"
@@ -135,6 +151,26 @@ for path in /assets/missing-00000000.js /wasm/missing.wasm /ocr/missing.js; do
 done
 headers / | grep -i -E '^content-security-policy|^cache-control'
 headers /wasm/ul_image_bg.wasm | grep -i '^content-type'
+
+# The isolation, shown rather than assumed. The container is on its one
+# network; the same probe that must fail below first reaches the site itself,
+# so a refused exec or a missing wget cannot pass for "isolated"; there is no
+# default route to try, rather than one remote host that happened not to
+# answer; and a neighbour on `proxy` is asked by its address, not its name —
+# a name would fail on DNS alone and say nothing of the bridge's firewall.
+nets=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' uleditor)
+[ "$nets" = "caddy-uleditor " ] || { echo "uleditor is on: $nets" >&2; exit 1; }
+probe() { docker exec uleditor wget -q -T 3 -O /dev/null "$1" 2>/dev/null; }
+probe http://127.0.0.1:8080/ || { echo "the probe cannot reach the site itself" >&2; exit 1; }
+# A default route, v4 or v6; the kernel's unreachable v6 default on `lo` is not one.
+routes=$(docker exec uleditor cat /proc/net/route /proc/net/ipv6_route 2>/dev/null || true)
+if echo "$routes" | grep -v '[[:space:]]lo$' | grep -qE '^[^[:space:]]+[[:space:]]+00000000[[:space:]]|^0{32} 00 '; then
+  echo "uleditor has a default route" >&2; exit 1
+fi
+dockge=$(docker inspect -f '{{with index .NetworkSettings.Networks "proxy"}}{{.IPAddress}}{{end}}' dockge)
+[ -n "$dockge" ] || { echo "no address for dockge on proxy to probe" >&2; exit 1; }
+probe "http://$dockge:5001/" && { echo "uleditor reaches dockge at $dockge" >&2; exit 1; }
+echo "isolated: no default route, dockge at $dockge unreachable"
 true #
 '@
 }

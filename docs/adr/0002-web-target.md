@@ -161,6 +161,23 @@ go through an independent security review first.
    OCR. The container needs `NET_BIND_SERVICE` back: the image's caddy
    binary carries it as a file capability, and under no-new-privileges exec
    is refused without it. The name needs a DNS record on the router.
+   **Network (2026-09-29)**: the container leaves the flat `proxy` network,
+   where 17 containers — dockge with the docker socket among them — could
+   reach it and it them. Its one network is `caddy-uleditor`, made with
+   `--internal` (no route out) and shared with the Caddy alone. It is made
+   once by hand, outside both stacks: owned by this stack, the shared Caddy
+   could not start while this one was down. The deploy refuses to run
+   without it, before it touches anything on the host, and after the deploy
+   it shows from inside that the container reaches itself, has no default
+   route, and cannot reach dockge by its address on `proxy`. Run today
+   against the container still on `proxy`, those probes find the route and
+   reach dockge. What it does not stand against is a container holding the
+   docker socket, which is root on the host. The security review said
+   PROLAZI, with its three findings on the probes fixed; Docker on the
+   server is 29.7.2, past the resolver leak fixed in 25.0.5. Adding the
+   network to the shared Caddy's compose file changes its hash, so the next
+   `docker compose up -d` there recreates the Caddy — a few seconds without
+   any `*.truss` site, expected.
 8. The workspace root survives a reload.
    **Done (2026-09-28)**: `host/root-store.ts` keeps each opened folder's
    `FileSystemDirectoryHandle` in IndexedDB, under its uri, and nothing read
