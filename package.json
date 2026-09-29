@@ -46,6 +46,7 @@
     "verify:web-offline": "node tools/verify-web-offline.mjs",
     "verify:web-roots": "node tools/verify-web-roots.mjs",
     "deploy:web": "pwsh tools/deploy-web.ps1",
+    "setup:web-network": "pwsh tools/setup-web-network.ps1",
     "verify:clipboard": "node tools/verify-clipboard.mjs",
     "verify:crash": "node tools/verify-crash.mjs",
     "verify:search": "node tools/verify-project-search.mjs",
