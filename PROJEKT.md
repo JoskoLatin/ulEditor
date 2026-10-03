@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-09-27. Zamjenjuje onaj od 2026-09-23; dopunjen nakon `9bc2548`.
+Izvještaj od 2026-10-03. Zamjenjuje onaj od 2026-09-27.
 
 ## Jedna rečenica
 
@@ -16,13 +16,21 @@ objavljeni: **`v0.6.2`** na `0da06a0` (2026-09-28), `pnpm verify:release-live`
 14/14 — kanal za ažuriranje nudi 0.6.2 na sva četiri cilja.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Zadnji rad: **2026-09-27** — cold start izmjeren (474 ms), vremenski testovi
-preračuna više ne ovise o brzini CI runnera.
-Faza: **2 (Office)**, pri kraju — `docs/ANALYSIS-AND-PLAN.md:367`. Faza 3 (Web,
-WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
+Zadnji rad: **2026-09-29** — web kontejner prebačen na vlastitu mrežu
+`caddy-uleditor` (`385782c`, `8bf9b7d`).
+Faza: **3 (Web) gotova** — svih osam koraka iz ADR 0002
+(`docs/adr/0002-web-target.md:79`). Od `v0.6.2` desktop nije dobio ništa novo
+(samo deploy, testovi i dokumentacija), pa novo izdanje ne treba. Sljedeća je
+faza 4 (mobitel, `docs/ANALYSIS-AND-PLAN.md:759`); odluka o njoj još nije
+donesena.
 
 ## Radi
 
+- **Web radi na `uleditor.truss:8443`** (faza 3, ADR 0002): `ul-image` u WASM-u,
+  uređivanje slika u workeru, service worker za rad bez mreže, otvorena mapa
+  preživi osvježavanje, CSP iz `deploy/web/Caddyfile`. Provjereno 2026-10-03 s
+  radne stanice: `/` i `/sw.js` odgovaraju HTTP 200; kontejner je samo na mreži
+  `caddy-uleditor`, a ona je `internal=true` (`docker inspect`).
 - **Cold start je izmjeren** — zadnji neizmjereni budžet iz plana. Instalirana
   0.6.0, od pokretanja procesa do prvog iscrtavanja ljuske: **474 ms** medijan,
   603–807 ms pri prvom pokretanju s praznim profilom, 1 104 ms na jednoj jezgri;
@@ -47,11 +55,11 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
   listu `Cashless` — pa se nijedna ne može izračunati, ali se ni ne označava
   krivo. Jedan pritisak tipke ondje je označavao **50 od 51** formule, sad
   nijednu (`be4b50e`).
-- **Release lanac je dostižan.** `pnpm verify:release-live` prolazi 14/14:
-  `latest.json` odgovara odjavljenom zahtjevu HTTP 200, servira 0.5.0, potpis i
-  artefakt postoje za sva četiri cilja (windows-x86_64, darwin-aarch64,
-  darwin-x86_64, linux-x86_64). Time je v0.5.0 objavljen, a ne više draft; jesu
-  li v0.3.3 i v0.4.0 objavljeni, **ne znam** — provjera pita samo `/latest`.
+- **Release lanac je dostižan.** `pnpm verify:release-live` prolazi 14/14 za
+  `v0.6.2` (2026-09-28): `latest.json` odgovara odjavljenom zahtjevu HTTP 200,
+  potpis i artefakt postoje za sva četiri cilja (windows-x86_64, darwin-aarch64,
+  darwin-x86_64, linux-x86_64). Jesu li v0.3.3 i v0.4.0 objavljeni, **ne znam**
+  — provjera pita samo `/latest`.
 - **Spajanje ćelija u Wordu** — `Ctrl+M`, mjereno protiv Wordovog vlastitog
   spajanja (`a16086e`, `91ebd25`, `tools/verify-docx-merge.mjs`).
 - **Cenzus formula nad stvarnim dokumentima** — 372 formule, `SUM` 79.8%
@@ -84,9 +92,10 @@ WASM) nije započeta (`docs/ANALYSIS-AND-PLAN.md:686`).
 - **Installeri nisu potpisani** za Windows i macOS (`README.md:36`). Android APK
   jest. Ovo je kupnja certifikata, ne kod.
 - **Telemetrija nije započeta** (i ostaje opt-in) — `docs/ANALYSIS-AND-PLAN.md:228`.
-- ~~`CLAUDE.md` u korijenu nije u gitu~~ — riješeno (`af59b5d`): namjerno je
-  izvan gita, i `CLAUDE.md` i `AGENTS.md` su u `.gitignore`, jer opisuju wiki i
-  lokalnu infrastrukturu, a `origin` je javan.
+- **Faza 4 (mobitel) nije odlučena.** Kandidati za sljedeći veliki posao: faza 4
+  (sučelje za dodir, Android), servis za pretvaranje (LibreOffice, ADR 0002 ga
+  je izbacio iz faze 3 kao najveću novu površinu za napad) i opt-in telemetrija.
+  Odluka ide kao ADR 0003.
 
 ## Kartice
 
@@ -95,7 +104,7 @@ gotovo | normalan | Izračunati SUMIFS/COUNTIFS nad tablicom (35 u stvarnoj knji
 gotovo | visok | Izdati 0.6.2 — tag `v0.6.2` na `0da06a0` (HEAD: 0.6.1, ubrzanje, faza 3, granice slika, novi start desktopa), 2026-09-28
 gotovo | nizak | Ubrzati preračun nakon masovne promjene — 511 ms → 10 ms, 20k teških formula 62,8 s → 479 ms (`d4e40ba`, ulazi u 0.6.2)
 gotovo | normalan | Izmjeriti cold start i zapisati budžet u plan — 474 ms naspram 1,5 s (`d6a0c99`)
-ceka | nizak | Kupiti certifikat za potpisivanje Windows i macOS installera — odgođeno 2026-09-28 dok installere koristi samo Joško; vratiti se kad ulEditor ide drugima
+ceka | nizak | Kupiti certifikat za potpisivanje Windows i macOS installera — odgođeno 2026-09-28 dok installere koristi samo Čovik; vratiti se kad ulEditor ide drugima
 gotovo | nizak | Odlučiti ide li korijenski CLAUDE.md u git ili u .gitignore — u .gitignore
 gotovo | normalan | Potvrditi ADR 0002 (faza 3: ul-image/ul-formats u WASM, ne ul-core; backend kasnije) — prihvaćen 2026-09-27
 gotovo | normalan | Faza 3, korak 2 — Tauri API samo kroz host/native.ts, web bundle ga više ne učitava (`8e98feb`, `pnpm verify:host`, CI zelen)
@@ -109,15 +118,18 @@ gotovo | visok | Deploy weba nakon koraka 6 i 8 — uleditor.truss:8443 poslužu
 gotovo | normalan | Faza 3, korak 7 — web na serveru: /opt/stacks/uleditor, zajednički Caddy → uleditor.truss, CSP iz deploy/web/Caddyfile (`pnpm deploy:web`, `pnpm verify:web-csp`)
 gotovo | nizak | Vremenski test spremanja slike pada na sporom macOS runneru (313 ms naspram praga 200) — sad najdulji okvir < 40% trajanja spremanja: worker 1–15%, isto spremanje na glavnoj niti 81% (mutant pada), 2026-09-29
 gotovo | visok | DNS: uleditor.truss je alias za server.truss na routeru; u Chromeu se otvara bez upozorenja, sigurni kontekst, spremanje u mape radi
-ceka | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): zasebna `--internal` mreža `caddy-uleditor` — repo spreman 2026-09-29 (compose, deploy odbija bez mreže i dokazuje izolaciju); čeka `pnpm setup:web-network` (jednom), pa `pnpm deploy:web`
+gotovo | nizak | Mreža `proxy` je ravna (17 kontejnera, uključujući dockge s docker.sockom): web kontejner je sad samo na `--internal` mreži `caddy-uleditor`, koju dijeli samo s Caddyjem — provjereno 2026-10-03 (`docker inspect`: jedna mreža, `internal=true`; `/` i `/sw.js` HTTP 200)
 gotovo | nizak | Faza 3, korak 8 — otvorena mapa preživi osvježavanje: handle u IndexedDB, dopuštenje samo na klik; sigurnosni pregled PROLAZI, četiri nalaza popravljena (`pnpm verify:web-roots`, 23 provjere)
 gotovo | normalan | Desktop: dok program radi (i pri ponovnom učitavanju prozora) sve ostaje; nakon zatvaranja start je prazan uz „Vrati prošlu sesiju" (početni ekran i paleta); datoteka otvorena izvana dok radi ide u novu karticu; na telefonu obnova ostaje automatska (`pnpm verify:session-desktop`, 13 provjera)
 gotovo | visok | Odluka: spremljeni handle mape kao trajna ovlast origina — prihvaćeno 2026-09-28, zapisano u ADR 0002 (korak 8)
+ceka | visok | Odlučiti sljedeći veliki posao (ADR 0003): faza 4 (mobitel, sučelje za dodir), servis za pretvaranje (LibreOffice) ili opt-in telemetrija — prijedlog s odbačenim alternativama, pa Čovikova odluka
 
 ## Blokada
 
-Potpisivanje installera čeka Joškovu odluku o kupnji certifikata (99 USD/god za
-Apple, nekoliko stotina za Windows); sve ostalo je posao u repou i nije blokirano.
+Nema blokade. Potpisivanje installera je odgođeno 2026-09-28 dok ulEditor ne ide
+drugima (certifikat 99 USD/god za Apple, nekoliko stotina za Windows). Isti
+plaćeni Apple Developer račun traži i distribucija iOS-a (TestFlight, App
+Store) — to će odluka o fazi 4 morati uzeti u obzir.
 
 ## Stranica u wikiju
 
@@ -131,5 +143,9 @@ Naslov: ulEditor — stanje
 - Faza 2 je time zatvorena u kodu: pogled na tablicu više ne pokazuje broj koji
   je prestao biti točan, a ne označava ni ono što nije dirano. Računa se cijela
   knjiga, i svi budžeti iz plana su izmjereni i ispunjeni (cold start 474 ms od
-  1,5 s). Izvan repoa čekaju tag za 0.6.2 i kupnja certifikata; sljedeće u kodu
-  je faza 3 (Web, WASM).
+  1,5 s). 0.6.2 je objavljen 2026-09-28.
+- Faza 3 (Web) je gotova: ulEditor radi i u pregledniku na uleditor.truss —
+  slike uređuje kroz WASM, radi bez mreže i pamti otvorenu mapu, a na serveru
+  je iza Caddyja na vlastitoj izoliranoj mreži.
+- Sljedeće je odluka o fazi 4 (mobitel); certifikat za potpisivanje čeka da
+  ulEditor ide drugima.
