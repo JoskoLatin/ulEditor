@@ -30,7 +30,15 @@ import {
   type SaveResult,
 } from '@uleditor/plugin-sdk';
 
-import { showHit, textNodesOf } from '@uleditor/reader-core';
+/* The page geometry is reader-core's, not a copy of it: the copy here missed the
+   margin reader-core gained (f02305d), and a book ran its text into the edge. */
+import {
+  COLUMN_GAP,
+  PAGE_MARGIN,
+  TWO_COLUMN_MIN,
+  showHit,
+  textNodesOf,
+} from '@uleditor/reader-core';
 import { t } from '@uleditor/i18n';
 
 import { openEpub, WORDS_PER_MINUTE, type Book, type BookChapter } from './epub.js';
@@ -38,10 +46,6 @@ import { openEpub, WORDS_PER_MINUTE, type Book, type BookChapter } from './epub.
 export type { Book, BookChapter } from './epub.js';
 export { openEpub } from './epub.js';
 
-/** The gap between columns in paged mode. Also the page-turn step. */
-const COLUMN_GAP = 56;
-/** Below this width a two-column layout becomes narrower than a comfortable measure. */
-const TWO_COLUMN_MIN = 1180;
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
@@ -286,10 +290,9 @@ class BookEditor implements EditorInstance {
     // back into the decision that produced it.
     const available = view.parentElement?.clientWidth ?? view.clientWidth;
     const columns = available >= TWO_COLUMN_MIN ? 2 : 1;
-    view.style.maxWidth =
-      columns === 2
-        ? `calc(var(--book-measure) * 2 + ${COLUMN_GAP}px)`
-        : 'var(--book-measure)';
+    const measure =
+      columns === 2 ? `calc(var(--book-measure) * 2 + ${COLUMN_GAP}px)` : 'var(--book-measure)';
+    view.style.maxWidth = `min(${measure}, calc(100% - ${PAGE_MARGIN * 2}px))`;
 
     const width = view.clientWidth;
     const height = view.clientHeight;

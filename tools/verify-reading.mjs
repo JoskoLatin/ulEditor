@@ -86,6 +86,25 @@ try {
   const chapterVisible = await page.locator('.ul-book-chapter h1').first().isVisible();
   check('the chapter text is displayed', chapterVisible);
 
+  /* A window narrower than the measure. The book kept its own copy of the page
+     geometry and missed the margin reader-core gained, so the text ran from the
+     contents straight into the edge of the window. */
+  const before = page.viewportSize();
+  await page.setViewportSize({ width: 1000, height: before.height });
+  await page.waitForTimeout(400);
+  const margins = await page.evaluate(() => {
+    const text = document.querySelector('.ul-book-chapter p').getBoundingClientRect();
+    const toc = document.querySelector('.ul-book-toc').getBoundingClientRect();
+    return { left: Math.round(text.left - toc.right), right: Math.round(window.innerWidth - text.right) };
+  });
+  check(
+    'in a narrow window the text keeps a margin on both sides',
+    margins.left >= 16 && margins.right >= 16,
+    `${margins.left} px from the contents, ${margins.right} px from the edge`,
+  );
+  await page.setViewportSize(before);
+  await page.waitForTimeout(400);
+
   const formatTag = await page.locator('.tab[data-active="true"] .name').innerText();
   check('the tab carries the book file name', formatTag === 'book.epub');
 

@@ -20,14 +20,14 @@ import type { ReadingOptions, ReadingProgress } from '@uleditor/plugin-sdk';
 /** The gap between columns; also part of the page-turn step. */
 export const COLUMN_GAP = 56;
 /** Below this width a two-column layout becomes narrower than a comfortable measure. */
-const TWO_COLUMN_MIN = 1180;
+export const TWO_COLUMN_MIN = 1180;
 /**
  * The least margin either side of the page. Without it a window narrower than
  * the measure — a phone, or a laptop with two columns — runs the text into the
  * glass. It goes on the width, not as padding, because padding would enter the
  * page-turn step.
  */
-const PAGE_MARGIN = 24;
+export const PAGE_MARGIN = 24;
 
 const WORDS_PER_MINUTE = 220;
 
