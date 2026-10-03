@@ -6,8 +6,9 @@
  * into. Conversions and exports take the same route later on.
  *
  * The panel holds **one** document. That is deliberate: this is an output, not a
- * second workspace, so a tab bar of its own would be a frame with no content. A
- * full split with two tab groups remains an open item.
+ * second workspace, so a tab bar of its own would be a frame with no content.
+ * The workspace has its own split, with two tab groups (`state/workspace.ts`);
+ * this panel is not one of them.
  */
 
 import { create } from 'zustand';

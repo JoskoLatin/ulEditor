@@ -1,9 +1,9 @@
 /**
  * Reading a model and putting it on screen.
  *
- * Everything three.js is kept behind this module, and this module is only
- * reached from `index.ts` through a dynamic import, so opening a text file never
- * downloads a renderer.
+ * Everything three.js is kept behind this module, and the shell loads the whole
+ * package only when a model is opened (`lazyProvider` in `shell-ui/src/main.tsx`),
+ * so opening a text file never downloads a renderer.
  *
  * The scene is deliberately plain: two lights, a grid, an orbit camera. A viewer
  * that tries to look impressive — shadows, tone mapping, an environment map —

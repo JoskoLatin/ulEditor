@@ -146,10 +146,10 @@ ulEditor/
 │  ├─ web/                  # Vite SPA, core-rs as WASM         (phase 3)
 │  └─ mobile/               # Tauri v2 iOS/Android              (phase 4)
 ├─ crates/
-│  ├─ ul-core/              # VFS, document registry, search, library
-│  ├─ ul-formats/           # FormatCodec trait + detection by magic bytes
+│  ├─ ul-core/              # VFS (the folder sandbox), search, library
+│  ├─ ul-formats/           # detection by content (magic bytes) and by name
 │  ├─ ul-image/             # crop, rotate, mirror, resize, re-encode
-│  ├─ ul-convert/           # LibreOffice headless, for .cdr / EPS / PostScript
+│  ├─ ul-convert/           # LibreOffice headless, for .cdr / EPS / PostScript / a PostScript .ai
 │  ├─ ul-lsp/               # a Language Server Protocol client (diagnostics)
 │  └─ (no ul-index)         # tantivy is still not taken — see the search table
 │  #  and no ul-ffi: the Tauri commands live in apps/desktop/src-tauri, since
@@ -165,7 +165,7 @@ ulEditor/
 │  ├─ editor-book/          # EPUB
 │  ├─ editor-vector/        # SVG, and .cdr / EPS through ul-convert
 │  ├─ editor-3d/            # STL, OBJ, PLY, glTF, GLB, 3MF
-│  ├─ reader-core/          # the reading room, shared by four editors
+│  ├─ reader-core/          # the reading room, shared by three editors (markdown, office, book)
 │  ├─ text-export/          # txt / md / docx / pdf out of anything textual
 │  ├─ i18n/                 # the catalogues, and `t()`
 │  ├─ (no editor-sheet)     # Univer not taken; the office package reads sheets
@@ -372,7 +372,7 @@ of the two engines it was designed around has been taken.
 
 | Item | State |
 |---|---|
-| `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Univer arrives for formulas and charts |
+| `editor-sheet`: Univer, XLSX I/O, formulas, cell formatting, charts, 100k+ rows | **partly** — sheets, number formats, merged cells and cell editing through a reader of our own, for `.xlsx`, `.xls` and `.ods`, every row of a sheet kept and windowed at the speed a frame allows — see **"A hundred thousand rows"** below. A cell holding a formula does not open and says which formula it holds. Formulas are worked out by an evaluator of its own, sized by the census below; Univer was not taken, and charts are not drawn |
 | `editor-doc`: a ProseMirror schema over an OOXML subset | **partly** — headings, formatting, lists, tables and images are read, in `.docx`, `.doc`, `.odt` and RTF; text is retyped a run at a time, and a paragraph can be added — the first change here that is not a substitution, and the one that showed the byte-range model does reach past one — and one the file already had can be taken away, Enter splits one where the caret stands, Backspace joins two back into one, and Ctrl+Enter in a cell adds a row to the table: every change this row once said needed ProseMirror, done without it (see **"Enter in the middle of a sentence"**, **"Backspace at the start of a line"** and **"A row in a table"** below). What is left of phase 2 for documents is a merged row, which changes a grid rather than adding to it |
 | **A cell that is not in the file** | **not a hole, and measured rather than argued.** `applyCellEdits` will write a `<c>` into a row that has none and a whole `<row>` into a sheet that has none, which raises the obvious worry: does an edit land outside the `<dimension ref>` the sheet declares, leaving it stale? It cannot. The grid a person can type into is derived from the cells that exist, never from `<dimension>`, so it is a subset of the used range — and over 19 real worksheets, **none** has a grid reaching past its declared dimension (six declare none at all, which is legal). A merged range is not reachable either: `renderSheet` skips covered cells, so there is nothing to double-click |
 | `ul-convert`: LibreOffice headless | **done**, and smaller than it was meant to be: `.odt` and `.ods` open without it, so what it does is `.cdr`, EPS, PostScript and a PostScript-only `.ai` — the drawing models nobody else implements. Optional and asked for by name; the conversion writes to the temporary folder, never beside the original. DOCX ↔ PDF ↔ ODF conversion is not offered, because every one of those formats is read here already |

@@ -5,9 +5,10 @@
  * (`_rels`), so parsing the container lives here while mapping the content lives
  * in `docx.ts` and `xlsx.ts` respectively.
  *
- * A deliberate boundary: this layer **only reads**. Phase 2 brings writing back
- * (ProseMirror + Univer), and only then does the fidelity rule start to matter —
- * while nothing is saved, nothing can be quietly corrupted.
+ * A deliberate boundary: this layer **only reads**. Writing is the business of
+ * `docx-edit.ts` and `xlsx-edit.ts`, which change the bytes the file already has
+ * rather than serialise it afresh — ProseMirror and Univer, in the first plan,
+ * were not taken.
  */
 
 import { unzipSync, strFromU8 } from 'fflate';

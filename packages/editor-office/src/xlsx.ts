@@ -1,10 +1,12 @@
 /**
- * XLSX → a grid (read-only).
+ * XLSX → a grid.
  *
  * A spreadsheet is not shown as "text out of cells" but as a grid with column
  * and row labels, because a spreadsheet is read by position as much as by
- * content. Formulas are not evaluated — the value Excel saved is displayed, and
- * the formula itself sits in the cell's description.
+ * content. This module only reads: the value Excel saved is what is displayed,
+ * and the formula itself sits in the cell's description. A formula is worked
+ * out again only when a cell it reads is retyped (`formula.ts`), and the
+ * retyping is written by `xlsx-edit.ts`.
  */
 
 import { unescapeXml } from './docx-edit.js';

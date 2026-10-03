@@ -9,11 +9,12 @@
  * files are everywhere: every export from an older accounting program, every
  * attachment from an office that never upgraded.
  *
- * **Read-only, deliberately.** The format is write-hostile in a way OOXML is
- * not — the shared string table is indexed from every sheet, the records carry
- * offsets into one another, and a byte-surgical edit in the spirit of
- * [`xlsx-edit.ts`](./xlsx-edit.ts) has no safe seam to cut along. Rather than
- * write it badly, the grid says plainly: save it as `.xlsx` and edit it here.
+ * **Never written back, deliberately.** The format is write-hostile in a way
+ * OOXML is not — the shared string table is indexed from every sheet, the
+ * records carry offsets into one another, and a byte-surgical edit in the spirit
+ * of [`xlsx-edit.ts`](./xlsx-edit.ts) has no safe seam to cut along. Rather than
+ * write it badly, an edited `.xls` is saved as a new `.xlsx` beside it and the
+ * original is left as it was — the bar says so before anything is written.
  *
  * What is read: cell values (numbers, shared and inline strings, booleans,
  * errors, cached formula results), number formats far enough to tell a date

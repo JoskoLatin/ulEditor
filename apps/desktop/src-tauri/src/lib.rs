@@ -930,8 +930,9 @@ pub fn run() {
      * Tauri's updater will not build for Android at all. The endpoint and the
      * public key live in `tauri.conf.json` — the key is what makes this safe to
      * have, since an update is only installed if it was signed by the private
-     * half, which never leaves GitHub Secrets. Without that, "download and run
-     * an executable from the internet" is exactly what it sounds like.
+     * half, which is never in the repository — it is in GitHub Secrets and in
+     * the one file it was made in (docs/RELEASE.md). Without that, "download
+     * and run an executable from the internet" is exactly what it sounds like.
      */
     #[cfg(desktop)]
     let builder = builder

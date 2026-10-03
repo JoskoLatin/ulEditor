@@ -1,14 +1,16 @@
 /**
- * DOCX → an HTML view (read-only).
+ * DOCX → an HTML view.
  *
- * The aim is not a perfect reproduction of Word's layout — that is the job of
- * phase 2 and a real fidelity harness. The aim is for a person to open a `.docx`
- * and **read it**: headings, paragraphs, bold, lists, tables and images in their
+ * The aim is not a perfect reproduction of Word's layout. The aim is for a
+ * person to open a `.docx` and **read it**: headings, paragraphs, bold, lists, tables and images in their
  * places.
  *
  * Everything not carried across is collected into `notes` and displayed above
  * the document. A view that stays silent about what it lost is worse than one
  * that says so.
+ *
+ * This module only reads. What is typed is written by `docx-edit.ts` into the
+ * bytes the file already has.
  */
 
 import {

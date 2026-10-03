@@ -1,6 +1,6 @@
 [package]
 name = "ul-core"
-description = "ulEditor core: virtual file system and document model."
+description = "ulEditor core: the virtual file system, search across it, and the library."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -62,8 +62,9 @@ phone.
 
 The program looks for a new version by itself, and installs one only if it was
 signed with this key. That is the whole security model: the public half is
-compiled into the application, the private half never leaves GitHub Secrets, and
-an artefact that does not verify is refused before a byte of it runs. A hijacked
+compiled into the application, the private half is never in the repository — it
+is in GitHub Secrets and in the one file it was made in, below — and an artefact
+that does not verify is refused before a byte of it runs. A hijacked
 release page, a proxy rewriting the download, a DNS answer from somewhere else —
 all of them end the same way.
 
