@@ -1289,6 +1289,29 @@ try {
   check('an ordinary cell opens for editing', await odsCell.evaluate((el) => el.isContentEditable));
   await odsCell.press('Escape');
 
+  /* An `.ods` is worked out again the way an `.xlsx` is: retyping what a total
+     reads changes the total. Its bar used to say formulas are never
+     recalculated, which was true of the reader and not of the editor. */
+  const odsTotalBefore = await odsTotal.innerText();
+  await odsCell.dblclick();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('1000');
+  await page.keyboard.press('Enter');
+  const odsWorkedOut = await until(
+    async () => (await odsTotal.innerText()).replace(/[.\s]/g, '').includes('1987,25'),
+    5000,
+  );
+  check(
+    'retyping what an .ods total reads works the total out again',
+    odsWorkedOut,
+    `${odsTotalBefore} → ${await odsTotal.innerText()}`,
+  );
+  check(
+    'and its bar does not say formulas are never recalculated',
+    !(await odsBook.locator('.ul-office-notes').innerText()).includes('not recalculated'),
+    (await odsBook.locator('.ul-office-notes').innerText()).replace(/\s+/g, ' ').slice(0, 160),
+  );
+
   await dropFile(page, 'izvjestaj.odt', makeOdt());
   const odtView = page.locator('.ul-office-doc:visible').first();
   await odtView.locator('h1').first().waitFor({ timeout: 20000 });

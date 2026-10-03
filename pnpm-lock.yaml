@@ -287,6 +287,9 @@ importers:
 
   packages/reader-core:
     dependencies:
+      '@uleditor/i18n':
+        specifier: workspace:*
+        version: link:../i18n
       '@uleditor/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk

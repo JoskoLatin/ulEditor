@@ -537,10 +537,9 @@ function readTable(
 /**
  * `.ods` → the same grid `.xlsx` and `.xls` get.
  *
- * Editable, and saved the way the old binary Excel is: into a **new `.xlsx`
- * beside the original**, which is never touched. Writing OpenDocument back is a
- * separate piece of work with its own fidelity question, and the honest thing
- * until it is done is to say where the save is going.
+ * Editable, and saved back into the `.ods` itself — `ods-edit.ts` rewrites only
+ * the cells that were retyped. Its formulas are worked out again on an edit the
+ * way an `.xlsx`'s are, once `plainFormula` has taken them out of OpenFormula.
  */
 export function readOds(bytes: Uint8Array): Workbook {
   const opened = open(bytes, 'spreadsheet');
@@ -569,7 +568,12 @@ export function readOds(bytes: Uint8Array): Workbook {
   if (tag(opened.content, 'database-ranges') || tag(opened.content, 'named-expressions')) {
     notes.add('Filters and frozen panes are not applied.');
   }
-  notes.add('Formulas are not recalculated — the value stored in the file is shown.');
+  /* The same sentence as `.xlsx`, because it is the same behaviour: `#settle`
+     recalculates every kind of workbook. It used to say formulas are never
+     recalculated, which was true of the reader and not of the editor. */
+  notes.add(
+    'Formulas are worked out again only where a cell they read has been retyped, and only SUM, SUMIFS, COUNTIFS and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.',
+  );
 
   return { sheets, notes: [...notes], archive: opened.archive, kind: 'odf' };
 }

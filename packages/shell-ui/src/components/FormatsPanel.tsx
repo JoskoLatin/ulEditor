@@ -21,7 +21,7 @@ interface Row {
 }
 
 const ROADMAP: Row[] = [
-  { format: 'code', note: 'CodeMirror 6, 23 languages', phase: '' },
+  { format: 'code', note: 'CodeMirror 6, 24 languages', phase: '' },
   { format: 'text', note: 'plain text', phase: '' },
   { format: 'markdown', note: 'source + live preview + diagrams', phase: '' },
   { format: 'pdf', note: 'view, annotate, pages', phase: '' },

@@ -14,6 +14,7 @@
  * knows not to separate a heading from the paragraph that follows it.
  */
 
+import { t } from '@uleditor/i18n';
 import type { ReadingOptions, ReadingProgress } from '@uleditor/plugin-sdk';
 
 /** The gap between columns; also part of the page-turn step. */
@@ -203,7 +204,8 @@ export class PagedFlow {
     const fraction = this.fraction();
     const label =
       this.#options?.flow === 'paged'
-        ? `str. ${this.#page + 1}/${this.#pages}`
+        ? // Through the catalogue like every other label; it was written in Croatian here.
+          t('p. {n}/{total}', { n: this.#page + 1, total: this.#pages })
         : `${Math.round(fraction * 100)} %`;
 
     this.#host.onProgress({

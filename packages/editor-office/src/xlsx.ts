@@ -858,7 +858,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
   const workbook = readXml(archive, 'xl/workbook.xml');
   if (!workbook) {
     throw new Error(
-      t('The file has no `xl/workbook.xml`. The older binary `.xls` is not supported — save it as .xlsx.'),
+      t('The file has no `xl/workbook.xml`, so it is not a complete Excel workbook.'),
     );
   }
 

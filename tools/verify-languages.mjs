@@ -83,6 +83,23 @@ if (unused.length) console.log(`\n  ${unused.length} loaded but not detected yet
 
 console.log(`\n  ${named.size} languages reachable from a file name`);
 
+/*
+ * The number the program says. The welcome screen and the Formats panel state
+ * how many languages the code editor colours, as a number written into the
+ * sentence — and it said 23 while 24 were reachable, because nothing compared
+ * the sentence with the table. A file name is what puts a language in front of
+ * somebody, so that is the count it is held to.
+ */
+for (const file of ['packages/shell-ui/src/components/Welcome.tsx', 'packages/shell-ui/src/components/FormatsPanel.tsx']) {
+  const text = await readFile(resolve(ROOT, file), 'utf8');
+  const stated = [...text.matchAll(/(\d+) languages/g)].map((m) => Number(m[1]));
+  check(
+    `${file.split('/').pop()} states the number of languages there are`,
+    stated.length > 0 && stated.every((n) => n === named.size),
+    `says ${stated.join(', ') || 'nothing'}, there are ${named.size}`,
+  );
+}
+
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length === 0 ? 0 : 1);

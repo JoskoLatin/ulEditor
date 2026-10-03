@@ -55,7 +55,7 @@ interface FormatLine {
  * and what it says when it does is that it cannot draw them yet.
  */
 const EDITS: FormatLine[] = [
-  { format: 'code', kind: 'Code', note: '23 languages highlighted, with find and replace' },
+  { format: 'code', kind: 'Code', note: '24 languages highlighted, with find and replace' },
   {
     format: 'pdf',
     kind: 'Documents',

@@ -251,6 +251,22 @@ try {
   const docxHits = await search(page, 'uniqueword');
   check('the search works over the Word view', docxHits === 1, `${docxHits} hits`);
 
+  /* The Word view reads through reader-core, whose page label was written in
+     Croatian in the code rather than taken from the catalogue — "str. 1/1" in
+     an English interface. */
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForSelector('.reader', { timeout: 10000 });
+  await page.locator('.reader-dock-btn[aria-label="More"]').click();
+  const docxFlow = await page.locator('[data-flow]').first().getAttribute('data-flow');
+  const docxLabel = await page.locator('.reader-status span').first().innerText();
+  check(
+    'the Word reading label is in the interface language',
+    /p\. \d+\/\d+|\d+ %/.test(docxLabel) && !docxLabel.includes('str.'),
+    `${docxLabel} (${docxFlow})`,
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.reader', { timeout: 10000 });
   const docxReading = await page.locator('.ul-office').getAttribute('data-reading');
