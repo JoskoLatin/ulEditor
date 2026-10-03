@@ -1294,7 +1294,16 @@ try {
      recalculated, which was true of the reader and not of the editor. */
   const odsTotalBefore = await odsTotal.innerText();
   await odsCell.dblclick();
-  await page.keyboard.press('Control+A');
+  /* The cell's text is selected through the DOM, not with Control+A: on macOS
+     select-all is Cmd+A, and the number was typed after the old one instead
+     of over it — the first run on the macOS runner read 987,25. */
+  await odsCell.evaluate((cell) => {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await page.keyboard.type('1000');
   await page.keyboard.press('Enter');
   const odsWorkedOut = await until(
