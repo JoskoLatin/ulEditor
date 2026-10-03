@@ -38,19 +38,57 @@ export function chooseLocale(shell: Shell, next: Locale): void {
  *
  * A window with unsaved work in it is closed by the same gesture as an empty
  * one, and the program is the only thing that knows the difference. So the
- * question is asked here, and both routes this program owns — the button in the
- * corner of the title bar and Exit in the File menu — go through it.
+ * question is asked here, and every route goes through it: the button in the
+ * corner of the title bar and Exit in the File menu call this directly, and
+ * the native ones — Alt+F4, the taskbar's Close, the window menu, on macOS the
+ * traffic light — arrive through `guardWindowClose` below.
  *
- * **It is not every route.** Alt+F4, the taskbar's Close, a shutdown, and on
- * macOS the traffic light and Cmd+Q all destroy the window natively; nothing
- * registers `onCloseRequested`, and the page's `beforeunload` cannot veto a
- * native destroy. That is not a loss against what came before — until this
- * function existed no route asked at all — but it is a gap, and a comment
- * claiming otherwise would be worse than the gap. Closing it means registering
- * the listener once and calling `destroy()` ourselves, because Tauri prevents
- * every close as soon as one exists.
+ * **Still not every route.** Cmd+Q on macOS quits the application rather than
+ * closing a window, and a shutdown or log-off ends the session; neither is a
+ * close request, so neither asks. The page's `beforeunload` cannot veto a
+ * native destroy either.
  */
 let asking = false;
+
+/**
+ * The native close, turned into the question.
+ *
+ * Rust holds a close request while the page has said it will ask
+ * (`guard_close`), and sends it here as `ul://close-requested`. The decision
+ * is there and not in a Tauri `onCloseRequested` listener on purpose: Tauri
+ * holds every close while a page listens for one, and a reload — a change of
+ * language, F5 — left the old page's listener registered with nobody behind
+ * it, so Alt+F4 did nothing at all. Every page load now takes the guard back
+ * until the new page sets it again, and a request the page does not
+ * acknowledge in three seconds goes through, so a frozen page cannot keep the
+ * window open either.
+ */
+export function guardWindowClose(shell: Shell): () => void {
+  if (shell.platform !== 'desktop') return () => {};
+
+  let cancelled = false;
+  let stop: (() => void) | undefined;
+
+  void (async () => {
+    const [{ listen }, { invoke }] = await Promise.all([native.event(), native.core()]);
+    const unlisten = await listen('ul://close-requested', () => {
+      void invoke('close_acknowledged');
+      void requestExit(shell);
+    });
+    // The component could have unmounted while the subscription was in flight.
+    if (cancelled) {
+      unlisten();
+      return;
+    }
+    stop = unlisten;
+    await invoke('guard_close', { on: true });
+  })();
+
+  return () => {
+    cancelled = true;
+    stop?.();
+  };
+}
 
 export async function requestExit(shell: Shell): Promise<void> {
   /* One question at a time. Two presses of the button in the corner used to
@@ -85,6 +123,10 @@ export async function requestExit(shell: Shell): Promise<void> {
   saveSession(shell);
 
   if (shell.platform === 'desktop') {
+    /* The question has been answered, so the guard comes down first —
+       otherwise `close()` would be held and come back here to ask again. */
+    const { invoke } = await native.core();
+    await invoke('guard_close', { on: false });
     const { getCurrentWindow } = await native.window();
     await getCurrentWindow().close();
     return;

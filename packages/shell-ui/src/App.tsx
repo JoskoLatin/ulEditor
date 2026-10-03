@@ -12,6 +12,7 @@ import { exitReading, useReading } from './shell/reading.js';
 import { restoreSession, watchSession } from './shell/session.js';
 import { watchLaunchPaths } from './shell/launch.js';
 import { watchForPastCrashes } from './shell/crash.js';
+import { guardWindowClose } from './shell/lifecycle.js';
 
 import { About } from './components/About.js';
 import { ActivityBar } from './components/ActivityBar.js';
@@ -59,6 +60,10 @@ export function App({ shell }: { shell: Shell }) {
       stopLaunch?.();
     };
   }, [shell]);
+
+  // Alt+F4, the taskbar's Close and the rest of the native ways out ask about
+  // unsaved work the way the button in the title bar does — see `requestExit`.
+  useEffect(() => guardWindowClose(shell), [shell]);
 
   // The reading room belongs to one document. Switching tabs means leaving it,
   // not quietly carrying on reading something else with somebody else's settings.

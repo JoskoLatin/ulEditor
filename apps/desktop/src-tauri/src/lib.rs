@@ -867,6 +867,81 @@ fn within_limit(text: String) -> String {
     )
 }
 
+/* ── closing the window ────────────────────────────────────────────────── */
+
+/// How long a close request may wait for the page to say it has it. Past
+/// that the page is taken to be frozen and the window closes as it would
+/// have before there was a question to ask.
+const UNANSWERED: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Whether a close request is held for the page to ask about unsaved work.
+///
+/// The decision is here rather than in a `onCloseRequested` listener on the
+/// page. Tauri holds every close while a page listens for one, and a reload —
+/// a change of language, F5 — leaves the old page's listener registered with
+/// nobody behind it: the close was held and never answered, and Alt+F4 did
+/// nothing at all. So the page says it will ask (`guard_close`), every page
+/// load takes that back until the new page says it again, and a request the
+/// page does not acknowledge in `UNANSWERED` goes through.
+#[derive(Default)]
+struct CloseGuard(Mutex<Guarding>);
+
+#[derive(Default)]
+struct Guarding {
+    on: bool,
+    /// When a held request went to the page and has not been acknowledged.
+    unanswered_since: Option<std::time::Instant>,
+}
+
+impl CloseGuard {
+    fn set(&self, on: bool) {
+        let mut guarding = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        guarding.on = on;
+        guarding.unanswered_since = None;
+    }
+
+    fn acknowledge(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .unanswered_since = None;
+    }
+
+    /// Whether to hold this close request and hand it to the page.
+    fn hold(&self, now: std::time::Instant) -> bool {
+        let mut guarding = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if !guarding.on {
+            return false;
+        }
+        match guarding.unanswered_since {
+            None => {
+                guarding.unanswered_since = Some(now);
+                true
+            }
+            Some(since) if now.duration_since(since) < UNANSWERED => true,
+            Some(_) => {
+                // The page never answered: let this one through.
+                guarding.on = false;
+                guarding.unanswered_since = None;
+                false
+            }
+        }
+    }
+}
+
+/// The page will ask before the window closes — or, with `on` false, that it
+/// is done asking and the close it is about to make should go through.
+#[tauri::command]
+fn guard_close(guard: State<'_, CloseGuard>, on: bool) {
+    guard.set(on);
+}
+
+/// The page has the close request and is dealing with it.
+#[tauri::command]
+fn close_acknowledged(guard: State<'_, CloseGuard>) {
+    guard.acknowledge();
+}
+
 /// The reports nobody has been shown yet, and after this call, none.
 ///
 /// Drained the same way the launch paths are, and for the same reason: the
@@ -972,6 +1047,24 @@ pub fn run() {
     }));
 
     builder
+        /* Alt+F4, the taskbar's Close, the window menu and the traffic light
+        all arrive here as a close request; see `CloseGuard`. */
+        .manage(CloseGuard::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.state::<CloseGuard>().hold(std::time::Instant::now()) {
+                    use tauri::Emitter;
+                    api.prevent_close();
+                    let _ = window.emit("ul://close-requested", ());
+                }
+            }
+        })
+        .on_page_load(|webview, payload| {
+            // A page that is loading asks nothing until it says it will.
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<CloseGuard>().set(false);
+            }
+        })
         .setup(|app| {
             app.manage(AppState {
                 workspace: Mutex::new(Workspace::new()),
@@ -1071,6 +1164,8 @@ pub fn run() {
             take_launch_paths,
             record_crash,
             take_crash_reports,
+            guard_close,
+            close_acknowledged,
         ])
         .build(tauri::generate_context!())
         .expect("starting ulEditor failed")
@@ -1149,6 +1244,48 @@ mod tests {
             "cut before the letter, nothing past it"
         );
         assert!(note.contains("the rest was cut"));
+    }
+
+    #[test]
+    fn a_close_is_held_only_while_the_page_says_it_will_ask() {
+        use super::{CloseGuard, UNANSWERED};
+        let now = std::time::Instant::now();
+        let guard = CloseGuard::default();
+        assert!(!guard.hold(now), "nobody asked to guard: the window closes");
+
+        guard.set(true);
+        assert!(guard.hold(now), "guarded: held for the page");
+        guard.acknowledge();
+        assert!(
+            guard.hold(now + UNANSWERED * 2),
+            "acknowledged, so a later close is held again"
+        );
+
+        /* A reload takes the guard back (`on_page_load`); the page that went
+        away cannot hold the window any more. */
+        guard.set(false);
+        assert!(!guard.hold(now), "after set(false) the close goes through");
+    }
+
+    #[test]
+    fn a_page_that_never_answers_does_not_keep_the_window_open() {
+        use super::{CloseGuard, UNANSWERED};
+        let now = std::time::Instant::now();
+        let guard = CloseGuard::default();
+        guard.set(true);
+        assert!(guard.hold(now), "the first request goes to the page");
+        assert!(
+            guard.hold(now + UNANSWERED / 2),
+            "a second one while it may still answer is held"
+        );
+        assert!(
+            !guard.hold(now + UNANSWERED),
+            "no answer in time: the close goes through"
+        );
+        assert!(
+            !guard.hold(now + UNANSWERED * 2),
+            "and stays released until the page guards again"
+        );
     }
 
     #[test]
