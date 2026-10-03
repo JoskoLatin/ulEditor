@@ -498,6 +498,11 @@ pub struct Server {
 }
 
 impl Server {
+    /// Whether the process behind it has ended.
+    fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
     /// Starts a server for a language and a workspace, and completes the
     /// handshake before returning.
     ///
@@ -1128,6 +1133,13 @@ impl Servers {
         timeout: Duration,
     ) -> Result<&mut Server, LspError> {
         let key = (root.to_path_buf(), language.to_string());
+        /* A server that died — crashed, or killed from outside — stayed in the
+        map, and every request after it went down a pipe nobody reads until
+        the window was closed. It is dropped here and the next file of the
+        language starts a fresh one. */
+        if self.running.get_mut(&key).is_some_and(Server::has_exited) {
+            self.running.remove(&key);
+        }
         if !self.running.contains_key(&key) {
             let server = Server::start(language, root, sink.clone(), timeout)?;
             self.running.insert(key.clone(), server);
@@ -1145,7 +1157,8 @@ impl Servers {
         self.running
             .iter_mut()
             .filter(|((_, lang), _)| lang == language)
-            .map(|(_, server)| server)
+            // A dead one is not serving anything; it waits for `ensure` to replace it.
+            .filter_map(|(_, server)| (!server.has_exited()).then_some(server))
             .collect()
     }
 
@@ -1195,6 +1208,46 @@ impl Drop for Servers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "needs rust-analyzer installed; run with: cargo test -p ul-lsp -- --ignored"]
+    fn a_server_that_died_is_started_again_rather_than_asked_again() {
+        let root = std::env::temp_dir().join(format!("ul-lsp-dead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"proba\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+
+        let (sink, _events) = std::sync::mpsc::channel();
+        let mut servers = Servers::new();
+        let timeout = Duration::from_secs(120);
+
+        /* Killed from outside, as a crash would leave it: the entry stays, and
+        everything asked of it afterwards went down a pipe nobody reads. */
+        let first = servers
+            .ensure("rust", &root, &sink, timeout)
+            .expect("a server");
+        let dead = first.child.id();
+        first.child.kill().unwrap();
+        first.child.wait().unwrap();
+
+        let second = servers
+            .ensure("rust", &root, &sink, timeout)
+            .expect("a new server");
+        assert_ne!(second.child.id(), dead, "the dead server was handed back");
+        assert!(
+            matches!(second.child.try_wait(), Ok(None)),
+            "the new one is running"
+        );
+        assert_eq!(servers.serving("rust").len(), 1);
+
+        drop(servers);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_languages_with_a_server_are_the_ones_worth_one() {
