@@ -10,7 +10,7 @@
 import { PDFDocument, degrees } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
-import { missingGlyphWarning, writeAnnotations, type Annotation } from './annotations.js';
+import { dropImported, missingGlyphWarning, writeAnnotations, type Annotation } from './annotations.js';
 import { applyRedactions, refusalWarning, type Redaction } from './redact.js';
 import { standardWidths, type FontLoader } from './text.js';
 
@@ -114,6 +114,8 @@ export async function saveDocument(
   loadFont?: FontLoader,
   /** The areas whose text is removed from the document itself. */
   redactions: Redaction[] = [],
+  /** Annotations the file was opened with that were since edited or deleted, by pdf.js id. */
+  dropped: readonly string[] = [],
 ): Promise<SaveDocumentResult> {
   const lost: string[] = [];
 
@@ -128,7 +130,10 @@ export async function saveDocument(
     loadFont && redactions.length > 0 ? await standardWidths(loadFont) : undefined,
   );
   lost.push(...refusalWarning(cleaned.refused));
-  source = cleaned.bytes;
+  /* Then the annotations that were edited or deleted, while the objects still
+     have the numbers pdf.js read them by — copying pages for a new order
+     renumbers everything. */
+  source = await dropImported(cleaned.bytes, dropped);
 
   if (isIdentity(plan, pageCount)) {
     const { bytes, missingGlyphs } = await writeAnnotations(

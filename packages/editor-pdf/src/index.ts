@@ -1,9 +1,9 @@
 /**
  * The PDF viewer, annotator and page organiser.
  *
- * pdf.js displays, pdf-lib writes. On desktop, pdf.js is replaced in phase 1 by
- * pdfium through Rust; the `EditorInstance` contract stays the same, so the shell
- * does not see the difference.
+ * pdf.js displays, pdf-lib writes, on desktop and in the browser alike. pdfium
+ * was planned for the desktop and not taken: measured over 457 real PDFs, pdf.js
+ * was fast enough (docs/ANALYSIS-AND-PLAN.md, `tools/pdf-timing.mjs`).
  *
  * Page operations do not change the document until a save — there is only a plan
  * (see `document.ts`). Annotations bind to the SOURCE page, so reordering does
@@ -221,6 +221,24 @@ class PdfEditor implements EditorInstance {
 
   #plan: PagePlan[];
   #annotations: Annotation[] = [];
+  /**
+   * Every annotation read out of `source`, by pdf.js id.
+   *
+   * One that is no longer in the list as imported was edited (it became ours)
+   * or deleted, and the save takes the original out of the file — see
+   * `#droppedImported`. Derived rather than recorded, so an undo that brings the
+   * original back also stops it being dropped.
+   */
+  #importedIds = new Set<string>();
+  /**
+   * What the annotations were at the last save, as `#annotationState` writes it.
+   *
+   * The save used to mark every annotation imported to say the document was
+   * clean again. But every save starts from `source`, the bytes as opened, so an
+   * annotation marked imported was not written by the next save — and a note
+   * added before the first save was gone from the file after the second.
+   */
+  #savedAnnotations = JSON.stringify({ ours: [], dropped: [] });
   /**
    * The areas whose text leaves the document itself.
    *
@@ -802,6 +820,7 @@ class PdfEditor implements EditorInstance {
      * saved twice. What the user made in this session is not imported and stays.
      */
     this.#annotations = this.#annotations.filter((a) => !a.imported);
+    this.#importedIds.clear();
     this.#painted = [];
 
     const previous = this.pdf;
@@ -1348,6 +1367,7 @@ class PdfEditor implements EditorInstance {
     try {
       const raw = await view.page.getAnnotations();
       const imported = importAnnotations(raw as unknown[], view.source);
+      for (const annotation of imported) this.#importedIds.add(annotation.id);
       if (imported.length > 0) {
         this.#annotations = [...this.#annotations, ...imported];
         this.#painted = [
@@ -1576,10 +1596,25 @@ class PdfEditor implements EditorInstance {
     }
   }
 
+  /** Annotations the file was opened with that are no longer in the list as they were. */
+  #droppedImported(): string[] {
+    return [...this.#importedIds].filter(
+      (id) => !this.#annotations.some((a) => a.id === id && a.imported),
+    );
+  }
+
+  /** Ours and the dropped ones — everything a save writes about annotations. */
+  #annotationState(): string {
+    return JSON.stringify({
+      ours: this.#annotations.filter((a) => !a.imported),
+      dropped: this.#droppedImported(),
+    });
+  }
+
   #markDirty(): void {
     const dirty =
       this.#sourceEdited ||
-      this.#annotations.some((a) => !a.imported) ||
+      this.#annotationState() !== this.#savedAnnotations ||
       this.#redactions.some((r) => !r.applied) ||
       !isIdentity(this.#plan, this.pdf.numPages);
     if (dirty === this.#dirty) return;
@@ -2724,12 +2759,14 @@ class PdfEditor implements EditorInstance {
       this.pdf.numPages,
       loadFontBytes,
       this.#redactions,
+      this.#droppedImported(),
     );
     await this.host.fs.writeBytes(uri, bytes);
 
-    // The saved annotations are now part of the file; we mark them as imported so
-    // the next save does not add them a second time.
-    this.#annotations = this.#annotations.map((a) => ({ ...a, imported: true }));
+    /* Ours stay ours. The next save starts from `source` again, the bytes as
+       opened, so it has to write them again — marking them imported here, which
+       is what this used to do, left them out of every save after the first. */
+    this.#savedAnnotations = this.#annotationState();
     /* The marks stay: every save starts from the untouched source, so the
        redaction is repeated with the same outcome — and removing a mark still
        brings the text back, which is the only way changing your mind can be

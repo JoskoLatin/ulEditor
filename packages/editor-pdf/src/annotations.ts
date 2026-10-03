@@ -11,8 +11,8 @@
  * pixels — otherwise a note would run away the moment the zoom changed.
  */
 
-import { PDFDocument, PDFName, PDFArray, PDFDict, PDFNumber, PDFString, PDFHexString } from 'pdf-lib';
-import type { PDFFont, PDFPage, PDFContext, PDFRef } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFArray, PDFDict, PDFNumber, PDFRef, PDFString, PDFHexString } from 'pdf-lib';
+import type { PDFFont, PDFPage, PDFContext } from 'pdf-lib';
 import { t } from '@uleditor/i18n';
 
 import {
@@ -645,6 +645,70 @@ export async function writeAnnotations(
   }
 
   return { bytes: await doc.save({ useObjectStreams: false }), written, missingGlyphs };
+}
+
+/**
+ * Takes out of the file the annotations it was opened with that have since been
+ * changed or removed in the editor.
+ *
+ * An imported annotation that is edited becomes one of ours and is written
+ * afresh on save; one that is deleted is simply gone from the list. Neither
+ * touched the file, so the original stayed beside the edit, or came back the next
+ * time the file was opened. pdf.js names an annotation after its object — `12R`,
+ * or `12R1` for generation one — so the original can be found again by
+ * reference. Its popup goes with it, and the annotation and its appearance
+ * streams are deleted rather than only unlinked: a note somebody removed should
+ * not still be readable in the bytes.
+ *
+ * An annotation written inline in a page's `/Annots`, without an object of its
+ * own, has no reference to find it by (pdf.js calls it `annot_…`); it stays.
+ */
+export async function dropImported(source: Uint8Array, ids: readonly string[]): Promise<Uint8Array> {
+  const refs = new Set<string>();
+  for (const id of ids) {
+    const match = /^(\d+)R(\d*)$/.exec(id);
+    if (match) refs.add(`${match[1]} ${match[2] || '0'}`);
+  }
+  if (refs.size === 0) return source;
+
+  const doc = await PDFDocument.load(source, { ignoreEncryption: true });
+  const context = doc.context;
+  const key = (ref: PDFRef) => `${ref.objectNumber} ${ref.generationNumber}`;
+  const doomed = (entry: unknown): entry is PDFRef => {
+    if (!(entry instanceof PDFRef)) return false;
+    if (refs.has(key(entry))) return true;
+    // A popup belongs to the annotation it was opened from.
+    const dict = context.lookup(entry);
+    const parent = dict instanceof PDFDict ? dict.get(PDFName.of('Parent')) : undefined;
+    return parent instanceof PDFRef && refs.has(key(parent));
+  };
+
+  const removed: PDFRef[] = [];
+  for (const page of doc.getPages()) {
+    const annots = page.node.lookup(PDFName.of('Annots'));
+    if (!(annots instanceof PDFArray)) continue;
+    const kept = annots.asArray().filter((entry) => {
+      if (!doomed(entry)) return true;
+      removed.push(entry);
+      return false;
+    });
+    if (kept.length !== annots.size()) page.node.set(PDFName.of('Annots'), context.obj(kept));
+  }
+  if (removed.length === 0) return source;
+
+  for (const ref of removed) {
+    const dict = context.lookup(ref);
+    if (dict instanceof PDFDict) {
+      const raw = dict.get(PDFName.of('AP'));
+      const appearance = raw instanceof PDFRef ? context.lookup(raw) : raw;
+      if (appearance instanceof PDFDict) {
+        for (const [, state] of appearance.entries()) if (state instanceof PDFRef) context.delete(state);
+      }
+      if (raw instanceof PDFRef) context.delete(raw);
+    }
+    context.delete(ref);
+  }
+  return doc.save({ useObjectStreams: false });
 }
 
 /** Which features of the source document a save cannot reproduce. */
