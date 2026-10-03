@@ -843,17 +843,28 @@ const LONGEST_REPORT: usize = 64 * 1024;
 /// it is the beginning of a loop.
 #[tauri::command]
 fn record_crash(text: String) -> Result<String, String> {
-    let text = if text.len() > LONGEST_REPORT {
-        format!(
-            "{}\n…the rest was cut; it was longer than this file is allowed to be.\n",
-            &text[..LONGEST_REPORT]
-        )
-    } else {
-        text
-    };
-    crash::write(&text)
+    crash::write(&within_limit(text))
         .map(|path| path.display().to_string())
         .map_err(|err| err.to_string())
+}
+
+/// The report, cut to at most `LONGEST_REPORT` bytes when it is longer.
+///
+/// The cut moves back to the start of the letter it would land in: slicing a
+/// `str` inside a letter panics, and with `panic = "abort"` in the release
+/// profile a report about one crash would have been the next.
+fn within_limit(text: String) -> String {
+    if text.len() <= LONGEST_REPORT {
+        return text;
+    }
+    let mut end = LONGEST_REPORT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n…the rest was cut; it was longer than this file is allowed to be.\n",
+        &text[..end]
+    )
 }
 
 /// The reports nobody has been shown yet, and after this call, none.
@@ -1115,7 +1126,34 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::paths_from;
+    use super::{paths_from, within_limit, LONGEST_REPORT};
+
+    #[test]
+    fn a_report_cut_in_the_middle_of_a_letter_is_cut_before_it() {
+        /* A stack trace with Croatian in it — an error message, a file name —
+        long enough to be cut, with the limit landing inside a `č` (two bytes).
+        Slicing at the byte panicked, and with `panic = "abort"` in the release
+        profile the report of a crash took the whole program down with it. */
+        let text = format!("{}č{}", "a".repeat(LONGEST_REPORT - 1), "b".repeat(100));
+        assert!(
+            !text.is_char_boundary(LONGEST_REPORT),
+            "the limit must fall inside the letter"
+        );
+
+        let cut = within_limit(text);
+        let (kept, note) = cut.split_once('\n').expect("the kept part, then the note");
+        assert_eq!(
+            kept,
+            "a".repeat(LONGEST_REPORT - 1),
+            "cut before the letter, nothing past it"
+        );
+        assert!(note.contains("the rest was cut"));
+    }
+
+    #[test]
+    fn a_short_report_is_kept_whole() {
+        assert_eq!(within_limit("čćžšđ".to_string()), "čćžšđ");
+    }
 
     #[test]
     fn the_program_itself_is_not_a_document() {
