@@ -14,7 +14,9 @@
  *   node tools/verify-desktop-ocr.mjs
  */
 
-import { resolve, dirname } from 'node:path';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isLocal, startDesktop, stopDesktop } from './desktop-session.mjs';
@@ -63,14 +65,22 @@ try {
     return [...new Uint8Array(await blob.arrayBuffer())];
   }, PHRASE);
 
-  await page.evaluate((data) => {
-    const file = new File([new Uint8Array(data)], 'offline.png', { type: 'image/png' });
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    window.dispatchEvent(
-      new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }),
-    );
-  }, bytes);
+  /* Opened from disk, the way verify-desktop-image does it. An HTML `drop` on the
+     window used to stand in for the gesture, but on the desktop the shell takes
+     dropped files only from Tauri's `onDragDropEvent` (`App.tsx`) — the HTML
+     listener exists on the web alone — so the picture never opened and the check
+     timed out before it reached OCR at all. */
+  const workspace = await mkdtemp(join(tmpdir(), 'ul-ocr-'));
+  await writeFile(join(workspace, 'offline.png'), Buffer.from(bytes));
+  await page.evaluate(
+    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
+    workspace,
+  );
+  await page.keyboard.press('Control+P');
+  await page.waitForSelector('.palette-input input', { timeout: 10000 });
+  await page.locator('.palette-input input').fill('offline.png');
+  await page.waitForSelector('.palette-item', { timeout: 15000 });
+  await page.locator('.palette-item').first().click();
 
   await page.waitForSelector('.ul-img img', { timeout: 30000 });
   check('the image is open in the application', true);
