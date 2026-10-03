@@ -133,9 +133,16 @@ button {
 
 /* ── the title bar ──────────────────────────────────────────────────── */
 
+/*
+ * Three columns, the name in the middle. The sides are never narrower than
+ * what they hold, and the middle gives way instead: with `1fr auto 1fr` the
+ * buttons on the left spilled out of their column once the window or the
+ * language made them wider than it, and the document's name was drawn over
+ * Save, Undo and Redo — in Croatian at the default width of the window.
+ */
 .titlebar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
   align-items: center;
   gap: 12px;
   padding: env(safe-area-inset-top) 10px 0;
@@ -245,6 +252,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 46ch;
+  min-width: 0;
   text-align: center;
 }
 .titlebar-title b {

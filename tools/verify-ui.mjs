@@ -113,6 +113,30 @@ async function dropFile(page, name, content) {
   );
 }
 
+/**
+ * The buttons in the title bar that the document's name is drawn over, if any.
+ *
+ * With `1fr auto 1fr` the left side spilled out of its column once it was wider
+ * than a third of the window, and the name sat on Save, Undo and Redo — in
+ * Croatian at 1320 px, the window's default width. Measured as boxes rather than
+ * looked at, because overlapping text is easy to miss in a screenshot.
+ */
+async function titleOverlaps(page) {
+  return page.evaluate(() => {
+    const title = document.querySelector('.titlebar-title');
+    if (!title || getComputedStyle(title).display === 'none') return [];
+    const box = title.getBoundingClientRect();
+    const hits = [];
+    for (const el of document.querySelectorAll('.titlebar-left > *, .titlebar-left .chrome-btn, .titlebar-right > *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.left < box.right - 0.5 && r.right > box.left + 0.5) {
+        hits.push(el.getAttribute('title') ?? el.className);
+      }
+    }
+    return hits;
+  });
+}
+
 /* ── execution ───────────────────────────────────────────────────────── */
 
 const browser = await chromium.launch({ headless: !headed });
@@ -195,6 +219,13 @@ try {
   check('CodeMirror is mounted', true);
   check('the syntax is coloured', highlighted > 0, `${highlighted} coloured tokens`);
   check('the tab got its name', (await page.locator('.tab .name').first().innerText()) === 'example.ts');
+
+  for (const width of [1440, 1100, 900]) {
+    await page.setViewportSize({ width, height: 900 });
+    const over = await titleOverlaps(page);
+    check(`at ${width} px the document's name is not drawn over a button`, over.length === 0, over.join(', '));
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   /*
    * — a batch script, and a shell script —
@@ -1539,6 +1570,17 @@ try {
     const croatian = await lang.locator('.menubar .menu-title').first().innerText();
     check('the interface switched to Croatian', inCroatian && croatian === 'Datoteka', croatian);
     await lang.screenshot({ path: resolve(SHOTS, 'croatian.png') });
+
+    /* Croatian words are longer, so the left side is wider: this is where the
+       name first ran over the buttons, at the window's default width. */
+    await dropFile(lang, 'zapisnik-sa-sastanka-uprave.txt', 'Prvi redak.\n');
+    await lang.waitForSelector('.titlebar-title b', { timeout: 15000 });
+    for (const width of [1320, 1100]) {
+      await lang.setViewportSize({ width, height: 900 });
+      const over = await titleOverlaps(lang);
+      check(`in Croatian at ${width} px the name is not drawn over a button`, over.length === 0, over.join(', '));
+    }
+    await lang.setViewportSize({ width: 1440, height: 900 });
 
     await lang.keyboard.press('Control+Comma');
     await lang.waitForSelector('.prefs', { timeout: 5000 });
