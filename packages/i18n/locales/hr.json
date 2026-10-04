@@ -443,6 +443,8 @@
   "The last remaining paragraph of a document cannot be removed.": "Posljednji preostali odlomak dokumenta ne može se ukloniti.",
   "This paragraph cannot be removed — a document cannot end on a table or an empty section.": "Ovaj se odlomak ne može ukloniti — dokument ne može završiti tablicom ni praznim odsječkom.",
   "Paragraph split — Ctrl+Z joins it back.": "Odlomak je podijeljen — Ctrl+Z ga ponovno spaja.",
+  "{n} paragraphs pasted — Ctrl+Z takes them back.": "Zalijepljeno odlomaka: {n} — Ctrl+Z ih vraća.",
+  "The pasted lines were joined into one: a new paragraph cannot be started here.": "Zalijepljeni retci spojeni su u jedan: ovdje se ne može započeti novi odlomak.",
   "Nothing stands before the cursor to keep in this paragraph — a new line above it starts at the end of the one before.": "Ispred pokazivača nema ničega što bi ostalo u ovom odlomku — novi redak iznad njega počinje na kraju prethodnoga.",
   "A new paragraph can follow only the last line of a split paragraph — Ctrl+Z joins the split back.": "Novi odlomak može doći samo iza posljednjeg retka podijeljenog odlomka — Ctrl+Z ga ponovno spaja.",
   "This paragraph was split with Enter — Ctrl+Z joins it back before it can be removed.": "Ovaj je odlomak podijeljen Enterom — prije uklanjanja ga Ctrl+Z ponovno spaja.",

@@ -90,6 +90,7 @@
     "verify:desktop-pdf-notes": "node tools/verify-desktop-pdf-notes.mjs",
     "verify:desktop-links": "node tools/verify-desktop-links.mjs",
     "verify:npm-licenses": "node tools/verify-npm-licenses.mjs",
+    "verify:office-paste": "node tools/verify-office-paste.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"
   },

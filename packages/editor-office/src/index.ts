@@ -234,6 +234,21 @@ function caretOffset(target: HTMLElement): number | null {
   return before.toString().length;
 }
 
+/** Where the selection starts and ends in an element's text, if it is in it. */
+function selectionIn(target: HTMLElement): [number, number] | null {
+  const selection = document.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!target.contains(range.startContainer) || !target.contains(range.endContainer)) return null;
+  const upTo = (node: Node, offset: number) => {
+    const before = document.createRange();
+    before.selectNodeContents(target);
+    before.setEnd(node, offset);
+    return before.toString().length;
+  };
+  return [upTo(range.startContainer, range.startOffset), upTo(range.endContainer, range.endOffset)];
+}
+
 /**
  * Whether a paragraph holds anything besides one of its pieces of text, on
  * one side of it — text, or a picture or a break with none.
@@ -583,6 +598,7 @@ class DocumentPreviewEditor implements EditorInstance {
     const finish = () => {
       target.removeEventListener('blur', finish);
       target.removeEventListener('keydown', onKey);
+      target.removeEventListener('paste', onPaste);
       target.contentEditable = 'false';
 
       /*
@@ -633,8 +649,56 @@ class DocumentPreviewEditor implements EditorInstance {
       }
     };
 
+    /* One line is the browser's to paste, and it does it right. Several are
+       not: see `#pasteLines`. */
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      if (!/[\r\n]/.test(text)) return;
+      event.preventDefault();
+      this.#pasteLines(target, typing, text.replace(/\r\n?/g, '\n'));
+    };
+
     target.addEventListener('blur', finish);
     target.addEventListener('keydown', onKey);
+    target.addEventListener('paste', onPaste);
+  }
+
+  /**
+   * A paste of several lines into the text being typed.
+   *
+   * The browser puts the line breaks into the text as characters, and a line
+   * break inside a run is not a new line in either format this writes: Word
+   * shows it as a space and OpenDocument folds it away. The lines were on the
+   * screen and gone from the saved file. Where the paragraph can be divided
+   * here, each line becomes a paragraph of its own, the way Enter makes them,
+   * in one step that Ctrl+Z takes back. Where it cannot — an OpenDocument
+   * text, a table cell, a paragraph this format will not divide — the lines are
+   * joined with a space, and the status bar says so.
+   */
+  #pasteLines(target: HTMLElement, typing: Typing, text: string): void {
+    const lines = text.split('\n');
+    const current = target.textContent ?? '';
+    const [start, end] = selectionIn(target) ?? [current.length, current.length];
+    const seam = this.preview.source?.paragraphs;
+    const divisible =
+      !!seam && typing.kind !== 'cell' && (typing.kind === 'step' || !seam.divisionRefusalAt(typing.run));
+
+    if (!divisible) {
+      const joined = lines.join(' ');
+      target.textContent = current.slice(0, start) + joined + current.slice(end);
+      placeCaret(target, start + joined.length);
+      this.#statusEmitter.fire(t('The pasted lines were joined into one: a new paragraph cannot be started here.'));
+      return;
+    }
+
+    /* What was selected goes, and what was typed is written down first, by
+       the ordinary path — as Enter does — so that Ctrl+Z takes back the
+       paste and leaves the typing. */
+    target.textContent = current.slice(0, start) + current.slice(end);
+    target.blur();
+    if (this.#divideInto(typing, start, lines)) {
+      this.#statusEmitter.fire(t('{n} paragraphs pasted — Ctrl+Z takes them back.', { n: lines.length }));
+    }
   }
 
   #record(index: number, text: string): void {
@@ -702,65 +766,81 @@ class DocumentPreviewEditor implements EditorInstance {
 
   /** Divides a piece of text at an offset: the first part stays, the rest begins a paragraph. */
   #divide(typing: Typing, offset: number): void {
+    if (this.#divideInto(typing, offset, ['', ''])) {
+      this.#statusEmitter.fire(t('Paragraph split — Ctrl+Z joins it back.'));
+    }
+  }
+
+  /**
+   * Divides the piece being typed at `offset` with `lines` between: the text
+   * before the offset begins the first line, the text after it ends the last,
+   * and every line is a paragraph. Enter is two empty lines; a paste is what
+   * was pasted. One step in the history, whatever the number of lines.
+   */
+  #divideInto(typing: Typing, offset: number, lines: string[]): boolean {
     const body = this.preview.body;
+    const last = lines.length - 1;
+    const pieces = (text: string) =>
+      lines.map((line, i) => (i === 0 ? text.slice(0, offset) : '') + line + (i === last ? text.slice(offset) : ''));
 
     if (typing.kind === 'step') {
-      /* A paragraph only the plan has divides into two of the same kind:
-         nothing of the file is involved, so there is nothing to carry. */
+      /* A paragraph only the plan has divides into paragraphs of the same
+         kind: nothing of the file is involved, so there is nothing to carry. */
       const position = this.#steps.indexOf(typing.step);
-      if (position === -1) return;
+      if (position === -1) return false;
       this.#undoStack.push(this.#capture());
       this.#redoStack = [];
-      const text = typing.step.text;
-      typing.step.text = text.slice(0, offset);
-      const next: NewParagraph = { after: typing.step.after, text: text.slice(offset) };
-      this.#steps.splice(position + 1, 0, next);
+      const [first, ...rest] = pieces(typing.step.text);
+      typing.step.text = first ?? '';
+      const added = rest.map((text): NewParagraph => ({ after: typing.step.after, text }));
+      this.#steps.splice(position + 1, 0, ...added);
       this.#syncSteps();
       this.#emitDirty();
-      const fresh = body.querySelector<HTMLElement>(`[data-new="${position + 1}"] .ul-office-run`);
-      if (fresh) this.#openForTyping(fresh, { kind: 'step', step: next }, 'start');
-      this.#statusEmitter.fire(t('Paragraph split — Ctrl+Z joins it back.'));
-      return;
+      const step = this.#steps[position + last];
+      const fresh = body.querySelector<HTMLElement>(`[data-new="${position + last}"] .ul-office-run`);
+      if (fresh && step) this.#openForTyping(fresh, { kind: 'step', step }, lines[last]!.length);
+      return true;
     }
 
     const source = this.preview.source;
-    if (!source || typing.kind === 'cell') return;
+    if (!source || typing.kind === 'cell') return false;
     const run = typing.run;
     const parts = this.#cuts.get(run) ?? [this.#edits.get(run) ?? source.textOf(run)];
     const part = typing.kind === 'part' ? typing.part : 0;
     const text = parts[part];
-    if (text === undefined) return;
+    if (text === undefined) return false;
 
     /* The paragraph the run stands in, by what the view was drawn with — a
        join may have drawn it inside another paragraph's element since. What
        every redraw of that paragraph starts from is taken once, before its
        first division, now that the typing has left it. */
     const index = this.#home.get(run);
-    if (index === undefined) return;
+    if (index === undefined) return false;
     this.#keep(index);
 
     this.#undoStack.push(this.#capture());
     this.#redoStack = [];
     const next = [...parts];
-    next.splice(part, 1, text.slice(0, offset), text.slice(offset));
+    next.splice(part, 1, ...pieces(text));
     this.#cuts.set(run, next);
     this.#edits.delete(run);
     this.#syncSteps();
     this.#emitDirty();
 
-    /* Typing goes on in the new part, from its start — when it has text to
-       hold a caret. A split made at the very end of a piece's own text, with
-       more of the paragraph after it, leaves an empty part ahead of the rest;
-       the caret is put at the start of that line instead. */
-    const fresh = body.querySelector<HTMLElement>(`[data-part-of="${run}"][data-part="${part + 1}"]`);
-    if (fresh && next[part + 1]!.length > 0) {
-      this.#openForTyping(fresh, { kind: 'part', run, part: part + 1 }, 'start');
+    /* Typing goes on in the last new part, after what was put there — when
+       it has text to hold a caret. A division made at the very end of a
+       piece's own text, with more of the paragraph after it, leaves an empty
+       part ahead of the rest; the caret is put at the start of that line
+       instead. */
+    const fresh = body.querySelector<HTMLElement>(`[data-part-of="${run}"][data-part="${part + last}"]`);
+    if (fresh && next[part + last]!.length > 0) {
+      this.#openForTyping(fresh, { kind: 'part', run, part: part + last }, lines[last]!.length);
     } else {
       const piece = fresh?.closest<HTMLElement>('[data-piece-of]');
       if (piece) document.getSelection()?.collapse(piece, 0);
       this.#root?.focus();
     }
-    this.#statusEmitter.fire(t('Paragraph split — Ctrl+Z joins it back.'));
+    return true;
   }
 
   /**
