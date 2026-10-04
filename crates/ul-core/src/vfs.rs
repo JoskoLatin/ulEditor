@@ -481,9 +481,10 @@ fn open_regular(path: &Path) -> Result<fs::File, VfsError> {
 /// instead of the document's, and without its `Zone.Identifier` stream, so a
 /// `.docx` from an email, saved once here, opened in Word without Protected
 /// View. All of it goes to the new file **before anything is written into it**,
-/// while it is empty and nobody else can open it, so there is no moment in
-/// which the new version is less protected than the old one. A document saved
-/// for the first time has none of it.
+/// while it is empty — on Windows open to nobody else, on Unix readable by its
+/// owner alone — so there is no moment in which the new version is less
+/// protected than the old one. A document saved for the first time has none of
+/// it.
 fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -681,10 +682,14 @@ pub(crate) mod windows {
     const FILE_LIST_DIRECTORY: u32 = 0x1;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
-    /// What a new version may be opened with, so that its security can be set.
-    pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = 0x4000_0000 | 0x0004_0000;
+    /// What a new version is opened with, and with the right to set its
+    /// security where it is to be given one.
+    pub(super) const GENERIC_WRITE: u32 = 0x4000_0000;
+    pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = GENERIC_WRITE | 0x0004_0000;
     /// What it takes of the document's attributes at its creation: encryption,
-    /// which can only be given then, and being hidden.
+    /// which can only be given then, and being hidden. Encrypted anew, it is for
+    /// whoever saves it: anybody else the document had been shared with through
+    /// EFS has to be given it again.
     pub(super) const KEPT_ATTRIBUTES: u32 = 0x4000 | 0x2;
 
     #[link(name = "advapi32")]
@@ -749,6 +754,18 @@ pub(crate) mod windows {
             .share_mode(FILE_SHARE_ALL)
             .open(path)
             .map(Some)
+    }
+
+    /// Whether a document is there whose DACL its next version is to be given:
+    /// a plain file, on a volume that keeps ACLs. Asked to decide whether the
+    /// new file needs the right to have its security set; when it cannot be
+    /// told, yes — and `carry_over` then fails the save if it cannot be done.
+    pub(super) fn has_acl_to_carry(path: &Path) -> bool {
+        match open_for_its_security(path) {
+            Ok(Some(document)) => keeps_acls(&document).unwrap_or(true),
+            Ok(None) => false,
+            Err(_) => true,
+        }
     }
 
     /// Gives `to` the DACL `from` has, protected or inherited as `from`'s is.
@@ -906,20 +923,39 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
         })
         .unwrap_or(0);
 
+    /* The right to set its security is asked for only where there is a
+    security to give it: a share that does not grant it would otherwise refuse
+    every save, a first one included. */
+    #[cfg(windows)]
+    let access = if windows::has_acl_to_carry(path) {
+        windows::GENERIC_WRITE_AND_WRITE_DAC
+    } else {
+        windows::GENERIC_WRITE
+    };
+    /* Where there is a document, readable by its owner alone until it is given
+    the document's own mode in `carry_over`; a first save keeps the defaults. */
+    #[cfg(unix)]
+    let replacing = fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
+
     let mut taken = None;
     for attempt in 0..16 {
         let temp = temp_beside(path, attempt);
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
-        /* Nobody else opens it, and it may have its security set before
-        anything is written into it — see `carry_over`. */
+        /* On Windows nobody else opens it while it is written, and it may have
+        its security set before anything is in it — see `carry_over`. */
         #[cfg(windows)]
         {
             use std::os::windows::fs::OpenOptionsExt;
             options
                 .share_mode(0)
-                .access_mode(windows::GENERIC_WRITE_AND_WRITE_DAC)
+                .access_mode(access)
                 .attributes(attributes);
+        }
+        #[cfg(unix)]
+        if replacing {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
         match options.open(&temp) {
             Ok(file) => return Ok((file, temp)),
