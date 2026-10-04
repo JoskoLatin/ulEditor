@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-10-03. Zamjenjuje onaj od 2026-09-27.
+Izvještaj od 2026-10-04. Zamjenjuje onaj od 2026-10-03.
 
 ## Jedna rečenica
 
@@ -16,16 +16,36 @@ objavljeni: **`v0.6.2`** na `0da06a0` (2026-09-28), `pnpm verify:release-live`
 14/14 — kanal za ažuriranje nudi 0.6.2 na sva četiri cilja.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Zadnji rad: **2026-09-29** — web kontejner prebačen na vlastitu mrežu
-`caddy-uleditor` (`385782c`, `8bf9b7d`).
+Zadnji rad: **2026-10-04** — neovisni sigurnosni pregled i popravci,
+PDF bilješke, Alt+F4, language serveri (`06c5675`…`ea2f448`).
 Faza: **3 (Web) gotova** — svih osam koraka iz ADR 0002
-(`docs/adr/0002-web-target.md:79`). Od `v0.6.2` desktop nije dobio ništa novo
-(samo deploy, testovi i dokumentacija), pa novo izdanje ne treba. Sljedeća je
-faza 4 (mobitel, `docs/ANALYSIS-AND-PLAN.md:759`); odluka o njoj još nije
-donesena.
+(`docs/adr/0002-web-target.md:79`). **Od `v0.6.2` desktop ima popravke koje
+korisnik osjeti**, među njima sigurnosni (pretraga je slijedila link izvan
+otvorene mape) i dva gubitka podataka (PDF bilješke, Alt+F4 bez pitanja) —
+vrijedi izdati 0.6.3; tag je Čovikov korak. Sljedeća je faza 4 (mobitel,
+`docs/ANALYSIS-AND-PLAN.md:759`); odluka čeka ADR 0003 (agent arhitekt na Fableu).
 
 ## Radi
 
+- **Neovisni sigurnosni pregled (2026-10-04, kartica 449)** našao je kritičnu
+  rupu: pretraga i Ctrl+P slijedili su junction/symlink izvan otvorene mape
+  (tuđa datoteka u rezultatima), dva junctiona natrag na mapu davala su hod
+  koji ne završava i drži lock, a klik na pogodak širio je sandbox. Popravljeno
+  (`94e4525`): hod preskače linkove, ne drži lock, pogoci više ne šire
+  sandbox; u pravoj aplikaciji pretraga vidi samo mapu (11 ms s dvije petlje).
+  Spremanje više ne piše kroz podmetnuti symlink `.ultmp` (`d0b3be7`), akcije
+  u CI-u pinane na SHA (`58ec816`). Popravci čekaju ponovni neovisni pregled.
+- **PDF bilješke se više ne gube** (`b8d560c`, `a05f074`): bilješka napravljena
+  prije prvog spremanja nestajala je pri drugom; uređena ili obrisana bilješka
+  iz datoteke ostajala je ili se vraćala (i kroz umetanje PDF-a). Poništavanje
+  nakon skrolanja brisalo je bilješku koju nitko nije dirao — tu je grešku unio
+  `b8d560c` i popravio `a05f074` isti dan, nije bila ni u jednom izdanju.
+  `verify-desktop-pdf-notes` 27/27 u pravoj aplikaciji.
+- **Alt+F4 i Zatvori na programskoj traci pitaju za nespremljeno** (`e7f16a9`)
+  — prije su zatvarali bez pitanja; `verify-desktop-close` 13/13 šalje pravi
+  `WM_SYSCOMMAND`.
+- **Language server koji šuti više ne zaustavi sve ostale** (`06c5675`), a mrtav
+  se starta ponovno (`d4718a4`).
 - **Web radi na `uleditor.truss:8443`** (faza 3, ADR 0002): `ul-image` u WASM-u,
   uređivanje slika u workeru, service worker za rad bez mreže, otvorena mapa
   preživi osvježavanje, CSP iz `deploy/web/Caddyfile`. Provjereno 2026-10-03 s
@@ -35,8 +55,8 @@ donesena.
   0.6.0, od pokretanja procesa do prvog iscrtavanja ljuske: **474 ms** medijan,
   603–807 ms pri prvom pokretanju s praznim profilom, 1 104 ms na jednoj jezgri;
   budžet je 1,5 s (`pnpm cold-start`, `tools/cold-start.mjs`,
-  `docs/ANALYSIS-AND-PLAN.md:799`). Ne mjeri start nakon ponovnog pokretanja
-  računala (prazan file cache).
+  `docs/ANALYSIS-AND-PLAN.md:799`); ponovljeno 2026-10-03: 473 ms. Ne mjeri
+  start nakon ponovnog pokretanja računala (prazan file cache).
 - **Vremenski testovi preračuna više ne padaju na sporom runneru.** Test je
   dvaput srušio CI na kodu koji se nije mijenjao (101 ms naspram praga 100;
   macOS runner 221 ms). Sad se mjeri kako vrijeme raste s veličinom (osmina
@@ -58,22 +78,29 @@ donesena.
 - **Release lanac je dostižan.** `pnpm verify:release-live` prolazi 14/14 za
   `v0.6.2` (2026-09-28): `latest.json` odgovara odjavljenom zahtjevu HTTP 200,
   potpis i artefakt postoje za sva četiri cilja (windows-x86_64, darwin-aarch64,
-  darwin-x86_64, linux-x86_64). Jesu li v0.3.3 i v0.4.0 objavljeni, **ne znam**
-  — provjera pita samo `/latest`.
+  darwin-x86_64, linux-x86_64). v0.3.3 i v0.4.0 su **nacrti**, nikad objavljeni
+  (`gh release list`, 2026-10-03).
 - **Spajanje ćelija u Wordu** — `Ctrl+M`, mjereno protiv Wordovog vlastitog
   spajanja (`a16086e`, `91ebd25`, `tools/verify-docx-merge.mjs`).
 - **Cenzus formula nad stvarnim dokumentima** — 372 formule, `SUM` 79.8%
   (`b054c85`, `tools/formula-census.mjs`, `docs/ANALYSIS-AND-PLAN.md:645`).
-- **Evaluator formula** — `SUM` i aritmetika, 296 od 344 formule (86%), a svaka
-  od 48 odbijenih pogledana pojedinačno (`6ef397a`, `packages/editor-office/src/formula.ts`).
+- **Evaluator formula** — `SUM` i aritmetika; izmjereno 2026-10-03: 335 od 372
+  formule (90,1%), a svaka odbijena pogledana pojedinačno (`6ef397a`, `packages/editor-office/src/formula.ts`).
 - **Prepoznavanje zastarjelih brojeva** — `recalculate` odgovara koja se
   vrijednost više ne smije prikazivati kao točna, kroz tri puta u zastarjelost
   (`9a2ce0c`, `formula.ts:442`).
-- **Fidelity harness** — 604 stvarna dokumenta, nijedan ne pada
+- **Fidelity harness** — 608 stvarnih dokumenata (2026-10-03), nijedan ne pada
   (`docs/ANALYSIS-AND-PLAN.md:379`, `tools/fidelity.mjs`).
 
 ## Nije gotovo
 
+- **Odluke koje čekaju Čovika** (kartice u wikiju): language server se starta
+  bez pitanja o povjerenju u mapu (468, visok — zlonamjeran repo izvrši kod
+  samim otvaranjem .rs datoteke); potpisni ključ izložen build koraku izdanja
+  (469); `adopt_paths` i navigacija prozora (470); **spremanje pita o gubitku
+  tek nakon što je datoteka zapisana** (471 — protiv glavnog pravila projekta,
+  ugovor `save()` od faze 0); font za PDF izvoz (457); što ide u CI i zaštita
+  `main` (454); format brojeva hr-HR (453); lozinka i backup ključeva (460).
 - **`SUMIFS` i `COUNTIFS` se izračunavaju** (2026-09-26, `fb48e6c`) po pravilima
   izmjerenima u samom Excelu (34 slučaja, `pnpm verify:formula-excel`). Na
   stvarnom cashless izvještaju daju 0, isto kao Excel, jer podaci pišu
@@ -147,5 +174,8 @@ Naslov: ulEditor — stanje
 - Faza 3 (Web) je gotova: ulEditor radi i u pregledniku na uleditor.truss —
   slike uređuje kroz WASM, radi bez mreže i pamti otvorenu mapu, a na serveru
   je iza Caddyja na vlastitoj izoliranoj mreži.
+- 2026-10-04 neovisni sigurnosni pregled: kritična rupa (pretraga izlazila iz
+  otvorene mape kroz link) popravljena, uz dva gubitka podataka (PDF bilješke,
+  Alt+F4). Vrijedi izdati 0.6.3.
 - Sljedeće je odluka o fazi 4 (mobitel); certifikat za potpisivanje čeka da
   ulEditor ide drugima.
