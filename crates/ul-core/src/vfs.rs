@@ -341,6 +341,15 @@ impl Workspace {
         use std::io::Write;
 
         let resolved = self.resolve(path)?;
+        let folder = resolved
+            .parent()
+            .ok_or_else(|| VfsError::NotADirectory(display(&resolved)))?;
+        /* The folder is checked to be the one that was resolved, and on
+        Windows held so until the save is over: swapped for a junction in the
+        meantime, it would have the new version written wherever the junction
+        pointed. See `hold_folder`. */
+        #[cfg(windows)]
+        let _held = windows::hold_folder(folder)?;
         let (mut file, temp) = create_beside(&resolved)?;
 
         let written = carry_over(&resolved, &file, &temp).and_then(|()| file.write_all(data));
@@ -348,6 +357,11 @@ impl Workspace {
         if let Err(err) = written {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
+        }
+        #[cfg(unix)]
+        if let Err(err) = still_the_folder(folder) {
+            let _ = fs::remove_file(&temp);
+            return Err(err);
         }
         /* A rename replaces a link in the document's place rather than
         writing through it, and takes the document away only by putting the
@@ -358,6 +372,21 @@ impl Workspace {
         }
         sweep_leftovers(&resolved);
         Ok(())
+    }
+}
+
+/// Whether the folder a save goes into is still the one that was resolved.
+///
+/// Asked just before the rename. What is left is the moment between this and
+/// the rename itself: closing it needs the `*at` calls (`openat`,
+/// `renameat`) on a handle of the folder, which the standard library does not
+/// offer. Windows holds the folder instead — see `hold_folder`.
+#[cfg(unix)]
+fn still_the_folder(folder: &Path) -> Result<(), VfsError> {
+    if fs::canonicalize(folder)? == folder {
+        Ok(())
+    } else {
+        Err(VfsError::OutsideWorkspace(display(folder)))
     }
 }
 
@@ -488,6 +517,9 @@ mod windows {
     const READ_CONTROL: u32 = 0x0002_0000;
     const FILE_READ_ATTRIBUTES: u32 = 0x80;
     const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+    const FILE_LIST_DIRECTORY: u32 = 0x1;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
     /// What a new version may be opened with, so that its security can be set.
     pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = 0x4000_0000 | 0x0004_0000;
@@ -526,6 +558,12 @@ mod windows {
     #[link(name = "kernel32")]
     extern "system" {
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn GetFinalPathNameByHandleW(
+            file: *mut c_void,
+            path: *mut u16,
+            length: u32,
+            flags: u32,
+        ) -> u32;
         fn GetVolumeInformationByHandleW(
             file: *mut c_void,
             volume_name: *mut u16,
@@ -619,6 +657,56 @@ mod windows {
         // SAFETY: allocated by GetSecurityInfo, freed once.
         unsafe { LocalFree(descriptor) };
         set
+    }
+
+    /// The folder a document is saved into, held until the save is over.
+    ///
+    /// Held with the right to list it and without letting anybody delete it,
+    /// which on Windows is what renaming takes — measured: while it is held
+    /// the folder cannot be renamed, nor any folder above it, so nothing can
+    /// be put in its place; files inside it can be made and renamed as usual.
+    /// And then asked what it really is: a folder swapped for a junction
+    /// between the resolve and this is not the one that was resolved, and the
+    /// save is refused.
+    pub(super) fn hold_folder(folder: &Path) -> Result<fs::File, super::VfsError> {
+        let held = fs::OpenOptions::new()
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(folder)?;
+        if final_path(&held)? == folder {
+            Ok(held)
+        } else {
+            Err(super::VfsError::OutsideWorkspace(super::display(folder)))
+        }
+    }
+
+    /// Where an open file or folder really is, in the form `canonicalize` gives.
+    fn final_path(file: &fs::File) -> io::Result<std::path::PathBuf> {
+        use std::os::windows::ffi::OsStringExt;
+
+        let mut buffer = vec![0u16; 512];
+        loop {
+            // SAFETY: a handle of an open file, and a buffer of the length
+            // given; the flags ask for the normalised name with a drive letter.
+            let length = unsafe {
+                GetFinalPathNameByHandleW(
+                    file.as_raw_handle(),
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    0,
+                )
+            } as usize;
+            if length == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if length < buffer.len() {
+                buffer.truncate(length);
+                return Ok(std::ffi::OsString::from_wide(&buffer).into());
+            }
+            // Too short: the length is what it needs, the nought included.
+            buffer.resize(length, 0);
+        }
     }
 
     /// Whether the volume a file is on keeps ACLs at all.
@@ -1291,5 +1379,60 @@ mod tests {
         workspace.write(&file, b"after").unwrap();
 
         assert_eq!(fs::metadata(&file).unwrap().created().unwrap(), made);
+    }
+
+    /// While a save holds the folder, nothing can take its place.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_being_saved_into_cannot_be_moved_away() {
+        let base = scratch("held");
+        let folder = base.join("documents");
+        fs::create_dir_all(&folder).unwrap();
+        let folder = fs::canonicalize(&folder).unwrap();
+
+        let held = windows::hold_folder(&folder).unwrap();
+        assert!(
+            fs::rename(&folder, base.join("moved")).is_err(),
+            "the held folder was moved"
+        );
+        fs::write(folder.join("inside.txt"), "x").unwrap();
+        assert!(fs::rename(folder.join("inside.txt"), folder.join("renamed.txt")).is_ok());
+        drop(held);
+        assert!(fs::rename(&folder, base.join("moved")).is_ok());
+    }
+
+    /// A folder that is not what was resolved — a junction to somewhere else in
+    /// its place — is refused.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_swapped_for_a_junction_is_refused() {
+        let mut links = crate::testing::Links::default();
+        let base = scratch("swapped");
+        let elsewhere = base.join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let resolved = fs::canonicalize(&base).unwrap().join("documents");
+        links.folder(&resolved, &elsewhere);
+
+        assert!(matches!(
+            windows::hold_folder(&resolved),
+            Err(VfsError::OutsideWorkspace(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_is_refused() {
+        let mut links = crate::testing::Links::default();
+        let base = fs::canonicalize(scratch("swapped")).unwrap();
+        let elsewhere = base.join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let documents = base.join("documents");
+        links.folder(&documents, &elsewhere);
+
+        assert!(still_the_folder(&elsewhere).is_ok());
+        assert!(matches!(
+            still_the_folder(&documents),
+            Err(VfsError::OutsideWorkspace(_))
+        ));
     }
 }
