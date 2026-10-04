@@ -1362,33 +1362,28 @@ mod tests {
     #[test]
     fn a_program_is_found_only_through_an_absolute_path_entry() {
         /* `.` on the PATH, or an empty entry, is the folder the program is
-        started in — for a language server, the project. A program planted
-        there is not one the machine has installed. */
-        let dir = scratch("which");
-        let file = if cfg!(windows) {
-            "planted-server.exe"
-        } else {
-            "planted-server"
-        };
-        touch(&dir.join(file));
-
+        started in — for a language server, the project. Whatever is there is
+        not a program this machine has installed. A test runs in its crate's
+        folder, whose `Cargo.toml` stands in for one: the bare name is among
+        the names looked for on every system. It used to be a file planted in
+        the temporary folder and reached by a relative path, which cannot be
+        made when the two are on different drives, as on the Windows runner. */
         let here = std::env::current_dir().unwrap();
-        let mut base = here.as_path();
-        let mut relative = PathBuf::new();
-        while !dir.starts_with(base) {
-            relative.push("..");
-            base = base.parent().expect("the temporary folder shares a root");
-        }
-        let relative = relative.join(dir.strip_prefix(base).unwrap());
         assert!(
-            here.join(&relative).join(file).is_file(),
-            "the relative entry reaches the file"
+            here.join("Cargo.toml").is_file(),
+            "the test runs in its crate"
         );
 
-        assert_eq!(which_in("planted-server", relative.as_os_str()), None);
+        for relative in [".", ""] {
+            assert_eq!(
+                which_in("Cargo.toml", std::ffi::OsStr::new(relative)),
+                None,
+                "found through {relative:?}"
+            );
+        }
         assert_eq!(
-            which_in("planted-server", dir.as_os_str()),
-            Some(dir.join(file))
+            which_in("Cargo.toml", here.as_os_str()),
+            Some(here.join("Cargo.toml"))
         );
     }
 
