@@ -305,10 +305,19 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
   shell.fs.open = async () => {
     throw new Error('no workspace is open');
   };
-  shell.fs.adoptPaths = async () => ({ documents: [doc], directories: [] });
   recent.rememberFile(shell, { uri: doc.uri, name: doc.name });
 
+  /* A search hit or a name from Ctrl+P comes from walking the folders already
+     open, and a refusal there is not a reason to open another one. */
+  let adopted = 0;
+  shell.fs.adoptPaths = async () => {
+    adopted++;
+    return { documents: [doc], directories: [] };
+  };
   await openUri(shell, doc.uri);
+  check('a refused open is not re-adopted unless asked', adopted === 0, `${adopted} adoption(s)`);
+
+  await openUri(shell, doc.uri, { adopt: true });
   check(
     'a remembered file is re-adopted and opens',
     useWorkspace.getState().tabs.some((tab) => tab.uri === doc.uri),
@@ -317,7 +326,7 @@ const names = (entries) => entries.map((e) => e.name).join(', ');
 
   /* When re-adopting finds nothing, the file really is gone. */
   shell.fs.adoptPaths = async () => ({ documents: [], directories: [] });
-  await openUri(shell, 'C:/w/vanished.pdf');
+  await openUri(shell, 'C:/w/vanished.pdf', { adopt: true });
   check(
     'a file that is gone is still dropped, and named as gone',
     recent.recentFiles(shell).every((e) => e.uri !== 'C:/w/vanished.pdf') &&
