@@ -1,6 +1,6 @@
 # ulEditor — stanje projekta
 
-Izvještaj od 2026-10-04. Zamjenjuje onaj od 2026-10-03.
+Izvještaj od 2026-10-05. Zamjenjuje onaj od 2026-10-04.
 
 ## Jedna rečenica
 
@@ -16,8 +16,9 @@ objavljeni: **`v0.6.2`** na `0da06a0` (2026-09-28), `pnpm verify:release-live`
 14/14 — kanal za ažuriranje nudi 0.6.2 na sva četiri cilja.
 Grana: `main` (jedina lokalna; `origin/main`, `truss/main`)
 Kopija: `origin` → github.com/JoskoLatin/ulEditor, `truss` → git.truss:2222/josko/ulEditor.
-Zadnji rad: **2026-10-04** — neovisni sigurnosni pregled i popravci,
-PDF bilješke, Alt+F4, language serveri (`06c5675`…`ea2f448`).
+Zadnji rad: **2026-10-05** — drugi krug sigurnosnih popravaka, svaki uz
+neovisni pregled do PROLAZI (`1ee68c0`…`0c6f482`), lijepljenje više redaka u
+Wordu (`965f0c4`).
 Faza: **3 (Web) gotova** — svih osam koraka iz ADR 0002
 (`docs/adr/0002-web-target.md:79`). **Od `v0.6.2` desktop ima popravke koje
 korisnik osjeti**, među njima sigurnosni (pretraga je slijedila link izvan
@@ -27,6 +28,19 @@ vrijedi izdati 0.6.3; tag je Čovikov korak. Sljedeća je faza 4 (mobitel,
 
 ## Radi
 
+- **Drugi krug (2026-10-05, kartice 458, 470, 472, 454)**, svaki popravak uz
+  neovisni pregled koji je tražio dorade dok nije rekao PROLAZI:
+  - prozor ostaje na stranici aplikacije i nijedan link iz dokumenta ga ne
+    odvodi niti ponovno učitava (`verify-desktop-links` 24/24);
+  - F12 pušta samo datoteku;
+  - mapa maknuta iz stabla izlazi iz sandboxa;
+  - spremanje na Windowsu čuva ACL, EFS i oznaku preuzetog s interneta, a na
+    Unixu dozvole;
+  - language server i LibreOffice ne mogu pokrenuti ništa iz mape projekta.
+    Pregled je dokazao da je npm-ov `.cmd` pokretao podmetnuti `node`.
+  - CI provjerava ranjivosti na obje strane, uz licence npm-a. Našao je i
+    popravio `rustls` pod updaterom te `markdown-it`, koji je zamrzavao
+    Markdown uređivač.
 - **Neovisni sigurnosni pregled (2026-10-04, kartica 449)** našao je kritičnu
   rupu: pretraga i Ctrl+P slijedili su junction/symlink izvan otvorene mape
   (tuđa datoteka u rezultatima), dva junctiona natrag na mapu davala su hod
