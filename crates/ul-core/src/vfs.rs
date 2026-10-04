@@ -24,6 +24,10 @@ pub enum VfsError {
     Unsupported(String),
     #[error("not a directory: {0}")]
     NotADirectory(String),
+    /// Something that is neither a file nor a folder — a FIFO, a socket, a
+    /// device. Opening a FIFO to read it waits for a writer, for ever.
+    #[error("not a file: {0}")]
+    NotAFile(String),
     #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
@@ -228,7 +232,12 @@ impl Workspace {
                 continue;
             }
 
-            let stat = stat_of(&entry.path())?;
+            /* One entry that cannot be looked at — a link to something that is
+            gone, most often — is left out. It used to fail the whole folder,
+            and the tree then dropped the folder as if it had disappeared. */
+            let Ok(stat) = stat_of(&entry.path()) else {
+                continue;
+            };
             let detection = if is_dir {
                 detect_by_name("")
             } else {
@@ -250,6 +259,7 @@ impl Workspace {
 
     pub fn read(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
         let resolved = self.resolve(path)?;
+        openable(&resolved)?;
         Ok(fs::read(resolved)?)
     }
 
@@ -264,6 +274,7 @@ impl Workspace {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
+        openable(&resolved)?;
         let mut file = fs::File::open(&resolved)?;
         let mut probe = vec![0u8; PROBE_LEN];
         let read = file.read(&mut probe)?;
@@ -287,7 +298,7 @@ impl Workspace {
         let resolved = self.resolve(path)?;
         let (mut file, temp) = create_beside(&resolved)?;
 
-        let written = file.write_all(data);
+        let written = carry_over(&resolved, &file, &temp).and_then(|()| file.write_all(data));
         drop(file);
         if let Err(err) = written {
             let _ = fs::remove_file(&temp);
@@ -299,6 +310,54 @@ impl Workspace {
         }
         Ok(())
     }
+}
+
+/// Refuses, before it is opened, what is neither a file nor a folder. A
+/// folder is left to the read to refuse, as it always was.
+fn openable(path: &Path) -> Result<(), VfsError> {
+    let kind = fs::metadata(path)?.file_type();
+    if kind.is_file() || kind.is_dir() {
+        Ok(())
+    } else {
+        Err(VfsError::NotAFile(display(path)))
+    }
+}
+
+/// What a save must not take from the document: who may read it, and on
+/// Windows the mark that says it came from the internet.
+///
+/// A save writes a new file and renames it over the old one, and a new file
+/// starts with the defaults — on Linux and macOS readable by everybody on the
+/// machine where the document was `0600`; on Windows without its
+/// `Zone.Identifier` stream, so a `.docx` from an email, saved once here, opened
+/// in Word without Protected View. Both go to the new file before it takes the
+/// old one's place. A document saved for the first time has neither.
+fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = temp;
+        if let Ok(meta) = fs::metadata(original) {
+            temp_file.set_permissions(meta.permissions())?;
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = temp_file;
+        let mark = |path: &Path| {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(":Zone.Identifier");
+            PathBuf::from(name)
+        };
+        /* Not there, or a volume with no streams at all (FAT on a stick): no
+        mark to keep. One that was read and cannot be written fails the save
+        rather than dropping it. */
+        if let Ok(zone) = fs::read(mark(original)) {
+            fs::write(mark(temp), zone)?;
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (original, temp_file, temp);
+    Ok(())
 }
 
 /// A temporary file beside `path` that did not exist until now.
@@ -588,5 +647,91 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_save_keeps_the_mark_of_a_file_from_the_internet() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("zone")).unwrap();
+        let file = root.join("downloaded.docx");
+        fs::write(&file, "before").unwrap();
+        let mut mark = file.as_os_str().to_os_string();
+        mark.push(":Zone.Identifier");
+        let mark = PathBuf::from(mark);
+        fs::write(&mark, "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        assert_eq!(
+            fs::read_to_string(&mark).ok().as_deref(),
+            Some("[ZoneTransfer]\r\nZoneId=3\r\n"),
+            "the save took the mark away"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_save_keeps_who_may_read_the_document() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("mode")).unwrap();
+        let file = root.join("private.md");
+        fs::write(&file, "before").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the save made it {mode:o}");
+    }
+
+    /// One link to something that is gone, and the rest of the folder is still
+    /// there to see.
+    #[test]
+    fn a_link_to_something_gone_does_not_hide_the_folder() {
+        let mut links = crate::testing::Links::default();
+        let base = scratch("dangling");
+        let gone = base.join("gone");
+        fs::create_dir_all(&gone).unwrap();
+        let inside = base.join("ws");
+        fs::create_dir_all(&inside).unwrap();
+        fs::write(inside.join("kept.txt"), "here").unwrap();
+        links.folder(&inside.join("broken"), &gone);
+        fs::remove_dir(&gone).unwrap();
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&inside).unwrap();
+        let listed = workspace.read_dir(&root).unwrap();
+
+        let names: Vec<&str> = listed.iter().map(|e| e.stat.name.as_str()).collect();
+        assert_eq!(names, ["kept.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_rather_than_waited_on() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("fifo")).unwrap();
+        let fifo = root.join("pipe.txt");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let (done, outcome) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let read = workspace.read(&fifo).map(|_| ());
+            let detected = workspace.detect_at(&fifo).map(|_| ());
+            let _ = done.send((read, detected));
+        });
+        let (read, detected) = outcome
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("opening the FIFO waited for a writer");
+        assert!(matches!(read, Err(VfsError::NotAFile(_))));
+        assert!(matches!(detected, Err(VfsError::NotAFile(_))));
     }
 }

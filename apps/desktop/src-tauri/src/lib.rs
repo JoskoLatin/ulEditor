@@ -314,7 +314,11 @@ async fn scan_library(
 ) -> Result<LibraryScan, VfsError> {
     let roots = ul_core::default_roots();
 
-    with_workspace(&state, |workspace| {
+    /* The folders are granted under the lock and walked outside it, on a copy,
+    like a search: a walk of Documents, Downloads, Desktop and Pictures held
+    every command that needs the sandbox — saving among them — until it was
+    done. */
+    let (usable, workspace) = with_workspace(&state, |workspace| {
         let mut usable = Vec::new();
         for root in &roots {
             // Missing folders are expected — the list is the same for every device.
@@ -322,8 +326,9 @@ async fn scan_library(
                 usable.push(root.clone());
             }
         }
-        workspace.scan_library(&usable, limit)
-    })
+        Ok((usable, workspace.clone()))
+    })?;
+    workspace.scan_library(&usable, limit)
 }
 
 #[tauri::command]

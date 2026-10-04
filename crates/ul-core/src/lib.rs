@@ -10,6 +10,9 @@ pub mod library;
 pub mod search;
 pub mod vfs;
 
+#[cfg(test)]
+mod testing;
+
 pub use library::{default_roots, LibraryEntry, LibraryScan};
 pub use search::{DocumentCandidate, SearchHit, SearchOutcome, SearchQuery};
 pub use ul_formats::{detect, detect_by_name, Detection, FormatId, PROBE_LEN};

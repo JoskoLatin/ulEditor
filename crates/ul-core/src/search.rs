@@ -408,7 +408,16 @@ fn entries_of(dir: &Path) -> Vec<(PathBuf, bool)> {
         .flatten()
         .filter_map(|entry| {
             let kind = entry.file_type().ok()?;
-            (!kind.is_symlink()).then(|| (entry.path(), kind.is_dir()))
+            /* Folders and files, and nothing else: a FIFO on Linux or macOS
+            is neither, and reading one waits for somebody to write into it —
+            for ever, in a folder that came with one. */
+            if kind.is_dir() {
+                Some((entry.path(), true))
+            } else if kind.is_file() {
+                Some((entry.path(), false))
+            } else {
+                None
+            }
         })
         .collect();
     found.sort();
@@ -472,7 +481,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return finding;
     };
-    if meta.file_type().is_symlink() || meta.len() > MAX_FILE_BYTES {
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
         return finding;
     }
 
@@ -491,7 +500,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
         return finding;
     }
 
-    let Ok(bytes) = fs::read(path) else {
+    let Some(bytes) = read_regular(path, &meta) else {
         return finding;
     };
     if !looks_textual(&bytes) {
@@ -530,6 +539,44 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
     finding
 }
 
+/// Reads a file the walk saw as a regular file, if it is still that file.
+///
+/// Between the look and the read the file can be swapped for a link out of the
+/// folder, or grow past the limit. So it is opened once, the open file is asked
+/// whether it is the one that was looked at, and no more than the limit is read
+/// whatever its size has become.
+fn read_regular(path: &Path, seen: &fs::Metadata) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    let file = fs::File::open(path).ok()?;
+    let opened = file.metadata().ok()?;
+    if !opened.is_file() || !same_file(seen, &opened) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_FILE_BYTES).then_some(bytes)
+}
+
+/// Whether two looks at a path saw the same file.
+///
+/// On Unix that is the device and the inode, which is exact. Windows has no
+/// stable way to ask for its file index in the standard library, so there it is
+/// when the file was made and its size: a link swapped in points at a different
+/// file, and two files made in the same instant with the same size are not a
+/// race anybody wins on purpose.
+fn same_file(seen: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (seen.dev(), seen.ino()) == (opened.dev(), opened.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        seen.created().ok() == opened.created().ok() && seen.len() == opened.len()
+    }
+}
+
 use crate::vfs::{stat_of, Stat};
 
 fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
@@ -558,6 +605,7 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Links;
     use std::env;
 
     fn temp_root(name: &str) -> PathBuf {
@@ -836,51 +884,6 @@ mod tests {
         assert!(!names.contains(&"c.ts"), "noise is skipped here too");
     }
 
-    /// A link to a folder, made the way anybody can make one: a junction on
-    /// Windows, which needs no rights, and a symbolic link elsewhere.
-    fn link_folder(link: &Path, target: &Path) {
-        #[cfg(windows)]
-        {
-            let made = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
-                .output()
-                .unwrap();
-            assert!(
-                made.status.success(),
-                "{}",
-                String::from_utf8_lossy(&made.stderr)
-            );
-        }
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(target, link).unwrap();
-    }
-
-    /// The links a test made, taken away when it ends, passed or failed: a
-    /// loop left in the temporary folder waits for the next tool that follows
-    /// links. Taking a link away leaves what it points at.
-    #[derive(Default)]
-    struct Links(Vec<PathBuf>);
-
-    impl Links {
-        fn folder(&mut self, link: &Path, target: &Path) {
-            link_folder(link, target);
-            self.0.push(link.to_path_buf());
-        }
-    }
-
-    impl Drop for Links {
-        fn drop(&mut self) {
-            for link in &self.0 {
-                #[cfg(windows)]
-                let _ = fs::remove_dir(link);
-                #[cfg(unix)]
-                let _ = fs::remove_file(link);
-            }
-        }
-    }
-
     #[test]
     fn a_link_out_of_the_folder_is_neither_searched_nor_listed() {
         let mut links = Links::default();
@@ -894,11 +897,7 @@ mod tests {
         );
         links.folder(&root.join("docs"), &outside);
         #[cfg(unix)]
-        {
-            let link = root.join("secret-link.txt");
-            std::os::unix::fs::symlink(outside.join("secret.txt"), &link).unwrap();
-            links.0.push(link);
-        }
+        links.file(&root.join("secret-link.txt"), &outside.join("secret.txt"));
 
         let mut ws = Workspace::new();
         ws.add_root(&root).unwrap();
@@ -935,6 +934,35 @@ mod tests {
         let (scanned, listed) = outcome
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the walk did not end");
+        assert_eq!(scanned.unwrap(), 1);
+        assert_eq!(listed.unwrap(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_the_folder_does_not_stop_the_search() {
+        /* Read, a FIFO waits for somebody to write into it. It is neither a
+        file nor a folder, and the walk leaves it out. */
+        let root = temp_root("fifo");
+        write(&root, "only.txt", "nothing to find\n");
+        let made = std::process::Command::new("mkfifo")
+            .arg(root.join("pipe.txt"))
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let (done, outcome) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let scanned = ws.search(&query("absent")).map(|out| out.scanned);
+            let listed = ws.list_files(100).map(|files| files.len());
+            let _ = done.send((scanned, listed));
+        });
+        let (scanned, listed) = outcome
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the search waited on the FIFO");
         assert_eq!(scanned.unwrap(), 1);
         assert_eq!(listed.unwrap(), 1);
     }
