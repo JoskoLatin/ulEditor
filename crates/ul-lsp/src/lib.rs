@@ -402,6 +402,15 @@ enum Answer {
     Refused { code: i64, message: String },
 }
 
+/// How a handshake ended, told by the thread that read it to the one waiting.
+enum Handshake {
+    /// The server answered `initialize`.
+    Ready,
+    /// It refused, closed its output or spoke something that is not the
+    /// protocol, and this is what it amounted to.
+    Failed(String),
+}
+
 /// `ContentModified` — the document changed under the question.
 const CONTENT_MODIFIED: i64 = -32801;
 
@@ -543,7 +552,19 @@ impl Server {
     ) -> Result<Self, LspError> {
         let launch =
             find_server(language).ok_or_else(|| LspError::NoServer(language.to_string()))?;
+        Self::start_launch(launch, language, root, sink, timeout, options)
+    }
 
+    /// The same, with the program already chosen — which is how the tests
+    /// start a server that misbehaves on purpose.
+    fn start_launch(
+        launch: Launch,
+        language: &str,
+        root: &Path,
+        sink: Sender<Event>,
+        timeout: Duration,
+        options: serde_json::Value,
+    ) -> Result<Self, LspError> {
         let mut child = Command::new(&launch.program)
             .args(&launch.args)
             .current_dir(root)
@@ -566,7 +587,7 @@ impl Server {
             .spawn()
             .map_err(|err| LspError::Start(launch.program.clone(), err.to_string()))?;
 
-        let mut stdin = child
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| LspError::Start(launch.program.clone(), "no standard input".into()))?;
@@ -702,75 +723,21 @@ impl Server {
             }
         });
 
-        stdin.write_all(&frame(&initialize.to_string()))?;
-        stdin.flush()?;
-
-        let mut reader = BufReader::new(stdout);
-        let mut buffer: Vec<u8> = Vec::new();
-        let deadline = Instant::now() + timeout;
-        let mut ready = false;
-
-        while !ready {
-            if Instant::now() > deadline {
-                let _ = child.kill();
-                return Err(LspError::Handshake(
-                    launch.program.clone(),
-                    timeout.as_secs(),
-                ));
-            }
-
-            let mut chunk = [0u8; 8192];
-            let read = reader.read(&mut chunk)?;
-            if read == 0 {
-                let _ = child.kill();
-                /* The most likely cause is not a protocol failure at all: a
-                binary that is on the PATH and cannot run. `rust-analyzer`
-                in `~/.cargo/bin` is a rustup shim, and without the component
-                installed it prints a line and exits — which is exactly what
-                this branch now reports, in the server's own words. */
-                return Err(LspError::Broken(
-                    launch.program.clone(),
-                    format!(
-                        "it closed its output during the handshake, {}",
-                        said(&complaints)
-                    ),
-                ));
-            }
-            buffer.extend_from_slice(&chunk[..read]);
-
-            loop {
-                match take_message(&mut buffer) {
-                    Taken::Message(text) => {
-                        trace("in", &text);
-                        /* The answer to `initialize` is the only thing being
-                        waited for. Anything else at this point is the
-                        server talking about itself, and diagnostics cannot
-                        arrive yet because no file has been opened. */
-                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if value.get("id").and_then(|v| v.as_u64()) == Some(1)
-                                && value.get("result").is_some()
-                            {
-                                ready = true;
-                                break;
-                            }
-                        }
-                    }
-                    Taken::Incomplete => break,
-                    Taken::Broken(reason) => {
-                        let _ = child.kill();
-                        return Err(LspError::Broken(launch.program.clone(), reason));
-                    }
-                }
-            }
-        }
-
         let stdin = Arc::new(Mutex::new(stdin));
-        let initialized = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "initialized",
-            "params": {}
-        });
-        write_message(&stdin, &initialized.to_string())?;
+        write_message(&stdin, &initialize.to_string())?;
+
+        /*
+         * The answer to `initialize` is read by the thread that reads
+         * everything after it, and waited for here with a deadline.
+         *
+         * Reading it on this thread was the first version, and its deadline
+         * was checked between reads — so a server that started and then said
+         * nothing held the read, and the deadline never came round. `ensure` is
+         * called with the registry of servers locked, which made it worse than
+         * one stuck language: every question to every server in the window
+         * waited on one silent process until the window was closed.
+         */
+        let (handshook, handshake) = std::sync::mpsc::channel::<Handshake>();
 
         /* From here the output belongs to a thread. It ends when the server
         does, and it says so — a server that dies is a fact the editor has
@@ -782,25 +749,48 @@ impl Server {
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let waiting = Arc::clone(&pending);
         std::thread::spawn(move || {
-            let mut buffer = buffer;
-            let mut reader = reader;
+            let mut reader = BufReader::new(stdout);
+            let mut buffer: Vec<u8> = Vec::new();
             let mut chunk = [0u8; 16384];
+            /* Until the answer to `initialize` arrives, how the reading ends is
+            told to `start`, which is waiting for it. After that, to the
+            editor. */
+            let mut handshook = Some(handshook);
+            let ended = |handshook: Option<Sender<Handshake>>, detail: String| match handshook {
+                Some(starting) => {
+                    let _ = starting.send(Handshake::Failed(detail));
+                }
+                None => {
+                    let _ = sink.send(Event::Stopped {
+                        language: language_owned.clone(),
+                        detail,
+                    });
+                }
+            };
 
             loop {
                 match reader.read(&mut chunk) {
                     Ok(0) => {
-                        let _ = sink.send(Event::Stopped {
-                            language: language_owned.clone(),
-                            detail: format!("{program} closed its output, {}", said(&complaints)),
-                        });
+                        /* During the handshake the most likely cause is not a
+                        protocol failure at all: a binary that is on the PATH
+                        and cannot run. `rust-analyzer` in `~/.cargo/bin` is a
+                        rustup shim, and without the component installed it
+                        prints a line and exits — which is exactly what this
+                        reports, in the server's own words. */
+                        let detail = if handshook.is_some() {
+                            format!(
+                                "it closed its output during the handshake, {}",
+                                said(&complaints)
+                            )
+                        } else {
+                            format!("{program} closed its output, {}", said(&complaints))
+                        };
+                        ended(handshook, detail);
                         return;
                     }
                     Ok(read) => buffer.extend_from_slice(&chunk[..read]),
                     Err(err) => {
-                        let _ = sink.send(Event::Stopped {
-                            language: language_owned.clone(),
-                            detail: err.to_string(),
-                        });
+                        ended(handshook, err.to_string());
                         return;
                     }
                 }
@@ -810,12 +800,36 @@ impl Server {
                         Taken::Message(text) => {
                             trace("in", &text);
 
-                            /* A message with both an id and a method is a
-                            question, and every question gets an answer —
-                            see `answer_request`. A message with an id and no
-                            method is an answer to one of *ours*, and it goes
-                            to whoever is waiting for that id. */
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                                /* The answer to `initialize` is the only thing
+                                the handshake waits for. Anything else before
+                                it is the server talking about itself, and is
+                                handled as it would be afterwards. */
+                                if handshook.is_some()
+                                    && value.get("method").is_none()
+                                    && value.get("id").and_then(|v| v.as_u64()) == Some(1)
+                                {
+                                    if value.get("result").is_some() {
+                                        if let Some(starting) = handshook.take() {
+                                            let _ = starting.send(Handshake::Ready);
+                                        }
+                                        continue;
+                                    }
+                                    if let Some(error) = value.get("error") {
+                                        let reason = error
+                                            .get("message")
+                                            .and_then(|m| m.as_str())
+                                            .unwrap_or("no reason given");
+                                        ended(handshook, format!("it refused to start: {reason}"));
+                                        return;
+                                    }
+                                }
+
+                                /* A message with both an id and a method is a
+                                question, and every question gets an answer —
+                                see `answer_request`. A message with an id and no
+                                method is an answer to one of *ours*, and it goes
+                                to whoever is waiting for that id. */
                                 if let (Some(id), Some(method)) = (
                                     value.get("id"),
                                     value.get("method").and_then(|m| m.as_str()),
@@ -846,16 +860,40 @@ impl Server {
                         }
                         Taken::Incomplete => break,
                         Taken::Broken(reason) => {
-                            let _ = sink.send(Event::Stopped {
-                                language: language_owned.clone(),
-                                detail: reason,
-                            });
+                            ended(handshook, reason);
                             return;
                         }
                     }
                 }
             }
         });
+
+        let refused = match handshake.recv_timeout(timeout) {
+            Ok(Handshake::Ready) => None,
+            Ok(Handshake::Failed(reason)) => Some(LspError::Broken(launch.program.clone(), reason)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(LspError::Handshake(
+                launch.program.clone(),
+                timeout.as_secs(),
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(LspError::Broken(
+                launch.program.clone(),
+                "the thread reading it ended during the handshake".into(),
+            )),
+        };
+        if let Some(error) = refused {
+            /* Killed rather than left: its output closes with it, which is also
+            what ends the thread reading it. */
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+
+        let initialized = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+        write_message(&stdin, &initialized.to_string())?;
 
         Ok(Server {
             language: language.to_string(),
@@ -1394,5 +1432,69 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, LspError::NoServer(_)), "{error}");
+    }
+
+    /// A program started in a server's place, from a command line.
+    fn stand_in(program: &str, args: &[&str]) -> Launch {
+        Launch {
+            program: program.to_string(),
+            args: args.iter().map(|a| (*a).to_string()).collect(),
+        }
+    }
+
+    /// Starts a stand-in and answers what came of it, and how long that took.
+    fn start_stand_in(launch: Launch, timeout: Duration) -> (LspError, Duration) {
+        let (sink, _events) = std::sync::mpsc::channel();
+        let started = Instant::now();
+        let outcome = Server::start_launch(
+            launch,
+            "rust",
+            &std::env::temp_dir(),
+            sink,
+            timeout,
+            serde_json::Value::Null,
+        );
+        match outcome {
+            Ok(_) => {
+                panic!("the stand-in is not a language server, so nothing should have started")
+            }
+            Err(error) => (error, started.elapsed()),
+        }
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_given_up_on_in_time() {
+        /* Starts, takes its input and says nothing for half a minute. The read
+        used to wait the half minute out — and, under the registry's lock,
+        hold every other server's questions with it. */
+        let silent = if cfg!(windows) {
+            stand_in(
+                "powershell",
+                &["-NoProfile", "-Command", "Start-Sleep -Seconds 30"],
+            )
+        } else {
+            stand_in("sleep", &["30"])
+        };
+        let (error, took) = start_stand_in(silent, Duration::from_secs(1));
+        assert!(matches!(error, LspError::Handshake(_, 1)), "{error}");
+        assert!(took < Duration::from_secs(10), "it waited {took:?}");
+    }
+
+    #[test]
+    fn a_server_that_leaves_during_the_handshake_is_reported_at_once() {
+        let leaving = if cfg!(windows) {
+            stand_in("cmd", &["/C", "echo no such toolchain 1>&2"])
+        } else {
+            stand_in("sh", &["-c", "echo no such toolchain >&2"])
+        };
+        let (error, took) = start_stand_in(leaving, Duration::from_secs(60));
+        assert!(
+            matches!(&error, LspError::Broken(_, detail) if detail.contains("closed its output during the handshake")),
+            "{error}"
+        );
+        assert!(
+            took < Duration::from_secs(10),
+            "it waited {took:?} for a program that had gone"
+        );
     }
 }
