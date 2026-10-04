@@ -303,9 +303,13 @@ impl Workspace {
     }
 
     pub fn read(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
+        use std::io::Read;
+
         let resolved = self.resolve(path)?;
-        openable(&resolved)?;
-        Ok(fs::read(resolved)?)
+        let mut file = open_regular(&resolved)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
     }
 
     /// Reads only the start of a file — enough for format detection without
@@ -319,8 +323,7 @@ impl Workspace {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        openable(&resolved)?;
-        let mut file = fs::File::open(&resolved)?;
+        let mut file = open_regular(&resolved)?;
         let mut probe = vec![0u8; PROBE_LEN];
         let read = file.read(&mut probe)?;
         probe.truncate(read);
@@ -390,12 +393,80 @@ fn still_the_folder(folder: &Path) -> Result<(), VfsError> {
     }
 }
 
-/// Refuses, before it is opened, what is neither a file nor a folder. A
-/// folder is left to the read to refuse, as it always was.
-fn openable(path: &Path) -> Result<(), VfsError> {
-    let kind = fs::metadata(path)?.file_type();
-    if kind.is_file() || kind.is_dir() {
-        Ok(())
+/// `O_NONBLOCK`, as the libc crate's own tables have it (0.2.189): 2048 on
+/// Linux for the architectures this is built for and on Android, 4 on macOS
+/// and the BSDs. Elsewhere it is not guessed — see `open_regular`.
+#[cfg(any(
+    target_os = "android",
+    all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "x86"
+        )
+    )
+))]
+const O_NONBLOCK: Option<i32> = Some(0o4000);
+#[cfg(any(
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+const O_NONBLOCK: Option<i32> = Some(0x4);
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "android",
+        all(
+            target_os = "linux",
+            any(
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "arm",
+                target_arch = "x86"
+            )
+        ),
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+))]
+const O_NONBLOCK: Option<i32> = None;
+
+/// Opens a file to read it — and only a file.
+///
+/// Opening a FIFO to read it waits for somebody to write into it, for ever,
+/// and holding the sandbox's lock while it waits. Asking first and opening
+/// after left a moment in which the file could be swapped for one. So it is
+/// opened without waiting (`O_NONBLOCK`, which changes nothing for a regular
+/// file), the open file is asked what it is, and anything but a regular file is
+/// refused before a byte is read — a folder included, which a read refused
+/// anyway. Where the flag's value is not known here, the question is asked of
+/// the path before opening, as before.
+fn open_regular(path: &Path) -> Result<fs::File, VfsError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    match O_NONBLOCK {
+        Some(flag) => {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(flag);
+        }
+        None => {
+            if !fs::metadata(path)?.is_file() {
+                return Err(VfsError::NotAFile(display(path)));
+            }
+        }
+    }
+    let file = options.open(path)?;
+    if file.metadata()?.is_file() {
+        Ok(file)
     } else {
         Err(VfsError::NotAFile(display(path)))
     }
@@ -1434,5 +1505,20 @@ mod tests {
             still_the_folder(&documents),
             Err(VfsError::OutsideWorkspace(_))
         ));
+    }
+
+    /// Read asks the opened thing what it is: a folder is not a file to read.
+    #[test]
+    fn a_folder_is_not_read_as_a_file() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("folder-read")).unwrap();
+        fs::create_dir_all(root.join("inner")).unwrap();
+
+        assert!(matches!(
+            workspace.read(root.join("inner")),
+            Err(VfsError::NotAFile(_)) | Err(VfsError::Io(_))
+        ));
+        fs::write(root.join("note.txt"), "text").unwrap();
+        assert_eq!(workspace.read(root.join("note.txt")).unwrap(), b"text");
     }
 }
