@@ -499,6 +499,10 @@ fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Re
         {
             temp_file.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o777))?;
         }
+        /* macOS's own mark of a file from the internet, which Gatekeeper and
+        the apps that open it read as Windows' programs read Zone.Identifier. */
+        #[cfg(target_os = "macos")]
+        macos::carry_quarantine(original, temp_file)?;
     }
     #[cfg(windows)]
     {
@@ -520,6 +524,91 @@ fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Re
     #[cfg(not(any(unix, windows)))]
     let _ = (original, temp_file, temp);
     Ok(())
+}
+
+/// `com.apple.quarantine`, the extended attribute macOS marks a file from the
+/// internet with, carried to the document's next version.
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::ffi::{c_void, CString};
+    use std::fs;
+    use std::io;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+    use std::path::Path;
+
+    /* From the libc crate's tables (0.2.189), for macOS. */
+    const XATTR_NOFOLLOW: i32 = 0x0001;
+    const ENOENT: i32 = 2;
+    const ENOTSUP: i32 = 45;
+    const ENOATTR: i32 = 93;
+
+    const QUARANTINE: &[u8] = b"com.apple.quarantine\0";
+    /// Far more than a mark macOS writes, which is a line of a few dozen bytes.
+    const LONGEST: usize = 64 * 1024;
+
+    extern "C" {
+        fn getxattr(
+            path: *const std::ffi::c_char,
+            name: *const std::ffi::c_char,
+            value: *mut c_void,
+            size: usize,
+            position: u32,
+            options: i32,
+        ) -> isize;
+        fn fsetxattr(
+            fd: i32,
+            name: *const std::ffi::c_char,
+            value: *const c_void,
+            size: usize,
+            position: u32,
+            options: i32,
+        ) -> i32;
+    }
+
+    /// No mark, or a volume that keeps no extended attributes: nothing to
+    /// carry. A mark that is there and cannot be read or written fails the
+    /// save rather than leave the next version unmarked.
+    pub(super) fn carry_quarantine(original: &Path, temp: &fs::File) -> io::Result<()> {
+        let path = CString::new(original.as_os_str().as_bytes())?;
+        let mut value = vec![0u8; LONGEST];
+        // SAFETY: NUL-terminated path and name, and a buffer of the size given;
+        // the attribute is read from the document itself, not through a link.
+        let read = unsafe {
+            getxattr(
+                path.as_ptr(),
+                QUARANTINE.as_ptr().cast(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+                0,
+                XATTR_NOFOLLOW,
+            )
+        };
+        if read < 0 {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(ENOATTR | ENOTSUP | ENOENT) => Ok(()),
+                _ => Err(err),
+            };
+        }
+        value.truncate(read as usize);
+        // SAFETY: an open descriptor, the NUL-terminated name and the bytes read.
+        let done = unsafe {
+            fsetxattr(
+                temp.as_raw_fd(),
+                QUARANTINE.as_ptr().cast(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        if done == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
 }
 
 /// The `Zone.Identifier` stream of a file, by its name.
@@ -1520,5 +1609,31 @@ mod tests {
         ));
         fs::write(root.join("note.txt"), "text").unwrap();
         assert_eq!(workspace.read(root.join("note.txt")).unwrap(), b"text");
+    }
+
+    /// A file from the internet stays one through a save on macOS, as on Windows.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_save_keeps_the_quarantine_mark_on_macos() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("quarantine")).unwrap();
+        let file = root.join("downloaded.docx");
+        fs::write(&file, "before").unwrap();
+        let mark = "0081;5f5e1000;Safari;";
+        let set = std::process::Command::new("xattr")
+            .args(["-w", "com.apple.quarantine", mark])
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(set.success(), "the test could not mark the file");
+
+        workspace.write(&file, b"after").unwrap();
+
+        let out = std::process::Command::new("xattr")
+            .args(["-p", "com.apple.quarantine"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), mark);
     }
 }
