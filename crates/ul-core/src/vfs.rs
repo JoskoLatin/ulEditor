@@ -313,6 +313,14 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
         {
             Ok(file) => return Ok((file, temp)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => taken = Some(err),
+            /* On Windows a folder or a junction under the name is not "already
+            exists" but "access denied". It is taken all the same. */
+            Err(err)
+                if err.kind() == std::io::ErrorKind::PermissionDenied
+                    && fs::symlink_metadata(&temp).is_ok() =>
+            {
+                taken = Some(err)
+            }
             Err(err) => return Err(err),
         }
     }
@@ -538,6 +546,23 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&file).unwrap(), "after");
         assert_eq!(fs::read_to_string(&taken).unwrap(), "somebody else's");
+    }
+
+    /// A folder under the temporary name is taken too. On Windows that is
+    /// "access denied" rather than "already exists", and was the end of the save.
+    #[test]
+    fn a_save_goes_round_a_folder_under_its_temporary_name() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("folder")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "before").unwrap();
+        let taken = temp_beside(&file, 0);
+        fs::create_dir(&taken).unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        assert!(taken.is_dir());
     }
 
     #[cfg(unix)]

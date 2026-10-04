@@ -857,8 +857,33 @@ mod tests {
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
+    /// The links a test made, taken away when it ends, passed or failed: a
+    /// loop left in the temporary folder waits for the next tool that follows
+    /// links. Taking a link away leaves what it points at.
+    #[derive(Default)]
+    struct Links(Vec<PathBuf>);
+
+    impl Links {
+        fn folder(&mut self, link: &Path, target: &Path) {
+            link_folder(link, target);
+            self.0.push(link.to_path_buf());
+        }
+    }
+
+    impl Drop for Links {
+        fn drop(&mut self) {
+            for link in &self.0 {
+                #[cfg(windows)]
+                let _ = fs::remove_dir(link);
+                #[cfg(unix)]
+                let _ = fs::remove_file(link);
+            }
+        }
+    }
+
     #[test]
     fn a_link_out_of_the_folder_is_neither_searched_nor_listed() {
+        let mut links = Links::default();
         let outside = temp_root("outside");
         write(&outside, "secret.txt", "password = MARKER-OUTSIDE\n");
         let root = temp_root("linked");
@@ -867,10 +892,13 @@ mod tests {
             "inside.txt",
             "MARKER-OUTSIDE is named here and only here\n",
         );
-        link_folder(&root.join("docs"), &outside);
+        links.folder(&root.join("docs"), &outside);
         #[cfg(unix)]
-        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("secret-link.txt"))
-            .unwrap();
+        {
+            let link = root.join("secret-link.txt");
+            std::os::unix::fs::symlink(outside.join("secret.txt"), &link).unwrap();
+            links.0.push(link);
+        }
 
         let mut ws = Workspace::new();
         ws.add_root(&root).unwrap();
@@ -889,10 +917,11 @@ mod tests {
         /* Followed, one link back to the root is the tree again under every
         folder, and two of them double it at every level: it was still
         walking after twenty-five seconds. */
+        let mut links = Links::default();
         let root = temp_root("loop");
         write(&root, "only.txt", "nothing to find\n");
-        link_folder(&root.join("a"), &root);
-        link_folder(&root.join("b"), &root);
+        links.folder(&root.join("a"), &root);
+        links.folder(&root.join("b"), &root);
 
         let mut ws = Workspace::new();
         ws.add_root(&root).unwrap();
