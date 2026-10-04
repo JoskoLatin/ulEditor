@@ -155,11 +155,27 @@ fn extra_directories() -> Vec<PathBuf> {
         out.push(home.join(".local").join("bin"));
         out.push(home.join("AppData").join("Roaming").join("npm"));
     }
+    // An empty HOME makes these relative — the folder the server starts in.
+    out.retain(|directory| directory.is_absolute());
     out
 }
 
 /// The server for a language, if this machine has one.
 pub fn find_server(language: &str) -> Option<Launch> {
+    find_server_in(
+        language,
+        std::env::var_os("PATH").as_deref(),
+        &extra_directories(),
+    )
+}
+
+/// The same, with the PATH and the other places given — so that what is
+/// started can be checked to be a full path.
+fn find_server_in(
+    language: &str,
+    path: Option<&std::ffi::OsStr>,
+    extra: &[PathBuf],
+) -> Option<Launch> {
     let mut launch = known_launch(language)?;
 
     /* Started by the full path found here, never by its bare name. A bare
@@ -168,8 +184,7 @@ pub fn find_server(language: &str) -> Option<Launch> {
     is the project folder the server starts in: a folder could bring its own
     `rust-analyzer`. On Windows a bare name found only as a `.cmd` (npm's
     servers) did not start at all. */
-    if let Some(found) = std::env::var_os("PATH").and_then(|path| which_in(&launch.program, &path))
-    {
+    if let Some(found) = path.and_then(|path| which_in(&launch.program, path)) {
         launch.program = found.to_string_lossy().into_owned();
         return Some(launch);
     }
@@ -177,7 +192,7 @@ pub fn find_server(language: &str) -> Option<Launch> {
     /* Tried with the extensions Windows requires, since `soffice` and
     `rust-analyzer` are `soffice.com` and `rust-analyzer.exe` there and a
     bare name finds neither when the PATH is not consulted. */
-    for directory in extra_directories() {
+    for directory in extra {
         for name in candidate_names(&launch.program) {
             let path = directory.join(&name);
             if path.is_file() {
@@ -201,6 +216,33 @@ fn candidate_names(program: &str) -> Vec<String> {
     } else {
         vec![program.to_string()]
     }
+}
+
+/// Starts a server where what it starts in turn is not looked for in the
+/// project.
+///
+/// The server is started by its full path, but what it starts is looked up by
+/// name. npm's `.cmd` shim on Windows runs `node` through cmd.exe, which looks
+/// in the current folder first — the project, where the server is started — so
+/// a `node.cmd` in a cloned repository ran as whoever opened a `.ts` file in
+/// it. `NoDefaultCurrentDirectoryInExePath` tells cmd.exe and Windows itself not
+/// to look there. Elsewhere npm's scripts begin `#!/usr/bin/env node`, and
+/// `env` goes through every PATH entry, `.` and an empty one among them: the
+/// child is given a PATH of absolute entries only.
+fn harden(command: &mut Command) {
+    harden_with(command, std::env::var_os("PATH"));
+}
+
+/// The same, with the PATH it starts from given.
+fn harden_with(command: &mut Command, path: Option<std::ffi::OsString>) {
+    if let Some(path) = path {
+        let absolute = std::env::split_paths(&path).filter(|entry| entry.is_absolute());
+        if let Ok(path) = std::env::join_paths(absolute) {
+            command.env("PATH", path);
+        }
+    }
+    #[cfg(windows)]
+    command.env("NoDefaultCurrentDirectoryInExePath", "1");
 }
 
 /// Where a program is on a PATH — `which`, without a dependency.
@@ -578,7 +620,9 @@ impl Server {
         timeout: Duration,
         options: serde_json::Value,
     ) -> Result<Self, LspError> {
-        let mut child = Command::new(&launch.program)
+        let mut command = Command::new(&launch.program);
+        harden(&mut command);
+        let mut child = command
             .args(&launch.args)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -1547,5 +1591,85 @@ mod tests {
             took < Duration::from_secs(10),
             "it waited {took:?} for a program that had gone"
         );
+    }
+
+    #[test]
+    fn a_server_is_started_by_its_full_path() {
+        /* A bare name is looked up again when it is started, through whatever
+        the system looks in — the project folder among it. */
+        let dir = scratch("full-path");
+        let file = if cfg!(windows) {
+            "rust-analyzer.exe"
+        } else {
+            "rust-analyzer"
+        };
+        touch(&dir.join(file));
+
+        let launch = find_server_in("rust", Some(dir.as_os_str()), &[]).unwrap();
+        assert_eq!(PathBuf::from(&launch.program), dir.join(file));
+        assert!(PathBuf::from(&launch.program).is_absolute());
+    }
+
+    /// Runs `node --version` in a folder that holds a planted `node`, and
+    /// answers whether the planted one ran.
+    fn planted_node_runs(hardened: bool) -> bool {
+        let project = scratch("planted-node");
+        std::fs::create_dir_all(&project).unwrap();
+        let marker = project.join("marker.txt");
+        let mut command;
+        if cfg!(windows) {
+            std::fs::write(
+                project.join("node.cmd"),
+                "@echo off\r\necho planted> \"%~dp0marker.txt\"\r\n",
+            )
+            .unwrap();
+            command = Command::new("cmd");
+            command.args(["/d", "/c", "node --version"]);
+            if hardened {
+                harden(&mut command);
+            } else {
+                command.env_remove("NoDefaultCurrentDirectoryInExePath");
+            }
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let node = project.join("node");
+                std::fs::write(&node, "#!/bin/sh\ntouch \"$(dirname \"$0\")/marker.txt\"\n")
+                    .unwrap();
+                std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            /* A PATH that begins with `.`, which some people's does. */
+            let mut path = std::ffi::OsString::from(".:");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            command = Command::new("sh");
+            command.args(["-c", "node --version"]);
+            if hardened {
+                harden_with(&mut command, Some(path));
+            } else {
+                command.env("PATH", path);
+            }
+        }
+        command
+            .current_dir(&project)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        let ran = marker.exists();
+        let _ = std::fs::remove_dir_all(&project);
+        ran
+    }
+
+    #[test]
+    fn what_a_server_starts_is_not_looked_for_in_the_project() {
+        /* The first run is the attack as it was, and has to work, or the
+        second proves nothing. */
+        assert!(
+            planted_node_runs(false),
+            "the planted node was not reached at all"
+        );
+        assert!(!planted_node_runs(true), "the planted node ran");
     }
 }

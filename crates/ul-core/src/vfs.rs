@@ -350,8 +350,17 @@ impl Workspace {
             return Err(err.into());
         }
         if let Err(err) = put_in_place(&temp, &resolved) {
-            let _ = fs::remove_file(&temp);
-            return Err(err.into());
+            /* Where the document is gone — `ReplaceFileW` can take it away and
+            then fail to move the new version in — the new version is the only
+            copy there is, and it stays, under the name the error gives. */
+            if fs::symlink_metadata(&resolved).is_ok() {
+                let _ = fs::remove_file(&temp);
+                return Err(err.into());
+            }
+            return Err(VfsError::Io(std::io::Error::new(
+                err.kind(),
+                format!("{err} — the saved text is in {}", display(&temp)),
+            )));
         }
         sweep_leftovers(&resolved);
         Ok(())
@@ -386,7 +395,11 @@ fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Re
         /* Who may read and write, and nothing more: setuid, setgid and sticky
         are not carried, or a file somebody planted would keep its setuid bit
         through a save by root. */
-        if let Ok(meta) = fs::metadata(original) {
+        // The document's own, not whatever a link put in its place points at.
+        if let Some(meta) = fs::symlink_metadata(original)
+            .ok()
+            .filter(|meta| meta.is_file())
+        {
             temp_file.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o777))?;
         }
     }
@@ -462,10 +475,17 @@ fn mark_of(original: &Path) -> Option<Vec<u8>> {
 /// to make a file link.
 fn put_in_place(temp: &Path, original: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
-    if fs::symlink_metadata(original).is_ok_and(|meta| meta.is_file())
-        && replace_file(original, temp).is_ok()
-    {
-        return Ok(());
+    if fs::symlink_metadata(original).is_ok_and(|meta| meta.is_file()) {
+        match replace_file(original, temp) {
+            Ok(()) => return Ok(()),
+            /* Somebody else holds the new version or the document open —
+            another program, or another account waiting for exactly this
+            moment. The rename would hand the document the folder's security
+            in place of its own, so the save is refused instead, and says
+            why. */
+            Err(err) if matches!(err.raw_os_error(), Some(32 | 33)) => return Err(err),
+            Err(_) => {}
+        }
     }
     fs::rename(temp, original)
 }
@@ -517,11 +537,13 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
     let mut taken = None;
     for attempt in 0..16 {
         let temp = temp_beside(path, attempt);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-        {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        /* Nobody else opens it while it is being written: it starts with the
+        folder's security, not the document's. */
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+        match options.open(&temp) {
             Ok(file) => return Ok((file, temp)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => taken = Some(err),
             /* On Windows a folder or a junction under the name is not "already
@@ -1067,5 +1089,28 @@ mod tests {
             Err(VfsError::NotAFile(_))
         ));
         assert!(workspace.read(base.join("outside.rs")).is_err());
+    }
+
+    /// A mark that is there and cannot be read — somebody holds it shut — is
+    /// taken as the plain internet one, not as none.
+    #[cfg(windows)]
+    #[test]
+    fn a_mark_that_cannot_be_read_is_taken_as_the_internet_one() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let base = scratch("locked-mark");
+        let file = base.join("downloaded.docx");
+        fs::write(&file, "before").unwrap();
+        fs::write(zone_stream(&file), "[ZoneTransfer]\r\nZoneId=4\r\n").unwrap();
+        let _held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(zone_stream(&file))
+            .unwrap();
+
+        assert_eq!(
+            mark_of(&file).as_deref(),
+            Some(&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..])
+        );
     }
 }

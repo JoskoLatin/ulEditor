@@ -183,6 +183,21 @@ pub fn backend() -> Option<Backend> {
     })
 }
 
+/// LibreOffice started so that nothing it starts in turn is looked for in a
+/// relative place: a PATH of absolute entries only, and on Windows no looking
+/// in the current folder (`NoDefaultCurrentDirectoryInExePath`). The same as a
+/// language server is started with — see `harden` in ul-lsp.
+fn harden(command: &mut Command) {
+    if let Some(path) = std::env::var_os("PATH") {
+        let absolute = std::env::split_paths(&path).filter(|entry| entry.is_absolute());
+        if let Ok(path) = std::env::join_paths(absolute) {
+            command.env("PATH", path);
+        }
+    }
+    #[cfg(windows)]
+    command.env("NoDefaultCurrentDirectoryInExePath", "1");
+}
+
 /// What the output of a conversion is called.
 ///
 /// LibreOffice names it after the input with the extension replaced, in the
@@ -254,7 +269,9 @@ pub fn to_pdf(
     // A stale file from a previous run would be mistaken for this run's answer.
     let _ = std::fs::remove_file(&expected);
 
-    let mut child = Command::new(&backend.path)
+    let mut command = Command::new(&backend.path);
+    harden(&mut command);
+    let mut child = command
         .args(arguments(source, outdir, &profile))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -323,6 +340,25 @@ pub fn to_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn libreoffice_is_started_with_nothing_relative_to_look_in() {
+        let mut command = Command::new("soffice");
+        harden(&mut command);
+        let envs: Vec<_> = command.get_envs().collect();
+        let path = envs
+            .iter()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| *value);
+        if let Some(path) = path {
+            assert!(std::env::split_paths(path).all(|entry| entry.is_absolute()));
+        }
+        if cfg!(windows) {
+            assert!(envs.iter().any(|(key, value)| {
+                *key == "NoDefaultCurrentDirectoryInExePath" && *value == Some("1".as_ref())
+            }));
+        }
+    }
 
     #[test]
     fn only_an_absolute_path_entry_is_looked_in() {
