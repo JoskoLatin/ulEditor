@@ -289,11 +289,15 @@ pub fn file_url(path: &std::path::Path) -> String {
 pub fn path_of_url(url: &str) -> Option<std::path::PathBuf> {
     let rest = url.strip_prefix("file://")?;
     /* Only a path on this machine: no host, or `localhost`. `file://server/x`
-    names another machine and came back as the relative path `server/x`, and
-    `file:////server/share/x` as `//server/share/x`, which Windows reads as a
-    share on the network — from whatever a language server cared to answer. */
+    names another machine and came back as the relative path `server/x`.
+
+    And no path that starts with two separators. Windows reads `/` and `\`
+    alike, so `file:////server/share/x` and `file:///\\server\share\x` both came
+    back as a share on the network — and opening one hands the person's
+    credentials to whoever runs that machine, on a language server's word. */
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    if !rest.starts_with('/') || rest.starts_with("//") {
+    let mut leading = rest.chars();
+    if leading.next() != Some('/') || matches!(leading.next(), Some('/' | '\\')) {
         return None;
     }
     let decoded = rest
@@ -920,10 +924,22 @@ mod tests {
     #[test]
     fn a_url_naming_another_machine_is_nobodys_path() {
         /* A definition is whatever the server answered, and the answer is
-        opened. Neither of these is a file on this machine. */
+        opened. None of these is a file on this machine. */
         assert!(
             path_of_url("file:////server/share/x.rs").is_none(),
             "a share"
+        );
+        assert!(
+            path_of_url(r"file:///\\server\share\x.rs").is_none(),
+            "a share, written the Windows way"
+        );
+        assert!(
+            path_of_url(r"file:///\/server/share/x.rs").is_none(),
+            "a share, mixed"
+        );
+        assert!(
+            path_of_url("file://localhost//server/share/x.rs").is_none(),
+            "a share behind localhost"
         );
         assert!(path_of_url("file://server/x.rs").is_none(), "a host");
         assert_eq!(
