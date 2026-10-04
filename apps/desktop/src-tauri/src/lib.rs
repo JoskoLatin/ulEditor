@@ -1073,7 +1073,9 @@ pub fn run() {
         (`routeExternalLinks`); this is what holds when something does not. */
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("stay-in-app")
-                .on_navigation(|_, url| stays_in_app(url))
+                .on_navigation(|webview, url| {
+                    stays_in_app(url, webview.app_handle().config().build.dev_url.as_ref())
+                })
                 .build(),
         );
 
@@ -1301,46 +1303,101 @@ pub fn run() {
         });
 }
 
-/// Whether a navigation of the window stays inside the application.
+/// Whether a navigation of the window stays on the application's own page.
 ///
-/// The application's own pages are `tauri://localhost` on macOS and Linux and
-/// `http(s)://tauri.localhost` on Windows and Android; a `blob:` is a page the
-/// application made itself. A debug build is served by the dev server on
-/// `localhost`, and only a debug build may go there.
-fn stays_in_app(url: &tauri::Url) -> bool {
-    match url.scheme() {
-        "tauri" | "blob" => true,
-        "http" | "https" => {
-            let host = url.host_str();
-            host == Some("tauri.localhost")
-                || (cfg!(debug_assertions) && matches!(host, Some("localhost" | "127.0.0.1")))
-        }
-        _ => false,
+/// Exactly the application's origin and nothing near it — `http://tauri.localhost`
+/// on Windows and Android, `tauri://localhost` on macOS and Linux, with no port,
+/// no user and no other scheme — and only its page, `/` or `/index.html`.
+///
+/// The first version let through anything on the host `tauri.localhost`: https,
+/// any port, a user in front of it. Only plain http is the application on
+/// Windows; the rest went to the network, which resolves `*.localhost` to this
+/// machine, so a link in a Markdown file could put whatever answers on a local
+/// port in the window. And another path on the application's own origin is
+/// answered with the application itself — a relative link in a README reloaded
+/// it, and the unsaved work went with it.
+///
+/// A `blob:` only when the page that made it is the application. A debug build
+/// may also reach its dev server, exactly as `devUrl` names it.
+fn stays_in_app(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    if url.scheme() == "blob" {
+        return tauri::Url::parse(url.path()).is_ok_and(|maker| own_origin(&maker, dev));
     }
+    own_origin(url, dev) && matches!(url.path(), "/" | "/index.html")
+}
+
+/// Whether a URL is on the application's own origin.
+fn own_origin(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    let nobody = url.username().is_empty() && url.password().is_none();
+    let app = if cfg!(any(windows, target_os = "android")) {
+        url.scheme() == "http" && url.host_str() == Some("tauri.localhost")
+    } else {
+        url.scheme() == "tauri" && url.host_str() == Some("localhost")
+    };
+    let dev_server = cfg!(debug_assertions)
+        && dev.is_some_and(|dev| {
+            url.scheme() == dev.scheme()
+                && url.host_str() == dev.host_str()
+                && url.port_or_known_default() == dev.port_or_known_default()
+        });
+    nobody && ((app && url.port().is_none()) || dev_server)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{paths_from, stays_in_app, within_limit, LONGEST_REPORT};
 
+    fn url(text: &str) -> tauri::Url {
+        tauri::Url::parse(text).unwrap()
+    }
+
     #[test]
-    fn the_window_stays_on_the_applications_own_pages() {
-        let url = |text: &str| tauri::Url::parse(text).unwrap();
-        for own in [
-            "tauri://localhost/index.html",
-            "http://tauri.localhost/",
-            "https://tauri.localhost/#/x",
+    fn the_window_stays_on_the_applications_own_page() {
+        let (own, other) = if cfg!(windows) {
+            ("http://tauri.localhost", "tauri://localhost")
+        } else {
+            ("tauri://localhost", "http://tauri.localhost")
+        };
+        for here in [
+            format!("{own}/"),
+            format!("{own}/index.html"),
+            format!("{own}/#heading"),
+            format!("blob:{own}/5c1d0f2e"),
         ] {
-            assert!(stays_in_app(&url(own)), "{own}");
+            assert!(stays_in_app(&url(&here), None), "{here}");
         }
         for away in [
-            "https://example.com/",
-            "http://tauri.localhost.example.com/",
-            "file:///C:/Windows/",
-            "data:text/html,<p>x</p>",
-            "javascript:alert(1)",
+            format!("{other}/"),
+            format!("{own}/docs/upute.md"),
+            "https://tauri.localhost/".to_string(),
+            "http://tauri.localhost:8080/".to_string(),
+            "http://somebody@tauri.localhost/".to_string(),
+            "http://u:p@tauri.localhost/".to_string(),
+            "tauri://evil.example/".to_string(),
+            "blob:null/5c1d0f2e".to_string(),
+            "blob:https://evil.example/5c1d0f2e".to_string(),
+            "https://example.com/".to_string(),
+            "http://tauri.localhost.example.com/".to_string(),
+            "file:///C:/Windows/".to_string(),
+            "data:text/html,<p>x</p>".to_string(),
+            "javascript:alert(1)".to_string(),
         ] {
-            assert!(!stays_in_app(&url(away)), "{away}");
+            assert!(!stays_in_app(&url(&away), None), "{away}");
+        }
+    }
+
+    #[test]
+    fn a_debug_build_reaches_its_dev_server_and_nothing_beside_it() {
+        let dev = url("http://localhost:5273");
+        assert!(stays_in_app(&url("http://localhost:5273/"), Some(&dev)));
+        for away in [
+            "http://localhost:5274/",
+            "http://localhost/",
+            "http://somebody@localhost:5273/",
+            "http://localhost:5273/docs/upute.md",
+            "http://127.0.0.1:5273/",
+        ] {
+            assert!(!stays_in_app(&url(away), Some(&dev)), "{away}");
         }
     }
 

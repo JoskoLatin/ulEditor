@@ -333,7 +333,11 @@ export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
   } catch (err) {
     setTree(tree.filter((n) => n.uri !== root.uri));
     forget(shell, root.uri);
-    void shell.fs.forgetRoot?.(root.uri);
+    /* Not out of the desktop's sandbox: a folder that could not be read just
+       now — a stick pulled out, a share that blinked — may be back in a moment,
+       and a document open from it has to be able to save when it is. The web
+       has nothing to keep, and lets the folder's handle go. */
+    if (shell.platform !== 'desktop') void shell.fs.forgetRoot?.(root.uri);
     shell.notify.show('error', t('Could not read the folder: {reason}', { reason: describe(err) }));
   }
 }
@@ -347,20 +351,28 @@ export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
  * somebody is working in would be a surprise nobody asked for.
  */
 export function removeRoot(shell: Shell, root: TreeNode): void {
-  const { tree, setTree, tabs } = useWorkspace.getState();
+  const { tree, setTree } = useWorkspace.getState();
   setTree(tree.filter((node) => node.uri !== root.uri));
   forget(shell, root.uri);
+  void releaseRoot(shell, root.uri);
+}
 
-  /* On the desktop the folder now leaves the sandbox as well, so a document
-     still open from it is let in on its own first — otherwise its next save
-     would be refused as outside the folders that are open. */
-  const inside = tabs
-    .map((tab) => tab.uri)
-    .filter((uri) => uri.startsWith(`${root.uri}\\`) || uri.startsWith(`${root.uri}/`));
-  void (async () => {
-    for (const uri of inside) await shell.fs.grantFile?.(uri).catch(() => undefined);
-    await shell.fs.forgetRoot?.(root.uri);
-  })();
+/**
+ * Lets a folder go from the sandbox, keeping what is open from it.
+ *
+ * On the desktop a folder off the tree leaves the sandbox as well. A document
+ * still open from it is let in on its own first — otherwise its next save would
+ * be refused as outside the folders that are open, which is the work somebody
+ * is in the middle of.
+ */
+async function releaseRoot(shell: Shell, uri: Uri): Promise<void> {
+  if (!shell.fs.forgetRoot) return;
+  const inside = useWorkspace
+    .getState()
+    .tabs.map((tab) => tab.uri)
+    .filter((tab) => tab.startsWith(`${uri}\\`) || tab.startsWith(`${uri}/`));
+  for (const tab of inside) await shell.fs.grantFile?.(tab).catch(() => undefined);
+  await shell.fs.forgetRoot(uri);
 }
 
 /**
@@ -376,7 +388,10 @@ export async function openRecentFolder(shell: Shell, root: { uri: Uri; name: str
     await addRoot(shell, root);
   } catch (err) {
     forget(shell, root.uri);
-    void shell.fs.forgetRoot?.(root.uri);
+    // A folder that is in the tree already stays in it, and in the sandbox.
+    if (!useWorkspace.getState().tree.some((node) => node.uri === root.uri)) {
+      void releaseRoot(shell, root.uri);
+    }
     shell.notify.show('error', t('Could not open the folder: {reason}', { reason: describe(err) }));
   }
 }

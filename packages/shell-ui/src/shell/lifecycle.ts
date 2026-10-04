@@ -91,31 +91,37 @@ export function guardWindowClose(shell: Shell): () => void {
 }
 
 /**
- * A link to the web opens in the browser, never in place of the application.
+ * A link opens in the browser or nowhere, never in place of the application.
  *
  * A link in a Markdown preview was followed by the window itself. On the
  * desktop the whole interface gave way to the page — no address bar to say
  * where it was, unsaved work behind it — and in the browser the tab left the
- * application the same way. The desktop shell now refuses such a navigation
+ * application the same way. The desktop shell refuses such a navigation
  * outright (`stays_in_app` in Rust), so the click is sent where it belongs
  * instead of doing nothing: `https` to the browser, anything else nowhere.
- * A link an editor handles itself is left to it.
+ *
+ * Every kind of link a document can hold: an HTML one, an image map's `area`,
+ * and an SVG one, which is not an `HTMLAnchorElement` and was let through. And
+ * a link to another page of the application's own origin — a relative link in
+ * a README — goes nowhere too: the application answers every path with itself,
+ * so following one reloaded it. Only a jump within the page, `#heading`, is
+ * the page's own business. A link an editor handles itself is left to it.
  */
 export function routeExternalLinks(shell: Shell): () => void {
   const follow = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button > 1) return;
-    const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
-    if (!(link instanceof HTMLAnchorElement)) return;
+    const link = event.target instanceof Element ? event.target.closest('a, area') : null;
+    const target = linkTarget(link);
+    // A jump within the page is the page's own; an empty link would reload it.
+    if (target === null || (target.startsWith('#') && target.length > 1)) return;
+    event.preventDefault();
     let url: URL;
     try {
-      url = new URL(link.href, window.location.href);
+      url = new URL(target, document.baseURI);
     } catch {
       return;
     }
-    if (url.origin === window.location.origin) return;
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return;
-    event.preventDefault();
-    if (url.protocol === 'https:') shell.openExternal?.(url.href);
+    if (url.protocol === 'https:' && url.origin !== window.location.origin) shell.openExternal?.(url.href);
   };
   document.addEventListener('click', follow);
   document.addEventListener('auxclick', follow);
@@ -123,6 +129,17 @@ export function routeExternalLinks(shell: Shell): () => void {
     document.removeEventListener('click', follow);
     document.removeEventListener('auxclick', follow);
   };
+}
+
+/** Where a link points, as written: an HTML link, an image map's area, an SVG link. */
+function linkTarget(link: Element | null): string | null {
+  if (link instanceof HTMLAnchorElement || link instanceof HTMLAreaElement) {
+    return link.getAttribute('href');
+  }
+  if (link instanceof SVGAElement) {
+    return link.href.baseVal || link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+  }
+  return null;
 }
 
 export async function requestExit(shell: Shell): Promise<void> {

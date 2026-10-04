@@ -82,15 +82,55 @@ try {
   check('a click on a link to the web is taken over by the shell', taken === true, String(taken));
   check('and the window is still the application', page.url() === home, page.url());
 
-  await page.evaluate(() => {
-    window.location.href = 'https://example.com/';
-  });
-  await sleep(3000);
+  /* Every kind of link a document can hold, each clicked once. The second
+     review found an SVG link and an image map's area let through, and a
+     relative link reloading the whole application. */
+  const prevented = (markup) =>
+    page.evaluate((html) => {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      document.body.append(holder);
+      const target = holder.querySelector('[data-click]');
+      let result = null;
+      window.addEventListener('click', (event) => (result = event.defaultPrevented), { once: true });
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      holder.remove();
+      return result;
+    }, markup);
+  for (const [name, markup] of [
+    ['an SVG link', '<svg width="10" height="10"><a data-click href="http://example.invalid/svg"><rect width="10" height="10"/></a></svg>'],
+    ['an image map\'s area', '<map name="m"><area data-click shape="rect" coords="0,0,10,10" href="http://example.invalid/area"></map>'],
+    ['a relative link, which the application would answer with itself', '<a data-click href="docs/upute.md">upute</a>'],
+    ['an empty link, which would reload the page', '<a data-click href="">x</a>'],
+  ]) {
+    check(`${name} is taken over too`, (await prevented(markup)) === true);
+  }
+  await sleep(1500);
+  check('and the window is still the application after all of them', page.url() === home, page.url());
   check(
-    'a navigation the page starts anyway goes nowhere',
-    page.url() === home && (await page.locator('.shell').count()) > 0,
-    page.url(),
+    'a jump within the page is left to the page',
+    (await prevented('<a data-click href="#a-heading">x</a>')) === false,
   );
+  await page.evaluate(() => history.replaceState(null, '', window.location.pathname));
+
+  /* Navigations the page starts itself go nowhere but the application's own
+     page — not https on its host, not another port, not another path. */
+  for (const away of [
+    'https://example.com/',
+    'https://tauri.localhost/',
+    'http://tauri.localhost:8080/',
+    new URL('docs/upute.md', home).href,
+  ]) {
+    await page.evaluate((target) => {
+      window.location.href = target;
+    }, away);
+    await sleep(2500);
+    check(
+      `a navigation to ${away} goes nowhere`,
+      page.url() === home && (await page.locator('.shell').count()) > 0,
+      page.url(),
+    );
+  }
 
   /* ── a folder off the tree ──────────────────────────────────────── */
 

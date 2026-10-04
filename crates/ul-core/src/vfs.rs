@@ -180,8 +180,16 @@ impl Workspace {
     /// in somebody else's crate — has to open, and adopting it used to make its
     /// whole folder a root: in the tree, searched, written to. A server's answer
     /// is not a person's gesture, and nobody asked for the folder. So only the
-    /// file is let in.
+    /// file is let in — and not through a link: a link in a project pointing out
+    /// of it is refused when it is opened, and a definition that names the link
+    /// must not let in what it points at.
     pub fn grant_file(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        if fs::symlink_metadata(path.as_ref())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(VfsError::NotAFile(display(path.as_ref())));
+        }
         let canonical = fs::canonicalize(path.as_ref())?;
         if !canonical.is_file() {
             return Err(VfsError::NotAFile(display(&canonical)));
@@ -198,6 +206,11 @@ impl Workspace {
     /// was closed — still searched, still listed by Ctrl+P, still open to read
     /// and write. Matched by the folder itself and by how it was shown, since a
     /// folder that is gone cannot be resolved any more.
+    ///
+    /// The roots only. A folder inside one the library or a save dialog let in
+    /// (`grant_folder`) leaves the tree, the search and Ctrl+P, and can still be
+    /// read and written through that grant — which is the library's to answer
+    /// for (card 470).
     pub fn forget_root(&mut self, path: impl AsRef<Path>) {
         let path = path.as_ref();
         let canonical = fs::canonicalize(path).ok();
@@ -1036,5 +1049,23 @@ mod tests {
             assert!(root.join(name).exists(), "{name} was taken");
         }
         assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+    }
+
+    /// A definition named through a link does not let in what the link points
+    /// at: opening the link from the project is refused, and so is this.
+    #[cfg(unix)]
+    #[test]
+    fn a_granted_file_is_not_let_in_through_a_link() {
+        let mut links = crate::testing::Links::default();
+        let base = scratch("grant-link");
+        fs::write(base.join("outside.rs"), "fn secret() {}").unwrap();
+        links.file(&base.join("pointer.rs"), &base.join("outside.rs"));
+
+        let mut workspace = Workspace::new();
+        assert!(matches!(
+            workspace.grant_file(base.join("pointer.rs")),
+            Err(VfsError::NotAFile(_))
+        ));
+        assert!(workspace.read(base.join("outside.rs")).is_err());
     }
 }
