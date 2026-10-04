@@ -164,7 +164,13 @@ interface PageView {
 }
 
 interface Snapshot {
-  annotations: Annotation[];
+  /**
+   * The annotations made or edited in this session. The ones read from the file
+   * are not here; see `#originals`.
+   */
+  ours: Annotation[];
+  /** See `#dropped`. */
+  dropped: string[];
   redactions: Redaction[];
   plan: PagePlan[];
   /**
@@ -222,14 +228,26 @@ class PdfEditor implements EditorInstance {
   #plan: PagePlan[];
   #annotations: Annotation[] = [];
   /**
-   * Every annotation read out of `source`, by pdf.js id.
+   * Every annotation read out of `source`, by pdf.js id, as it was read.
    *
-   * One that is no longer in the list as imported was edited (it became ours)
-   * or deleted, and the save takes the original out of the file — see
-   * `#droppedImported`. Derived rather than recorded, so an undo that brings the
-   * original back also stops it being dropped.
+   * The list is these, less the dropped ones, and ours. They are kept apart
+   * because a page's annotations are read when the page is first drawn: a step
+   * taken before somebody scrolled to page eight knew nothing of page eight's
+   * notes. Undo used to put back the whole list as it was at that step, and a
+   * note read since was missing from it — taken for one somebody deleted, and
+   * deleted from the file at the next save.
    */
-  #importedIds = new Set<string>();
+  #originals = new Map<string, Annotation>();
+  /**
+   * Originals the save takes out of the file: deleted, or edited, which makes
+   * the edit ours and the original something to remove.
+   *
+   * Kept when the document is rebuilt from new bytes. Inserting a PDF or
+   * retyping a line reads every page again, and the originals are still in
+   * those bytes — a deleted note came back with the insert, and an edited one
+   * was there twice. Undo restores it with the rest of a step.
+   */
+  #dropped = new Set<string>();
   /**
    * What the annotations were at the last save, as `#annotationState` writes it.
    *
@@ -815,12 +833,13 @@ class PdfEditor implements EditorInstance {
 
     /*
      * The pages are read again, and with them the annotations that were in the
-     * file. What was imported before is therefore dropped first — otherwise every
-     * reload would leave a second copy of every note in the list, drawn twice and
-     * saved twice. What the user made in this session is not imported and stays.
+     * file. What was imported before is therefore taken out of the list first —
+     * otherwise every reload would leave a second copy of every note, drawn twice
+     * and saved twice. What the user made in this session is not imported and
+     * stays, and so does `#dropped`: the ids survive the rewrite of the bytes.
      */
     this.#annotations = this.#annotations.filter((a) => !a.imported);
-    this.#importedIds.clear();
+    this.#originals.clear();
     this.#painted = [];
 
     const previous = this.pdf;
@@ -840,6 +859,10 @@ class PdfEditor implements EditorInstance {
   async mergeFrom(incoming: Uint8Array, at = this.#current): Promise<number> {
     const result = await mergeInto(this.source, this.#plan, incoming, at);
     this.#snapshot();
+    /* The bytes are new even where the order of the pages is not: inserted after
+       the last page, the plan reads exactly as an untouched document does, and
+       the insert was not reported as a change. */
+    this.#sourceEdited = true;
     await this.#reload(result.bytes, result.plan);
     return result.added;
   }
@@ -1367,9 +1390,11 @@ class PdfEditor implements EditorInstance {
     try {
       const raw = await view.page.getAnnotations();
       const imported = importAnnotations(raw as unknown[], view.source);
-      for (const annotation of imported) this.#importedIds.add(annotation.id);
+      for (const annotation of imported) this.#originals.set(annotation.id, annotation);
+      const shown = imported.filter((a) => !this.#dropped.has(a.id));
       if (imported.length > 0) {
-        this.#annotations = [...this.#annotations, ...imported];
+        this.#annotations = [...this.#annotations, ...shown.map((a) => ({ ...a }))];
+        /* Every one the reader painted, dropped or not: a dropped one is covered. */
         this.#painted = [
           ...this.#painted,
           ...imported
@@ -1553,7 +1578,8 @@ class PdfEditor implements EditorInstance {
 
   #capture(): Snapshot {
     return {
-      annotations: this.#annotations.map((a) => ({ ...a })),
+      ours: this.#annotations.filter((a) => !a.imported).map((a) => ({ ...a })),
+      dropped: [...this.#dropped],
       redactions: this.#redactions.map((r) => ({ ...r })),
       plan: this.#plan.map((p) => ({ ...p })),
       source: this.source,
@@ -1562,9 +1588,13 @@ class PdfEditor implements EditorInstance {
   }
 
   #restore(snapshot: Snapshot): void {
+    this.#dropped = new Set(snapshot.dropped);
+
     // Undoing a merge restores the document itself, not just the plan.
     if (snapshot.source !== this.source) {
-      this.#annotations = snapshot.annotations;
+      // The originals come back as the old bytes are read again.
+      this.#annotations = snapshot.ours.map((a) => ({ ...a }));
+      this.#originals.clear();
       this.#redactions = snapshot.redactions;
       this.#sourceEdited = snapshot.sourceEdited;
       /* A retype leaves the pages where they are, so the reader stays where it
@@ -1583,7 +1613,12 @@ class PdfEditor implements EditorInstance {
         return !current || current.source !== entry.source || current.rotate !== entry.rotate;
       });
 
-    this.#annotations = snapshot.annotations;
+    this.#annotations = [
+      ...[...this.#originals.values()]
+        .filter((a) => !this.#dropped.has(a.id))
+        .map((a) => ({ ...a })),
+      ...snapshot.ours.map((a) => ({ ...a })),
+    ];
     this.#redactions = snapshot.redactions;
     this.#sourceEdited = snapshot.sourceEdited;
     this.#plan = snapshot.plan;
@@ -1596,22 +1631,32 @@ class PdfEditor implements EditorInstance {
     }
   }
 
-  /** Annotations the file was opened with that are no longer in the list as they were. */
-  #droppedImported(): string[] {
-    return [...this.#importedIds].filter(
-      (id) => !this.#annotations.some((a) => a.id === id && a.imported),
-    );
+  /**
+   * Records the originals that have left the list as they were read — deleted,
+   * or edited into ours.
+   *
+   * Every change goes through `#markDirty`, which calls this, so it is the one
+   * place a deletion or an edit is noticed. The rebuilds — a reload, an undo —
+   * put every original that is not dropped back into the list, so nothing goes
+   * missing from it that somebody did not take out.
+   */
+  #noteDropped(): void {
+    const listed = new Set(this.#annotations.filter((a) => a.imported).map((a) => a.id));
+    for (const id of this.#originals.keys()) {
+      if (!listed.has(id)) this.#dropped.add(id);
+    }
   }
 
   /** Ours and the dropped ones — everything a save writes about annotations. */
   #annotationState(): string {
     return JSON.stringify({
       ours: this.#annotations.filter((a) => !a.imported),
-      dropped: this.#droppedImported(),
+      dropped: [...this.#dropped].sort(),
     });
   }
 
   #markDirty(): void {
+    this.#noteDropped();
     const dirty =
       this.#sourceEdited ||
       this.#annotationState() !== this.#savedAnnotations ||
@@ -2759,7 +2804,7 @@ class PdfEditor implements EditorInstance {
       this.pdf.numPages,
       loadFontBytes,
       this.#redactions,
-      this.#droppedImported(),
+      [...this.#dropped],
     );
     await this.host.fs.writeBytes(uri, bytes);
 
