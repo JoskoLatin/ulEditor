@@ -476,8 +476,11 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
     let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
         return finding;
     };
-    /* The walk has left links out already. Asked again of the path itself,
-    which does not follow one either, for a file swapped for a link since. */
+    /* The walk has left links out already. Asked again of the file itself,
+    which does not follow a link either, for a file swapped for one since.
+    What this does not see is a folder above it swapped for a link between
+    the walk reaching the folder and reading the file — a race against a
+    process writing in the folder while the search runs; see card 472. */
     let Ok(meta) = fs::symlink_metadata(path) else {
         return finding;
     };
@@ -544,7 +547,8 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
 /// Between the look and the read the file can be swapped for a link out of the
 /// folder, or grow past the limit. So it is opened once, the open file is asked
 /// whether it is the one that was looked at, and no more than the limit is read
-/// whatever its size has become.
+/// whatever its size has become. That covers the file, the last part of the
+/// path, only: a folder above it swapped in the same moment is not seen here.
 fn read_regular(path: &Path, seen: &fs::Metadata) -> Option<Vec<u8>> {
     use std::io::Read;
 

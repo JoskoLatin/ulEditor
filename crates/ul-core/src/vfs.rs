@@ -336,7 +336,7 @@ impl Workspace {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
-        if let Err(err) = fs::rename(&temp, &resolved) {
+        if let Err(err) = put_in_place(&temp, &resolved) {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
@@ -368,29 +368,126 @@ fn openable(path: &Path) -> Result<(), VfsError> {
 fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let _ = temp;
+        /* Who may read and write, and nothing more: setuid, setgid and sticky
+        are not carried, or a file somebody planted would keep its setuid bit
+        through a save by root. */
         if let Ok(meta) = fs::metadata(original) {
-            temp_file.set_permissions(meta.permissions())?;
+            temp_file.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o777))?;
         }
     }
     #[cfg(windows)]
     {
         let _ = temp_file;
-        let mark = |path: &Path| {
-            let mut name = path.as_os_str().to_os_string();
-            name.push(":Zone.Identifier");
-            PathBuf::from(name)
-        };
-        /* Not there, or a volume with no streams at all (FAT on a stick): no
-        mark to keep. One that was read and cannot be written fails the save
-        rather than dropping it. */
-        if let Ok(zone) = fs::read(mark(original)) {
-            fs::write(mark(temp), zone)?;
+        /* One that was read and cannot be written fails the save rather than
+        dropping it. */
+        if let Some(mark) = mark_of(original) {
+            fs::write(zone_stream(temp), mark)?;
         }
     }
     #[cfg(not(any(unix, windows)))]
     let _ = (original, temp_file, temp);
     Ok(())
+}
+
+/// The `Zone.Identifier` stream of a file, by its name.
+#[cfg(windows)]
+fn zone_stream(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(":Zone.Identifier");
+    PathBuf::from(name)
+}
+
+/// The longest mark read as it is. Windows writes a few lines; one far longer
+/// was made by somebody else, and reading it whole would hold this save — and
+/// every other, behind the sandbox's lock — for as long as it took.
+#[cfg(windows)]
+const LONGEST_MARK: u64 = 64 * 1024;
+
+/// The mark a file from the internet carries, for its next version.
+///
+/// None where there is none: no stream, or a volume with no streams at all
+/// (FAT on a stick). A mark that cannot be taken as it is — too long, or
+/// unreadable — becomes the plain mark of the internet zone: a document must
+/// not come out of a save trusted because its mark was odd.
+#[cfg(windows)]
+fn mark_of(original: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    const INTERNET: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+    let file = match fs::File::open(zone_stream(original)) {
+        Ok(file) => file,
+        // Not found, path not found, or a name this volume has no streams for.
+        Err(err) if matches!(err.raw_os_error(), Some(2 | 3 | 123)) => return None,
+        Err(_) => return Some(INTERNET.to_vec()),
+    };
+    let mut mark = Vec::new();
+    match file.take(LONGEST_MARK + 1).read_to_end(&mut mark) {
+        Ok(_) if mark.len() as u64 <= LONGEST_MARK => Some(mark),
+        _ => Some(INTERNET.to_vec()),
+    }
+}
+
+/// Puts the new version in the document's place.
+///
+/// On Windows through `ReplaceFileW` when the document is already there. A
+/// rename gives the document the new file's security, inherited from its
+/// folder: a document somebody had closed to other accounts was open to them
+/// again after one save, and one encrypted with EFS in an unencrypted folder was
+/// written in the clear. `ReplaceFileW` keeps the document's ACL, attributes,
+/// encryption and streams. Where it will not — another file system, a share
+/// without it — the rename is what there is; whatever state a refusal leaves,
+/// the new version is still under its temporary name and the rename finishes
+/// the job.
+fn put_in_place(temp: &Path, original: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    if original.is_file() && replace_file(original, temp).is_ok() {
+        return Ok(());
+    }
+    fs::rename(temp, original)
+}
+
+#[cfg(windows)]
+fn replace_file(original: &Path, replacement: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn ReplaceFileW(
+            replaced: *const u16,
+            replacement: *const u16,
+            backup: *const u16,
+            flags: u32,
+            exclude: *mut std::ffi::c_void,
+            reserved: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    let wide = |path: &Path| {
+        path.as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<u16>>()
+    };
+    let (original, replacement) = (wide(original), wide(replacement));
+    // SAFETY: both are NUL-terminated wide strings that outlive the call, no
+    // backup is asked for, and the two reserved pointers are null as required.
+    let done = unsafe {
+        ReplaceFileW(
+            original.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if done != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// A temporary file beside `path` that did not exist until now.
@@ -750,12 +847,72 @@ mod tests {
         let root = workspace.add_root(scratch("mode")).unwrap();
         let file = root.join("private.md");
         fs::write(&file, "before").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        /* 0604 rather than 0600: under `umask 077` a new file is 0600 by
+        itself, and the test would pass with nothing carried over. */
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o604)).unwrap();
 
         workspace.write(&file, b"after").unwrap();
 
-        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "the save made it {mode:o}");
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o604, "the save made it {mode:o}");
+    }
+
+    /// A document closed to everybody else stays closed after a save. A
+    /// rename gave it the security of the folder it is in.
+    #[cfg(windows)]
+    #[test]
+    fn a_save_keeps_who_may_read_the_document_on_windows() {
+        let icacls = |path: &Path, args: &[&str]| {
+            let out = std::process::Command::new("icacls")
+                .arg(display(path))
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("acl")).unwrap();
+        let file = root.join("closed.md");
+        fs::write(&file, "before").unwrap();
+        let me = std::env::var("USERNAME").unwrap();
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
+        assert!(
+            !icacls(&file, &[]).contains("(I)"),
+            "the test could not close the file"
+        );
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        let after = icacls(&file, &[]);
+        assert!(
+            !after.contains("(I)"),
+            "the save opened it to the folder: {after}"
+        );
+    }
+
+    /// A mark too long to be one Windows wrote is replaced by the plain mark of
+    /// the internet zone, not copied whole and not dropped.
+    #[cfg(windows)]
+    #[test]
+    fn an_outsized_mark_becomes_the_plain_internet_one() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("big-mark")).unwrap();
+        let file = root.join("downloaded.docx");
+        fs::write(&file, "before").unwrap();
+        fs::write(zone_stream(&file), vec![b'x'; 128 * 1024]).unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(
+            fs::read(zone_stream(&file)).unwrap(),
+            b"[ZoneTransfer]\r\nZoneId=3\r\n"
+        );
     }
 
     /// One link to something that is gone, and the rest of the folder is still
