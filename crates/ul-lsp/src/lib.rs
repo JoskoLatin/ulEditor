@@ -237,12 +237,22 @@ fn harden(command: &mut Command) {
 fn harden_with(command: &mut Command, path: Option<std::ffi::OsString>) {
     if let Some(path) = path {
         let absolute = std::env::split_paths(&path).filter(|entry| entry.is_absolute());
-        if let Ok(path) = std::env::join_paths(absolute) {
-            command.env("PATH", path);
-        }
+        /* One that cannot be put back together (a `"` in an entry, on
+        Windows) leaves no PATH rather than the one with relative entries. */
+        command.env("PATH", std::env::join_paths(absolute).unwrap_or_default());
     }
     #[cfg(windows)]
     command.env("NoDefaultCurrentDirectoryInExePath", "1");
+}
+
+/// The command a server is started with — by its full path, in the project,
+/// with `harden`. Apart from the start so the environment it is given can be
+/// checked.
+fn server_command(launch: &Launch, root: &Path) -> Command {
+    let mut command = Command::new(&launch.program);
+    harden(&mut command);
+    command.args(&launch.args).current_dir(root);
+    command
 }
 
 /// Where a program is on a PATH — `which`, without a dependency.
@@ -620,11 +630,7 @@ impl Server {
         timeout: Duration,
         options: serde_json::Value,
     ) -> Result<Self, LspError> {
-        let mut command = Command::new(&launch.program);
-        harden(&mut command);
-        let mut child = command
-            .args(&launch.args)
-            .current_dir(root)
+        let mut child = server_command(&launch, root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             /*
@@ -1625,10 +1631,11 @@ mod tests {
             .unwrap();
             command = Command::new("cmd");
             command.args(["/d", "/c", "node --version"]);
+            /* Taken out first either way: a session that already has it set
+            would pass the hardened run without `harden` doing anything. */
+            command.env_remove("NoDefaultCurrentDirectoryInExePath");
             if hardened {
                 harden(&mut command);
-            } else {
-                command.env_remove("NoDefaultCurrentDirectoryInExePath");
             }
         } else {
             #[cfg(unix)]
@@ -1671,5 +1678,37 @@ mod tests {
             "the planted node was not reached at all"
         );
         assert!(!planted_node_runs(true), "the planted node ran");
+    }
+
+    #[test]
+    fn a_server_is_started_with_nothing_relative_to_look_in() {
+        /* The command the start really uses, not `harden` on its own. */
+        let command = server_command(&stand_in("server", &["--stdio"]), &std::env::temp_dir());
+        let envs: Vec<_> = command.get_envs().collect();
+        if cfg!(windows) {
+            assert!(envs.iter().any(|(key, value)| {
+                *key == "NoDefaultCurrentDirectoryInExePath" && *value == Some("1".as_ref())
+            }));
+        }
+        if let Some((_, Some(path))) = envs.iter().find(|(key, _)| *key == "PATH") {
+            assert!(std::env::split_paths(path).all(|entry| entry.is_absolute()));
+        }
+
+        /* And whatever PATH it starts from. */
+        let messy = std::env::join_paths([
+            PathBuf::from("."),
+            PathBuf::from("relative"),
+            std::env::temp_dir(),
+        ])
+        .unwrap();
+        let mut probe = Command::new("probe");
+        harden_with(&mut probe, Some(messy));
+        let path = probe
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        let entries: Vec<PathBuf> = std::env::split_paths(path).collect();
+        assert_eq!(entries, vec![std::env::temp_dir()]);
     }
 }

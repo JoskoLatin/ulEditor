@@ -188,14 +188,27 @@ pub fn backend() -> Option<Backend> {
 /// in the current folder (`NoDefaultCurrentDirectoryInExePath`). The same as a
 /// language server is started with — see `harden` in ul-lsp.
 fn harden(command: &mut Command) {
-    if let Some(path) = std::env::var_os("PATH") {
+    harden_with(command, std::env::var_os("PATH"));
+}
+
+/// The same, with the PATH it starts from given.
+fn harden_with(command: &mut Command, path: Option<std::ffi::OsString>) {
+    if let Some(path) = path {
         let absolute = std::env::split_paths(&path).filter(|entry| entry.is_absolute());
-        if let Ok(path) = std::env::join_paths(absolute) {
-            command.env("PATH", path);
-        }
+        // One that cannot be put back together leaves no PATH, not the old one.
+        command.env("PATH", std::env::join_paths(absolute).unwrap_or_default());
     }
     #[cfg(windows)]
     command.env("NoDefaultCurrentDirectoryInExePath", "1");
+}
+
+/// The command LibreOffice is started with, apart from the start so the
+/// environment it is given can be checked.
+fn soffice_command(backend: &Backend, source: &Path, outdir: &Path, profile: &Path) -> Command {
+    let mut command = Command::new(&backend.path);
+    harden(&mut command);
+    command.args(arguments(source, outdir, profile));
+    command
 }
 
 /// What the output of a conversion is called.
@@ -269,10 +282,7 @@ pub fn to_pdf(
     // A stale file from a previous run would be mistaken for this run's answer.
     let _ = std::fs::remove_file(&expected);
 
-    let mut command = Command::new(&backend.path);
-    harden(&mut command);
-    let mut child = command
-        .args(arguments(source, outdir, &profile))
+    let mut child = soffice_command(backend, source, outdir, &profile)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -343,8 +353,13 @@ mod tests {
 
     #[test]
     fn libreoffice_is_started_with_nothing_relative_to_look_in() {
-        let mut command = Command::new("soffice");
-        harden(&mut command);
+        /* The command the conversion really uses, not `harden` on its own. */
+        let backend = Backend {
+            path: "soffice".to_string(),
+            formats: Vec::new(),
+        };
+        let here = Path::new("x");
+        let command = soffice_command(&backend, here, here, here);
         let envs: Vec<_> = command.get_envs().collect();
         let path = envs
             .iter()
@@ -358,6 +373,25 @@ mod tests {
                 *key == "NoDefaultCurrentDirectoryInExePath" && *value == Some("1".as_ref())
             }));
         }
+    }
+
+    #[test]
+    fn whatever_path_it_starts_from_only_absolute_entries_are_passed_on() {
+        let messy = std::env::join_paths([
+            std::path::PathBuf::from("."),
+            std::path::PathBuf::from("relative"),
+            std::env::temp_dir(),
+        ])
+        .unwrap();
+        let mut probe = Command::new("probe");
+        harden_with(&mut probe, Some(messy));
+        let path = probe
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        let entries: Vec<_> = std::env::split_paths(path).collect();
+        assert_eq!(entries, vec![std::env::temp_dir()]);
     }
 
     #[test]

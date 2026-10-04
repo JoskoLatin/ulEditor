@@ -349,11 +349,13 @@ impl Workspace {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
+        let was_there = fs::symlink_metadata(&resolved).is_ok();
         if let Err(err) = put_in_place(&temp, &resolved) {
-            /* Where the document is gone — `ReplaceFileW` can take it away and
-            then fail to move the new version in — the new version is the only
-            copy there is, and it stays, under the name the error gives. */
-            if fs::symlink_metadata(&resolved).is_ok() {
+            /* Where the document was there and is gone — `ReplaceFileW` can
+            take it away and then fail to move the new version in — the new
+            version is the only copy there is, and it stays, under the name the
+            error gives. A first save that failed leaves nothing behind. */
+            if !was_there || fs::symlink_metadata(&resolved).is_ok() {
                 let _ = fs::remove_file(&temp);
                 return Err(err.into());
             }
