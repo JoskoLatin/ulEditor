@@ -227,6 +227,13 @@ check(
  * 1 000 — twenty-eight times that worst one — and the larger sizes are measured
  * and printed rather than failed, because a number nobody has measured is an
  * opinion and a budget nobody has met is a guess.
+ *
+ * The best of seven keystrokes, like the shapes further down. One sample each
+ * put the ratio of ten times the formulas anywhere from 4 to 14 times the cost
+ * on one machine, and a pause for garbage collection once made it 23 and
+ * failed a run that changed nothing here. The best of seven reads 10 to 14
+ * there, so the bound is 20: work that grows with the square of the formulas
+ * costs a hundred times as much for ten times as many.
  */
 const costOf = (formulas) => {
   const cells = new Map();
@@ -235,9 +242,13 @@ const costOf = (formulas) => {
     cells.set(`${r},1`, { text: '0', kind: 'number', formula: `SUM(A${r + 1}:A${r + 1})`, fmt: MONEY });
   }
   recalculate(cells, 'Veliki', new Map([['0,0', '5']]));
-  const started = performance.now();
-  recalculate(cells, 'Veliki', new Map([['0,0', '6']]));
-  return performance.now() - started;
+  let best = Infinity;
+  for (let round = 0; round < 7; round++) {
+    const started = performance.now();
+    recalculate(cells, 'Veliki', new Map([['0,0', '6']]));
+    best = Math.min(best, performance.now() - started);
+  }
+  return best;
 };
 
 const small = costOf(1_000);
@@ -250,7 +261,7 @@ check(
 );
 check(
   'and the cost is linear in the formulas rather than worse',
-  large < small * 15,
+  large < small * 20,
   `${large.toFixed(1)} ms for ten times as many — ${(large / small).toFixed(1)} times the cost`,
 );
 /*
