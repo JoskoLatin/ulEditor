@@ -570,7 +570,7 @@ fn mark_of(original: &Path) -> Option<Vec<u8>> {
 /// every save. Now the document's DACL is set on the new file as soon as it
 /// exists — empty, and open to nobody else — and a plain rename does the rest.
 #[cfg(windows)]
-mod windows {
+pub(crate) mod windows {
     use std::ffi::c_void;
     use std::fs;
     use std::io;
@@ -753,7 +753,7 @@ mod windows {
     }
 
     /// Where an open file or folder really is, in the form `canonicalize` gives.
-    fn final_path(file: &fs::File) -> io::Result<std::path::PathBuf> {
+    pub(crate) fn final_path(file: &fs::File) -> io::Result<std::path::PathBuf> {
         use std::os::windows::ffi::OsStringExt;
 
         let mut buffer = vec![0u16; 512];

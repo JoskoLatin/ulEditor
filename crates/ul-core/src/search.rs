@@ -281,7 +281,7 @@ impl Workspace {
              *   either side can end it.
              */
             each_block(&start, block, |paths| {
-                let findings = scan_block(paths, &needle, query, readers);
+                let findings = scan_block(paths, &needle, query, readers, &start);
 
                 for finding in findings {
                     if finding.scanned {
@@ -433,11 +433,12 @@ fn scan_block(
     needle: &Needle,
     query: &SearchQuery,
     readers: usize,
+    root: &Path,
 ) -> Vec<Finding> {
     if readers <= 1 || paths.len() < 2 {
         return paths
             .iter()
-            .map(|path| scan_one(path, needle, query))
+            .map(|path| scan_one(path, needle, query, root))
             .collect();
     }
 
@@ -451,7 +452,7 @@ fn scan_block(
                 scope.spawn(move || {
                     slice
                         .iter()
-                        .map(|path| scan_one(path, needle, query))
+                        .map(|path| scan_one(path, needle, query, root))
                         .collect::<Vec<_>>()
                 })
             })
@@ -470,17 +471,16 @@ fn scan_block(
 }
 
 /// One file: read it, and find what is in it.
-fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
+fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> Finding {
     let mut finding = Finding::default();
 
     let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
         return finding;
     };
     /* The walk has left links out already. Asked again of the file itself,
-    which does not follow a link either, for a file swapped for one since.
-    What this does not see is a folder above it swapped for a link between
-    the walk reaching the folder and reading the file — a race against a
-    process writing in the folder while the search runs; see card 472. */
+    which does not follow a link either, for a file swapped for one since; a
+    folder above it swapped for one is answered by where the opened file
+    really is — see `read_regular`. */
     let Ok(meta) = fs::symlink_metadata(path) else {
         return finding;
     };
@@ -503,7 +503,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
         return finding;
     }
 
-    let Some(bytes) = read_regular(path, &meta) else {
+    let Some(bytes) = read_regular(path, &meta, root) else {
         return finding;
     };
     if !looks_textual(&bytes) {
@@ -542,14 +542,16 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
     finding
 }
 
-/// Reads a file the walk saw as a regular file, if it is still that file.
+/// Reads a file the walk saw as a regular file, if it is still that file and
+/// still inside the root.
 ///
 /// Between the look and the read the file can be swapped for a link out of the
-/// folder, or grow past the limit. So it is opened once, the open file is asked
-/// whether it is the one that was looked at, and no more than the limit is read
-/// whatever its size has become. That covers the file, the last part of the
-/// path, only: a folder above it swapped in the same moment is not seen here.
-fn read_regular(path: &Path, seen: &fs::Metadata) -> Option<Vec<u8>> {
+/// folder, a folder above it for a junction, or the file can grow past the
+/// limit. So it is opened once; the open file is asked whether it is the one
+/// that was looked at and where it really is — a folder swapped on the way
+/// puts it outside the root — and no more than the limit is read whatever its
+/// size has become.
+fn read_regular(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
     let file = fs::File::open(path).ok()?;
@@ -557,9 +559,62 @@ fn read_regular(path: &Path, seen: &fs::Metadata) -> Option<Vec<u8>> {
     if !opened.is_file() || !same_file(seen, &opened) {
         return None;
     }
+    if !where_opened(&file, path).is_some_and(|at| at.starts_with(root)) {
+        return None;
+    }
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
     (bytes.len() as u64 <= MAX_FILE_BYTES).then_some(bytes)
+}
+
+/// Where an opened file really is, asked of the open file rather than of the
+/// path: Windows by `GetFinalPathNameByHandleW`, Linux and Android through
+/// `/proc/self/fd`, macOS by `fcntl(F_GETPATH)`. Elsewhere the path is asked,
+/// which leaves the moment between the open and the question.
+fn where_opened(file: &fs::File, path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        crate::vfs::windows::final_path(file).ok()
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use std::os::unix::io::AsRawFd;
+        let _ = path;
+        let at = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()?;
+        // A file taken away since it was opened is not one to report.
+        (!at.to_string_lossy().ends_with(" (deleted)")).then_some(at)
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::io::AsRawFd;
+        /// `F_GETPATH` and `PATH_MAX`, from the libc crate's tables (0.2.189).
+        const F_GETPATH: i32 = 50;
+        const PATH_MAX: usize = 1024;
+        extern "C" {
+            fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+        }
+        let _ = path;
+        let mut buffer = vec![0u8; PATH_MAX];
+        // SAFETY: an open descriptor, and a buffer of PATH_MAX bytes as
+        // F_GETPATH requires.
+        if unsafe { fcntl(file.as_raw_fd(), F_GETPATH, buffer.as_mut_ptr()) } == -1 {
+            return None;
+        }
+        let end = buffer.iter().position(|&b| b == 0)?;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buffer[..end])))
+    }
+    #[cfg(not(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_vendor = "apple"
+    )))]
+    {
+        let _ = file;
+        fs::canonicalize(path).ok()
+    }
 }
 
 /// Whether two looks at a path saw the same file.
@@ -969,5 +1024,31 @@ mod tests {
             .expect("the search waited on the FIFO");
         assert_eq!(scanned.unwrap(), 1);
         assert_eq!(listed.unwrap(), 1);
+    }
+
+    #[test]
+    fn a_file_reached_through_a_folder_swapped_for_a_link_is_not_read() {
+        /* The state the race leaves: the walk saw `sub` as a folder, and by
+        the time a file in it is read, `sub` is a link out of the root. */
+        let mut links = Links::default();
+        let outside = temp_root("swapped-outside");
+        write(&outside, "secret.txt", "lozinka=tajna\n");
+        let root = fs::canonicalize(temp_root("swapped-root")).unwrap();
+        write(&root, "here.txt", "lozinka=ovdje\n");
+        links.folder(&root.join("sub"), &outside);
+
+        let through = root.join("sub").join("secret.txt");
+        let seen = fs::symlink_metadata(&through).unwrap();
+        assert!(
+            read_regular(&through, &seen, &root).is_none(),
+            "read from outside the root"
+        );
+
+        let inside = root.join("here.txt");
+        let seen = fs::symlink_metadata(&inside).unwrap();
+        assert_eq!(
+            read_regular(&inside, &seen, &root).as_deref(),
+            Some(&b"lozinka=ovdje\n"[..])
+        );
     }
 }
