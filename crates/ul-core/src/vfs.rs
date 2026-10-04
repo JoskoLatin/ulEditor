@@ -440,9 +440,18 @@ fn mark_of(original: &Path) -> Option<Vec<u8>> {
 /// without it — the rename is what there is; whatever state a refusal leaves,
 /// the new version is still under its temporary name and the rename finishes
 /// the job.
+///
+/// Only over a plain file, asked without following a link. A document swapped
+/// for a link since it was resolved would have the new version written through
+/// the link, wherever it points; a rename replaces the link itself. A swap in
+/// the instant between this look and the call is not covered — that needs a
+/// process writing in the folder while the save runs, and on Windows the right
+/// to make a file link.
 fn put_in_place(temp: &Path, original: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
-    if original.is_file() && replace_file(original, temp).is_ok() {
+    if fs::symlink_metadata(original).is_ok_and(|meta| meta.is_file())
+        && replace_file(original, temp).is_ok()
+    {
         return Ok(());
     }
     fs::rename(temp, original)
