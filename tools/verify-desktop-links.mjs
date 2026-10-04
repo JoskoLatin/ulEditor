@@ -102,6 +102,11 @@ try {
     ['an image map\'s area', '<map name="m"><area data-click shape="rect" coords="0,0,10,10" href="http://example.invalid/area"></map>'],
     ['a relative link, which the application would answer with itself', '<a data-click href="docs/upute.md">upute</a>'],
     ['an empty link, which would reload the page', '<a data-click href="">x</a>'],
+    ['an empty SVG link', '<svg width="10" height="10"><a data-click href=""><rect width="10" height="10"/></a></svg>'],
+    [
+      'an SVG link with no address inside one with an address',
+      '<a href="?x"><svg width="10" height="10"><a><rect data-click width="10" height="10"/></a></svg></a>',
+    ],
   ]) {
     check(`${name} is taken over too`, (await prevented(markup)) === true);
   }

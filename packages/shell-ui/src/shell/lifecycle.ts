@@ -110,10 +110,11 @@ export function guardWindowClose(shell: Shell): () => void {
 export function routeExternalLinks(shell: Shell): () => void {
   const follow = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button > 1) return;
-    const link = event.target instanceof Element ? event.target.closest('a, area') : null;
+    const link = linkOf(event.target);
+    if (!link) return;
     const target = linkTarget(link);
     // A jump within the page is the page's own; an empty link would reload it.
-    if (target === null || (target.startsWith('#') && target.length > 1)) return;
+    if (target.startsWith('#') && target.length > 1) return;
     event.preventDefault();
     let url: URL;
     try {
@@ -131,15 +132,25 @@ export function routeExternalLinks(shell: Shell): () => void {
   };
 }
 
-/** Where a link points, as written: an HTML link, an image map's area, an SVG link. */
-function linkTarget(link: Element | null): string | null {
-  if (link instanceof HTMLAnchorElement || link instanceof HTMLAreaElement) {
-    return link.getAttribute('href');
-  }
-  if (link instanceof SVGAElement) {
-    return link.href.baseVal || link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+const XLINK = 'http://www.w3.org/1999/xlink';
+
+/**
+ * The link a click is on: the nearest element above it that has an address —
+ * an empty one included. Not merely the nearest that looks like a link: an
+ * SVG `a` without one inside an `a` with one stopped the search, and the
+ * browser then followed the outer one.
+ */
+function linkOf(start: EventTarget | null): Element | null {
+  for (let at = start instanceof Element ? start : null; at; at = at.parentElement) {
+    if ((at instanceof HTMLAnchorElement || at instanceof HTMLAreaElement) && at.hasAttribute('href')) return at;
+    if (at instanceof SVGAElement && (at.hasAttribute('href') || at.hasAttributeNS(XLINK, 'href'))) return at;
   }
   return null;
+}
+
+/** Where a link points, as written. */
+function linkTarget(link: Element): string {
+  return link.getAttribute('href') ?? link.getAttributeNS(XLINK, 'href') ?? '';
 }
 
 export async function requestExit(shell: Shell): Promise<void> {

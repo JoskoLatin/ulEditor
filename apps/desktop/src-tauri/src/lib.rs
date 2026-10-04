@@ -1323,7 +1323,10 @@ fn stays_in_app(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
     if url.scheme() == "blob" {
         return tauri::Url::parse(url.path()).is_ok_and(|maker| own_origin(&maker, dev));
     }
-    own_origin(url, dev) && matches!(url.path(), "/" | "/index.html")
+    /* `tauri://localhost` — the address macOS and Linux open the application
+    at — has no path at all, not `/`: `tauri` is not a scheme the URL
+    standard gives a path to. Refusing it left those builds an empty window. */
+    own_origin(url, dev) && matches!(url.path(), "" | "/" | "/index.html")
 }
 
 /// Whether a URL is on the application's own origin.
@@ -1359,6 +1362,7 @@ mod tests {
             ("tauri://localhost", "http://tauri.localhost")
         };
         for here in [
+            own.to_string(),
             format!("{own}/"),
             format!("{own}/index.html"),
             format!("{own}/#heading"),
