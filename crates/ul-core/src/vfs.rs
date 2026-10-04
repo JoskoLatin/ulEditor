@@ -274,23 +274,56 @@ impl Workspace {
 
     /// Writes atomically: first to a neighbouring temporary file, then a
     /// rename. A power cut mid-save therefore leaves no truncated document.
+    ///
+    /// The temporary file is **made new, never opened**. `fs::write` opens
+    /// whatever already has the name, and follows a symbolic link to do it: a
+    /// folder that came with `notes.md.ultmp` pointing at `~/.bashrc` had the
+    /// next save of `notes.md` written into `.bashrc`. Made with `create_new`,
+    /// a name somebody has taken — a file, a link, a link to nothing — is
+    /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
-        let resolved = self.resolve(path)?;
-        let temp = resolved.with_extension(format!(
-            "{}.ultmp",
-            resolved
-                .extension()
-                .map(|e| e.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        ));
+        use std::io::Write;
 
-        fs::write(&temp, data)?;
+        let resolved = self.resolve(path)?;
+        let (mut file, temp) = create_beside(&resolved)?;
+
+        let written = file.write_all(data);
+        drop(file);
+        if let Err(err) = written {
+            let _ = fs::remove_file(&temp);
+            return Err(err.into());
+        }
         if let Err(err) = fs::rename(&temp, &resolved) {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
         Ok(())
     }
+}
+
+/// A temporary file beside `path` that did not exist until now.
+fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
+    let mut taken = None;
+    for attempt in 0..16 {
+        let temp = temp_beside(path, attempt);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => return Ok((file, temp)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => taken = Some(err),
+            Err(err) => return Err(err),
+        }
+    }
+    Err(taken.expect("sixteen names were tried"))
+}
+
+/// `notes.md` → `notes.md.<process>-<attempt>.ultmp`.
+fn temp_beside(path: &Path, attempt: u32) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}-{attempt}.ultmp", std::process::id()));
+    path.with_file_name(name)
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -482,5 +515,53 @@ mod tests {
     fn read_dir_skips_noise() {
         assert!(NOISE.contains(&"node_modules"));
         assert!(NOISE.contains(&".git"));
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ul-vfs-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Whatever already has the temporary name is left as it was.
+    #[test]
+    fn a_save_leaves_a_temporary_name_somebody_took_alone() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("taken")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "before").unwrap();
+        let taken = temp_beside(&file, 0);
+        fs::write(&taken, "somebody else's").unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        assert_eq!(fs::read_to_string(&taken).unwrap(), "somebody else's");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_save_does_not_follow_a_link_left_where_its_temporary_file_goes() {
+        let base = scratch("link");
+        let outside = base.join("outside.txt");
+        fs::write(&outside, "untouched").unwrap();
+        let inside = base.join("ws");
+        fs::create_dir_all(&inside).unwrap();
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&inside).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "before").unwrap();
+        std::os::unix::fs::symlink(&outside, temp_beside(&file, 0)).unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "untouched");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        assert!(!fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }
