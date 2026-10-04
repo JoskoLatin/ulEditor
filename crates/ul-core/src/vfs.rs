@@ -349,20 +349,12 @@ impl Workspace {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
-        let was_there = fs::symlink_metadata(&resolved).is_ok();
-        if let Err(err) = put_in_place(&temp, &resolved) {
-            /* Where the document was there and is gone — `ReplaceFileW` can
-            take it away and then fail to move the new version in — the new
-            version is the only copy there is, and it stays, under the name the
-            error gives. A first save that failed leaves nothing behind. */
-            if !was_there || fs::symlink_metadata(&resolved).is_ok() {
-                let _ = fs::remove_file(&temp);
-                return Err(err.into());
-            }
-            return Err(VfsError::Io(std::io::Error::new(
-                err.kind(),
-                format!("{err} — the saved text is in {}", display(&temp)),
-            )));
+        /* A rename replaces a link in the document's place rather than
+        writing through it, and takes the document away only by putting the
+        new version there. */
+        if let Err(err) = fs::rename(&temp, &resolved) {
+            let _ = fs::remove_file(&temp);
+            return Err(err.into());
         }
         sweep_leftovers(&resolved);
         Ok(())
@@ -381,14 +373,17 @@ fn openable(path: &Path) -> Result<(), VfsError> {
 }
 
 /// What a save must not take from the document: who may read it, and on
-/// Windows the mark that says it came from the internet.
+/// Windows the mark that says it came from the internet and when it was made.
 ///
 /// A save writes a new file and renames it over the old one, and a new file
 /// starts with the defaults — on Linux and macOS readable by everybody on the
-/// machine where the document was `0600`; on Windows without its
-/// `Zone.Identifier` stream, so a `.docx` from an email, saved once here, opened
-/// in Word without Protected View. Both go to the new file before it takes the
-/// old one's place. A document saved for the first time has neither.
+/// machine where the document was `0600`; on Windows with the folder's security
+/// instead of the document's, and without its `Zone.Identifier` stream, so a
+/// `.docx` from an email, saved once here, opened in Word without Protected
+/// View. All of it goes to the new file **before anything is written into it**,
+/// while it is empty and nobody else can open it, so there is no moment in
+/// which the new version is less protected than the old one. A document saved
+/// for the first time has none of it.
 fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -407,7 +402,15 @@ fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Re
     }
     #[cfg(windows)]
     {
-        let _ = temp_file;
+        if let Some(document) = windows::open_for_its_security(original)? {
+            windows::copy_dacl(&document, temp_file)?;
+            /* When it was made is the document's too: a rename would make it
+            today. */
+            if let Ok(created) = document.metadata().and_then(|meta| meta.created()) {
+                use std::os::windows::fs::FileTimesExt;
+                temp_file.set_times(fs::FileTimes::new().set_created(created))?;
+            }
+        }
         /* One that was read and cannot be written fails the save rather than
         dropping it. */
         if let Some(mark) = mark_of(original) {
@@ -457,94 +460,219 @@ fn mark_of(original: &Path) -> Option<Vec<u8>> {
     }
 }
 
-/// Puts the new version in the document's place.
+/// The document's security on Windows, read from it and given to its next
+/// version.
 ///
-/// On Windows through `ReplaceFileW` when the document is already there. A
-/// rename gives the document the new file's security, inherited from its
-/// folder: a document somebody had closed to other accounts was open to them
-/// again after one save, and one encrypted with EFS in an unencrypted folder was
-/// written in the clear. `ReplaceFileW` keeps the document's ACL, attributes,
-/// encryption and streams. Where it will not — another file system, a share
-/// without it — the rename is what there is; whatever state a refusal leaves,
-/// the new version is still under its temporary name and the rename finishes
-/// the job.
-///
-/// Only over a plain file, asked without following a link. A document swapped
-/// for a link since it was resolved would have the new version written through
-/// the link, wherever it points; a rename replaces the link itself. A swap in
-/// the instant between this look and the call is not covered — that needs a
-/// process writing in the folder while the save runs, and on Windows the right
-/// to make a file link.
-fn put_in_place(temp: &Path, original: &Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    if fs::symlink_metadata(original).is_ok_and(|meta| meta.is_file()) {
-        match replace_file(original, temp) {
-            Ok(()) => return Ok(()),
-            /* Somebody else holds the new version or the document open —
-            another program, or another account waiting for exactly this
-            moment. The rename would hand the document the folder's security
-            in place of its own, so the save is refused instead, and says
-            why. */
-            Err(err) if matches!(err.raw_os_error(), Some(32 | 33)) => return Err(err),
-            Err(_) => {}
-        }
-    }
-    fs::rename(temp, original)
-}
-
+/// `ReplaceFileW` did this for a while, at the moment of the replacement, and
+/// two things came with it: until then the new version carried the folder's
+/// security, readable by any account the folder let in; and it carried every
+/// stream the document had, a planted one of half a gigabyte included, through
+/// every save. Now the document's DACL is set on the new file as soon as it
+/// exists — empty, and open to nobody else — and a plain rename does the rest.
 #[cfg(windows)]
-fn replace_file(original: &Path, replacement: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
+mod windows {
+    use std::ffi::c_void;
+    use std::fs;
+    use std::io;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+    use std::ptr::null_mut;
 
-    #[link(name = "kernel32")]
+    const SE_FILE_OBJECT: i32 = 1;
+    const DACL_SECURITY_INFORMATION: u32 = 0x4;
+    const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
+    const UNPROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x2000_0000;
+    const SE_DACL_PROTECTED: u16 = 0x1000;
+    const FILE_PERSISTENT_ACLS: u32 = 0x8;
+    const READ_CONTROL: u32 = 0x0002_0000;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+
+    /// What a new version may be opened with, so that its security can be set.
+    pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = 0x4000_0000 | 0x0004_0000;
+    /// What it takes of the document's attributes at its creation: encryption,
+    /// which can only be given then, and being hidden.
+    pub(super) const KEPT_ATTRIBUTES: u32 = 0x4000 | 0x2;
+
+    #[link(name = "advapi32")]
     extern "system" {
-        fn ReplaceFileW(
-            replaced: *const u16,
-            replacement: *const u16,
-            backup: *const u16,
-            flags: u32,
-            exclude: *mut std::ffi::c_void,
-            reserved: *mut std::ffi::c_void,
+        fn GetSecurityInfo(
+            handle: *mut c_void,
+            object_type: i32,
+            info: u32,
+            owner: *mut *mut c_void,
+            group: *mut *mut c_void,
+            dacl: *mut *mut c_void,
+            sacl: *mut *mut c_void,
+            descriptor: *mut *mut c_void,
+        ) -> u32;
+        fn SetSecurityInfo(
+            handle: *mut c_void,
+            object_type: i32,
+            info: u32,
+            owner: *mut c_void,
+            group: *mut c_void,
+            dacl: *const c_void,
+            sacl: *const c_void,
+        ) -> u32;
+        fn GetSecurityDescriptorControl(
+            descriptor: *mut c_void,
+            control: *mut u16,
+            revision: *mut u32,
         ) -> i32;
     }
 
-    let wide = |path: &Path| {
-        path.as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<u16>>()
-    };
-    let (original, replacement) = (wide(original), wide(replacement));
-    // SAFETY: both are NUL-terminated wide strings that outlive the call, no
-    // backup is asked for, and the two reserved pointers are null as required.
-    let done = unsafe {
-        ReplaceFileW(
-            original.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    if done != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn GetVolumeInformationByHandleW(
+            file: *mut c_void,
+            volume_name: *mut u16,
+            volume_name_size: u32,
+            serial: *mut u32,
+            longest_component: *mut u32,
+            flags: *mut u32,
+            file_system_name: *mut u16,
+            file_system_name_size: u32,
+        ) -> i32;
+    }
+
+    /// The document, opened only to read its security and when it was made —
+    /// which needs no right to read what is in it. `None` when there is no
+    /// document there as a plain file: a first save, or something that is not
+    /// one.
+    pub(super) fn open_for_its_security(path: &Path) -> io::Result<Option<fs::File>> {
+        if !fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()) {
+            return Ok(None);
+        }
+        fs::OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_ALL)
+            .open(path)
+            .map(Some)
+    }
+
+    /// Gives `to` the DACL `from` has, protected or inherited as `from`'s is.
+    ///
+    /// Inherited, the entries `from` inherited are worked out again from the
+    /// folder — the same folder — and its own entries are kept; protected, the
+    /// list is taken as it is. A volume that keeps no ACLs (WSL's 9P, FAT) has
+    /// none to give; asked on one that does and refused, the save fails rather
+    /// than go on with the folder's security.
+    pub(super) fn copy_dacl(from: &fs::File, to: &fs::File) -> io::Result<()> {
+        if !keeps_acls(from)? {
+            return Ok(());
+        }
+        let mut dacl = null_mut();
+        let mut descriptor = null_mut();
+        // SAFETY: a handle of an open file; the out-pointers are valid, and the
+        // descriptor the call allocates is freed below.
+        let status = unsafe {
+            GetSecurityInfo(
+                from.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                &mut dacl,
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+
+        let set = (|| {
+            let mut control = 0u16;
+            let mut revision = 0u32;
+            // SAFETY: the descriptor GetSecurityInfo returned, still allocated.
+            if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            let protection = if control & SE_DACL_PROTECTED != 0 {
+                PROTECTED_DACL_SECURITY_INFORMATION
+            } else {
+                UNPROTECTED_DACL_SECURITY_INFORMATION
+            };
+            // SAFETY: `dacl` points into the descriptor, still allocated; the
+            // handle was opened with WRITE_DAC.
+            let status = unsafe {
+                SetSecurityInfo(
+                    to.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | protection,
+                    null_mut(),
+                    null_mut(),
+                    dacl,
+                    std::ptr::null(),
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            Ok(())
+        })();
+
+        // SAFETY: allocated by GetSecurityInfo, freed once.
+        unsafe { LocalFree(descriptor) };
+        set
+    }
+
+    /// Whether the volume a file is on keeps ACLs at all.
+    fn keeps_acls(file: &fs::File) -> io::Result<bool> {
+        let mut flags = 0u32;
+        // SAFETY: a handle of an open file; no names are asked for, so the
+        // buffers are null with a size of nought.
+        let done = unsafe {
+            GetVolumeInformationByHandleW(
+                file.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                &mut flags,
+                null_mut(),
+                0,
+            )
+        };
+        if done == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(flags & FILE_PERSISTENT_ACLS != 0)
     }
 }
 
 /// A temporary file beside `path` that did not exist until now.
 fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
+    /* Encrypted with EFS, or hidden: what the document is, its next version is
+    from the start. Encryption cannot be given to a file later. */
+    #[cfg(windows)]
+    let attributes = fs::symlink_metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| {
+            std::os::windows::fs::MetadataExt::file_attributes(&meta) & windows::KEPT_ATTRIBUTES
+        })
+        .unwrap_or(0);
+
     let mut taken = None;
     for attempt in 0..16 {
         let temp = temp_beside(path, attempt);
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
-        /* Nobody else opens it while it is being written: it starts with the
-        folder's security, not the document's. */
+        /* Nobody else opens it, and it may have its security set before
+        anything is written into it — see `carry_over`. */
         #[cfg(windows)]
-        std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options
+                .share_mode(0)
+                .access_mode(windows::GENERIC_WRITE_AND_WRITE_DAC)
+                .attributes(attributes);
+        }
         match options.open(&temp) {
             Ok(file) => return Ok((file, temp)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => taken = Some(err),
@@ -908,19 +1036,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_save_keeps_who_may_read_the_document_on_windows() {
-        let icacls = |path: &Path, args: &[&str]| {
-            let out = std::process::Command::new("icacls")
-                .arg(display(path))
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout).into_owned()
-        };
         let mut workspace = Workspace::new();
         let root = workspace.add_root(scratch("acl")).unwrap();
         let file = root.join("closed.md");
@@ -1114,5 +1229,67 @@ mod tests {
             mark_of(&file).as_deref(),
             Some(&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..])
         );
+    }
+
+    #[cfg(windows)]
+    fn icacls(path: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("icacls")
+            .arg(display(path))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// A document that inherits from its folder and has an entry of its own
+    /// keeps both after a save: the inherited ones worked out again from the
+    /// folder, its own carried over. A rename kept only the folder's.
+    #[cfg(windows)]
+    #[test]
+    fn a_save_keeps_an_entry_the_document_has_of_its_own() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("acl-own")).unwrap();
+        let file = root.join("shared.md");
+        fs::write(&file, "before").unwrap();
+        // BUILTIN\Users by its SID, so the test does not depend on the language of Windows.
+        icacls(&file, &["/grant", "*S-1-5-32-545:(R)"]);
+        let before = icacls(&file, &[]);
+        assert!(
+            before.contains("(I)"),
+            "the test file stopped inheriting: {before}"
+        );
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+        assert_eq!(icacls(&file, &[]), before);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_save_keeps_when_the_document_was_made() {
+        use std::os::windows::fs::FileTimesExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("made")).unwrap();
+        let file = root.join("old.md");
+        fs::write(&file, "before").unwrap();
+        let made =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_created(made))
+            .unwrap();
+
+        workspace.write(&file, b"after").unwrap();
+
+        assert_eq!(fs::metadata(&file).unwrap().created().unwrap(), made);
     }
 }
