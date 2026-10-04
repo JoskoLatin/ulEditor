@@ -146,7 +146,7 @@ async function restoreFrom(shell: Shell, session: StoredSession): Promise<void> 
 
   for (const entry of entries) {
     try {
-      await openUri(shell, entry.uri, { quiet: true });
+      await openUri(shell, entry.uri, { quiet: true, adopt: true });
     } catch {
       // The file no longer exists.
     }

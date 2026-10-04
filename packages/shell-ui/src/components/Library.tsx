@@ -100,7 +100,7 @@ export function Library() {
       <ul className="library-list">
         {shown.map((item) => (
           <li key={item.uri}>
-            <button className="library-item" onClick={() => void openUri(shell, item.uri)}>
+            <button className="library-item" onClick={() => void openUri(shell, item.uri, { adopt: true })}>
               <FormatIcon family={FORMATS[item.format].family} size={17} />
               <span className="library-name">{item.name}</span>
               <span className="library-meta">

@@ -92,7 +92,19 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
 export async function openUri(
   shell: Shell,
   uri: Uri,
-  opts?: { quiet?: boolean },
+  opts?: {
+    quiet?: boolean;
+    /**
+     * Whether a refused open may register the file's folder and try again.
+     *
+     * Only for a file somebody pointed at earlier — the recent list, the
+     * session, the library — or a definition the language server pointed at.
+     * Not for a search hit or a name from Ctrl+P: those come from walking the
+     * folders already open, so a refusal there means the walk reached outside
+     * them, and the retry used to make that outside folder part of the sandbox.
+     */
+    adopt?: boolean;
+  },
 ): Promise<void> {
   try {
     await openDocument(shell, await shell.fs.open(uri));
@@ -102,7 +114,7 @@ export async function openUri(
        open of a remembered file is refused. Pointing at the file again is the
        same explicit gesture the file picker makes, so it re-registers the
        file's folder and the open is tried once more. */
-    if (shell.fs.adoptPaths) {
+    if (opts?.adopt && shell.fs.adoptPaths) {
       try {
         const [doc] = (await shell.fs.adoptPaths([uri])).documents;
         if (doc) {

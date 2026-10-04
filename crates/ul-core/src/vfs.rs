@@ -116,7 +116,7 @@ pub(crate) fn is_scratch(name: &str) -> bool {
     name.starts_with("~$")
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
     granted: Vec<PathBuf>,

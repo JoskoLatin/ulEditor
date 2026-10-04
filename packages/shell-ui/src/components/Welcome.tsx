@@ -259,7 +259,7 @@ export function Welcome() {
                     key={entry.uri}
                     className="welcome-action welcome-recent"
                     title={entry.uri}
-                    onClick={() => void openUri(shell, entry.uri)}
+                    onClick={() => void openUri(shell, entry.uri, { adopt: true })}
                   >
                     <FormatIcon family={FORMATS[formatOfName(entry.name)].family} size={13} />
                     <span className="name">{entry.name}</span>

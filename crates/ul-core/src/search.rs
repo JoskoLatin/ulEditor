@@ -26,8 +26,14 @@
 //! project folder answers in a sixth of a second, and the pathological case is
 //! two seconds without holding any state that could go stale.
 //!
-//! Everything goes through `Workspace::resolve`, so search cannot leave the
-//! sandbox, not even via a symlink.
+//! **Links are not followed** — a symbolic link, or on Windows a junction,
+//! whether it points at a folder or at a file. Only the roots go through
+//! `Workspace::resolve`; what is under them is walked, and the walk used to ask
+//! `is_dir()` of each entry, which follows a link. A folder holding a junction
+//! to somebody's home then had that home searched and listed, its lines shown
+//! in the results, while `read` refused the same path. Two junctions back to
+//! the folder itself made a walk that never ended. An entry's own type follows
+//! nothing, and it is what `library.rs` has always used.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -363,20 +369,14 @@ fn each_block(start: &Path, block: usize, mut sink: impl FnMut(&[PathBuf]) -> bo
                 }
             }
             Item::Dir(dir) => {
-                let Ok(entries) = fs::read_dir(&dir) else {
-                    continue;
-                };
-                let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-                paths.sort();
-
                 /* Pushed in reverse, because a stack hands back what went on
                 last: that is what turns "sorted" into "walked in order". */
-                for path in paths.into_iter().rev() {
+                for (path, is_dir) in entries_of(&dir).into_iter().rev() {
                     let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
                     else {
                         continue;
                     };
-                    if path.is_dir() {
+                    if is_dir {
                         if !crate::vfs::is_noise(&name) {
                             stack.push(Item::Dir(path));
                         }
@@ -391,6 +391,28 @@ fn each_block(start: &Path, block: usize, mut sink: impl FnMut(&[PathBuf]) -> bo
     if !pending.is_empty() {
         sink(&pending);
     }
+}
+
+/// What is in a folder, sorted, each with whether it is a folder — **links
+/// left out**.
+///
+/// The type is the entry's own, which a link does not pass on: a junction or a
+/// symbolic link is reported as a link rather than as what it points at, and is
+/// skipped whatever it points at. That costs a link that stays inside the
+/// folder, which is the price of never having to work out where one goes.
+fn entries_of(dir: &Path) -> Vec<(PathBuf, bool)> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(PathBuf, bool)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let kind = entry.file_type().ok()?;
+            (!kind.is_symlink()).then(|| (entry.path(), kind.is_dir()))
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Reads one block of files, on as many threads as it is worth.
@@ -445,10 +467,12 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery) -> Finding {
     let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
         return finding;
     };
-    let Ok(meta) = fs::metadata(path) else {
+    /* The walk has left links out already. Asked again of the path itself,
+    which does not follow one either, for a file swapped for a link since. */
+    let Ok(meta) = fs::symlink_metadata(path) else {
         return finding;
     };
-    if meta.len() > MAX_FILE_BYTES {
+    if meta.file_type().is_symlink() || meta.len() > MAX_FILE_BYTES {
         return finding;
     }
 
@@ -512,21 +536,14 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
     if out.len() >= limit {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-
-    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-
-    for path in paths {
+    for (path, is_dir) in entries_of(dir) {
         if out.len() >= limit {
             return;
         }
         let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
             continue;
         };
-        if path.is_dir() {
+        if is_dir {
             if !crate::vfs::is_noise(&name) {
                 collect(&path, limit, out);
             }
@@ -817,5 +834,79 @@ mod tests {
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"a.ts") && names.contains(&"b.ts"));
         assert!(!names.contains(&"c.ts"), "noise is skipped here too");
+    }
+
+    /// A link to a folder, made the way anybody can make one: a junction on
+    /// Windows, which needs no rights, and a symbolic link elsewhere.
+    fn link_folder(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(
+                made.status.success(),
+                "{}",
+                String::from_utf8_lossy(&made.stderr)
+            );
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[test]
+    fn a_link_out_of_the_folder_is_neither_searched_nor_listed() {
+        let outside = temp_root("outside");
+        write(&outside, "secret.txt", "password = MARKER-OUTSIDE\n");
+        let root = temp_root("linked");
+        write(
+            &root,
+            "inside.txt",
+            "MARKER-OUTSIDE is named here and only here\n",
+        );
+        link_folder(&root.join("docs"), &outside);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("secret-link.txt"))
+            .unwrap();
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let found = ws.search(&query("MARKER-OUTSIDE")).unwrap();
+        let names: Vec<&str> = found.hits.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, ["inside.txt"], "found through a link");
+
+        let listed = ws.list_files(1000).unwrap();
+        let names: Vec<&str> = listed.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["inside.txt"], "listed through a link");
+    }
+
+    #[test]
+    fn links_back_to_the_folder_do_not_make_a_walk_that_never_ends() {
+        /* Followed, one link back to the root is the tree again under every
+        folder, and two of them double it at every level: it was still
+        walking after twenty-five seconds. */
+        let root = temp_root("loop");
+        write(&root, "only.txt", "nothing to find\n");
+        link_folder(&root.join("a"), &root);
+        link_folder(&root.join("b"), &root);
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+
+        let (done, outcome) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let scanned = ws.search(&query("absent")).map(|out| out.scanned);
+            let listed = ws.list_files(10_000).map(|files| files.len());
+            let _ = done.send((scanned, listed));
+        });
+        let (scanned, listed) = outcome
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the walk did not end");
+        assert_eq!(scanned.unwrap(), 1);
+        assert_eq!(listed.unwrap(), 1);
     }
 }

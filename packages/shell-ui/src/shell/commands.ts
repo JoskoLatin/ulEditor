@@ -72,7 +72,7 @@ async function goToLocation(
   line: number,
   column: number,
 ): Promise<void> {
-  await openUri(shell, path);
+  await openUri(shell, path, { adopt: true });
   await new Promise((resolve) => setTimeout(resolve, 120));
   activeInstance()?.revealPosition?.(line, column);
 }

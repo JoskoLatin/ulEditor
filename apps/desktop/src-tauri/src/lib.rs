@@ -56,6 +56,21 @@ fn with_workspace<T>(
     f(&mut guard)
 }
 
+/// A copy of the sandbox, for a walk of the whole tree.
+///
+/// A search holds what it walks for as long as it walks it, and under the lock
+/// that was every command that needs the sandbox — saving among them — waiting
+/// for a search through a large folder to finish. The copy is two lists of
+/// folders, and the walk checks against it just as it would against the one
+/// behind the lock.
+fn walking_copy(state: &State<'_, AppState>) -> Workspace {
+    state
+        .workspace
+        .lock()
+        .expect("the workspace lock is poisoned")
+        .clone()
+}
+
 /* ── dialogs ─────────────────────────────────────────────────────────── */
 
 /// Folder picker.
@@ -275,13 +290,13 @@ async fn search_workspace(
     state: State<'_, AppState>,
     query: SearchQuery,
 ) -> Result<SearchOutcome, VfsError> {
-    with_workspace(&state, |workspace| workspace.search(&query))
+    walking_copy(&state).search(&query)
 }
 
 /// The file list for quick open by name (`Ctrl+P`).
 #[tauri::command]
 async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat>, VfsError> {
-    with_workspace(&state, |workspace| workspace.list_files(limit))
+    walking_copy(&state).list_files(limit)
 }
 
 /// A survey of the device in search of documents.
