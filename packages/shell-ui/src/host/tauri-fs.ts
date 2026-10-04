@@ -162,6 +162,17 @@ export class TauriFileSystem implements VirtualFileSystem {
     return { documents, directories };
   }
 
+  /** One file the language server pointed at, without its folder. */
+  async grantFile(uri: Uri): Promise<DocumentHandle> {
+    const stat = await invoke<RawStat>('grant_file', { path: uri });
+    return this.open(stat.uri);
+  }
+
+  /** A folder off the tree is out of the sandbox too. */
+  async forgetRoot(uri: Uri): Promise<void> {
+    await invoke('forget_root', { path: uri });
+  }
+
   async pickDirectory(): Promise<DirectoryEntry | null> {
     const raw = await invoke<RawStat | null>('pick_directory');
     return raw ? (toStat(raw) as DirectoryEntry) : null;

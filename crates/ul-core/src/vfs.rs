@@ -174,6 +174,38 @@ impl Workspace {
         Ok(canonical)
     }
 
+    /// One file, and nothing beside it.
+    ///
+    /// A definition a language server points at — in the standard library, or
+    /// in somebody else's crate — has to open, and adopting it used to make its
+    /// whole folder a root: in the tree, searched, written to. A server's answer
+    /// is not a person's gesture, and nobody asked for the folder. So only the
+    /// file is let in.
+    pub fn grant_file(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        let canonical = fs::canonicalize(path.as_ref())?;
+        if !canonical.is_file() {
+            return Err(VfsError::NotAFile(display(&canonical)));
+        }
+        if !self.granted.contains(&canonical) {
+            self.granted.push(canonical.clone());
+        }
+        Ok(canonical)
+    }
+
+    /// Takes a folder out of the roots.
+    ///
+    /// Taking it off the tree used to leave it in the sandbox until the program
+    /// was closed — still searched, still listed by Ctrl+P, still open to read
+    /// and write. Matched by the folder itself and by how it was shown, since a
+    /// folder that is gone cannot be resolved any more.
+    pub fn forget_root(&mut self, path: impl AsRef<Path>) {
+        let path = path.as_ref();
+        let canonical = fs::canonicalize(path).ok();
+        let shown = display(path);
+        self.roots
+            .retain(|root| canonical.as_ref() != Some(root) && display(root) != shown);
+    }
+
     /// Resolves a path and checks that it stays inside one of the roots.
     ///
     /// `..` is removed lexically first, because a file that does not exist yet
@@ -733,5 +765,42 @@ mod tests {
             .expect("opening the FIFO waited for a writer");
         assert!(matches!(read, Err(VfsError::NotAFile(_))));
         assert!(matches!(detected, Err(VfsError::NotAFile(_))));
+    }
+
+    /// Only the file a language server pointed at is let in, not its folder.
+    #[test]
+    fn a_granted_file_lets_in_that_file_and_nothing_beside_it() {
+        let base = scratch("grant-file");
+        fs::write(base.join("definition.rs"), "fn here() {}").unwrap();
+        fs::write(base.join("beside.rs"), "fn not_asked_for() {}").unwrap();
+
+        let mut workspace = Workspace::new();
+        let granted = workspace.grant_file(base.join("definition.rs")).unwrap();
+
+        assert!(workspace.read(&granted).is_ok());
+        assert!(matches!(
+            workspace.read(granted.with_file_name("beside.rs")),
+            Err(VfsError::OutsideWorkspace(_))
+        ));
+        assert!(workspace.roots().is_empty(), "the folder became a root");
+        assert!(matches!(
+            workspace.grant_file(&base),
+            Err(VfsError::NotAFile(_))
+        ));
+    }
+
+    #[test]
+    fn a_forgotten_folder_is_out_of_the_sandbox() {
+        let base = scratch("forget");
+        fs::write(base.join("note.txt"), "here").unwrap();
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&base).unwrap();
+        assert!(workspace.read(root.join("note.txt")).is_ok());
+
+        workspace.forget_root(display(&root));
+
+        assert!(workspace.roots().is_empty());
+        assert!(workspace.read(root.join("note.txt")).is_err());
     }
 }

@@ -47,6 +47,8 @@ export type ShellFileSystem = VirtualFileSystem & {
   /** The web keeps its folders across a reload; see `BrowserFileSystem`. */
   restoreRoots?(): Promise<{ ready: DirectoryEntry[]; waiting: WaitingRoot[] }>;
   forgetRoot?(uri: Uri): Promise<void>;
+  /** One file let in without its folder; desktop only. See `Workspace::grant_file`. */
+  grantFile?(uri: Uri): Promise<DocumentHandle>;
 };
 
 export type Platform = 'desktop' | 'web';

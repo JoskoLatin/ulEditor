@@ -251,6 +251,26 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
     Ok(out)
 }
 
+/// One file a language server pointed at, let in without its folder — see
+/// `Workspace::grant_file`. F12 into the standard library used to adopt the
+/// folder, which put it in the tree, in every search and open to writing.
+#[tauri::command]
+fn grant_file(state: State<'_, AppState>, path: String) -> Result<Stat, VfsError> {
+    with_workspace(&state, |workspace| {
+        let granted = workspace.grant_file(&path)?;
+        workspace.stat(&granted)
+    })
+}
+
+/// A folder taken off the tree leaves the sandbox as well.
+#[tauri::command]
+fn forget_root(state: State<'_, AppState>, path: String) -> Result<(), VfsError> {
+    with_workspace(&state, |workspace| {
+        workspace.forget_root(&path);
+        Ok(())
+    })
+}
+
 #[tauri::command]
 fn roots(state: State<'_, AppState>) -> Result<Vec<Stat>, VfsError> {
     with_workspace(&state, |workspace| {
@@ -1016,7 +1036,18 @@ pub fn run() {
      */
     crash::install();
 
-    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        /* The window never leaves the application. A link in a Markdown
+        preview was followed by the window itself: the whole interface gave way
+        to the page, with no address bar to say where it was and unsaved work
+        behind it. The shell sends such links to the browser instead
+        (`routeExternalLinks`); this is what holds when something does not. */
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("stay-in-app")
+                .on_navigation(|_, url| stays_in_app(url))
+                .build(),
+        );
 
     /*
      * The updater, and the restart that follows it.
@@ -1158,6 +1189,8 @@ pub fn run() {
             pick_files,
             pick_save_target,
             adopt_paths,
+            grant_file,
+            forget_root,
             roots,
             read_directory,
             stat,
@@ -1240,9 +1273,48 @@ pub fn run() {
         });
 }
 
+/// Whether a navigation of the window stays inside the application.
+///
+/// The application's own pages are `tauri://localhost` on macOS and Linux and
+/// `http(s)://tauri.localhost` on Windows and Android; a `blob:` is a page the
+/// application made itself. A debug build is served by the dev server on
+/// `localhost`, and only a debug build may go there.
+fn stays_in_app(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "blob" => true,
+        "http" | "https" => {
+            let host = url.host_str();
+            host == Some("tauri.localhost")
+                || (cfg!(debug_assertions) && matches!(host, Some("localhost" | "127.0.0.1")))
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{paths_from, within_limit, LONGEST_REPORT};
+    use super::{paths_from, stays_in_app, within_limit, LONGEST_REPORT};
+
+    #[test]
+    fn the_window_stays_on_the_applications_own_pages() {
+        let url = |text: &str| tauri::Url::parse(text).unwrap();
+        for own in [
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "https://tauri.localhost/#/x",
+        ] {
+            assert!(stays_in_app(&url(own)), "{own}");
+        }
+        for away in [
+            "https://example.com/",
+            "http://tauri.localhost.example.com/",
+            "file:///C:/Windows/",
+            "data:text/html,<p>x</p>",
+            "javascript:alert(1)",
+        ] {
+            assert!(!stays_in_app(&url(away)), "{away}");
+        }
+    }
 
     #[test]
     fn a_report_cut_in_the_middle_of_a_letter_is_cut_before_it() {

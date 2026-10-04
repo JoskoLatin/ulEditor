@@ -104,6 +104,13 @@ export async function openUri(
      * them, and the retry used to make that outside folder part of the sandbox.
      */
     adopt?: boolean;
+    /**
+     * Whether a refused open may let in this one file, and not its folder: a
+     * definition the language server pointed at. The server's answer is not a
+     * person pointing at a folder, and adopting it put the standard library in
+     * the tree, in every search and open to writing.
+     */
+    grant?: boolean;
   },
 ): Promise<void> {
   try {
@@ -114,6 +121,14 @@ export async function openUri(
        open of a remembered file is refused. Pointing at the file again is the
        same explicit gesture the file picker makes, so it re-registers the
        file's folder and the open is tried once more. */
+    if (opts?.grant && shell.fs.grantFile) {
+      try {
+        await openDocument(shell, await shell.fs.grantFile(uri));
+        return;
+      } catch {
+        /* The original error stands. */
+      }
+    }
     if (opts?.adopt && shell.fs.adoptPaths) {
       try {
         const [doc] = (await shell.fs.adoptPaths([uri])).documents;
@@ -331,10 +346,20 @@ export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
  * somebody is working in would be a surprise nobody asked for.
  */
 export function removeRoot(shell: Shell, root: TreeNode): void {
-  const { tree, setTree } = useWorkspace.getState();
+  const { tree, setTree, tabs } = useWorkspace.getState();
   setTree(tree.filter((node) => node.uri !== root.uri));
   forget(shell, root.uri);
-  void shell.fs.forgetRoot?.(root.uri);
+
+  /* On the desktop the folder now leaves the sandbox as well, so a document
+     still open from it is let in on its own first — otherwise its next save
+     would be refused as outside the folders that are open. */
+  const inside = tabs
+    .map((tab) => tab.uri)
+    .filter((uri) => uri.startsWith(`${root.uri}\\`) || uri.startsWith(`${root.uri}/`));
+  void (async () => {
+    for (const uri of inside) await shell.fs.grantFile?.(uri).catch(() => undefined);
+    await shell.fs.forgetRoot?.(root.uri);
+  })();
 }
 
 /**

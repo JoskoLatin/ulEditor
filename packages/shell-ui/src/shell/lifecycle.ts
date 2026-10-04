@@ -90,6 +90,41 @@ export function guardWindowClose(shell: Shell): () => void {
   };
 }
 
+/**
+ * A link to the web opens in the browser, never in place of the application.
+ *
+ * A link in a Markdown preview was followed by the window itself. On the
+ * desktop the whole interface gave way to the page — no address bar to say
+ * where it was, unsaved work behind it — and in the browser the tab left the
+ * application the same way. The desktop shell now refuses such a navigation
+ * outright (`stays_in_app` in Rust), so the click is sent where it belongs
+ * instead of doing nothing: `https` to the browser, anything else nowhere.
+ * A link an editor handles itself is left to it.
+ */
+export function routeExternalLinks(shell: Shell): () => void {
+  const follow = (event: MouseEvent) => {
+    if (event.defaultPrevented || event.button > 1) return;
+    const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+    if (!(link instanceof HTMLAnchorElement)) return;
+    let url: URL;
+    try {
+      url = new URL(link.href, window.location.href);
+    } catch {
+      return;
+    }
+    if (url.origin === window.location.origin) return;
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return;
+    event.preventDefault();
+    if (url.protocol === 'https:') shell.openExternal?.(url.href);
+  };
+  document.addEventListener('click', follow);
+  document.addEventListener('auxclick', follow);
+  return () => {
+    document.removeEventListener('click', follow);
+    document.removeEventListener('auxclick', follow);
+  };
+}
+
 export async function requestExit(shell: Shell): Promise<void> {
   /* One question at a time. Two presses of the button in the corner used to
      stack two identical warnings, and answering one of them left the other

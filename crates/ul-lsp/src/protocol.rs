@@ -288,6 +288,14 @@ pub fn file_url(path: &std::path::Path) -> String {
 /// And back, because diagnostics arrive keyed by URL and the editor knows paths.
 pub fn path_of_url(url: &str) -> Option<std::path::PathBuf> {
     let rest = url.strip_prefix("file://")?;
+    /* Only a path on this machine: no host, or `localhost`. `file://server/x`
+    names another machine and came back as the relative path `server/x`, and
+    `file:////server/share/x` as `//server/share/x`, which Windows reads as a
+    share on the network — from whatever a language server cared to answer. */
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') || rest.starts_with("//") {
+        return None;
+    }
     let decoded = rest
         .replace("%20", " ")
         .replace("%23", "#")
@@ -907,6 +915,22 @@ mod tests {
     fn a_url_that_is_not_a_file_is_nobodys_path() {
         assert!(path_of_url("untitled:Untitled-1").is_none());
         assert!(path_of_url("https://example.com/x.rs").is_none());
+    }
+
+    #[test]
+    fn a_url_naming_another_machine_is_nobodys_path() {
+        /* A definition is whatever the server answered, and the answer is
+        opened. Neither of these is a file on this machine. */
+        assert!(
+            path_of_url("file:////server/share/x.rs").is_none(),
+            "a share"
+        );
+        assert!(path_of_url("file://server/x.rs").is_none(), "a host");
+        assert_eq!(
+            path_of_url("file://localhost/C:/dev/x.rs"),
+            Some(std::path::PathBuf::from("C:/dev/x.rs")),
+            "localhost is this machine"
+        );
     }
 
     /* ── the answers, and every shape they arrive in ─────────────────── */
