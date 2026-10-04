@@ -56,3 +56,12 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+# Vulnerabilities fail the job wherever they are in the tree. "Unmaintained"
+# fails it only for what this workspace depends on directly: those found on
+# 2026-10-04 — proc-macro-error, and the unic-* crates under `urlpattern` —
+# come in through Tauri, and there is no replacement for them that this
+# project could make. A gate nobody can turn green is a gate people learn to
+# ignore; a vulnerability is not that, and has to be answered.
+unmaintained = "workspace"

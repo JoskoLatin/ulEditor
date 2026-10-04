@@ -17,7 +17,7 @@
     "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
     "@uleditor/reader-core": "workspace:*",
-    "dompurify": "^3.2.3",
+    "dompurify": "^3.4.16",
     "fflate": "^0.8.2"
   },
   "devDependencies": {

@@ -35,6 +35,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
 
+      # What the build ships, held to the licences in deny.toml and to the
+      # published advisories, as cargo deny holds the Rust side. Once is
+      # enough. The audit fails on a moderate advisory or worse: on 2026-10-04
+      # it found markdown-it's linkify freezing the editor on a crafted file.
+      - if: matrix.os == 'ubuntu-latest'
+        run: pnpm verify:npm-licenses
+      - if: matrix.os == 'ubuntu-latest'
+        run: pnpm audit --prod --audit-level moderate
+
       # A missing translation renders as English and fails nothing — the key is
       # the English source text. So without this step the Croatian catalogue
       # falls behind silently, and a renamed placeholder reaches the user as
@@ -276,8 +285,10 @@ jobs:
           tool: cargo-deny@0.20.2
 
       # A copyleft dependency sneaking into the core would change the licence of
-      # the whole project. That is why this step blocks rather than warns.
-      - run: cargo deny check licenses bans sources
+      # the whole project. That is why this step blocks rather than warns. And a
+      # published vulnerability anywhere in the tree blocks too — on 2026-10-04
+      # it was rustls under the updater (deny.toml, [advisories]).
+      - run: cargo deny check licenses bans sources advisories
 
   android:
     name: Android check

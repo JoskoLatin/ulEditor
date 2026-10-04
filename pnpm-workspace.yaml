@@ -5,5 +5,7 @@ packages:
 # work without it. Every other script stays blocked.
 allowBuilds:
   esbuild: true
-  # The script fetches the wasm core into its own `dist`. Without it OCR has nothing to load.
-  tesseract.js: true
+  # Not run: its script is `opencollective-postinstall`, a request for donations,
+  # and fetches nothing. The OCR core comes from `tesseract.js-core` through
+  # tools/ocr-assets.mjs. Said here as false so the install is not left asking.
+  tesseract.js: false

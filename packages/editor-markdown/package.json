@@ -24,8 +24,8 @@
     "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
     "@uleditor/reader-core": "workspace:*",
-    "dompurify": "^3.2.3",
-    "markdown-it": "^14.1.0",
+    "dompurify": "^3.4.16",
+    "markdown-it": "^14.3.2",
     "mermaid": "^11.17.2"
   },
   "devDependencies": {
