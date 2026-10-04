@@ -724,7 +724,12 @@ impl Server {
         });
 
         let stdin = Arc::new(Mutex::new(stdin));
-        write_message(&stdin, &initialize.to_string())?;
+        /* A program that has already left — a rustup shim without the component
+        prints a line and exits — has closed its input by now, and on Linux the
+        write fails with a broken pipe. What it said on its way out is the
+        better report, and the reading thread is about to have it, so this
+        failure is kept for when nothing better arrives. */
+        let sent = write_message(&stdin, &initialize.to_string());
 
         /*
          * The answer to `initialize` is read by the thread that reads
@@ -868,13 +873,18 @@ impl Server {
             }
         });
 
-        let refused = match handshake.recv_timeout(timeout) {
-            Ok(Handshake::Ready) => None,
+        let patience = if sent.is_ok() {
+            timeout
+        } else {
+            timeout.min(Duration::from_secs(2))
+        };
+        let refused = match handshake.recv_timeout(patience) {
+            Ok(Handshake::Ready) => sent.err(),
             Ok(Handshake::Failed(reason)) => Some(LspError::Broken(launch.program.clone(), reason)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(LspError::Handshake(
-                launch.program.clone(),
-                timeout.as_secs(),
-            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(match sent {
+                Err(unsent) => unsent,
+                Ok(()) => LspError::Handshake(launch.program.clone(), timeout.as_secs()),
+            }),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(LspError::Broken(
                 launch.program.clone(),
                 "the thread reading it ended during the handshake".into(),
