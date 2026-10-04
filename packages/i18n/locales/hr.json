@@ -562,7 +562,7 @@
   "Get LibreOffice": "Preuzmi LibreOffice",
   "Converting {name} through LibreOffice…": "Pretvaram {name} kroz LibreOffice…",
   "The conversion produced a file this program could not open.": "Pretvaranje je dalo datoteku koju ovaj program nije mogao otvoriti.",
-  "{name} was converted to PDF. This is a copy in the temporary folder — the original is untouched.": "{name} je pretvoren u PDF. Ovo je kopija u privremenoj mapi — original je nedirnut.",
+  "{name} was converted to PDF. This is a copy in ulEditor's own folder — the original is untouched.": "{name} je pretvoren u PDF. Ovo je kopija u ulEditorovoj mapi — original je nedirnut.",
   "{name} could not be converted: {reason}": "{name} se nije mogao pretvoriti: {reason}",
   "Converting to {format} needs LibreOffice, which this build cannot start.": "Pretvaranje u {format} traži LibreOffice, koji ova verzija ne može pokrenuti.",
   "Converting to {format} is not offered — LibreOffice is here for the drawings nobody else reads.": "Pretvaranje u {format} se ne nudi — LibreOffice je tu zbog crteža koje ništa drugo ne čita.",

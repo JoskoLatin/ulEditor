@@ -441,12 +441,19 @@ fn convert_backend() -> Option<Backend> {
 
 /// Converts one drawing to PDF and says where the PDF is.
 ///
-/// The output goes into a directory of this program's own under the system
-/// temporary folder — never beside the original. A program that leaves a PDF
-/// next to somebody's drawing without being asked is a program that litters,
-/// and the folder a `.cdr` lives in is usually somebody's work.
+/// The output goes into this program's own cache folder — never beside the
+/// original. A program that leaves a PDF next to somebody's drawing without
+/// being asked is a program that litters, and the folder a `.cdr` lives in is
+/// usually somebody's work.
+///
+/// The cache folder is the person's own. It used to be the system temporary
+/// folder, which on Linux is `/tmp`, shared by every account on the machine,
+/// under a name anybody could work out: another account could make that folder
+/// first — as a link to wherever it liked — and choose where LibreOffice wrote,
+/// what it deleted and which profile it started with.
 #[tauri::command]
 async fn convert_to_pdf(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<String, ConvertCommandError> {
@@ -456,9 +463,13 @@ async fn convert_to_pdf(
     /* One directory per document, named after the document rather than at
     random: a second conversion of the same file reuses it, and a person
     looking at the temporary folder can tell what is in there. */
-    let outdir = std::env::temp_dir()
-        .join("uleditor-converted")
-        .join(digest_of(&path));
+    let converted = app
+        .path()
+        .app_cache_dir()
+        .map_err(|err| ConvertError::Start(err.to_string()))?
+        .join("converted");
+    private_folder(&converted).map_err(ConvertError::from)?;
+    let outdir = converted.join(digest_of(&path));
 
     /* Two minutes. LibreOffice takes a few seconds for a drawing and can take
     twenty on a cold start, since the first run of a fresh profile builds it;
@@ -470,6 +481,23 @@ async fn convert_to_pdf(
         std::time::Duration::from_secs(120),
     )?;
     Ok(output.to_string_lossy().into_owned())
+}
+
+/// A folder only its owner can enter, made if it is not there.
+fn private_folder(path: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)?;
+    /* `create` leaves a folder that is already there as it was, and one made
+    before this was the rule is made private now. */
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 /// A short, stable, filesystem-safe name for a path.

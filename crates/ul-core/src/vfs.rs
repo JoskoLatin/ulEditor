@@ -340,6 +340,7 @@ impl Workspace {
             let _ = fs::remove_file(&temp);
             return Err(err.into());
         }
+        sweep_leftovers(&resolved);
         Ok(())
     }
 }
@@ -416,6 +417,43 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
         }
     }
     Err(taken.expect("sixteen names were tried"))
+}
+
+/// Takes away the temporary files an earlier run left beside this document —
+/// ended, or killed, in the middle of a save. Only what this program names so
+/// (`notes.md.<process>-<attempt>.ultmp`, and `notes.md.ultmp` from before the
+/// process was in the name), only regular files, and never this run's own.
+fn sweep_leftovers(path: &Path) {
+    let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let name = name.to_string_lossy();
+    let prefix = format!("{name}.");
+    let ours = std::process::id().to_string();
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let found = entry.file_name().to_string_lossy().into_owned();
+        let Some(middle) = found
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix("ultmp"))
+        else {
+            continue;
+        };
+        let left_over = if middle.is_empty() {
+            true
+        } else {
+            let numbered = middle.strip_suffix('.').and_then(|m| m.split_once('-'));
+            let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            numbered.is_some_and(|(process, attempt)| {
+                digits(process) && digits(attempt) && process != ours
+            })
+        };
+        if left_over && entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// `notes.md` → `notes.md.<process>-<attempt>.ultmp`.
@@ -802,5 +840,35 @@ mod tests {
 
         assert!(workspace.roots().is_empty());
         assert!(workspace.read(root.join("note.txt")).is_err());
+    }
+
+    /// What an interrupted save left beside the document goes with the next
+    /// save — and nothing that only looks like it.
+    #[test]
+    fn a_save_takes_away_what_an_interrupted_one_left() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("leftovers")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "before").unwrap();
+        let left = ["notes.md.4294967-0.ultmp", "notes.md.ultmp"];
+        let kept = [
+            "notes.md.backup",
+            "notes.md.12-x.ultmp",
+            "other.md.4294967-0.ultmp",
+            "notes.md.4294967-0.ultmp.txt",
+        ];
+        for name in left.iter().chain(kept.iter()) {
+            fs::write(root.join(name), "somebody's").unwrap();
+        }
+
+        workspace.write(&file, b"after").unwrap();
+
+        for name in left {
+            assert!(!root.join(name).exists(), "{name} was left");
+        }
+        for name in kept {
+            assert!(root.join(name).exists(), "{name} was taken");
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap(), "after");
     }
 }

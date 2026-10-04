@@ -207,8 +207,9 @@ export async function openThroughLibreOffice(shell: Shell, uri: Uri): Promise<vo
     const path = await shell.convert.toPdfFile(uri);
     working.dispose();
 
-    const adopted = await shell.fs.adoptPaths?.([path]);
-    const document = adopted?.documents[0];
+    /* The PDF alone is let in, not the folder it was written to: that is the
+       program's own cache, and has no business in the tree or a search. */
+    const document = await shell.fs.grantFile?.(path).catch(() => undefined);
     if (!document) {
       shell.notify.show('error', t('The conversion produced a file this program could not open.'));
       return;
@@ -217,7 +218,7 @@ export async function openThroughLibreOffice(shell: Shell, uri: Uri): Promise<vo
     await openDocument(shell, document);
     shell.notify.show(
       'info',
-      t('{name} was converted to PDF. This is a copy in the temporary folder — the original is untouched.', {
+      t("{name} was converted to PDF. This is a copy in ulEditor's own folder — the original is untouched.", {
         name,
       }),
     );

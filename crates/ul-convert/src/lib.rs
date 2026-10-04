@@ -142,18 +142,29 @@ pub fn find_in(candidates: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option
 
 /// Whatever is on the PATH, if anything.
 fn on_path() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|path| on_path_in(&path))
+        .unwrap_or_default()
+}
+
+/// The places a PATH names, absolute ones only.
+///
+/// A relative entry — `.`, or an empty one, which means the same — is whatever
+/// folder the program happens to be running in, and a `soffice` found there is
+/// not the LibreOffice this machine has installed. It was tried, and started by
+/// that relative path.
+fn on_path_in(path: &std::ffi::OsStr) -> Vec<PathBuf> {
     let names: &[&str] = if cfg!(target_os = "windows") {
         &["soffice.com", "soffice.exe"]
     } else {
         &["soffice", "libreoffice"]
     };
 
-    let Some(path) = std::env::var_os("PATH") else {
-        return Vec::new();
-    };
-
     let mut found = Vec::new();
-    for directory in std::env::split_paths(&path) {
+    for directory in std::env::split_paths(path) {
+        if !directory.is_absolute() {
+            continue;
+        }
         for name in names {
             found.push(directory.join(name));
         }
@@ -312,6 +323,22 @@ pub fn to_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_absolute_path_entry_is_looked_in() {
+        let absolute = if cfg!(windows) {
+            r"C:\Program Files\LibreOffice\program"
+        } else {
+            "/usr/bin"
+        };
+        let path = std::env::join_paths([".", "", "relative/bin", absolute]).unwrap();
+        let looked = on_path_in(&path);
+        assert!(!looked.is_empty());
+        assert!(
+            looked.iter().all(|candidate| candidate.is_absolute()),
+            "{looked:?}"
+        );
+    }
 
     #[test]
     fn the_first_candidate_that_exists_wins() {

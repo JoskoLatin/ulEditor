@@ -162,7 +162,15 @@ fn extra_directories() -> Vec<PathBuf> {
 pub fn find_server(language: &str) -> Option<Launch> {
     let mut launch = known_launch(language)?;
 
-    if which(&launch.program).is_some() {
+    /* Started by the full path found here, never by its bare name. A bare
+    name is looked up again by the system at the start, and on Linux and macOS
+    that goes through every PATH entry — `.` or an empty one among them, which
+    is the project folder the server starts in: a folder could bring its own
+    `rust-analyzer`. On Windows a bare name found only as a `.cmd` (npm's
+    servers) did not start at all. */
+    if let Some(found) = std::env::var_os("PATH").and_then(|path| which_in(&launch.program, &path))
+    {
+        launch.program = found.to_string_lossy().into_owned();
         return Some(launch);
     }
 
@@ -195,10 +203,15 @@ fn candidate_names(program: &str) -> Vec<String> {
     }
 }
 
-/// Whether a program is on the PATH — `which`, without a dependency.
-fn which(program: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
+/// Where a program is on a PATH — `which`, without a dependency.
+///
+/// Only absolute entries count. A relative one, `.` or an empty one that means
+/// the same, is whatever folder the program happens to be started in.
+fn which_in(program: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    for directory in std::env::split_paths(path) {
+        if !directory.is_absolute() {
+            continue;
+        }
         for name in candidate_names(program) {
             let candidate = directory.join(&name);
             if candidate.is_file() {
@@ -1344,6 +1357,39 @@ mod tests {
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn a_program_is_found_only_through_an_absolute_path_entry() {
+        /* `.` on the PATH, or an empty entry, is the folder the program is
+        started in — for a language server, the project. A program planted
+        there is not one the machine has installed. */
+        let dir = scratch("which");
+        let file = if cfg!(windows) {
+            "planted-server.exe"
+        } else {
+            "planted-server"
+        };
+        touch(&dir.join(file));
+
+        let here = std::env::current_dir().unwrap();
+        let mut base = here.as_path();
+        let mut relative = PathBuf::new();
+        while !dir.starts_with(base) {
+            relative.push("..");
+            base = base.parent().expect("the temporary folder shares a root");
+        }
+        let relative = relative.join(dir.strip_prefix(base).unwrap());
+        assert!(
+            here.join(&relative).join(file).is_file(),
+            "the relative entry reaches the file"
+        );
+
+        assert_eq!(which_in("planted-server", relative.as_os_str()), None);
+        assert_eq!(
+            which_in("planted-server", dir.as_os_str()),
+            Some(dir.join(file))
+        );
     }
 
     #[test]
