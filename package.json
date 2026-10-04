@@ -86,6 +86,8 @@
     "verify:desktop-updates": "node tools/verify-desktop-updates.mjs",
     "verify:desktop-convert": "node tools/verify-desktop-convert.mjs",
     "verify:desktop-lsp": "node tools/verify-desktop-lsp.mjs",
+    "verify:desktop-close": "node tools/verify-desktop-close.mjs",
+    "verify:desktop-pdf-notes": "node tools/verify-desktop-pdf-notes.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",
     "ocr:assets": "node tools/ocr-assets.mjs"
   },
