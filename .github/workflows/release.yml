@@ -43,7 +43,7 @@ jobs:
       release_id: ${{ steps.draft.outputs.result }}
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # A release without a tag makes no sense: name, version and links all hang off it.
       - name: Determine the tag
@@ -72,11 +72,15 @@ jobs:
 
       - name: Draft
         id: draft
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        # Through the environment rather than written into the script: an
+        # expression in the script is pasted into the code before it runs.
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         with:
           result-encoding: string
           script: |
-            const tag = '${{ steps.tag.outputs.tag }}';
+            const tag = process.env.TAG;
             const { owner, repo } = context.repo;
             // Looked for before it is created, because a release for this tag
             // may already be open — a rebuild of one platform is the ordinary
@@ -130,7 +134,7 @@ jobs:
       # The tag, not the branch the run was started from: a rebuild has to
       # produce the same binary as the release it is joining. On a tag push
       # these are the same commit anyway.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.create-release.outputs.tag }}
 
@@ -142,15 +146,15 @@ jobs:
             librsvg2-dev patchelf libxdo-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: './ -> target'
 
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
@@ -170,7 +174,7 @@ jobs:
           node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json');if(!c.bundle.createUpdaterArtifacts)process.exit(1);console.log('updater artifacts: on')"
         shell: bash
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The private half of the update key. It never touches the repository;
@@ -195,11 +199,11 @@ jobs:
     env:
       HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.create-release.outputs.tag }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
@@ -227,20 +231,20 @@ jobs:
     if: inputs.platforms != 'desktop'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.create-release.outputs.tag }}
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
 
       - name: Android NDK
         id: ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r27c
           # Not cached. The cache round-trip restores the NDK incomplete — the
@@ -253,15 +257,15 @@ jobs:
       # Two architectures cover practically every Android device in the wild.
       # i686 and x86_64 exist only on emulators, and each extra one doubles the
       # duration of the Rust build.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: './ -> target'
 
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
