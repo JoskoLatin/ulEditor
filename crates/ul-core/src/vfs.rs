@@ -449,7 +449,7 @@ const O_NONBLOCK: Option<i32> = None;
 /// refused before a byte is read — a folder included, which a read refused
 /// anyway. Where the flag's value is not known here, the question is asked of
 /// the path before opening, as before.
-fn open_regular(path: &Path) -> Result<fs::File, VfsError> {
+pub(crate) fn open_regular(path: &Path) -> Result<fs::File, VfsError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -494,16 +494,18 @@ fn carry_over(original: &Path, temp_file: &fs::File, temp: &Path) -> std::io::Re
         are not carried, or a file somebody planted would keep its setuid bit
         through a save by root. */
         // The document's own, not whatever a link put in its place points at.
+        /* macOS's own mark of a file from the internet, which Gatekeeper and
+        the apps that open it read as Windows' programs read Zone.Identifier.
+        Set before the mode: a document that was read-only would leave a file
+        nobody may set an attribute on. */
+        #[cfg(target_os = "macos")]
+        macos::carry_quarantine(original, temp_file)?;
         if let Some(meta) = fs::symlink_metadata(original)
             .ok()
             .filter(|meta| meta.is_file())
         {
             temp_file.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o777))?;
         }
-        /* macOS's own mark of a file from the internet, which Gatekeeper and
-        the apps that open it read as Windows' programs read Zone.Identifier. */
-        #[cfg(target_os = "macos")]
-        macos::carry_quarantine(original, temp_file)?;
     }
     #[cfg(windows)]
     {
@@ -1639,10 +1641,14 @@ mod tests {
         let root = workspace.add_root(scratch("folder-read")).unwrap();
         fs::create_dir_all(root.join("inner")).unwrap();
 
-        assert!(matches!(
-            workspace.read(root.join("inner")),
-            Err(VfsError::NotAFile(_)) | Err(VfsError::Io(_))
-        ));
+        let read = workspace.read(root.join("inner"));
+        /* On Unix a folder opens and is then refused by what it is; Windows
+        does not open a folder as a file at all. */
+        if cfg!(unix) {
+            assert!(matches!(read, Err(VfsError::NotAFile(_))), "{read:?}");
+        } else {
+            assert!(read.is_err());
+        }
         fs::write(root.join("note.txt"), "text").unwrap();
         assert_eq!(workspace.read(root.join("note.txt")).unwrap(), b"text");
     }

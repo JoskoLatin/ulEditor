@@ -316,7 +316,7 @@ impl Workspace {
         let mut out = Vec::new();
         for root in self.roots() {
             let start = self.resolve(root)?;
-            collect(&start, limit, &mut out);
+            collect(&start, limit, &mut out, &start);
         }
         Ok(out)
     }
@@ -490,6 +490,12 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
 
     let format = detect_by_name(&name).format;
     if FormatId::text_is_inside_a_container(format) {
+        /* Offered only if it is inside the root, as a file read is: a folder
+        swapped for a link on the way gave away the names of what was
+        outside. */
+        if opened_inside(path, &meta, root).is_none() {
+            return finding;
+        }
         /* Not read here at all: the text of a `.docx` is inside a ZIP, and the
         reader that understands it lives in the frontend. What goes back is
         the offer — the shell asks whether to search them too, which is the
@@ -554,17 +560,25 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
 fn read_regular(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
-    let file = fs::File::open(path).ok()?;
-    let opened = file.metadata().ok()?;
-    if !opened.is_file() || !same_file(seen, &opened) {
-        return None;
-    }
-    if !where_opened(&file, path).is_some_and(|at| at.starts_with(root)) {
-        return None;
-    }
+    let file = opened_inside(path, seen, root)?;
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
     (bytes.len() as u64 <= MAX_FILE_BYTES).then_some(bytes)
+}
+
+/// The file at `path`, opened, if it is the regular file the walk saw and is
+/// inside the root. Opened as `Workspace::read` opens one — on Unix without
+/// waiting, so a file swapped for a FIFO since the walk is refused rather than
+/// waited on for ever.
+fn opened_inside(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<fs::File> {
+    let file = crate::vfs::open_regular(path).ok()?;
+    let opened = file.metadata().ok()?;
+    if !same_file(seen, &opened) {
+        return None;
+    }
+    where_opened(&file, path)
+        .is_some_and(|at| at.starts_with(root))
+        .then_some(file)
 }
 
 /// Where an opened file really is, asked of the open file rather than of the
@@ -638,8 +652,15 @@ fn same_file(seen: &fs::Metadata, opened: &fs::Metadata) -> bool {
 
 use crate::vfs::{stat_of, Stat};
 
-fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
+fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path) {
     if out.len() >= limit {
+        return;
+    }
+    /* A folder swapped for a link since its parent was read is not listed:
+    its names and sizes are somebody else's. Asked of the path, which narrows
+    the moment rather than closing it — closing it takes reading a folder
+    through a handle of it, which the standard library does not offer. */
+    if !fs::canonicalize(dir).is_ok_and(|real| real.starts_with(root)) {
         return;
     }
     for (path, is_dir) in entries_of(dir) {
@@ -651,7 +672,7 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>) {
         };
         if is_dir {
             if !crate::vfs::is_noise(&name) {
-                collect(&path, limit, out);
+                collect(&path, limit, out, root);
             }
         } else if let Ok(stat) = stat_of(&path) {
             out.push(stat);
@@ -1050,5 +1071,33 @@ mod tests {
             read_regular(&inside, &seen, &root).as_deref(),
             Some(&b"lozinka=ovdje\n"[..])
         );
+    }
+
+    #[test]
+    fn names_from_a_folder_swapped_for_a_link_are_not_given_away() {
+        /* The state the race leaves, as above: `sub` was a folder when the
+        walk saw it and is a link out of the root by the time it is used. A
+        document there is not offered for the readers, and Ctrl+P does not list
+        what is in it. */
+        let mut links = Links::default();
+        let outside = temp_root("names-outside");
+        write(&outside, "secret-plan.docx", "not a real docx");
+        write(&outside, "secret.txt", "x");
+        let root = fs::canonicalize(temp_root("names-root")).unwrap();
+        links.folder(&root.join("sub"), &outside);
+
+        let document = root.join("sub").join("secret-plan.docx");
+        let needle = Needle {
+            text: "x".into(),
+            case_sensitive: false,
+            whole_word: false,
+        };
+        let finding = scan_one(&document, &needle, &query("x"), &root);
+        assert!(finding.document.is_none(), "offered from outside the root");
+
+        let mut listed = Vec::new();
+        collect(&root.join("sub"), 100, &mut listed, &root);
+        let names: Vec<&str> = listed.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.is_empty(), "listed from outside the root: {names:?}");
     }
 }
