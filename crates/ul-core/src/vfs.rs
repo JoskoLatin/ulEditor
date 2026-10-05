@@ -743,6 +743,23 @@ pub(crate) mod windows {
             file_system_name_size: u32,
         ) -> i32;
         fn GetFileInformationByHandle(file: *mut c_void, info: *mut FileInformation) -> i32;
+        fn GetFileInformationByHandleEx(
+            file: *mut c_void,
+            class: i32,
+            info: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+
+    /// `FileIdInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
+    const FILE_ID_INFO: i32 = 18;
+
+    /// `FILE_ID_INFO`: the volume's serial number and the file's 128-bit ID.
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInfo {
+        volume_serial: u64,
+        id: [u8; 16],
     }
 
     /// `BY_HANDLE_FILE_INFORMATION`, each FILETIME as its two halves.
@@ -762,8 +779,13 @@ pub(crate) mod windows {
     }
 
     /// A file opened only to be looked at: a link is the link and not what it
-    /// points at, there is no right to what is in it, and everything is shared
-    /// — nobody is kept from doing anything with the file while it is open.
+    /// points at, and there is no right to what is in it.
+    ///
+    /// Measured, on NTFS and over SMB: a program opening the file for itself
+    /// alone still can, and an oplock on it is not broken. Like any handle,
+    /// though, while it is open the file cannot be replaced by
+    /// `MoveFileEx(REPLACE_EXISTING)` nor a folder above it renamed — so it is
+    /// held no longer than it is needed.
     pub(crate) fn open_unfollowed(path: &Path) -> io::Result<fs::File> {
         fs::OpenOptions::new()
             .access_mode(FILE_READ_ATTRIBUTES)
@@ -772,18 +794,54 @@ pub(crate) mod windows {
             .open(path)
     }
 
-    /// Which file an open file is: its volume's serial number and its index on
-    /// that volume. WSL's 9P gives the inode and a serial of nought; a file
-    /// system that keeps no index gives nought for every file, and there every
-    /// file looks like every other.
-    pub(crate) fn identity(file: &fs::File) -> io::Result<(u32, u32, u32)> {
+    /// Which file an open file is, as far as its file system can say.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) enum Identity {
+        /// The volume's serial number and the file's 128-bit ID, from
+        /// `FileIdInfo`. ReFS needs all of it: the 64-bit index it gives is
+        /// not unique, and for many files it is all ones (MS-FSCC 2.1.9).
+        Long(u64, [u8; 16]),
+        /// The volume's serial number and the 64-bit index, where `FileIdInfo`
+        /// is not answered — measured: WSL's 9P (error 50), which gives the
+        /// inode and a serial of nought, and FAT (error 87).
+        Short(u32, u64),
+        /// An ID of nought or of all ones, which MS-FSCC says to ignore: it
+        /// tells nothing of which file this is.
+        Unknown,
+    }
+
+    pub(crate) fn identity(file: &fs::File) -> io::Result<Identity> {
+        let mut long = FileIdInfo::default();
+        // SAFETY: a handle of an open file, and a structure of the layout and
+        // size the class asks for.
+        let answered = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FILE_ID_INFO,
+                (&mut long as *mut FileIdInfo).cast(),
+                std::mem::size_of::<FileIdInfo>() as u32,
+            )
+        } != 0;
+        if answered {
+            return Ok(if long.id == [0; 16] || long.id == [0xff; 16] {
+                Identity::Unknown
+            } else {
+                Identity::Long(long.volume_serial, long.id)
+            });
+        }
+
         let mut info = FileInformation::default();
         // SAFETY: a handle of an open file, and a structure of the layout the
         // call fills in.
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok((info.volume_serial, info.index_high, info.index_low))
+        let index = (u64::from(info.index_high) << 32) | u64::from(info.index_low);
+        Ok(if index == 0 || index == u64::MAX {
+            Identity::Unknown
+        } else {
+            Identity::Short(info.volume_serial, index)
+        })
     }
 
     /// The document, opened only to read its security and when it was made —
@@ -1624,6 +1682,30 @@ mod tests {
         workspace.write(&file, b"after").unwrap();
 
         assert_eq!(fs::metadata(&file).unwrap().created().unwrap(), made);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_on_ntfs_is_known_by_its_whole_id() {
+        /* NTFS answers FileIdInfo, so neither the 64-bit index nor what stands
+        in for an unknown one decides here. Two handles of one file are the
+        same file, the one looked at and the one opened; another is not. */
+        let root = scratch("identity");
+        let one = root.join("one.txt");
+        let other = root.join("other.txt");
+        fs::write(&one, "a").unwrap();
+        fs::write(&other, "a").unwrap();
+
+        let seen = windows::identity(&windows::open_unfollowed(&one).unwrap()).unwrap();
+        assert!(matches!(seen, windows::Identity::Long(..)), "{seen:?}");
+        assert_eq!(
+            windows::identity(&fs::File::open(&one).unwrap()).unwrap(),
+            seen
+        );
+        assert_ne!(
+            windows::identity(&fs::File::open(&other).unwrap()).unwrap(),
+            seen
+        );
     }
 
     /// While a save holds the folder, nothing can take its place.

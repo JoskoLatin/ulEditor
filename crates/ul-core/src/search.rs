@@ -512,6 +512,9 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
     let Some(bytes) = read_regular(path, &seen, root) else {
         return finding;
     };
+    // Read: the file held for the look is let go before its text is searched.
+    #[cfg(windows)]
+    drop(seen);
     if !looks_textual(&bytes) {
         return finding;
     }
@@ -634,13 +637,14 @@ fn where_opened(file: &fs::File, path: &Path) -> Option<PathBuf> {
 /// later whether a file opened is the one looked at.
 ///
 /// On Unix the metadata carries that, as the device and the inode. On Windows
-/// the standard library does not hand out the file's index, so the file looked
-/// at is held — with no right to what is in it and keeping nobody from
-/// anything — and asked for its index when it is compared. When it was made
-/// used to stand in for the index there, and WSL's 9P does not answer that the
-/// same way twice: a file just written from Windows gave one time to a look
-/// and another to the open file, and was left out of the search with nothing
-/// said.
+/// the standard library does not hand out the file's ID, so the file looked at
+/// is held — with no right to what is in it — and asked for its ID when it is
+/// compared; it is let go as soon as the file is read, since while it is held
+/// the file cannot be replaced (`vfs::windows::open_unfollowed`). When it was
+/// made used to stand in for the ID there, and WSL's 9P does not answer that
+/// the same way twice: a file just written from Windows gave one time to a
+/// look and another to the open file, and was left out of the search with
+/// nothing said.
 struct Look {
     meta: fs::Metadata,
     #[cfg(windows)]
@@ -676,15 +680,29 @@ fn same_file(seen: &Look, opened: &fs::File) -> bool {
     }
     #[cfg(windows)]
     {
-        use crate::vfs::windows::identity;
-        identity(&seen.held).is_ok_and(|seen| identity(opened).is_ok_and(|opened| seen == opened))
+        /* Like with like: an ID of one kind is never the same as one of
+        another. Where neither has an ID worth the name, when each was made and
+        its size, as before there were IDs — weaker, but not nothing. */
+        use crate::vfs::windows::{identity, Identity};
+        match (identity(&seen.held), identity(opened)) {
+            (Ok(Identity::Unknown), Ok(Identity::Unknown)) => made_alike(&seen.meta, opened),
+            (Ok(seen), Ok(opened)) => seen == opened,
+            _ => false,
+        }
     }
     #[cfg(not(any(unix, windows)))]
     {
-        opened.metadata().is_ok_and(|opened| {
-            seen.meta.created().ok() == opened.created().ok() && seen.meta.len() == opened.len()
-        })
+        made_alike(&seen.meta, opened)
     }
+}
+
+/// Whether two looks saw a file made at the same moment and of the same size —
+/// what stands in for which file it is where nothing better is told.
+#[cfg(not(unix))]
+fn made_alike(seen: &fs::Metadata, opened: &fs::File) -> bool {
+    opened.metadata().is_ok_and(|opened| {
+        seen.created().ok() == opened.created().ok() && seen.len() == opened.len()
+    })
 }
 
 use crate::vfs::{stat_from, Stat};
