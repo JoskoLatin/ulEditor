@@ -481,10 +481,10 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
     which does not follow a link either, for a file swapped for one since; a
     folder above it swapped for one is answered by where the opened file
     really is — see `read_regular`. */
-    let Ok(meta) = fs::symlink_metadata(path) else {
+    let Some(seen) = look_at(path) else {
         return finding;
     };
-    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+    if !seen.meta.is_file() || seen.meta.len() > MAX_FILE_BYTES {
         return finding;
     }
 
@@ -493,7 +493,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
         /* Offered only if it is inside the root, as a file read is: a folder
         swapped for a link on the way gave away the names of what was
         outside. */
-        if opened_inside(path, &meta, root).is_none() {
+        if opened_inside(path, &seen, root).is_none() {
             return finding;
         }
         /* Not read here at all: the text of a `.docx` is inside a ZIP, and the
@@ -509,7 +509,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
         return finding;
     }
 
-    let Some(bytes) = read_regular(path, &meta, root) else {
+    let Some(bytes) = read_regular(path, &seen, root) else {
         return finding;
     };
     if !looks_textual(&bytes) {
@@ -557,7 +557,7 @@ fn scan_one(path: &Path, needle: &Needle, query: &SearchQuery, root: &Path) -> F
 /// that was looked at and where it really is — a folder swapped on the way
 /// puts it outside the root — and no more than the limit is read whatever its
 /// size has become.
-fn read_regular(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<Vec<u8>> {
+fn read_regular(path: &Path, seen: &Look, root: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
     let file = opened_inside(path, seen, root)?;
@@ -570,10 +570,9 @@ fn read_regular(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<Vec<u8>
 /// inside the root. Opened as `Workspace::read` opens one — on Unix without
 /// waiting, so a file swapped for a FIFO since the walk is refused rather than
 /// waited on for ever.
-fn opened_inside(path: &Path, seen: &fs::Metadata, root: &Path) -> Option<fs::File> {
+fn opened_inside(path: &Path, seen: &Look, root: &Path) -> Option<fs::File> {
     let file = crate::vfs::open_regular(path).ok()?;
-    let opened = file.metadata().ok()?;
-    if !same_file(seen, &opened) {
+    if !same_file(seen, &file) {
         return None;
     }
     where_opened(&file, path)
@@ -631,26 +630,74 @@ fn where_opened(file: &fs::File, path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Whether two looks at a path saw the same file.
+/// A look at a file, which follows no link: what it is, and enough to tell
+/// later whether a file opened is the one looked at.
 ///
-/// On Unix that is the device and the inode, which is exact. Windows has no
-/// stable way to ask for its file index in the standard library, so there it is
-/// when the file was made and its size: a link swapped in points at a different
-/// file, and two files made in the same instant with the same size are not a
-/// race anybody wins on purpose.
-fn same_file(seen: &fs::Metadata, opened: &fs::Metadata) -> bool {
-    #[cfg(unix)]
+/// On Unix the metadata carries that, as the device and the inode. On Windows
+/// the standard library does not hand out the file's index, so the file looked
+/// at is held — with no right to what is in it and keeping nobody from
+/// anything — and asked for its index when it is compared. When it was made
+/// used to stand in for the index there, and WSL's 9P does not answer that the
+/// same way twice: a file just written from Windows gave one time to a look
+/// and another to the open file, and was left out of the search with nothing
+/// said.
+struct Look {
+    meta: fs::Metadata,
+    #[cfg(windows)]
+    held: fs::File,
+}
+
+fn look_at(path: &Path) -> Option<Look> {
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::MetadataExt;
-        (seen.dev(), seen.ino()) == (opened.dev(), opened.ino())
+        let held = crate::vfs::windows::open_unfollowed(path).ok()?;
+        let meta = held.metadata().ok()?;
+        Some(Look { meta, held })
     }
-    #[cfg(not(unix))]
+    #[cfg(not(windows))]
     {
-        seen.created().ok() == opened.created().ok() && seen.len() == opened.len()
+        fs::symlink_metadata(path).ok().map(|meta| Look { meta })
     }
 }
 
-use crate::vfs::{stat_of, Stat};
+/// Whether the file opened is the one looked at.
+///
+/// Where the open file really is is asked as well (`where_opened`), and that
+/// alone answers a link or a folder swapped in on the way. This answers what
+/// it does not: a file swapped for a hard link to one outside the root, which
+/// is opened under its name inside.
+fn same_file(seen: &Look, opened: &fs::File) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        opened
+            .metadata()
+            .is_ok_and(|opened| (seen.meta.dev(), seen.meta.ino()) == (opened.dev(), opened.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use crate::vfs::windows::identity;
+        identity(&seen.held).is_ok_and(|seen| identity(opened).is_ok_and(|opened| seen == opened))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        opened.metadata().is_ok_and(|opened| {
+            seen.meta.created().ok() == opened.created().ok() && seen.meta.len() == opened.len()
+        })
+    }
+}
+
+use crate::vfs::{stat_from, Stat};
+
+/// What Ctrl+P is told of a file the walk found, asked of the file itself: a
+/// file swapped for a link since the walk is not listed with the size and
+/// time of what the link points at.
+fn listed(path: &Path) -> Option<Stat> {
+    fs::symlink_metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| stat_from(path, &meta))
+}
 
 fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path) {
     if out.len() >= limit {
@@ -674,7 +721,7 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path) {
             if !crate::vfs::is_noise(&name) {
                 collect(&path, limit, out, root);
             }
-        } else if let Ok(stat) = stat_of(&path) {
+        } else if let Some(stat) = listed(&path) {
             out.push(stat);
         }
     }
@@ -1059,17 +1106,84 @@ mod tests {
         links.folder(&root.join("sub"), &outside);
 
         let through = root.join("sub").join("secret.txt");
-        let seen = fs::symlink_metadata(&through).unwrap();
+        let seen = look_at(&through).unwrap();
         assert!(
             read_regular(&through, &seen, &root).is_none(),
             "read from outside the root"
         );
 
         let inside = root.join("here.txt");
-        let seen = fs::symlink_metadata(&inside).unwrap();
+        let seen = look_at(&inside).unwrap();
         assert_eq!(
             read_regular(&inside, &seen, &root).as_deref(),
             Some(&b"lozinka=ovdje\n"[..])
+        );
+    }
+
+    #[test]
+    fn a_file_swapped_for_a_hard_link_since_the_look_is_not_read() {
+        /* The walk looked at `here.txt`; before it is read, it is a hard link
+        to a file outside the root. Opened, it is still under its name inside,
+        so only which file it is gives it away. Same length, so that the size
+        does not. */
+        let outside = temp_root("relinked-outside");
+        write(&outside, "secret.txt", "lozinka=tajna\n");
+        let root = fs::canonicalize(temp_root("relinked-root")).unwrap();
+        write(&root, "here.txt", "lozinka=ovdje\n");
+
+        let here = root.join("here.txt");
+        let seen = look_at(&here).unwrap();
+        fs::remove_file(&here).unwrap();
+        fs::hard_link(outside.join("secret.txt"), &here).unwrap();
+        assert!(
+            read_regular(&here, &seen, &root).is_none(),
+            "read the file swapped in"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_swapped_for_a_fifo_since_the_look_is_not_waited_on() {
+        /* The walk leaves FIFOs out; this is one put in a file's place after
+        the walk looked. Opened as an ordinary file is, it would wait for a
+        writer for ever. */
+        let root = fs::canonicalize(temp_root("fifo-swap")).unwrap();
+        write(&root, "pipe.txt", "nothing to find\n");
+        let pipe = root.join("pipe.txt");
+        let seen = look_at(&pipe).unwrap();
+        fs::remove_file(&pipe).unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let (done, outcome) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(read_regular(&pipe, &seen, &root).is_none());
+        });
+        let refused = outcome
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the read waited on the FIFO");
+        assert!(refused);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ctrl_p_tells_nothing_of_what_a_file_swapped_for_a_link_points_at() {
+        /* The walk leaves links out; this is one put in a file's place after
+        it, and its target is not described under the name inside. */
+        let mut links = Links::default();
+        let outside = temp_root("listed-outside");
+        write(&outside, "secret.txt", "a size worth hiding\n");
+        let root = fs::canonicalize(temp_root("listed-root")).unwrap();
+        write(&root, "here.txt", "x");
+        links.file(&root.join("there.txt"), &outside.join("secret.txt"));
+
+        assert!(listed(&root.join("there.txt")).is_none());
+        assert_eq!(
+            listed(&root.join("here.txt")).map(|stat| stat.size),
+            Some(1)
         );
     }
 

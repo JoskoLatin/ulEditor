@@ -683,6 +683,7 @@ pub(crate) mod windows {
     const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
     const FILE_LIST_DIRECTORY: u32 = 0x1;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
     /// What a new version is opened with, and with the right to set its
     /// security where it is to be given one.
@@ -741,6 +742,48 @@ pub(crate) mod windows {
             file_system_name: *mut u16,
             file_system_name_size: u32,
         ) -> i32;
+        fn GetFileInformationByHandle(file: *mut c_void, info: *mut FileInformation) -> i32;
+    }
+
+    /// `BY_HANDLE_FILE_INFORMATION`, each FILETIME as its two halves.
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileInformation {
+        _attributes: u32,
+        _created: [u32; 2],
+        _accessed: [u32; 2],
+        _written: [u32; 2],
+        volume_serial: u32,
+        _size_high: u32,
+        _size_low: u32,
+        _links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+
+    /// A file opened only to be looked at: a link is the link and not what it
+    /// points at, there is no right to what is in it, and everything is shared
+    /// — nobody is kept from doing anything with the file while it is open.
+    pub(crate) fn open_unfollowed(path: &Path) -> io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_ALL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+
+    /// Which file an open file is: its volume's serial number and its index on
+    /// that volume. WSL's 9P gives the inode and a serial of nought; a file
+    /// system that keeps no index gives nought for every file, and there every
+    /// file looks like every other.
+    pub(crate) fn identity(file: &fs::File) -> io::Result<(u32, u32, u32)> {
+        let mut info = FileInformation::default();
+        // SAFETY: a handle of an open file, and a structure of the layout the
+        // call fills in.
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((info.volume_serial, info.index_high, info.index_low))
     }
 
     /// The document, opened only to read its security and when it was made —
@@ -1090,14 +1133,18 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn stat_of(path: &Path) -> Result<Stat, VfsError> {
-    let meta = fs::metadata(path)?;
+    Ok(stat_from(path, &fs::metadata(path)?))
+}
+
+/// What is told of `path`, from a look already taken at it.
+pub(crate) fn stat_from(path: &Path, meta: &fs::Metadata) -> Stat {
     let modified = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
 
-    Ok(Stat {
+    Stat {
         uri: display(path),
         name: path
             .file_name()
@@ -1112,7 +1159,7 @@ pub(crate) fn stat_of(path: &Path) -> Result<Stat, VfsError> {
         size: meta.len(),
         modified,
         readonly: meta.permissions().readonly(),
-    })
+    }
 }
 
 /* ── tests ───────────────────────────────────────────────────────────── */
