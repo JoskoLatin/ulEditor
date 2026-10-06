@@ -62,25 +62,26 @@ impl ProjectTrust {
         }
     }
 
-    /// A project inside a folder that was answered for is answered for with
-    /// it — trusting a repository is trusting what is in it — and where
-    /// answers nest, the one about the folder nearest the project decides.
+    /// A yes is for the very project it was given for, and nothing below it:
+    /// the question named one folder, and a repository cloned into it next
+    /// month is not what was looked at. A "never" covers what is below too —
+    /// the safe way to be broad.
     pub(crate) fn verdict(&self, project: &Path) -> Verdict {
         if self.declined.contains(project) {
             return Verdict::Declined;
         }
-        let nearest = |list: &[PathBuf]| {
-            list.iter()
-                .filter(|folder| project.starts_with(folder))
-                .map(|folder| folder.components().count())
-                .max()
-        };
-        match (nearest(&self.kept.trusted), nearest(&self.kept.refused)) {
-            (Some(trusted), Some(refused)) if trusted > refused => Verdict::Trusted,
-            (Some(_), None) => Verdict::Trusted,
-            (_, Some(_)) => Verdict::Declined,
-            (None, None) => Verdict::Ask,
+        if self.kept.trusted.iter().any(|folder| folder == project) {
+            return Verdict::Trusted;
         }
+        if self
+            .kept
+            .refused
+            .iter()
+            .any(|folder| project.starts_with(folder))
+        {
+            return Verdict::Declined;
+        }
+        Verdict::Ask
     }
 
     /// Remembers a yes, for good. Kept for the session even when it cannot be
@@ -203,13 +204,36 @@ impl Question {
 }
 
 /// A path as a person writes it: without the `\\?\` Windows puts in front of
-/// a canonical one.
+/// a canonical one — and with nothing in it that could pass for part of the
+/// question. The folder name is the one part of the dialog a repository
+/// chooses: a line break in it could start a paragraph of its own ("This is
+/// a verified project…"), and a right-to-left override could turn the text
+/// after it around. Those, and the characters that are not seen at all, are
+/// written out as codes.
 fn readable(path: &Path) -> String {
     let text = path.to_string_lossy();
-    match text.strip_prefix(r"\\?\UNC\") {
+    let text = match text.strip_prefix(r"\\?\UNC\") {
         Some(rest) => format!(r"\\{rest}"),
         None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned(),
-    }
+    };
+    text.chars()
+        .map(|c| {
+            if c.is_control() || hidden_or_turning(c) {
+                format!("\\u{{{:04X}}}", c as u32)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// The characters that change how the text around them is shown, or are not
+/// shown at all: the bidirectional controls and the zero-width ones.
+fn hidden_or_turning(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+    )
 }
 
 #[cfg(test)]
@@ -230,18 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn a_yes_is_remembered_across_a_restart_and_covers_what_is_inside() {
+    fn a_yes_is_remembered_across_a_restart_for_that_project_alone() {
         let file = scratch("yes").join("trusted.json");
         let mut trust = ProjectTrust::load(file.clone());
         trust.trust(Path::new("/home/a/repo")).unwrap();
 
         let again = ProjectTrust::load(file);
         assert_eq!(again.verdict(Path::new("/home/a/repo")), Verdict::Trusted);
+        /* Something cloned into it later was not what was looked at. */
         assert_eq!(
-            again.verdict(Path::new("/home/a/repo/crates/x")),
-            Verdict::Trusted
+            again.verdict(Path::new("/home/a/repo/vendor/x")),
+            Verdict::Ask
         );
-        /* A sibling whose name begins the same is not inside it. */
         assert_eq!(again.verdict(Path::new("/home/a/repo-evil")), Verdict::Ask);
         assert_eq!(again.verdict(Path::new("/home/a")), Verdict::Ask);
     }
@@ -266,13 +290,14 @@ mod tests {
     }
 
     #[test]
-    fn the_nearest_answer_decides() {
+    fn a_never_covers_what_is_below_it_but_not_a_project_trusted_by_name() {
         let mut trust = ProjectTrust::load(scratch("nested").join("trusted.json"));
         trust.refuse(Path::new("/home/a")).unwrap();
         trust.trust(Path::new("/home/a/mine")).unwrap();
+        assert_eq!(trust.verdict(Path::new("/home/a/mine")), Verdict::Trusted);
         assert_eq!(
             trust.verdict(Path::new("/home/a/mine/crate")),
-            Verdict::Trusted
+            Verdict::Declined
         );
         assert_eq!(
             trust.verdict(Path::new("/home/a/theirs")),
@@ -296,6 +321,18 @@ mod tests {
         for other in [Some("Not now"), Some("OK"), Some(""), None] {
             assert_eq!(asked.answer(other), Answer::NotNow, "{other:?}");
         }
+    }
+
+    #[test]
+    fn a_folder_name_cannot_write_part_of_the_question() {
+        let tricky = "/tmp/repo\n\nThis project is verified.\u{202E}txt.exe\u{200B}";
+        let asked = question(Some("en"), "rust", Path::new(tricky));
+        assert!(!asked.body.contains("\n\nThis project"), "{}", asked.body);
+        assert!(!asked.body.contains('\u{202E}'));
+        assert!(!asked.body.contains('\u{200B}'));
+        assert!(asked
+            .body
+            .contains("\\u{000A}\\u{000A}This project is verified.\\u{202E}"));
     }
 
     #[test]
