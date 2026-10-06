@@ -1141,7 +1141,7 @@ try {
   await book.locator('td[data-ref="1,1"]').waitFor({ timeout: 20000 });
 
   const amount = book.locator('td[data-ref="1,1"]');
-  check('the amount arrives formatted', (await amount.innerText()) === '1.234,50', await amount.innerText());
+  check('the amount arrives formatted', (await amount.innerText()) === '1,234.50', await amount.innerText());
 
   await amount.dblclick();
   check('a double-click opens the cell', await amount.evaluate((el) => el.isContentEditable));
@@ -1169,7 +1169,7 @@ try {
   );
 
   await page.keyboard.press('Control+Z');
-  const sheetClean = await until(async () => (await amount.innerText()) === '1.234,50', 10000);
+  const sheetClean = await until(async () => (await amount.innerText()) === '1,234.50', 10000);
   check('undo puts the old amount back', sheetClean, await amount.innerText());
 
   /* — the old binary Excel — */
@@ -1190,7 +1190,7 @@ try {
   );
   check(
     'and its amounts under their formats',
-    (await oldBook.locator('td[data-ref="1,1"]').innerText()) === '1.234,50',
+    (await oldBook.locator('td[data-ref="1,1"]').innerText()) === '1,234.50',
     await oldBook.locator('td[data-ref="1,1"]').innerText(),
   );
 
@@ -1307,7 +1307,7 @@ try {
   await page.keyboard.type('1000');
   await page.keyboard.press('Enter');
   const odsWorkedOut = await until(
-    async () => (await odsTotal.innerText()).replace(/[.\s]/g, '').includes('1987,25'),
+    async () => (await odsTotal.innerText()).replace(/[,\s]/g, '').includes('1987.25'),
     5000,
   );
   check(

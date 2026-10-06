@@ -33,6 +33,14 @@ const { findCells } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-office/src/xlsx-edit.ts')).href
 );
 
+/* The workbook is Croatian, and its numbers are checked in Croatian; how a
+   number is written follows the interface language (formatNumber), which
+   outside a browser is set here. */
+const { setLocale } = await import(
+  pathToFileURL(resolve(ROOT, 'packages/i18n/src/index.ts')).href
+);
+setLocale('hr');
+
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });

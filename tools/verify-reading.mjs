@@ -314,7 +314,7 @@ try {
   check('the shared strings were resolved', cellA2 === 'January', cellA2);
 
   const cellB2 = await cell(1, 1).innerText();
-  check('the number follows the cell format', cellB2.includes('1.234,50'), cellB2);
+  check('the number follows the cell format', cellB2.includes('1,234.50'), cellB2);
 
   const cellC2 = await cell(1, 2).innerText();
   check('the serial number is shown as a date', /^\d{2}\.\d{2}\.\d{4}\.$/.test(cellC2), cellC2);

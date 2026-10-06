@@ -12,7 +12,7 @@
 import { unescapeXml } from './docx-edit.js';
 import { parseA1, type TableRange } from './formula.js';
 import { attr, attrNum, openArchive, readRelationships, readText, readXml, tags, type Archive } from './ooxml.js';
-import { t } from '@uleditor/i18n';
+import { getLocale, t } from '@uleditor/i18n';
 
 export type CellKind = 'number' | 'text' | 'bool' | 'error' | 'date';
 
@@ -207,13 +207,24 @@ export function formatDate(serial: number, code: string | undefined): string {
   return day;
 }
 
+/**
+ * A sheet's numbers are written the way the interface writes numbers: an
+ * English interface shows `1,234.50`, a Croatian one `1.234,50`. What is typed
+ * is read either way — one comma or one point is the decimal point
+ * (`numberOf` in xlsx-edit.ts) — so this changes only what is shown.
+ */
+const NUMBER_LOCALES: Record<string, string> = { en: 'en-US', hr: 'hr-HR' };
+
 const numberFormats = new Map<string, { format: Intl.NumberFormat; percent: boolean }>();
 
 export function formatNumber(value: number, code: string | undefined): string {
-  const key = code ?? '';
+  const locale = getLocale();
+  /* By language as well as by format: the language is chosen once a page,
+     but a check, or a future live switch, can change it under the cache. */
+  const key = `${locale}|${code ?? ''}`;
   let found = numberFormats.get(key);
   if (!found) {
-    const skeleton = formatSkeleton(key);
+    const skeleton = formatSkeleton(code ?? '');
     const percent = skeleton.includes('%');
     const grouped = skeleton.includes('#,#') || skeleton.includes('0,0');
     const decimals = decimalsOf(code);
@@ -225,12 +236,14 @@ export function formatNumber(value: number, code: string | undefined): string {
     } else {
       options.maximumFractionDigits = 10;
     }
-    found = { format: new Intl.NumberFormat('hr-HR', options), percent };
+    found = { format: new Intl.NumberFormat(NUMBER_LOCALES[locale] ?? locale, options), percent };
     numberFormats.set(key, found);
   }
 
   const scaled = found.percent ? value * 100 : value;
-  return `${found.format.format(scaled)}${found.percent ? ' %' : ''}`;
+  /* Croatian writes a space before the per cent sign, English none. */
+  const percent = locale === 'hr' ? ' %' : '%';
+  return `${found.format.format(scaled)}${found.percent ? percent : ''}`;
 }
 
 /* ── reading a part without building a DOM of it ─────────────────────── */

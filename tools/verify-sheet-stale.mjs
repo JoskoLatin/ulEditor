@@ -14,7 +14,8 @@
  * So the first check below is that a changed `SUM` shows its new total.
  *
  * The second is that it shows it **in the same hand**. `formatNumber` renders
- * through `Intl` in hr-HR, so a sheet's own numbers read `1.234,50`; a total
+ * through `Intl` in the interface's language — here Croatian, the language of
+ * this workbook — so a sheet's own numbers read `1.234,50`; a total
  * recomputed as a bare JavaScript number arrives as `1234.5` in the middle of
  * that column. Both are "the right answer" and only one of them is readable.
  *
@@ -35,6 +36,9 @@ const load = (file) => import(pathToFileURL(join(ROOT, 'packages/editor-office/s
 const { recalculate, typedValue } = await load('formula.ts');
 const { shownFormula } = await load('sheet-grid.ts');
 const { formatNumber } = await load('xlsx.ts');
+const { setLocale } = await import(
+  pathToFileURL(join(ROOT, 'packages/i18n/src/index.ts')).href
+);
 const { typedKind } = await load('xlsx-edit.ts');
 
 const checks = [];
@@ -75,8 +79,22 @@ put('C2', { text: '8', kind: 'number' });
 put('D1', { text: '15', kind: 'number', formula: 'SUM(C1:C2)' });
 put('E1', { text: 'Ukupno', kind: 'text' });
 
+/* The interface's language decides how numbers are written. */
+setLocale('en');
 check(
-  'the reader formats through hr-HR, so a total must come back in the same hand',
+  'an English interface writes a number the English way',
+  formatNumber(2234.5, MONEY) === '2,234.50' && formatNumber(0.25, '0%') === '25%',
+  `${formatNumber(2234.5, MONEY)} ${formatNumber(0.25, '0%')}`,
+);
+setLocale('hr');
+check(
+  'and a Croatian one the Croatian way',
+  formatNumber(0.25, '0%') === '25 %',
+  formatNumber(0.25, '0%'),
+);
+
+check(
+  'the reader formats in the Croatian of this workbook, so a total must come back in the same hand',
   formatNumber(2234.5, MONEY) === '2.234,50',
   formatNumber(2234.5, MONEY),
 );
