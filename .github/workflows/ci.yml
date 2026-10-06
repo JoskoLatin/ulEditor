@@ -103,6 +103,18 @@ jobs:
       - run: pnpm verify:docx
       - run: pnpm verify:xlsx
 
+      # The rest of the .docx surgery, each a routine of its own over the same
+      # bytes — a paragraph deleted, inserted, joined to the next, split, a
+      # table's rows and cells merged — and the formula engine against its
+      # census. All plain Node; they ran only by hand before (card 454).
+      - run: pnpm verify:delete
+      - run: pnpm verify:insert
+      - run: pnpm verify:join
+      - run: pnpm verify:split
+      - run: pnpm verify:rows
+      - run: pnpm verify:merge
+      - run: pnpm verify:formula
+
       # Which numbers on the screen are no longer true. The half that matters
       # is the one about the cell that is NOT marked: a SUM this can work out
       # is deliberately absent from `stale`, so a view that only drew the marks
@@ -211,6 +223,10 @@ jobs:
           # and the bytes agree, and a photograph is written off the main
           # thread: the page never stops for most of the save.
           node tools/verify-web-image.mjs --url http://localhost:5273
+          # Pasting from Word and Excel into the office editors, and the
+          # reading room — both against the built page, by hand until now.
+          node tools/verify-office-paste.mjs --url http://localhost:5273
+          node tools/verify-reading.mjs --url http://localhost:5273
           # The service worker: installed, then the server is stopped and the
           # page reloaded, and a .docx never opened before has to open. Also
           # what it keeps — the precache under 5 MB, never another origin,
@@ -228,6 +244,25 @@ jobs:
             # violation. Linux only for the same minute of recognition.
             node tools/verify-web-csp.mjs
           fi
+        shell: bash
+
+      # The checks that load the shell's own modules into the page — a crash
+      # caught by the boundary, and the .docx table, cell and line routines
+      # driven through the reader. They need Vite's development server rather
+      # than the built page, so it is started for them. Linux only: what they
+      # test is the same code in the same Chromium on every runner.
+      - name: Checks against the development server
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --filter @uleditor/shell-ui dev --port 5274 --strictPort &
+          for _ in $(seq 1 90); do
+            curl -sf http://localhost:5274 >/dev/null && break
+            sleep 1
+          done
+          node tools/verify-crash.mjs --url http://localhost:5274
+          node tools/verify-docx-cells.mjs --url http://localhost:5274
+          node tools/verify-docx-lines.mjs --url http://localhost:5274
+          node tools/verify-docx-table.mjs --url http://localhost:5274
         shell: bash
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

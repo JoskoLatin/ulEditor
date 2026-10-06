@@ -87,7 +87,13 @@ function answer(response: ImageResponse): Extract<ImageResponse, { ok: true }> {
 export class WasmImages implements ImageService {
   #worker = new ImageWorker();
 
-  constructor(private readonly fs: VirtualFileSystem) {}
+  /* A field set in the constructor rather than a parameter property: Node's
+     type stripping, which the checks run this under, does not take those. */
+  private readonly fs: VirtualFileSystem;
+
+  constructor(fs: VirtualFileSystem) {
+    this.fs = fs;
+  }
 
   available(): boolean {
     return typeof WebAssembly === 'object' && typeof Worker === 'function';

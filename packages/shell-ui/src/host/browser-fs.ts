@@ -75,7 +75,9 @@ interface FsPickerWindow {
   }): Promise<FsFileHandle>;
 }
 
-const picker = window as unknown as FsPickerWindow;
+/* The window itself in a browser, so pickers set on it later are seen; an
+   empty object where there is none — the checks that load this under Node. */
+const picker = (typeof window === 'undefined' ? {} : window) as unknown as FsPickerWindow;
 
 export function hasFileSystemAccess(): boolean {
   return typeof picker.showOpenFilePicker === 'function';
