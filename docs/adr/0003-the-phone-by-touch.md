@@ -1,7 +1,9 @@
 # ADR 0003 — The next large piece: the phone, by touch, for what the desktop already edits
 
-**Status:** proposed 2026-10-06. Waits for Čovik on the five questions at the
-end. Nothing here is built yet.
+**Status:** accepted 2026-10-06 — Čovik answered as recommended: phase 4
+narrowed, the debug build beside the release for the device loop, no Play and
+no `content://` in this phase, the rejected cards closed, iOS out. Question 3
+was settled by ADR 0005, accepted the same day.
 **Date:** 2026-10-06
 **Context:** card 444. The candidates were phase 4 (444, 466), the conversion
 service (447), opt-in telemetry (446), the Office engines (104, 105, 106),
@@ -183,7 +185,7 @@ real `.xlsx` and a highlight in a real PDF.
 The phase stops if step 1 cannot make the device loop run. This ADR is then
 reopened, rather than building touch nobody can check.
 
-## Open: Čovik's five answers
+## Čovik's five answers (2026-10-06: as recommended)
 
 1. **The device loop.**
    - (a) a SIM in the test phone, so that `adb install` works and the loop is
