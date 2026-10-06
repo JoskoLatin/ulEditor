@@ -28,13 +28,26 @@ pub enum VfsError {
     /// device. Opening a FIFO to read it waits for a writer, for ever.
     #[error("not a file: {0}")]
     NotAFile(String),
+    /// The file is not what it was when it was opened: replaced by another,
+    /// or written by another program. A save over it waits for the person to
+    /// say so (`Workspace::save`).
+    #[error("{0} was changed outside ulEditor since it was opened")]
+    Changed(String),
     #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
 
+/// What a refused save over a changed file begins with when it crosses to the
+/// interface, which asks the person and tries once more. A code rather than
+/// the sentence: the sentence is for people, and could change.
+pub const CHANGED_OUTSIDE: &str = "ul:changed-outside:";
+
 impl Serialize for VfsError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
+        match self {
+            Self::Changed(path) => serializer.serialize_str(&format!("{CHANGED_OUTSIDE}{path}")),
+            other => serializer.serialize_str(&other.to_string()),
+        }
     }
 }
 
@@ -126,6 +139,67 @@ pub struct Workspace {
     granted: Vec<PathBuf>,
     /// Folders nothing is let into, whatever was opened above them.
     protected: Vec<PathBuf>,
+    /// Each document as it was when it was read to be edited, or last saved.
+    seen: std::collections::HashMap<PathBuf, Fingerprint>,
+}
+
+/// Which file a document is, and how it was: what `Workspace::save` compares
+/// to tell that somebody else changed it while it was open.
+///
+/// Which file: the volume and file ID on Windows, the device and inode on
+/// Unix — a file replaced under the same name is a different one. How it was:
+/// when it was last written and how long it is — a file written in place by
+/// another program is the same file, changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fingerprint {
+    #[cfg(windows)]
+    id: Option<windows::Identity>,
+    #[cfg(unix)]
+    id: (u64, u64),
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+}
+
+impl Fingerprint {
+    fn of(file: &fs::File) -> io::Result<Self> {
+        let meta = file.metadata()?;
+        Ok(Self {
+            #[cfg(windows)]
+            id: windows::identity(file).ok(),
+            #[cfg(unix)]
+            id: {
+                use std::os::unix::fs::MetadataExt;
+                (meta.dev(), meta.ino())
+            },
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        })
+    }
+
+    fn at(path: &Path) -> Option<Self> {
+        open_regular(path)
+            .ok()
+            .and_then(|file| Self::of(&file).ok())
+    }
+
+    /// Whether `other` is the same file, as far as can be told. Where an ID
+    /// is not known, it is not: what is not known to be the same file does
+    /// not get to hand its security to the next version.
+    fn same_file(&self, other: &Self) -> bool {
+        #[cfg(windows)]
+        {
+            matches!((&self.id, &other.id), (Some(a), Some(b)) if a == b && *a != windows::Identity::Unknown)
+        }
+        #[cfg(unix)]
+        {
+            self.id == other.id
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = other;
+            false
+        }
+    }
 }
 
 impl Workspace {
@@ -355,6 +429,63 @@ impl Workspace {
         Ok(bytes)
     }
 
+    /// Reads a document to edit it, and remembers it as it was — which file,
+    /// when it was written, how long — so that a save can tell whether
+    /// somebody else changed it in the meantime (`save`). Every other read
+    /// (search, a preview) uses `read`, which remembers nothing: reading a
+    /// file is not agreeing to whatever is in it now.
+    pub fn read_document(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
+        use std::io::Read;
+
+        let resolved = self.resolve(path)?;
+        let mut file = open_regular(&resolved)?;
+        let print = Fingerprint::of(&file)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        self.seen.insert(resolved, print);
+        Ok(bytes)
+    }
+
+    /// Writes a document, unless somebody else changed it since it was read
+    /// with `read_document` or last saved here — then `VfsError::Changed`,
+    /// and nothing is written, until the person says to (`overwrite`).
+    ///
+    /// Overwriting a file that was **replaced** — a different file under the
+    /// same name — writes a new file into the folder: it does not take that
+    /// file's security, attributes or streams, which are whoever put it
+    /// there's, and could make the person's content readable to them. A file
+    /// only written in place is the same file, and its security is carried
+    /// over as on any save. A file nobody read here is written as `write`
+    /// writes it.
+    pub fn save(
+        &mut self,
+        path: impl AsRef<Path>,
+        data: &[u8],
+        overwrite: bool,
+    ) -> Result<(), VfsError> {
+        let resolved = self.resolve(path)?;
+        let inherit = match (self.seen.get(&resolved), Fingerprint::at(&resolved)) {
+            (Some(before), Some(now)) if *before != now => {
+                if !overwrite {
+                    return Err(VfsError::Changed(display(&resolved)));
+                }
+                before.same_file(&now)
+            }
+            /* Unchanged, or never read here, or gone since: as on any save. */
+            _ => true,
+        };
+        self.write_resolved(&resolved, data, inherit)?;
+        match Fingerprint::at(&resolved) {
+            Some(print) => {
+                self.seen.insert(resolved, print);
+            }
+            None => {
+                self.seen.remove(&resolved);
+            }
+        }
+        Ok(())
+    }
+
     /// Reads only the start of a file — enough for format detection without
     /// loading a hundred-page PDF into memory.
     pub fn detect_at(&self, path: impl AsRef<Path>) -> Result<Detection, VfsError> {
@@ -384,9 +515,17 @@ impl Workspace {
     /// a name somebody has taken — a file, a link, a link to nothing — is
     /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
+        let resolved = self.resolve(path)?;
+        self.write_resolved(&resolved, data, true)
+    }
+
+    /// `write`, for a path already resolved. `inherit` is whether the new
+    /// version takes the document's security, attributes and marks; a
+    /// document somebody replaced does not hand them on (`save`).
+    fn write_resolved(&self, resolved: &Path, data: &[u8], inherit: bool) -> Result<(), VfsError> {
         use std::io::Write;
 
-        let resolved = self.resolve(path)?;
+        let resolved = resolved.to_path_buf();
         let folder = resolved
             .parent()
             .ok_or_else(|| VfsError::NotADirectory(display(&resolved)))?;
@@ -396,9 +535,14 @@ impl Workspace {
         pointed. See `hold_folder`. */
         #[cfg(windows)]
         let _held = windows::hold_folder(folder)?;
-        let (mut file, temp) = create_beside(&resolved)?;
+        let (mut file, temp) = create_beside(&resolved, inherit)?;
 
-        let written = carry_over(&resolved, &file, &temp).and_then(|()| file.write_all(data));
+        let carried = if inherit {
+            carry_over(&resolved, &file, &temp)
+        } else {
+            Ok(())
+        };
+        let written = carried.and_then(|()| file.write_all(data));
         drop(file);
         if let Err(err) = written {
             let _ = fs::remove_file(&temp);
@@ -838,7 +982,7 @@ pub(crate) mod windows {
     }
 
     /// Which file an open file is, as far as its file system can say.
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub(crate) enum Identity {
         /// The volume's serial number and the file's 128-bit ID, from
         /// `FileIdInfo`. ReFS needs all of it: the 64-bit index it gives is
@@ -1061,13 +1205,14 @@ pub(crate) mod windows {
 }
 
 /// A temporary file beside `path` that did not exist until now.
-fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
+fn create_beside(path: &Path, inherit: bool) -> std::io::Result<(fs::File, PathBuf)> {
     /* Encrypted with EFS, or hidden: what the document is, its next version is
-    from the start. Encryption cannot be given to a file later. */
+    from the start. Encryption cannot be given to a file later. Nothing of a
+    document that is not to be inherited from. */
     #[cfg(windows)]
     let attributes = fs::symlink_metadata(path)
         .ok()
-        .filter(|meta| meta.is_file())
+        .filter(|meta| inherit && meta.is_file())
         .map(|meta| {
             std::os::windows::fs::MetadataExt::file_attributes(&meta) & windows::KEPT_ATTRIBUTES
         })
@@ -1077,7 +1222,7 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
     security to give it: a share that does not grant it would otherwise refuse
     every save, a first one included. */
     #[cfg(windows)]
-    let access = if windows::has_acl_to_carry(path) {
+    let access = if inherit && windows::has_acl_to_carry(path) {
         windows::GENERIC_WRITE_AND_WRITE_DAC
     } else {
         windows::GENERIC_WRITE
@@ -1085,7 +1230,7 @@ fn create_beside(path: &Path) -> std::io::Result<(fs::File, PathBuf)> {
     /* Where there is a document, readable by its owner alone until it is given
     the document's own mode in `carry_over`; a first save keeps the defaults. */
     #[cfg(unix)]
-    let replacing = fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
+    let replacing = inherit && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
 
     let mut taken = None;
     for attempt in 0..16 {
@@ -1512,6 +1657,108 @@ mod tests {
             fs::read(zone_stream(&file)).unwrap(),
             b"[ZoneTransfer]\r\nZoneId=3\r\n"
         );
+    }
+
+    /// Written by another program since it was read to be edited: the save
+    /// is refused and nothing is written, until the person says to.
+    #[test]
+    fn a_document_changed_since_it_was_read_is_not_saved_over_without_a_yes() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("changed")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        assert_eq!(workspace.read_document(&file).unwrap(), b"mine");
+
+        fs::write(&file, "theirs, and longer").unwrap();
+        let refused = workspace.save(&file, b"mine, edited", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "theirs, and longer");
+
+        workspace.save(&file, b"mine, edited", true).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine, edited");
+        /* A save of its own is not somebody else's change. */
+        workspace.save(&file, b"mine, again", false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine, again");
+    }
+
+    /// Replaced by another file under the same name and length: which file it
+    /// is gives it away.
+    #[test]
+    fn a_document_replaced_since_it_was_read_is_refused_too() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("replaced")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        let other = root.join("theirs.md");
+        fs::write(&other, "them").unwrap();
+        fs::rename(&other, &file).unwrap();
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+    }
+
+    /// A file nobody read here, a new one included, is saved as it always was.
+    #[test]
+    fn a_file_not_read_here_is_saved_as_before() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("unread")).unwrap();
+        fs::write(root.join("old.md"), "x").unwrap();
+        workspace.save(root.join("old.md"), b"y", false).unwrap();
+        workspace.save(root.join("new.md"), b"z", false).unwrap();
+        assert_eq!(fs::read_to_string(root.join("new.md")).unwrap(), "z");
+    }
+
+    /// The person said overwrite, over a file somebody put in the document's
+    /// place with a security of their own. The new version is a new file in
+    /// the folder, with the folder's security — not the planted one, which
+    /// could have opened the person's content to whoever planted it.
+    #[cfg(windows)]
+    #[test]
+    fn overwriting_a_replaced_document_does_not_take_its_security() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("planted-acl")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        let me = std::env::var("USERNAME").unwrap();
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
+        assert!(
+            !icacls(&file, &[]).contains("(I)"),
+            "the test could not plant it"
+        );
+
+        workspace.save(&file, b"mine", true).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+        let after = icacls(&file, &[]);
+        assert!(
+            after.contains("(I)"),
+            "the planted security was carried over: {after}"
+        );
+    }
+
+    /// The same on Unix, with the mode.
+    #[cfg(unix)]
+    #[test]
+    fn overwriting_a_replaced_document_does_not_take_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("planted-mode")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o606)).unwrap();
+
+        workspace.save(&file, b"mine", true).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_ne!(mode, 0o606, "the planted mode was carried over");
     }
 
     /// The program's own folder stays shut with its parent open — read,

@@ -363,9 +363,27 @@ fn read_file(state: State<'_, AppState>, path: String) -> Result<Response, VfsEr
     Ok(Response::new(bytes))
 }
 
+/// A document read to be edited: remembered as it was, so that its save can
+/// tell whether somebody else changed it meanwhile (`Workspace::save`).
 #[tauri::command]
-fn write_file(state: State<'_, AppState>, path: String, contents: Vec<u8>) -> Result<(), VfsError> {
-    with_workspace(&state, |workspace| workspace.write(&path, &contents))
+fn read_document(state: State<'_, AppState>, path: String) -> Result<Response, VfsError> {
+    let bytes = with_workspace(&state, |workspace| workspace.read_document(&path))?;
+    Ok(Response::new(bytes))
+}
+
+/// A save. Refused with `VfsError::Changed` when the file is not what it was
+/// when it was read to be edited, until the page passes `overwrite` — which
+/// it does only after the person said so, for that one save.
+#[tauri::command]
+fn write_file(
+    state: State<'_, AppState>,
+    path: String,
+    contents: Vec<u8>,
+    overwrite: Option<bool>,
+) -> Result<(), VfsError> {
+    with_workspace(&state, |workspace| {
+        workspace.save(&path, &contents, overwrite.unwrap_or(false))
+    })
 }
 
 /* ── images ──────────────────────────────────────────────────────────── */
@@ -392,7 +410,8 @@ impl serde::Serialize for ImageCommandError {
 /// one of the formats that can be written back at all.
 #[tauri::command]
 fn image_info(state: State<'_, AppState>, path: String) -> Result<ImageInfo, ImageCommandError> {
-    let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
+    /* The image editor's reading of its document, so remembered like one. */
+    let bytes = with_workspace(&state, |workspace| workspace.read_document(&path))?;
     Ok(ul_image::info(&bytes)?)
 }
 
@@ -409,10 +428,13 @@ fn image_write(
     source: String,
     target: String,
     ops: ImageOps,
+    overwrite: Option<bool>,
 ) -> Result<Written, ImageCommandError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&source))?;
     let (out, written) = ul_image::apply(&bytes, &ops)?;
-    with_workspace(&state, |workspace| workspace.write(&target, &out))?;
+    with_workspace(&state, |workspace| {
+        workspace.save(&target, &out, overwrite.unwrap_or(false))
+    })?;
     Ok(written)
 }
 
@@ -1372,6 +1394,7 @@ pub fn run() {
             stat,
             detect_format,
             read_file,
+            read_document,
             write_file,
             image_info,
             image_write,
@@ -1495,6 +1518,17 @@ fn own_origin(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{paths_from, stays_in_app, within_limit, LONGEST_REPORT};
+
+    /// A save refused over a changed file reaches the page with a code in
+    /// front, which the shell knows it by; the words are for people.
+    #[test]
+    fn a_changed_file_reaches_the_page_as_a_code() {
+        use ul_core::vfs::{VfsError, CHANGED_OUTSIDE};
+        let said = serde_json::to_value(VfsError::Changed(r"C:\a\b.md".into())).unwrap();
+        assert_eq!(said, format!(r"{CHANGED_OUTSIDE}C:\a\b.md"));
+        let said = serde_json::to_value(VfsError::NoWorkspace).unwrap();
+        assert!(!said.as_str().unwrap().starts_with(CHANGED_OUTSIDE));
+    }
 
     fn url(text: &str) -> tauri::Url {
         tauri::Url::parse(text).unwrap()
