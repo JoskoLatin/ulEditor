@@ -86,7 +86,7 @@ shell.registry.register(
       id: 'org.uleditor.markdown',
       displayName: 'Markdown editor',
       matches: { extensions: ['md', 'markdown', 'mdx'], mimeTypes: ['text/markdown'] },
-      capabilities: ['view', 'edit', 'search', 'export', 'read'],
+      capabilities: ['view', 'edit', 'search', 'read'],
       priority: 30,
     },
     () => import('@uleditor/editor-markdown'),

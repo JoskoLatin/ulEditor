@@ -38,7 +38,15 @@ const SOURCE = [
 /* ── the format list ─────────────────────────────────────────────────── */
 
 check('four formats are offered', TEXT_FORMATS.length === 4, TEXT_FORMATS.map((f) => f.id).join(', '));
-check('an unknown format falls back to text', formatOf('does-not-exist').id === 'txt');
+{
+  let refused = false;
+  try {
+    formatOf('does-not-exist');
+  } catch {
+    refused = true;
+  }
+  check('an unknown format is refused, not written as plain text under its name', refused);
+}
 
 /* ── plain text ──────────────────────────────────────────────────────── */
 
@@ -58,8 +66,13 @@ check('an unknown format falls back to text', formatOf('does-not-exist').id === 
 /* ── DOCX ────────────────────────────────────────────────────────────── */
 
 {
-  const { bytes } = await exportText(SOURCE, 'docx', 'test');
+  const { bytes, lost } = await exportText(SOURCE, 'docx', 'test');
   const files = unzipSync(bytes);
+  check('plain text to docx reports no loss', lost.length === 0, lost.join(' | '));
+
+  /* Markdown's marks are written as characters, not as Word styles: said. */
+  const marked = await exportText(['# Naslov', '', 'Tekst s **naglaskom** i', '- popisom'].join('\n'), 'docx', 'md');
+  check('markdown to docx says its formatting is written as plain characters', marked.lost.length === 1 && marked.lost[0].includes('Markdown'), marked.lost.join(' | '));
 
   check(
     'the docx has its mandatory parts',

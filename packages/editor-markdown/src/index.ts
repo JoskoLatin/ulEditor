@@ -420,6 +420,11 @@ class MarkdownEditor implements EditorInstance {
   }
 
   async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
+    /* Markdown is saved as Markdown. Asked for another format, it says so
+       rather than write Markdown under that format's name. */
+    if (target?.format && !['md', 'markdown'].includes(target.format)) {
+      throw new Error(t('The Markdown editor saves Markdown only.'));
+    }
     const uri = target?.uri ?? this.doc.uri;
     const text = this.#text();
     await this.host.fs.writeText(uri, text, options);
@@ -534,7 +539,8 @@ export const markdownEditorProvider: EditorProvider = {
     extensions: ['md', 'markdown', 'mdx'],
     mimeTypes: ['text/markdown'],
   },
-  capabilities: ['view', 'edit', 'search', 'export', 'read'],
+  /* No 'export': a save to another format is refused (see `save`). */
+  capabilities: ['view', 'edit', 'search', 'read'],
   // Higher than the code editor, so a .md does not end up as plain text.
   priority: 30,
 

@@ -41,8 +41,23 @@ export const TEXT_FORMATS: TextFormatDescriptor[] = [
   { id: 'pdf', extension: 'pdf', label: 'PDF' },
 ];
 
+/**
+ * A format by its id. An id that is not one of them is an error, not plain
+ * text: a file named `.docx` holding plain text would be the export lying
+ * about what it wrote.
+ */
 export function formatOf(id: string): TextFormatDescriptor {
-  return TEXT_FORMATS.find((f) => f.id === id) ?? TEXT_FORMATS[0]!;
+  const found = TEXT_FORMATS.find((f) => f.id === id);
+  if (!found) throw new Error(`Unknown export format: ${id}`);
+  return found;
+}
+
+/**
+ * Whether a text is written in Markdown — a heading, emphasis, a list, code
+ * or a link — whose marks a Word document would carry as plain characters.
+ */
+function looksLikeMarkdown(text: string): boolean {
+  return /^#{1,6}\s|\*\*[^*\n]+\*\*|__[^_\n]+__|^\s*[-*+]\s|^\s*\d+\.\s|`[^`\n]+`|\[[^\]\n]+\]\([^)\n]+\)/m.test(text);
 }
 
 /* ── DOCX ────────────────────────────────────────────────────────────── */
@@ -281,7 +296,12 @@ export async function exportText(
       return { bytes: strToU8(text), lost: [] };
 
     case 'docx':
-      return { bytes: toDocx(text), lost: [] };
+      return {
+        bytes: toDocx(text),
+        lost: looksLikeMarkdown(text)
+          ? ['Markdown formatting — headings, emphasis, lists — is written as plain characters, not as Word styles.']
+          : [],
+      };
 
     case 'pdf': {
       if (options.pdfFont) {
