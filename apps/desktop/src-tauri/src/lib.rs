@@ -402,7 +402,13 @@ enum ImageCommandError {
 
 impl serde::Serialize for ImageCommandError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
+        match self {
+            /* The workspace's own, code and all: flattened to its words, a
+            save refused over a changed file reached the image editor as a
+            failure, and the person was never asked whether to write over it. */
+            Self::Vfs(err) => err.serialize(serializer),
+            Self::Image(err) => serializer.serialize_str(&err.to_string()),
+        }
     }
 }
 
@@ -1528,6 +1534,12 @@ mod tests {
         assert_eq!(said, format!(r"{CHANGED_OUTSIDE}C:\a\b.md"));
         let said = serde_json::to_value(VfsError::NoWorkspace).unwrap();
         assert!(!said.as_str().unwrap().starts_with(CHANGED_OUTSIDE));
+        /* And the same through the image commands, which wrap it. */
+        let said = serde_json::to_value(super::ImageCommandError::Vfs(VfsError::Changed(
+            r"C:\a\b.png".into(),
+        )))
+        .unwrap();
+        assert_eq!(said, format!(r"{CHANGED_OUTSIDE}C:\a\b.png"));
     }
 
     fn url(text: &str) -> tauri::Url {
