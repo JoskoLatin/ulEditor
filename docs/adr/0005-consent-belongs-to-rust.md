@@ -1,7 +1,7 @@
 # ADR 0005 — Consent to a folder or file is given in Rust, never by the page
 
-**Status:** proposed 2026-10-06. Waits for Čovik on the three questions at the
-end. Nothing here is built yet.
+**Status:** accepted 2026-10-06 — Čovik answered yes to all three questions at
+the end, as recommended. Being built (card 470).
 **Date:** 2026-10-06
 **Context:** card 470. Decided by the architect on its own model. The full
 reasoning is summarised here.
@@ -103,7 +103,7 @@ in it and is tested with `cargo test`.
    and every one must be refused. It is proved by a mutation.
 9. An independent review.
 
-## Open: Čovik's three answers
+## Čovik's three answers (2026-10-06: yes to each)
 
 1. **Remembered consents are a lasting capability of the installation.** A
    folder opened once stays open to the program across restarts, as the web
