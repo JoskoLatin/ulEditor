@@ -75,9 +75,10 @@ const FIXED = [
  *
  * The question is a Windows task dialog: class `#32770`, owned by the
  * application's process. rfd numbers its custom buttons 1004, 1008 and 1001
- * (yes, no, cancel), which are "Not now", "Trust and start" and "Never for this
- * folder" here, and `TDM_CLICK_BUTTON` (WM_USER + 102) presses one. Waited for,
- * up to `seconds`, since it comes up on a thread of its own.
+ * (yes, no, cancel), which are "Not now", "Trust and start" and "Cancel" here
+ * — the last the one Escape comes back as — and `TDM_CLICK_BUTTON`
+ * (WM_USER + 102) presses one. Waited for, up to `seconds`, since it comes up
+ * on a thread of its own.
  */
 const NOT_NOW = 1004;
 const TRUST = 1008;

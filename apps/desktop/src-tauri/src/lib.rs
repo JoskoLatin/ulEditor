@@ -577,13 +577,22 @@ async fn may_start(
 ) -> bool {
     use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
+    let verdict = |lsp: &LspState| {
+        lsp.trust
+            .lock()
+            .expect("the trust list is poisoned")
+            .verdict(project)
+    };
+    /* Answered already: no waiting behind a question about another project. */
+    match verdict(lsp) {
+        trust::Verdict::Trusted => return true,
+        trust::Verdict::Declined => return false,
+        trust::Verdict::Ask => {}
+    }
+    /* One question at a time, and asked again once it is this one's turn: the
+    one before may have been about this same project. */
     let _asking = lsp.asking.lock().await;
-    let verdict = lsp
-        .trust
-        .lock()
-        .expect("the trust list is poisoned")
-        .verdict(project);
-    match verdict {
+    match verdict(lsp) {
         trust::Verdict::Trusted => return true,
         trust::Verdict::Declined => return false,
         trust::Verdict::Ask => {}
@@ -591,19 +600,25 @@ async fn may_start(
 
     let asked = trust::question(interface, language, project);
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
+    let mut dialog = app
+        .dialog()
         .message(asked.body.clone())
         .title(asked.title.clone())
         .kind(MessageDialogKind::Warning)
-        /* The safe answer first, where Enter lands — see `trust::Question`. */
+        /* The safe answers where Enter and Escape land — see `trust::Question`. */
         .buttons(MessageDialogButtons::YesNoCancelCustom(
             asked.not_now.clone(),
             asked.trust.clone(),
-            asked.never.clone(),
-        ))
-        .show_with_result(move |pressed| {
-            let _ = tx.send(pressed);
-        });
+            asked.cancel.clone(),
+        ));
+    /* Owned by the window, so it cannot end up behind it while every file
+    that opens waits for it. */
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show_with_result(move |pressed| {
+        let _ = tx.send(pressed);
+    });
     /* A dialog that went away without an answer is a no. */
     let pressed = match rx.await {
         Ok(MessageDialogResult::Custom(label)) => Some(label),
@@ -616,10 +631,6 @@ async fn may_start(
         trust::Answer::Trust => {
             let _ = trust.trust(project);
             true
-        }
-        trust::Answer::Never => {
-            let _ = trust.refuse(project);
-            false
         }
         trust::Answer::NotNow => {
             trust.decline(project);
@@ -1227,8 +1238,27 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            /* Where a yes to a project's code is kept (trust.rs).
+            `UL_DATA_DIR` is for the desktop checks, in a debug build only:
+            they start the program on a scratch profile and must not leave
+            their projects in the person's own answers. */
+            let answers = std::env::var_os("UL_DATA_DIR")
+                .filter(|_| cfg!(debug_assertions))
+                .map(std::path::PathBuf::from)
+                .or_else(|| app.path().app_config_dir().ok());
+
+            /* The program's own folders are never the page's, whatever it
+            opens above them: a page that could write the answers could trust
+            a project for the person (`Workspace::protect`). */
+            let mut workspace = Workspace::new();
+            for own in [answers.clone(), app.path().app_data_dir().ok()]
+                .into_iter()
+                .flatten()
+            {
+                workspace.protect(own);
+            }
             app.manage(AppState {
-                workspace: Mutex::new(Workspace::new()),
+                workspace: Mutex::new(workspace),
             });
             app.manage(LaunchPaths(Mutex::new(paths_from(std::env::args()))));
 
@@ -1250,13 +1280,7 @@ pub fn run() {
             /* Where a yes is kept. A folder that cannot be made keeps it for
             this session only: the person is asked again next time, which is
             the safe way for this to fail. */
-            /* `UL_DATA_DIR` is for the desktop checks, which start the program
-            on a scratch profile and must not leave their test projects in the
-            person's own answers. Whoever sets a process's environment already
-            chooses what it opens, so it grants nothing new. */
-            let trusted = std::env::var_os("UL_DATA_DIR")
-                .map(std::path::PathBuf::from)
-                .or_else(|| app.path().app_config_dir().ok())
+            let trusted = answers
                 .filter(|dir| private_folder(dir).is_ok())
                 .map(|dir| trust::ProjectTrust::load(dir.join("trusted-projects.json")))
                 .unwrap_or_default();

@@ -124,11 +124,25 @@ pub(crate) fn is_scratch(name: &str) -> bool {
 pub struct Workspace {
     roots: Vec<PathBuf>,
     granted: Vec<PathBuf>,
+    /// Folders nothing is let into, whatever was opened above them.
+    protected: Vec<PathBuf>,
 }
 
 impl Workspace {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A folder nothing in it is let through, even when a folder above it is
+    /// open: the program's own, where it keeps what the page must not be able
+    /// to write — the projects a language server may run in, first of all. A
+    /// page that opened its user's home folder could otherwise trust a project
+    /// for them by writing a file.
+    pub fn protect(&mut self, dir: impl AsRef<Path>) {
+        let dir = canonical_prefix(&normalize(dir.as_ref()));
+        if !self.protected.contains(&dir) {
+            self.protected.push(dir);
+        }
     }
 
     /// Folders the user explicitly opened. This is what the explorer shows.
@@ -235,11 +249,12 @@ impl Workspace {
         // A symlink can lead outside; the real path is what gets checked.
         let effective = canonical_prefix(&normalized);
 
-        let allowed = self
-            .roots
-            .iter()
-            .chain(self.granted.iter())
-            .any(|root| effective.starts_with(root));
+        let allowed = !self.protected.iter().any(|dir| effective.starts_with(dir))
+            && self
+                .roots
+                .iter()
+                .chain(self.granted.iter())
+                .any(|root| effective.starts_with(root));
 
         if allowed {
             Ok(effective)
@@ -1491,6 +1506,36 @@ mod tests {
             fs::read(zone_stream(&file)).unwrap(),
             b"[ZoneTransfer]\r\nZoneId=3\r\n"
         );
+    }
+
+    /// The program's own folder stays shut with its parent open — read,
+    /// written and listed — and so does a root opened on it directly.
+    #[test]
+    fn a_protected_folder_is_shut_whatever_is_open_above_it() {
+        let base = scratch("protected");
+        let own = base.join("org.uleditor.app");
+        fs::create_dir_all(&own).unwrap();
+        fs::write(own.join("trusted-projects.json"), "{}").unwrap();
+        fs::write(base.join("other.txt"), "x").unwrap();
+
+        let mut workspace = Workspace::new();
+        workspace.protect(&own);
+        let root = workspace.add_root(&base).unwrap();
+        let answers = root.join("org.uleditor.app").join("trusted-projects.json");
+
+        assert!(workspace.read(&answers).is_err());
+        assert!(workspace
+            .write(&answers, b"{\"trusted\":[\"/evil\"]}")
+            .is_err());
+        assert!(workspace.read_dir(root.join("org.uleditor.app")).is_err());
+        assert_eq!(
+            fs::read_to_string(own.join("trusted-projects.json")).unwrap(),
+            "{}"
+        );
+        assert!(workspace.read(root.join("other.txt")).is_ok());
+
+        let _ = workspace.add_root(&own);
+        assert!(workspace.read(&answers).is_err());
     }
 
     /// One link to something that is gone, and the rest of the folder is still

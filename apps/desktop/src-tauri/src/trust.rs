@@ -10,10 +10,12 @@
 //!
 //! So the first time a server would start in a project, the person is asked,
 //! in a dialog the operating system draws — which the page can neither answer
-//! nor word — and the answer is kept here, on the Rust side, in a file the page
-//! has no command to write. "Trust" and "never" are kept for good; "not now"
-//! until the program closes, so a session restored with six files of one
-//! project asks once rather than six times.
+//! nor word — and a yes is kept here, on the Rust side, in a folder the sandbox
+//! never lets the page read or write (`Workspace::protect`). Anything else is
+//! a no until the program closes, so a session restored with six files of one
+//! project asks once rather than six times — and asks again next time: a no
+//! that lasted would come from an Escape or a closed window as often as from a
+//! decision, and there would be nothing to take it back with.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -33,8 +35,6 @@ pub(crate) enum Verdict {
 struct Kept {
     #[serde(default)]
     trusted: Vec<PathBuf>,
-    #[serde(default)]
-    refused: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -64,24 +64,15 @@ impl ProjectTrust {
 
     /// A yes is for the very project it was given for, and nothing below it:
     /// the question named one folder, and a repository cloned into it next
-    /// month is not what was looked at. A "never" covers what is below too —
-    /// the safe way to be broad.
+    /// month is not what was looked at.
     pub(crate) fn verdict(&self, project: &Path) -> Verdict {
         if self.declined.contains(project) {
-            return Verdict::Declined;
+            Verdict::Declined
+        } else if self.kept.trusted.iter().any(|folder| folder == project) {
+            Verdict::Trusted
+        } else {
+            Verdict::Ask
         }
-        if self.kept.trusted.iter().any(|folder| folder == project) {
-            return Verdict::Trusted;
-        }
-        if self
-            .kept
-            .refused
-            .iter()
-            .any(|folder| project.starts_with(folder))
-        {
-            return Verdict::Declined;
-        }
-        Verdict::Ask
     }
 
     /// Remembers a yes, for good. Kept for the session even when it cannot be
@@ -89,23 +80,13 @@ impl ProjectTrust {
     /// presented as the person's.
     pub(crate) fn trust(&mut self, project: &Path) -> std::io::Result<()> {
         self.declined.remove(project);
-        self.kept.refused.retain(|folder| folder != project);
         if !self.kept.trusted.iter().any(|folder| folder == project) {
             self.kept.trusted.push(project.to_path_buf());
         }
         self.save()
     }
 
-    /// Remembers a "never", for good.
-    pub(crate) fn refuse(&mut self, project: &Path) -> std::io::Result<()> {
-        self.kept.trusted.retain(|folder| folder != project);
-        if !self.kept.refused.iter().any(|folder| folder == project) {
-            self.kept.refused.push(project.to_path_buf());
-        }
-        self.save()
-    }
-
-    /// Remembers a "not now" until the program closes.
+    /// Remembers a no until the program closes.
     pub(crate) fn decline(&mut self, project: &Path) {
         self.declined.insert(project.to_path_buf());
     }
@@ -128,17 +109,18 @@ impl ProjectTrust {
 /// page's catalogue so that the page chooses only which of these two it is in,
 /// never what the dialog says.
 ///
-/// Three buttons, and the first is the safe one: a dialog that comes up while
-/// somebody is typing takes the next Enter as the first button, and Windows
-/// gives no other way to choose the default. Escape and closing the window are
-/// never a yes either — on Linux they come back as the third button, so that
-/// one is a no as well.
+/// Three buttons, and only the middle one is a yes. The first is where Enter
+/// lands — a dialog that comes up while somebody is typing takes their next
+/// Enter, and Windows gives no other way to choose the default — and the third
+/// is what Escape and closing the window come back as, on every platform
+/// (tauri-plugin-dialog turns a cancel into the third button's label). Two
+/// buttons would leave one of those two on the yes.
 pub(crate) struct Question {
     pub(crate) title: String,
     pub(crate) body: String,
     pub(crate) not_now: String,
     pub(crate) trust: String,
-    pub(crate) never: String,
+    pub(crate) cancel: String,
 }
 
 pub(crate) fn question(interface: Option<&str>, language: &str, project: &Path) -> Question {
@@ -156,14 +138,14 @@ pub(crate) fn question(interface: Option<&str>, language: &str, project: &Path) 
             body: format!(
                 "Za provjeru koda ({language}) ulEditor pokreće jezični poslužitelj u mapi\n\n\
                  {project}\n\n\
-                 Poslužitelj izvršava skripte za izgradnju, makroe i postavke ovog projekta, \
-                 s tvojim ovlastima. Dopusti to samo za projekt kojem vjeruješ — svoj ili od \
-                 nekoga kome vjeruješ.\n\n\
-                 „Vjerujem” i „Nikad” pamte se za ovu mapu."
+                 Poslužitelj izvršava skripte za izgradnju, makroe i postavke ovog projekta \
+                 — za Rust i Cargo workspacea u kojem je — s tvojim ovlastima. Dopusti to \
+                 samo za projekt kojem vjeruješ: svoj ili od nekoga kome vjeruješ.\n\n\
+                 „Vjerujem” se pamti za ovu mapu."
             ),
             not_now: "Ne sada".into(),
             trust: "Vjerujem, pokreni".into(),
-            never: "Nikad za ovu mapu".into(),
+            cancel: "Odustani".into(),
         }
     } else {
         Question {
@@ -171,14 +153,15 @@ pub(crate) fn question(interface: Option<&str>, language: &str, project: &Path) 
             body: format!(
                 "To check {language} code, ulEditor starts a language server in\n\n\
                  {project}\n\n\
-                 The server runs this project's own build scripts, macros and settings, \
-                 as you. Allow it only for a project you trust — your own, or one from \
-                 somebody you trust.\n\n\
-                 \"Trust\" and \"Never\" are remembered for this folder."
+                 The server runs this project's own build scripts, macros and settings \
+                 — for Rust, those of the Cargo workspace it is in too — as you. Allow \
+                 it only for a project you trust: your own, or one from somebody you \
+                 trust.\n\n\
+                 A \"Trust\" is remembered for this folder."
             ),
             not_now: "Not now".into(),
             trust: "Trust and start".into(),
-            never: "Never for this folder".into(),
+            cancel: "Cancel".into(),
         }
     }
 }
@@ -187,7 +170,6 @@ pub(crate) fn question(interface: Option<&str>, language: &str, project: &Path) 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
     Trust,
-    Never,
     NotNow,
 }
 
@@ -197,7 +179,6 @@ impl Question {
     pub(crate) fn answer(&self, pressed: Option<&str>) -> Answer {
         match pressed {
             Some(label) if label == self.trust => Answer::Trust,
-            Some(label) if label == self.never => Answer::Never,
             _ => Answer::NotNow,
         }
     }
@@ -246,11 +227,14 @@ fn readable(path: &Path) -> String {
     shown
 }
 
+/// Not `%`: GTK takes the dialog's text as a printf format (rfd passes it to
+/// `gtk_message_dialog_format_secondary_text` as the format itself), so a
+/// folder called `%s%n` would read and write memory before a button was
+/// drawn. Not `&` either, which some toolkits read as a mnemonic.
 fn shown_as_it_is(c: char) -> bool {
     /* Letters that are drawn as nothing: the Hangul fillers. */
     const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
-    (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
-        || " -_.,()[]{}'!@#$%&+=~;:/\\^`".contains(c)
+    (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c)) || " -_.,()[]{}'!@#$+=~;:/\\^`".contains(c)
 }
 
 #[cfg(test)]
@@ -288,11 +272,10 @@ mod tests {
     }
 
     #[test]
-    fn a_not_now_lasts_the_session_and_a_never_lasts() {
+    fn a_no_lasts_the_session_and_no_longer() {
         let file = scratch("no").join("trusted.json");
         let mut trust = ProjectTrust::load(file.clone());
         trust.decline(Path::new("/home/a/download"));
-        trust.refuse(Path::new("/home/a/other")).unwrap();
         assert_eq!(
             trust.verdict(Path::new("/home/a/download")),
             Verdict::Declined
@@ -300,26 +283,6 @@ mod tests {
 
         let again = ProjectTrust::load(file);
         assert_eq!(again.verdict(Path::new("/home/a/download")), Verdict::Ask);
-        assert_eq!(
-            again.verdict(Path::new("/home/a/other/sub")),
-            Verdict::Declined
-        );
-    }
-
-    #[test]
-    fn a_never_covers_what_is_below_it_but_not_a_project_trusted_by_name() {
-        let mut trust = ProjectTrust::load(scratch("nested").join("trusted.json"));
-        trust.refuse(Path::new("/home/a")).unwrap();
-        trust.trust(Path::new("/home/a/mine")).unwrap();
-        assert_eq!(trust.verdict(Path::new("/home/a/mine")), Verdict::Trusted);
-        assert_eq!(
-            trust.verdict(Path::new("/home/a/mine/crate")),
-            Verdict::Declined
-        );
-        assert_eq!(
-            trust.verdict(Path::new("/home/a/theirs")),
-            Verdict::Declined
-        );
     }
 
     #[test]
@@ -334,8 +297,7 @@ mod tests {
     fn only_the_trust_button_is_a_yes() {
         let asked = question(Some("en"), "rust", Path::new("/home/a/repo"));
         assert_eq!(asked.answer(Some("Trust and start")), Answer::Trust);
-        assert_eq!(asked.answer(Some("Never for this folder")), Answer::Never);
-        for other in [Some("Not now"), Some("OK"), Some(""), None] {
+        for other in [Some("Not now"), Some("Cancel"), Some("OK"), Some(""), None] {
             assert_eq!(asked.answer(other), Answer::NotNow, "{other:?}");
         }
     }
@@ -371,6 +333,12 @@ mod tests {
         let asked = question(Some("en"), "rust", Path::new(&long));
         assert!(asked.body.chars().count() < 1000, "{}", asked.body.len());
         assert!(asked.body.contains('…'));
+
+        /* A printf format for GTK, and a mnemonic for some toolkits. */
+        let asked = question(Some("en"), "rust", Path::new("/tmp/100%/a%s%s%n&b"));
+        assert!(!asked.body.contains('%'), "{}", asked.body);
+        assert!(!asked.body.contains('&'), "{}", asked.body);
+        assert!(asked.body.contains("/tmp/100\\u{0025}/a\\u{0025}s"));
 
         /* While a name in any script is shown as it is. */
         let asked = question(
