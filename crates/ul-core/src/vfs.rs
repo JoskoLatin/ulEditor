@@ -156,6 +156,11 @@ struct Fingerprint {
     id: Option<windows::Identity>,
     #[cfg(unix)]
     id: (u64, u64),
+    /// When it was made. With the ID, what tells a file from one made in its
+    /// place: a file system that frees an inode gives it to the next file made,
+    /// so a document deleted and recreated by somebody else can have its inode
+    /// — measured on the Linux runner, every time — but not its birth.
+    created: Option<std::time::SystemTime>,
     modified: Option<std::time::SystemTime>,
     len: u64,
 }
@@ -171,6 +176,7 @@ impl Fingerprint {
                 use std::os::unix::fs::MetadataExt;
                 (meta.dev(), meta.ino())
             },
+            created: meta.created().ok(),
             modified: meta.modified().ok(),
             len: meta.len(),
         })
@@ -182,21 +188,24 @@ impl Fingerprint {
             .and_then(|file| Self::of(&file).ok())
     }
 
-    /// Whether `other` is the same file, as far as can be told. Where an ID
-    /// is not known, it is not: what is not known to be the same file does
-    /// not get to hand its security to the next version.
+    /// Whether `other` is the same file, as far as can be told: the same ID
+    /// and the same birth. Where either is not known, it is not — what is not
+    /// known to be the same file does not get to hand its security to the
+    /// next version.
     fn same_file(&self, other: &Self) -> bool {
+        let born_together = matches!((self.created, other.created), (Some(a), Some(b)) if a == b);
         #[cfg(windows)]
         {
-            matches!((&self.id, &other.id), (Some(a), Some(b)) if a == b && *a != windows::Identity::Unknown)
+            born_together
+                && matches!((&self.id, &other.id), (Some(a), Some(b)) if a == b && *a != windows::Identity::Unknown)
         }
         #[cfg(unix)]
         {
-            self.id == other.id
+            born_together && self.id == other.id
         }
         #[cfg(not(any(windows, unix)))]
         {
-            let _ = other;
+            let _ = (other, born_together);
             false
         }
     }
@@ -1724,20 +1733,37 @@ mod tests {
 
         fs::remove_file(&file).unwrap();
         fs::write(&file, "planted").unwrap();
-        let me = std::env::var("USERNAME").unwrap();
-        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
-        assert!(
-            !icacls(&file, &[]).contains("(I)"),
-            "the test could not plant it"
-        );
+        /* An entry for the Guests group (S-1-5-32-546, "BG" in SDDL), which
+        nothing else in the folder has: if it is on the new version, the
+        planted security was carried over. Read as SDDL, so neither the
+        language of the system nor the runner's folders decide what is seen. */
+        const GUESTS: &str = ";;;BG)";
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+        assert!(sddl(&file).contains(GUESTS), "the test could not plant it");
 
         workspace.save(&file, b"mine", true).unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
-        let after = icacls(&file, &[]);
+        let after = sddl(&file);
         assert!(
-            after.contains("(I)"),
+            !after.contains(GUESTS),
             "the planted security was carried over: {after}"
         );
+    }
+
+    /// A file's DACL as SDDL, through `icacls /save`.
+    #[cfg(windows)]
+    fn sddl(path: &Path) -> String {
+        let out = path.with_extension("acl");
+        let _ = fs::remove_file(&out);
+        icacls(path, &["/save", &display(&out)]);
+        let bytes = fs::read(&out).unwrap();
+        let _ = fs::remove_file(&out);
+        /* UTF-16, as icacls writes it. */
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
     }
 
     /// The same on Unix, with the mode.
