@@ -145,6 +145,12 @@ impl Workspace {
         }
     }
 
+    /// The folders `protect` shut, for the walks that do not go through
+    /// `resolve` file by file — search and Ctrl+P.
+    pub(crate) fn protected(&self) -> &[PathBuf] {
+        &self.protected
+    }
+
     /// Folders the user explicitly opened. This is what the explorer shows.
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots

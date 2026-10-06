@@ -258,7 +258,13 @@ impl Workspace {
             .min(MAX_READERS);
         let block = readers * PER_READER;
 
+        let shut = self.protected();
         for root in self.roots() {
+            /* A root opened on a shut folder is passed over, not an error: the
+            rest of the workspace is still there to search. */
+            if is_shut(root, shut) {
+                continue;
+            }
             // The root was already checked when added, but `resolve` is the only
             // place allowed to confirm a path is inside the sandbox.
             let start = self.resolve(root)?;
@@ -280,7 +286,7 @@ impl Workspace {
              *   pauses at every block boundary for the reading to catch up, and
              *   either side can end it.
              */
-            each_block(&start, block, |paths| {
+            each_block(&start, block, shut, |paths| {
                 let findings = scan_block(paths, &needle, query, readers, &start);
 
                 for finding in findings {
@@ -314,9 +320,13 @@ impl Workspace {
     /// A list of every file in the workspace — for quick open by name.
     pub fn list_files(&self, limit: usize) -> Result<Vec<Stat>, VfsError> {
         let mut out = Vec::new();
+        let shut = self.protected();
         for root in self.roots() {
+            if is_shut(root, shut) {
+                continue;
+            }
             let start = self.resolve(root)?;
-            collect(&start, limit, &mut out, &start);
+            collect(&start, limit, &mut out, &start, shut);
         }
         Ok(out)
     }
@@ -348,7 +358,20 @@ struct Finding {
 ///
 /// `sink` returns `false` to stop — the search has what it asked for, and the
 /// rest of the tree is nobody's business.
-fn each_block(start: &Path, block: usize, mut sink: impl FnMut(&[PathBuf]) -> bool) {
+/// Whether a path is in a folder `Workspace::protect` shut. The walk checks
+/// it itself because it reads names and files without asking `resolve` for
+/// each one; the program's own folders would otherwise be searched whenever a
+/// folder above them was open.
+fn is_shut(path: &Path, shut: &[PathBuf]) -> bool {
+    shut.iter().any(|dir| path.starts_with(dir))
+}
+
+fn each_block(
+    start: &Path,
+    block: usize,
+    shut: &[PathBuf],
+    mut sink: impl FnMut(&[PathBuf]) -> bool,
+) {
     enum Item {
         File(PathBuf),
         Dir(PathBuf),
@@ -372,6 +395,9 @@ fn each_block(start: &Path, block: usize, mut sink: impl FnMut(&[PathBuf]) -> bo
                 /* Pushed in reverse, because a stack hands back what went on
                 last: that is what turns "sorted" into "walked in order". */
                 for (path, is_dir) in entries_of(&dir).into_iter().rev() {
+                    if is_shut(&path, shut) {
+                        continue;
+                    }
                     let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
                     else {
                         continue;
@@ -733,7 +759,7 @@ fn listed(path: &Path) -> Option<Stat> {
         .map(|meta| stat_from(path, &meta))
 }
 
-fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path) {
+fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path, shut: &[PathBuf]) {
     if out.len() >= limit {
         return;
     }
@@ -748,12 +774,15 @@ fn collect(dir: &Path, limit: usize, out: &mut Vec<Stat>, root: &Path) {
         if out.len() >= limit {
             return;
         }
+        if is_shut(&path, shut) {
+            continue;
+        }
         let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
             continue;
         };
         if is_dir {
             if !crate::vfs::is_noise(&name) {
-                collect(&path, limit, out, root);
+                collect(&path, limit, out, root, shut);
             }
         } else if let Some(stat) = listed(&path) {
             out.push(stat);
@@ -1185,6 +1214,33 @@ mod tests {
     }
 
     #[test]
+    fn a_shut_folder_is_neither_searched_nor_listed() {
+        /* The program's own folder under a folder that is open: its file is
+        not searched, its names are not listed, and a root opened on it is
+        passed over without failing the rest. */
+        let base = fs::canonicalize(temp_root("shut")).unwrap();
+        write(&base, "open.txt", "the needle is here\n");
+        write(
+            &base,
+            "org.uleditor.app/trusted-projects.json",
+            "the needle is here too\n",
+        );
+
+        let mut ws = Workspace::new();
+        ws.protect(base.join("org.uleditor.app"));
+        ws.add_root(&base).unwrap();
+        let _ = ws.add_root(base.join("org.uleditor.app"));
+
+        let found = ws.search(&query("needle")).unwrap();
+        let files: Vec<&str> = found.hits.iter().map(|hit| hit.name.as_str()).collect();
+        assert_eq!(files, ["open.txt"]);
+
+        let listed = ws.list_files(100).unwrap();
+        let names: Vec<&str> = listed.iter().map(|stat| stat.name.as_str()).collect();
+        assert_eq!(names, ["open.txt"]);
+    }
+
+    #[test]
     fn a_file_swapped_for_a_hard_link_since_the_look_is_not_read() {
         /* The walk looked at `here.txt`; before it is read, it is a hard link
         to a file outside the root. Opened, it is still under its name inside,
@@ -1274,7 +1330,7 @@ mod tests {
         assert!(finding.document.is_none(), "offered from outside the root");
 
         let mut listed = Vec::new();
-        collect(&root.join("sub"), 100, &mut listed, &root);
+        collect(&root.join("sub"), 100, &mut listed, &root, &[]);
         let names: Vec<&str> = listed.iter().map(|s| s.name.as_str()).collect();
         assert!(names.is_empty(), "listed from outside the root: {names:?}");
     }

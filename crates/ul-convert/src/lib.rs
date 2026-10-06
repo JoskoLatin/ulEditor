@@ -266,10 +266,18 @@ pub fn file_url(path: &Path) -> String {
 /// and nothing else. Nothing is ever written beside the original — a program
 /// that leaves a PDF next to somebody's drawing without being asked is a
 /// program that litters.
+///
+/// `profile` is the LibreOffice user profile this run uses, and the caller
+/// keeps it somewhere nobody else can write: the profile is where macro
+/// security and every other setting of that LibreOffice live, so a profile
+/// somebody planted is a LibreOffice that runs their macros in the document.
+/// It is apart from `outdir` for that reason — the PDF is handed to the
+/// interface to open, the profile never is.
 pub fn to_pdf(
     backend: &Backend,
     source: &Path,
     outdir: &Path,
+    profile: &Path,
     timeout: Duration,
 ) -> Result<PathBuf, ConvertError> {
     if !source.is_file() {
@@ -279,12 +287,11 @@ pub fn to_pdf(
     }
     std::fs::create_dir_all(outdir)?;
 
-    let profile = outdir.join("profile");
     let expected = outdir.join(output_name(source));
     // A stale file from a previous run would be mistaken for this run's answer.
     let _ = std::fs::remove_file(&expected);
 
-    let child = soffice_command(backend, source, outdir, &profile)
+    let child = soffice_command(backend, source, outdir, profile)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -579,6 +586,7 @@ mod tests {
             &backend,
             Path::new("/definitely/not/a/drawing.cdr"),
             Path::new("/tmp/ul-convert-test"),
+            Path::new("/tmp/ul-convert-test-profile"),
             Duration::from_secs(1),
         )
         .unwrap_err();
@@ -628,7 +636,8 @@ showpage
         .unwrap();
 
         let out = dir.join("out");
-        let pdf = to_pdf(&backend, &source, &out, Duration::from_secs(180)).unwrap();
+        let profile = dir.join("profile");
+        let pdf = to_pdf(&backend, &source, &out, &profile, Duration::from_secs(180)).unwrap();
 
         assert_eq!(pdf.file_name().unwrap(), "proba.pdf");
         let bytes = std::fs::read(&pdf).unwrap();
@@ -646,7 +655,8 @@ showpage
 
         /* And the profile really was its own, which is the argument that stops
         this failing whenever somebody has LibreOffice open. */
-        assert!(out.join("profile").exists());
+        assert!(profile.exists());
+        assert!(!out.join("profile").exists());
     }
 
     #[test]

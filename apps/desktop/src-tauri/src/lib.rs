@@ -477,6 +477,18 @@ async fn convert_to_pdf(
     private_folder(&converted).map_err(ConvertError::from)?;
     let outdir = converted.join(digest_of(&path));
 
+    /* The LibreOffice profile apart from the PDF, in the program's own data
+    folder: the sandbox never lets the page in there (`Workspace::protect`),
+    and a profile somebody could write is a LibreOffice that runs their
+    macros. The cache, which the PDF is opened from, is not shut. */
+    let profiles = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| ConvertError::Start(err.to_string()))?
+        .join("libreoffice");
+    private_folder(&profiles).map_err(ConvertError::from)?;
+    let profile = profiles.join(digest_of(&path));
+
     /* Two minutes. LibreOffice takes a few seconds for a drawing and can take
     twenty on a cold start, since the first run of a fresh profile builds it;
     a minute would time out on exactly the machine where it was slowest. */
@@ -484,6 +496,7 @@ async fn convert_to_pdf(
         &backend,
         &source,
         &outdir,
+        &profile,
         std::time::Duration::from_secs(120),
     )?;
     Ok(output.to_string_lossy().into_owned())
@@ -600,7 +613,7 @@ async fn may_start(
 
     let asked = trust::question(interface, language, project);
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let mut dialog = app
+    let dialog = app
         .dialog()
         .message(asked.body.clone())
         .title(asked.title.clone())
@@ -612,10 +625,13 @@ async fn may_start(
             asked.cancel.clone(),
         ));
     /* Owned by the window, so it cannot end up behind it while every file
-    that opens waits for it. */
-    if let Some(window) = app.get_webview_window("main") {
-        dialog = dialog.parent(&window);
-    }
+    that opens waits for it. Desktop only: a phone has one window, and the
+    plugin has no parent to set there. */
+    #[cfg(desktop)]
+    let dialog = match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    };
     dialog.show_with_result(move |pressed| {
         let _ = tx.send(pressed);
     });
@@ -1251,9 +1267,20 @@ pub fn run() {
             opens above them: a page that could write the answers could trust
             a project for the person (`Workspace::protect`). */
             let mut workspace = Workspace::new();
-            for own in [answers.clone(), app.path().app_data_dir().ok()]
-                .into_iter()
-                .flatten()
+            for own in [
+                answers.clone(),
+                app.path().app_data_dir().ok(),
+                /* The WebView's own profile and the crash reports — by name,
+                not their folder: on Windows that folder is the cache too, and
+                a converted PDF is opened from the cache. */
+                app.path()
+                    .app_local_data_dir()
+                    .ok()
+                    .map(|dir| dir.join("EBWebView")),
+                crash::folder().map(std::path::Path::to_path_buf),
+            ]
+            .into_iter()
+            .flatten()
             {
                 workspace.protect(own);
             }
