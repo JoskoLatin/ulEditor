@@ -12,4 +12,5 @@ publish = false
 [dependencies]
 ul-formats = { path = "../ul-formats" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }

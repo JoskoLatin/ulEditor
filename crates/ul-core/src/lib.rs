@@ -6,6 +6,7 @@
 
 #![deny(clippy::all)]
 
+pub mod consent;
 pub mod library;
 pub mod search;
 pub mod vfs;
@@ -13,6 +14,7 @@ pub mod vfs;
 #[cfg(test)]
 mod testing;
 
+pub use consent::{Access, Consent, Consents, Kind};
 pub use library::{default_roots, LibraryEntry, LibraryScan};
 pub use search::{DocumentCandidate, SearchHit, SearchOutcome, SearchQuery};
 pub use ul_formats::{detect, detect_by_name, Detection, FormatId, PROBE_LEN};
