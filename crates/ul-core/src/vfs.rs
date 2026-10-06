@@ -1349,17 +1349,21 @@ fn mark_of(original: &Path) -> Option<Vec<u8>> {
 fn mark_of_open(path: &Path, file: &fs::File) -> Option<Vec<u8>> {
     let of_the_file = || windows::has_mark(file).then(|| INTERNET.to_vec());
     match open_mark(path) {
-        Ok(Some(stream)) => {
-            let ours = matches!(
-                (windows::identity(&stream), windows::identity(file)),
-                (Ok(a), Ok(b)) if a == b && a != windows::Identity::Unknown
-            );
-            if ours {
-                Some(read_mark(stream))
-            } else {
-                of_the_file()
+        Ok(Some(stream)) => match (windows::identity(&stream), windows::identity(file)) {
+            (Ok(a), Ok(b))
+                if a != windows::Identity::Unknown && b != windows::Identity::Unknown =>
+            {
+                if a == b {
+                    Some(read_mark(stream))
+                } else {
+                    of_the_file()
+                }
             }
-        }
+            /* A volume that cannot tell whose stream it is: there is a mark
+            under the name, and the plain internet one is kept rather than
+            none. */
+            _ => Some(INTERNET.to_vec()),
+        },
         Ok(None) => of_the_file(),
         Err(()) => Some(INTERNET.to_vec()),
     }
