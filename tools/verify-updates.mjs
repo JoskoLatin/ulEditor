@@ -157,7 +157,10 @@ check(
 
 /* ── the release ─────────────────────────────────────────────────────── */
 
-const release = read('.github/workflows/release.yml');
+/* With line endings made the same: a Windows checkout has CRLF, and the
+   splitting below looks for "\njobs:\n". Read as it came, the Windows runner
+   found no jobs at all and failed every check about them. */
+const release = read('.github/workflows/release.yml').replace(/\r\n/g, '\n');
 
 /* The jobs, each as its own text: a name two spaces in, and a colon. A key
    that is only in the right job is the whole point of the split, and it is a
@@ -236,9 +239,13 @@ check(
 );
 check(
   'and runs nothing a builder handed on',
-  ['desktop-sign', 'android-sign'].every(
-    (name) => !/node\s+(\.\/)?dist|\bsh\s+(\.\/)?dist|dist(-android)?\/[^\s"]*\.(mjs|js|sh)\b/.test(job(name)),
-  ),
+  /* Every place a signer names what came from a builder is one of these —
+     read, signed, removed — and nothing else, however it might be run. */
+  ['desktop-sign', 'android-sign'].every((name) =>
+    (job(name).match(/\bdist(-android)?\/[^\s"')]*/g) ?? []).every((token) =>
+      ['dist/', 'dist/*.app.tar.gz', 'dist-android/unsigned.apk', 'dist-android/unsigned.aab'].includes(token),
+    ),
+  ) && !/(node|sh|bash|pwsh)\s+(\.\/)?dist/.test(job('desktop-sign') + job('android-sign')),
 );
 check(
   'what a builder handed on is checked to be installers and nothing else, signed or not',

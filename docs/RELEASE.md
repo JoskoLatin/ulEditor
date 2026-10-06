@@ -118,7 +118,9 @@ attached as always; only the `.sig` files and `latest.json` are missing, so the
 program on somebody's machine simply never offers that version. A warning says
 so in the log of the `Sign the desktop updates` job. That is deliberate: a
 release that does not happen is a much worse failure than one that is not
-offered as an update.
+offered as an update. The one exception: a file from a builder that is not one
+of our installers — a `latest.json`, a `.sig` — stops the release with or
+without a key, because only a builder that was tampered with makes one.
 
 `latest.json` is written by one job after every builder has finished, out of
 what is actually attached to the release — see
