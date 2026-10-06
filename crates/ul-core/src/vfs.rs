@@ -845,7 +845,11 @@ pub(crate) mod windows {
             )
         } != 0;
         if answered {
-            return Ok(if long.id == [0; 16] || long.id == [0xff; 16] {
+            /* And a 64-bit "unknown" widened to 128 bits by a file system
+            that does not follow the specification: all ones in the low half,
+            nought in the high one. */
+            let widened = long.id[..8] == [0xff; 8] && long.id[8..] == [0; 8];
+            return Ok(if long.id == [0; 16] || long.id == [0xff; 16] || widened {
                 Identity::Unknown
             } else {
                 Identity::Long(long.volume_serial, long.id)

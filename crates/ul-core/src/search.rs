@@ -680,19 +680,35 @@ fn same_file(seen: &Look, opened: &fs::File) -> bool {
     }
     #[cfg(windows)]
     {
-        /* Like with like: an ID of one kind is never the same as one of
-        another. Where neither has an ID worth the name, when each was made and
-        its size, as before there were IDs — weaker, but not nothing. */
-        use crate::vfs::windows::{identity, Identity};
-        match (identity(&seen.held), identity(opened)) {
-            (Ok(Identity::Unknown), Ok(Identity::Unknown)) => made_alike(&seen.meta, opened),
-            (Ok(seen), Ok(opened)) => seen == opened,
-            _ => false,
-        }
+        use crate::vfs::windows::identity;
+        ids_agree(identity(&seen.held), identity(opened), || {
+            made_alike(&seen.meta, opened)
+        })
     }
     #[cfg(not(any(unix, windows)))]
     {
         made_alike(&seen.meta, opened)
+    }
+}
+
+/// Whether two files' IDs say they are one file.
+///
+/// Like with like: an ID of one kind is never the same as one of another, and
+/// an unknown one is never the same as a known one. Where neither has an ID
+/// worth the name, `alike` is asked — when each was made and its size, as
+/// before there were IDs: weaker, but not nothing. A file that could not be
+/// asked is not the same file.
+#[cfg(windows)]
+fn ids_agree(
+    seen: std::io::Result<crate::vfs::windows::Identity>,
+    opened: std::io::Result<crate::vfs::windows::Identity>,
+    alike: impl FnOnce() -> bool,
+) -> bool {
+    use crate::vfs::windows::Identity;
+    match (seen, opened) {
+        (Ok(Identity::Unknown), Ok(Identity::Unknown)) => alike(),
+        (Ok(seen), Ok(opened)) => seen == opened,
+        _ => false,
     }
 }
 
@@ -1136,6 +1152,36 @@ mod tests {
             read_regular(&inside, &seen, &root).as_deref(),
             Some(&b"lozinka=ovdje\n"[..])
         );
+    }
+
+    /// The decision itself, on the pairs no volume here can produce: a ReFS
+    /// whose IDs are unknown, and two file systems answering differently.
+    #[cfg(windows)]
+    #[test]
+    fn ids_decide_like_with_like_and_ask_the_times_only_when_neither_knows() {
+        use crate::vfs::windows::Identity::{Long, Short, Unknown};
+        let io = || Err(std::io::Error::other("could not be asked"));
+        let never = || -> bool { panic!("asked the times with an ID to go by") };
+
+        assert!(ids_agree(Ok(Unknown), Ok(Unknown), || true));
+        assert!(!ids_agree(Ok(Unknown), Ok(Unknown), || false));
+        assert!(!ids_agree(Ok(Unknown), Ok(Long(1, [7; 16])), never));
+        assert!(!ids_agree(Ok(Long(1, [7; 16])), Ok(Unknown), never));
+        assert!(!ids_agree(Ok(Long(1, [7; 16])), Ok(Short(1, 7)), never));
+        assert!(ids_agree(Ok(Long(1, [7; 16])), Ok(Long(1, [7; 16])), never));
+        assert!(!ids_agree(
+            Ok(Long(1, [7; 16])),
+            Ok(Long(1, [8; 16])),
+            never
+        ));
+        assert!(!ids_agree(
+            Ok(Long(1, [7; 16])),
+            Ok(Long(2, [7; 16])),
+            never
+        ));
+        assert!(ids_agree(Ok(Short(0, 41926)), Ok(Short(0, 41926)), never));
+        assert!(!ids_agree(io(), Ok(Unknown), never));
+        assert!(!ids_agree(Ok(Unknown), io(), never));
     }
 
     #[test]
