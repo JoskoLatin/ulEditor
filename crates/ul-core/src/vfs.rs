@@ -233,7 +233,12 @@ impl Protection {
             #[cfg(windows)]
             dacl: windows::dacl_of(file)?,
             #[cfg(windows)]
-            mark: mark_of(path),
+            /* Read by the name — a stream is opened by one — and checked
+            against the open file: one that has a mark the name no longer
+            leads to (taken away, or put in another's place, between the
+            opening and this) keeps the plain mark of the internet rather than
+            none. */
+            mark: mark_of(path).or_else(|| windows::has_mark(file).then(|| INTERNET.to_vec())),
             #[cfg(windows)]
             created: meta.created().ok(),
             #[cfg(windows)]
@@ -725,22 +730,27 @@ impl Workspace {
     ) -> Result<(), VfsError> {
         let key = record_key(path.as_ref());
         let resolved = self.resolve(path)?;
-        let opened = self
-            .seen
-            .get(&key)
-            .or_else(|| {
-                /* Not read under this spelling: the same place read under
-                another — the same file in other letters, by its short name,
-                through a link to it — is that document, not one nobody read,
-                which would be saved over without a question. Where two
-                spellings of it were read, the first of them by name. */
-                self.seen
-                    .iter()
-                    .filter(|(_, opened)| opened.at == resolved)
-                    .min_by(|a, b| a.0.cmp(b.0))
-                    .map(|(_, opened)| opened)
-            })
-            .cloned();
+        /* Not read under this spelling: the same place read under another —
+        the same file in other letters, by its short name, through a link to
+        it — is that document, not one nobody read, which would be saved over
+        without a question. Where two spellings of it were read, the first of
+        them by name. Its record then moves to this spelling: left under the
+        other, it would describe the file as it was before this save, and the
+        next save under that spelling would be asked about a change that was
+        its own (found by the review). */
+        let mut moved_from = None;
+        let opened = match self.seen.get(&key) {
+            Some(opened) => Some(opened.clone()),
+            None => self
+                .seen
+                .iter()
+                .filter(|(_, opened)| opened.at == resolved)
+                .min_by(|a, b| a.0.cmp(b.0))
+                .map(|(other, opened)| {
+                    moved_from = Some(other.clone());
+                    opened.clone()
+                }),
+        };
         /* Whether the file there now is provably the document as it was
         opened — the one case its own security may be taken from it. Every
         other case of a document opened here gives the new version the
@@ -808,6 +818,9 @@ impl Workspace {
         or cannot be looked at, is never taken for it; the protection kept is
         what this save gave, read from the new version before it was let go. */
         let now = Fingerprint::at(&target).filter(|now| now.same_id(&written.print));
+        if let Some(other) = moved_from {
+            self.seen.remove(&other);
+        }
         self.seen.insert(
             key,
             Opened {
@@ -1297,6 +1310,11 @@ mod macos {
     }
 }
 
+/// The plain mark of the internet zone: what a mark that cannot be taken as
+/// it is becomes.
+#[cfg(windows)]
+const INTERNET: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+
 /// The `Zone.Identifier` stream of a file, by its name.
 #[cfg(windows)]
 fn zone_stream(path: &Path) -> PathBuf {
@@ -1321,7 +1339,6 @@ const LONGEST_MARK: u64 = 64 * 1024;
 fn mark_of(original: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
-    const INTERNET: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
     let file = match fs::File::open(zone_stream(original)) {
         Ok(file) => file,
         // Not found, path not found, or a name this volume has no streams for.
@@ -1429,6 +1446,18 @@ pub(crate) mod windows {
             descriptor: descriptor.0.as_mut_ptr().cast(),
             inherit: 0,
         };
+        /* Not through a link: CREATE_NEW alone follows a symbolic link left
+        under the name and makes whatever it points at, wherever that is —
+        the standard library adds this flag to every `create_new` for that
+        reason, and a call of its own has to as well (found by the review of
+        the commit that brought this function in). With it, a link under the
+        name is a name taken, and the next one is tried. */
+        let flags = FILE_FLAG_OPEN_REPARSE_POINT
+            | if attributes == 0 {
+                FILE_ATTRIBUTE_NORMAL
+            } else {
+                attributes
+            };
         // SAFETY: a NUL-terminated name, a valid self-relative descriptor that
         // lives through the call, and no template.
         let handle = unsafe {
@@ -1438,11 +1467,7 @@ pub(crate) mod windows {
                 0,
                 &security,
                 CREATE_NEW,
-                if attributes == 0 {
-                    FILE_ATTRIBUTE_NORMAL
-                } else {
-                    attributes
-                },
+                flags,
                 null_mut(),
             )
         };
@@ -1661,12 +1686,44 @@ pub(crate) mod windows {
         }
     }
 
+    /// `Zone.Identifier`'s stream, as an open file names it.
+    const MARK_STREAM: &str = ":Zone.Identifier:$DATA";
+
     /// The streams of an open file other than its content and its
     /// `Zone.Identifier`, by name (`:name:$DATA`). None on a volume that keeps
     /// no streams. More than fit in 64 KiB of names are reported as foreign:
     /// nobody's document has that many on purpose.
     pub(crate) fn foreign_streams(file: &fs::File) -> io::Result<Vec<String>> {
-        const ALLOWED: [&str; 2] = ["::$DATA", ":Zone.Identifier:$DATA"];
+        const ALLOWED: [&str; 2] = ["::$DATA", MARK_STREAM];
+        Ok(match stream_names(file)? {
+            None => vec!["(more streams than fit)".to_owned()],
+            Some(names) => names
+                .into_iter()
+                .filter(|name| {
+                    !ALLOWED
+                        .iter()
+                        .any(|allowed| allowed.eq_ignore_ascii_case(name))
+                })
+                .collect(),
+        })
+    }
+
+    /// Whether an open file has a `Zone.Identifier` stream — asked of the
+    /// file, not of its name. One with more streams than can be listed is
+    /// taken to have it.
+    pub(crate) fn has_mark(file: &fs::File) -> bool {
+        match stream_names(file) {
+            Ok(Some(names)) => names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(MARK_STREAM)),
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// The names of an open file's streams (`::$DATA` its content); none on a
+    /// volume that keeps no streams, `None` where they do not fit in 64 KiB.
+    fn stream_names(file: &fs::File) -> io::Result<Option<Vec<String>>> {
         let mut buffer = vec![0u64; 8192];
         // SAFETY: a handle of an open file, and a buffer of the size given,
         // aligned to eight as the entries in it want.
@@ -1682,9 +1739,9 @@ pub(crate) mod windows {
             let err = io::Error::last_os_error();
             return match err.raw_os_error() {
                 // No streams at all on this volume (FAT), or none to list.
-                Some(1 | 38 | 50 | 87) => Ok(Vec::new()),
+                Some(1 | 38 | 50 | 87) => Ok(Some(Vec::new())),
                 // ERROR_MORE_DATA: more than fit.
-                Some(234) => Ok(vec!["(more streams than fit)".to_owned()]),
+                Some(234) => Ok(None),
                 _ => Err(err),
             };
         }
@@ -1694,7 +1751,7 @@ pub(crate) mod windows {
             unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), buffer.len() * 8) };
         let read_u32 =
             |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
-        let mut foreign = Vec::new();
+        let mut names = Vec::new();
         let mut at = 0usize;
         loop {
             /* FILE_STREAM_INFO: next offset, name length in bytes, two 64-bit
@@ -1703,20 +1760,14 @@ pub(crate) mod windows {
             let length = read_u32(at + 4);
             let start = at + 24;
             if start + length > bytes.len() {
-                foreign.push("(a stream that could not be read)".to_owned());
+                names.push("(a stream that could not be read)".to_owned());
                 break;
             }
             let name: Vec<u16> = bytes[start..start + length]
                 .chunks_exact(2)
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                 .collect();
-            let name = String::from_utf16_lossy(&name);
-            if !ALLOWED
-                .iter()
-                .any(|allowed| allowed.eq_ignore_ascii_case(&name))
-            {
-                foreign.push(name);
-            }
+            names.push(String::from_utf16_lossy(&name));
             if next == 0 {
                 break;
             }
@@ -1725,7 +1776,7 @@ pub(crate) mod windows {
                 break;
             }
         }
-        Ok(foreign)
+        Ok(Some(names))
     }
 
     /// `FILE_ID_INFO`: the volume's serial number and the file's 128-bit ID.
@@ -2380,6 +2431,40 @@ mod tests {
             .is_symlink());
     }
 
+    /// The same on Windows, where a new version is made by a call of this
+    /// program's own: a link left under its name, to a file not there yet
+    /// outside the folder, is neither followed nor made. Needs an account that
+    /// can make a link to a file — the CI runner; elsewhere it says it was
+    /// skipped.
+    #[cfg(windows)]
+    #[test]
+    fn a_save_does_not_follow_a_link_left_where_its_temporary_file_goes_on_windows() {
+        let base = scratch("link-windows");
+        let outside = base.join("made-outside.txt");
+        let inside = base.join("ws");
+        fs::create_dir_all(&inside).unwrap();
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&inside).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "before").unwrap();
+        let me = std::env::var("USERNAME").unwrap();
+        /* A DACL of its own, so the new version is made by `create_closed`. */
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
+        let mut links = crate::testing::Links::default();
+        if !links.file(&temp_beside(&file, 0), &outside) {
+            eprintln!("skipped: this account cannot make a link to a file");
+            return;
+        }
+
+        workspace.read_document(&file).unwrap();
+        workspace.save(&file, b"after", false).unwrap();
+        workspace.write(&file, b"again").unwrap();
+
+        assert!(!outside.exists(), "the link was followed");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "again");
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_save_keeps_the_mark_of_a_file_from_the_internet() {
@@ -2833,6 +2918,47 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "theirs, and longer");
     }
 
+    /// Saved under another spelling, then under the first again: the second
+    /// save is not asked about the first one's change, which was its own.
+    #[cfg(windows)]
+    #[test]
+    fn a_save_under_another_spelling_is_not_taken_for_a_change_later() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("spelling-back")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        workspace
+            .save(root.join("NOTES.md"), b"mine, edited", false)
+            .unwrap();
+        workspace.save(&file, b"mine, again", false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine, again");
+    }
+
+    /// A document taken away between its opening and the reading of its mark,
+    /// with an unmarked file put in its place: the open file is asked whether
+    /// it has a mark, and the plain internet one is remembered rather than
+    /// none.
+    #[cfg(windows)]
+    #[test]
+    fn the_mark_of_the_file_opened_is_kept_when_its_name_has_none() {
+        let root = scratch("mark-of-open");
+        let file = root.join("downloaded.docx");
+        fs::write(&file, "from the internet").unwrap();
+        fs::write(zone_stream(&file), "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        let open = open_regular(&file).unwrap();
+        fs::rename(&file, root.join("away.docx")).unwrap();
+        fs::write(&file, "unmarked").unwrap();
+
+        let protection = Protection::of(&file, &open).unwrap();
+        assert_eq!(
+            protection.mark.as_deref(),
+            Some(INTERNET),
+            "the mark was lost"
+        );
+    }
+
     /// Its own security changed while it was open — by the person, in the
     /// file's properties — is the document's, and the next version keeps it,
     /// with when it was made and its being hidden.
@@ -2922,7 +3048,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_held_document_can_be_neither_replaced_nor_written() {
-        let root = scratch("held");
+        let root = scratch("held-document");
         let file = root.join("notes.md");
         let other = root.join("planted.md");
         fs::write(&file, "mine").unwrap();
