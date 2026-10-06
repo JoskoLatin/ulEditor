@@ -94,16 +94,18 @@ export function createShell(): Shell {
   const stored = settings.get<string>('locale', 'en');
   const desktop = isTauri();
   const fs = desktop ? new TauriFileSystem() : new BrowserFileSystem();
+  const notify = new Notifications();
 
-  /* Desktop goes through Rust: the webview's own `window.open` would put the
-     page inside another webview, not in the person's browser. Rust asks the
+  /* Desktop goes through Rust: the webview opens no window of its own, and a
+     link belongs in the person's browser anyway. Rust asks the
      person first about any link but the program's own (ADR 0005), in the
-     language the interface is in. */
+     language the interface is in — and says why when it will not, after a
+     link was refused. */
   const openExternal = desktop
     ? (url: string) => {
-        void import('@tauri-apps/api/core').then(({ invoke }) =>
-          invoke('open_external', { url, uiLanguage: getLocale() }),
-        );
+        void import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke('open_external', { url, uiLanguage: getLocale() }))
+          .catch((err: unknown) => notify.show('error', String(err)));
       }
     : (url: string) => {
         window.open(url, '_blank', 'noopener');
@@ -114,7 +116,7 @@ export function createShell(): Shell {
     commands: new Commands(),
     theme: new Themes(preference),
     settings,
-    notify: new Notifications(),
+    notify,
     /* LibreOffice, and only for the drawings nothing else reads. On the web
        there is nothing to reach, and `NoConversion` says so. */
     convert: desktop ? new TauriConversion() : new NoConversion(),

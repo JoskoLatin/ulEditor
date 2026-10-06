@@ -27,18 +27,21 @@ struct AppState {
     /// was offered this session (ADR 0005). Locked after `workspace`, never
     /// before it.
     consents: Mutex<Consents>,
-    /// Held while the person is asked whether the library may look, so two
-    /// scans ask once. Desktop only: on a phone "All files access" is the
-    /// consent.
-    #[cfg_attr(mobile, allow(dead_code))]
-    library_asking: tokio::sync::Mutex<()>,
-    /// A no to the library, for this session: asked again next time.
+    /// A no to the library, for this session: asked again next time. Desktop
+    /// only: on a phone "All files access" is the consent.
     #[cfg_attr(mobile, allow(dead_code))]
     library_declined: std::sync::atomic::AtomicBool,
-    /// Held while the person is asked whether a link may open in the browser.
+    /// The nos to links this session, and when the program's own last opened.
     #[cfg_attr(mobile, allow(dead_code))]
-    link_asking: tokio::sync::Mutex<()>,
+    links: Mutex<trust::Links>,
 }
+
+/// Held while the core asks the person anything in a dialog of its own —
+/// whether a language server may start, the library may look, a link may
+/// open — so that one question is on the screen at a time: two stacked, each
+/// with its yes in the middle, and a person answering one could press the yes
+/// of the other (found by the independent review of N6).
+struct Questions(tokio::sync::Mutex<()>);
 
 /// The language servers, and the way their news reaches the window.
 ///
@@ -50,11 +53,10 @@ struct LspState {
     /// Handed to every server as it starts; the receiving end is read by a
     /// thread that turns each message into an event for the window.
     sink: std::sync::mpsc::Sender<LspEvent>,
-    /// The projects a server may start in — see `trust.rs`.
+    /// The projects a server may start in — see `trust.rs`. The question is
+    /// asked under `Questions`, so that a restored session opening several
+    /// files of one project asks once.
     trust: Mutex<trust::ProjectTrust>,
-    /// Held while the person is being asked, so that a restored session
-    /// opening several files of one project asks once.
-    asking: tokio::sync::Mutex<()>,
 }
 
 /// Files the program was asked to open when it started.
@@ -287,9 +289,10 @@ async fn pick_save_target(
 /// ADR 0005). The person clicking a link in a document, or asking for a search
 /// for a font the screen does not have, answers the question; script cannot.
 ///
-/// One question at a time, and a link asked for while one is open is not
-/// opened rather than queued: a page cannot stack dialogs up behind each
-/// other.
+/// Not queued: a link asked for while any of the core's questions is open is
+/// not opened, so a page cannot stack dialogs up behind each other. After a no
+/// the page is kept from asking for a while, and after a few not again this
+/// session (`trust::Links`).
 #[cfg(desktop)]
 #[tauri::command]
 async fn open_external(
@@ -298,22 +301,35 @@ async fn open_external(
     url: String,
     ui_language: Option<String>,
 ) -> Result<bool, VfsError> {
+    let links = || state.links.lock().expect("the link lock is poisoned");
     let url = match trust::link(&url) {
-        Some(trust::Link::Own(url)) => url,
+        Some(trust::Link::Own(url)) => {
+            if !links().may_open_own(std::time::Instant::now()) {
+                return Ok(false);
+            }
+            url
+        }
         Some(trust::Link::Other(url)) => {
-            let Ok(_asking) = state.link_asking.try_lock() else {
+            let questions = app.state::<Questions>();
+            let Ok(_asking) = questions.0.try_lock() else {
                 return Ok(false);
             };
+            if !links().may_ask(std::time::Instant::now()) {
+                return Err(VfsError::Unsupported(trust::links_paused(
+                    ui_language.as_deref(),
+                )));
+            }
             let asked = trust::link_question(ui_language.as_deref(), &url);
             let answer = ask(&app, &asked, tauri_plugin_dialog::MessageDialogKind::Info).await;
             if answer != trust::Answer::Trust {
+                links().declined(std::time::Instant::now());
                 return Ok(false);
             }
             url
         }
         None => {
             return Err(VfsError::Unsupported(
-                "Only web links open outside the application.".into(),
+                "This link does not open outside the application.".into(),
             ))
         }
     };
@@ -322,10 +338,17 @@ async fn open_external(
     let url = url.as_str();
     #[cfg(target_os = "windows")]
     // `rundll32 url.dll` rather than `cmd /C start`: `start` reads `&` in a
-    // query string as a command separator.
-    let spawned = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
+    // query string as a command separator. By its full path, not by a name
+    // searched for beside the program first.
+    let spawned = std::process::Command::new(
+        std::path::PathBuf::from(
+            std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()),
+        )
+        .join("System32")
+        .join("rundll32.exe"),
+    )
+    .args(["url.dll,FileProtocolHandler", url])
+    .spawn();
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -342,6 +365,115 @@ fn open_external(_url: String) -> Result<bool, VfsError> {
     Err(VfsError::Unsupported(
         "Opening the browser is not wired up on mobile devices yet.".into(),
     ))
+}
+
+/* ── updates ─────────────────────────────────────────────────────────── */
+
+/// The update `check_update` found, kept here until the person takes it.
+#[cfg(desktop)]
+#[derive(Default)]
+struct Updates(Mutex<Option<tauri_plugin_updater::Update>>);
+
+/// What the page is told about an update: which version, over which.
+#[cfg(desktop)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Available {
+    version: String,
+    current_version: String,
+}
+
+/// Looks for a new version, at the endpoint `tauri.conf.json` names and in no
+/// other way.
+///
+/// The page has no updater permission of its own. The plugin's `check` takes a
+/// proxy, headers and a target from whoever calls it, and a proxy named by
+/// script in the page — `http://name:<what it read>@<more of it>.example/` —
+/// would carry the data out of the program in a DNS lookup and a
+/// `Proxy-Authorization` header, from Rust, where the CSP does not reach (found
+/// by the independent review of N6). These two commands take nothing from the
+/// page but the channel progress is reported on.
+#[cfg(desktop)]
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    updates: State<'_, Updates>,
+) -> Result<Option<Available>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let found = app
+        .updater()
+        .map_err(|err| err.to_string())?
+        .check()
+        .await
+        .map_err(|err| err.to_string())?;
+    let available = found.as_ref().map(|update| Available {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+    });
+    *updates.0.lock().expect("the update lock is poisoned") = found;
+    Ok(available)
+}
+
+/// How a download is going, in the shape the plugin's own events had.
+#[cfg(desktop)]
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "event", content = "data")]
+enum Downloading {
+    #[serde(rename_all = "camelCase")]
+    Started {
+        content_length: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Progress {
+        chunk_length: usize,
+    },
+    Finished,
+}
+
+/// Downloads and installs the update `check_update` found. Nothing of it runs
+/// unless it verifies against the public key compiled into the program.
+#[cfg(desktop)]
+#[tauri::command]
+async fn install_update(
+    updates: State<'_, Updates>,
+    on_event: tauri::ipc::Channel<Downloading>,
+) -> Result<(), String> {
+    let update = updates
+        .0
+        .lock()
+        .expect("the update lock is poisoned")
+        .clone()
+        .ok_or_else(|| "No update was found to install.".to_string())?;
+    let mut started = false;
+    update
+        .download_and_install(
+            |chunk_length, content_length| {
+                if !started {
+                    started = true;
+                    let _ = on_event.send(Downloading::Started { content_length });
+                }
+                let _ = on_event.send(Downloading::Progress { chunk_length });
+            },
+            || {
+                let _ = on_event.send(Downloading::Finished);
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())
+}
+
+/// A phone updates through its store.
+#[cfg(mobile)]
+#[tauri::command]
+fn check_update() -> Result<Option<()>, String> {
+    Err("This build updates where it was installed from.".into())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn install_update() -> Result<(), String> {
+    Err("This build updates where it was installed from.".into())
 }
 
 /* ── file system ─────────────────────────────────────────────────────── */
@@ -792,7 +924,8 @@ async fn library_allowed(
     if state.library_declined.load(Ordering::Relaxed) {
         return false;
     }
-    let _asking = state.library_asking.lock().await;
+    let questions = app.state::<Questions>();
+    let _asking = questions.0.lock().await;
     if consented() {
         return true;
     }
@@ -923,7 +1056,8 @@ async fn may_start(
     }
     /* One question at a time, and asked again once it is this one's turn: the
     one before may have been about this same project. */
-    let _asking = lsp.asking.lock().await;
+    let questions = app.state::<Questions>();
+    let _asking = questions.0.lock().await;
     match verdict(lsp) {
         trust::Verdict::Trusted => return true,
         trust::Verdict::Declined => return false,
@@ -1573,11 +1707,13 @@ pub fn run() {
      * half, which is never in the repository — it is in GitHub Secrets and in
      * the one file it was made in (docs/RELEASE.md). Without that, "download
      * and run an executable from the internet" is exactly what it sounds like.
+     * The page reaches it only through `check_update` and `install_update`.
      */
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init());
+        .plugin(tauri_plugin_process::init())
+        .manage(Updates::default());
 
     /*
      * A second double-click has to reach the window that is already open. Without
@@ -1705,10 +1841,10 @@ pub fn run() {
             app.manage(AppState {
                 workspace: Mutex::new(workspace),
                 consents: Mutex::new(consents),
-                library_asking: tokio::sync::Mutex::new(()),
                 library_declined: std::sync::atomic::AtomicBool::new(false),
-                link_asking: tokio::sync::Mutex::new(()),
+                links: Mutex::new(trust::Links::default()),
             });
+            app.manage(Questions(tokio::sync::Mutex::new(())));
             /* The files the program was started with are a gesture too: granted
             now, and opened when the page asks for them. */
             let launched = paths_from(std::env::args());
@@ -1741,7 +1877,6 @@ pub fn run() {
                 servers: Mutex::new(Servers::new()),
                 sink,
                 trust: Mutex::new(trusted),
-                asking: tokio::sync::Mutex::new(()),
             });
 
             let handle = app.handle().clone();
@@ -1787,6 +1922,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_external,
+            check_update,
+            install_update,
             pick_directory,
             pick_files,
             pick_save_target,

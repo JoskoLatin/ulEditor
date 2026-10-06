@@ -23,6 +23,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -231,11 +232,17 @@ pub(crate) enum Link {
     Other(tauri::Url),
 }
 
+/// The longest address that is asked about. Past it, most of the address would
+/// be hidden in the middle of the question — and past about 32 000 characters
+/// Windows will not start the browser with it at all, after the person said
+/// yes.
+const MOST_LINK: usize = 2048;
+
 /// What `text` is as a link, or `None` for what never opens: anything but
 /// `https://` — the command is callable from the page, and a scheme like
-/// `file:` or `ms-settings:` would make it a lever — and an address with a name
-/// or password before its host, which reads as one site and goes to another
-/// (`https://example.com@elsewhere.net/`).
+/// `file:` or `ms-settings:` would make it a lever — an address with a name or
+/// password before its host, which reads as one site and goes to another
+/// (`https://example.com@elsewhere.net/`), and one longer than `MOST_LINK`.
 #[cfg_attr(mobile, allow(dead_code))]
 pub(crate) fn link(text: &str) -> Option<Link> {
     let url = tauri::Url::parse(text).ok()?;
@@ -243,6 +250,7 @@ pub(crate) fn link(text: &str) -> Option<Link> {
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
+        || url.as_str().len() > MOST_LINK
     {
         return None;
     }
@@ -254,32 +262,48 @@ pub(crate) fn link(text: &str) -> Option<Link> {
 }
 
 /// The question asked before a link opens in the browser, in the same three
-/// buttons as `question`, the middle one the yes. It names the site on a line
-/// of its own — as the parser read it, a name in another script written the
-/// way the browser will look it up (`xn--…`) — and then the whole address.
+/// buttons as `question`, the middle one the yes. It names the site in the
+/// title and on a line of its own — as the parser read it, a name in another
+/// script written the way the browser will look it up (`xn--…`) — and then the
+/// whole address.
+///
+/// The site is what the person checks the question against. Script in the
+/// page can ask the moment a real link is clicked, so that its question comes
+/// up in that link's place; what tells the two apart is whether the site is
+/// where the clicked link goes, so that is what the question says to check.
 #[cfg_attr(mobile, allow(dead_code))]
 pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Question {
     let site = shown(url.host_str().unwrap_or_default());
-    let address = shown(&percent_decoded(url.as_str()));
+    let (address, hidden) = shown_parts(&percent_decoded(url.as_str()));
     if interface == Some("hr") {
+        let hidden = if hidden > 0 {
+            format!("\n\nIz sredine adrese nije prikazano znakova: {hidden}.")
+        } else {
+            String::new()
+        };
         Question {
-            title: "Otvoriti link u pregledniku?".into(),
+            title: format!("Otvoriti link na {site}?"),
             body: format!(
-                "Link vodi na\n\n{site}\n\n{address}\n\n\
-                 Sve što piše u adresi šalje se toj stranici. Ako link nije upravo \
-                 kliknut, odaberi „Ne sada”."
+                "Link vodi na\n\n{site}\n\n{address}{hidden}\n\n\
+                 Sve što piše u adresi šalje se toj stranici. Otvori ga samo ako \
+                 kliknuti link vodi na {site}."
             ),
             not_now: "Ne sada".into(),
             trust: "Otvori".into(),
             cancel: "Odustani".into(),
         }
     } else {
+        let hidden = if hidden > 0 {
+            format!("\n\nCharacters not shown from the middle of the address: {hidden}.")
+        } else {
+            String::new()
+        };
         Question {
-            title: "Open this link in your browser?".into(),
+            title: format!("Open a link to {site}?"),
             body: format!(
-                "The link goes to\n\n{site}\n\n{address}\n\n\
-                 Everything in the address is sent to that site. If no link was \
-                 just clicked, choose \"Not now\"."
+                "The link goes to\n\n{site}\n\n{address}{hidden}\n\n\
+                 Everything in the address is sent to that site. Open it only if \
+                 {site} is where the link you clicked goes."
             ),
             not_now: "Not now".into(),
             trust: "Open".into(),
@@ -288,25 +312,40 @@ pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Questi
     }
 }
 
+/// What the page is told when it may not ask about a link for now.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn links_paused(interface: Option<&str>) -> String {
+    if interface == Some("hr") {
+        "Nakon odbijenog linka drugi se neko vrijeme ne otvaraju, a nakon tri odbijena \
+         više ne do ponovnog pokretanja programa."
+            .into()
+    } else {
+        "After a link is refused, others do not open for a while — and after three, not \
+         until the program is started again."
+            .into()
+    }
+}
+
 /// An address as a person reads it: `%22` as the quote it stands for. Only
 /// for showing — the browser is handed the address as it was parsed — and
-/// what the decoding makes is shown through `shown` like the rest, so a `%0A`
-/// is still no line break.
+/// only the printable ASCII it stands for: decoded, `%D7%90` would be a
+/// right-to-left letter that turns the punctuation around it, and other
+/// letters can pass for a dot or a slash. What the decoding makes is shown
+/// through `shown` like the rest, so a `%25` is still no `%`.
 #[cfg_attr(mobile, allow(dead_code))]
 fn percent_decoded(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        let digits = bytes.get(i + 1..i + 3).map(|pair| {
-            (
-                char::from(pair[0]).to_digit(16),
-                char::from(pair[1]).to_digit(16),
-            )
+        let stands_for = bytes.get(i + 1..i + 3).and_then(|pair| {
+            let high = char::from(pair[0]).to_digit(16)?;
+            let low = char::from(pair[1]).to_digit(16)?;
+            Some((high * 16 + low) as u8)
         });
-        match (bytes[i], digits) {
-            (b'%', Some((Some(high), Some(low)))) => {
-                decoded.push((high * 16 + low) as u8);
+        match (bytes[i], stands_for) {
+            (b'%', Some(byte)) if (0x20..=0x7E).contains(&byte) => {
+                decoded.push(byte);
                 i += 3;
             }
             (byte, _) => {
@@ -316,6 +355,57 @@ fn percent_decoded(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// The nos to links this session (`open_external`).
+///
+/// Script in the page can ask again the moment a question is answered, for
+/// ever: a dialog over the window, and nothing to do in the program but answer
+/// it — until the yes is pressed to make it stop. So a no keeps the page from
+/// asking for `QUIET_AFTER_NO`, and the `MOST_NOS`th for the rest of the
+/// session. And the program's own links, which are not asked about, open at
+/// most once every `OWN_EVERY`, so that a page cannot open browser after
+/// browser.
+#[derive(Default)]
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) struct Links {
+    nos: u32,
+    last_no: Option<Instant>,
+    last_own: Option<Instant>,
+}
+
+#[cfg_attr(mobile, allow(dead_code))]
+impl Links {
+    const QUIET_AFTER_NO: Duration = Duration::from_secs(30);
+    const MOST_NOS: u32 = 3;
+    const OWN_EVERY: Duration = Duration::from_secs(1);
+
+    /// Whether the page may ask about a link at `now`.
+    pub(crate) fn may_ask(&self, now: Instant) -> bool {
+        let quiet = match self.last_no {
+            Some(at) => now.saturating_duration_since(at) < Self::QUIET_AFTER_NO,
+            None => false,
+        };
+        self.nos < Self::MOST_NOS && !quiet
+    }
+
+    /// Remembers a no given at `now`.
+    pub(crate) fn declined(&mut self, now: Instant) {
+        self.nos += 1;
+        self.last_no = Some(now);
+    }
+
+    /// Whether one of the program's own links may open at `now` — and if so,
+    /// that it did.
+    pub(crate) fn may_open_own(&mut self, now: Instant) -> bool {
+        if let Some(at) = self.last_own {
+            if now.saturating_duration_since(at) < Self::OWN_EVERY {
+                return false;
+            }
+        }
+        self.last_own = Some(now);
+        true
+    }
 }
 
 /// What the person said, out of the button that came back.
@@ -360,6 +450,11 @@ fn readable(path: &Path) -> String {
 /// are made of — and everything else is written out as a code. A list of what
 /// to leave out would be one Unicode version from missing something.
 fn shown(text: &str) -> String {
+    shown_parts(text).0
+}
+
+/// `shown`, and how many of its characters were left out of the middle.
+fn shown_parts(text: &str) -> (String, usize) {
     let mut shown = String::new();
     let mut previous = '\0';
     for c in text.chars() {
@@ -380,9 +475,9 @@ fn shown(text: &str) -> String {
     if count > 2 * ENDS + 1 {
         let head: String = shown.chars().take(ENDS).collect();
         let tail: String = shown.chars().skip(count - ENDS).collect();
-        shown = format!("{head}…{tail}");
+        return (format!("{head}…{tail}"), count - 2 * ENDS);
     }
-    shown
+    (shown, 0)
 }
 
 /// Not `%`: GTK takes the dialog's text as a printf format (rfd passes it to
@@ -523,6 +618,7 @@ mod tests {
             panic!("an outside link");
         };
         let asked = link_question(Some("en"), &url);
+        assert_eq!(asked.title, "Open a link to example.com?");
         assert!(
             asked
                 .body
@@ -530,6 +626,9 @@ mod tests {
             "{}",
             asked.body
         );
+        assert!(asked
+            .body
+            .ends_with("only if example.com is where the link you clicked goes."));
         assert!(!asked.body.contains("\n\nThis link"), "{}", asked.body);
         assert!(!asked.body.contains('\u{202E}'), "{}", asked.body);
         assert!(!asked.body.contains('%'), "{}", asked.body);
@@ -548,6 +647,74 @@ mod tests {
             asked.body
         );
         assert!(!asked.body.contains('\u{0430}'), "{}", asked.body);
+        assert!(
+            asked.title.starts_with("Otvoriti link na xn--"),
+            "{}",
+            asked.title
+        );
+
+        /* Only printable ASCII is decoded: a right-to-left letter would turn
+        the punctuation around it, with no override character to escape. */
+        let Some(Link::Other(url)) = link("https://example.com/%D7%90%D7%91?q=secret") else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("en"), &url);
+        assert!(!asked.body.contains('\u{05D0}'), "{}", asked.body);
+        assert!(asked.body.contains("?q=secret"), "{}", asked.body);
+    }
+
+    /// A long address says how much of it is not shown, and one too long to
+    /// be shown sensibly is not asked about at all.
+    #[test]
+    fn a_long_link_says_what_it_hides_and_a_longer_one_is_refused() {
+        let long = format!("https://example.com/?q={}", "x".repeat(1000));
+        let Some(Link::Other(url)) = link(&long) else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("en"), &url);
+        assert!(asked.body.contains('…'), "{}", asked.body);
+        let hidden = long.chars().count() - 240;
+        assert!(
+            asked.body.contains(&format!(
+                "not shown from the middle of the address: {hidden}."
+            )),
+            "{}",
+            asked.body
+        );
+        let asked = link_question(Some("hr"), &url);
+        assert!(asked
+            .body
+            .contains(&format!("nije prikazano znakova: {hidden}.")));
+
+        let short = link_question(
+            Some("en"),
+            &tauri::Url::parse("https://example.com/").unwrap(),
+        );
+        assert!(!short.body.contains("not shown"), "{}", short.body);
+
+        assert!(link(&format!("https://example.com/?q={}", "x".repeat(MOST_LINK))).is_none());
+    }
+
+    /// A no keeps the page from asking for a while, three keep it from asking
+    /// again this session, and the program's own links open at most once a
+    /// second.
+    #[test]
+    fn a_no_to_a_link_quiets_the_page() {
+        let start = Instant::now();
+        let mut links = Links::default();
+        assert!(links.may_ask(start));
+        links.declined(start);
+        assert!(!links.may_ask(start + Duration::from_secs(29)));
+        assert!(links.may_ask(start + Duration::from_secs(30)));
+        links.declined(start + Duration::from_secs(30));
+        assert!(links.may_ask(start + Duration::from_secs(60)));
+        links.declined(start + Duration::from_secs(60));
+        assert!(!links.may_ask(start + Duration::from_secs(3600)));
+
+        let mut links = Links::default();
+        assert!(links.may_open_own(start));
+        assert!(!links.may_open_own(start + Duration::from_millis(999)));
+        assert!(links.may_open_own(start + Duration::from_millis(1000)));
     }
 
     #[test]

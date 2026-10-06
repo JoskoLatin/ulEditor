@@ -106,7 +106,15 @@ check(
 
 const capability = JSON.parse(read('apps/desktop/src-tauri/capabilities/desktop.json'));
 const permissions = capability.permissions ?? [];
-check('the window may ask and install', permissions.includes('updater:default'));
+/* The plugin's own `check` takes a proxy from whoever calls it, and a proxy
+   named by script in the page carries what it read out of the program from
+   Rust, where the CSP does not reach. The page asks through the core's own two
+   commands instead, which take nothing from it. */
+check(
+  'the page has no updater permission of its own',
+  !permissions.some((name) => name.startsWith('updater:')),
+  permissions.join(', '),
+);
 check(
   'and may restart itself afterwards',
   permissions.includes('process:allow-restart'),
@@ -387,9 +395,18 @@ check(
 /* Through host/native.ts, which holds every Tauri import of the shell as a
    dynamic one — verify-host.mjs checks that for all of them, in the bundle too. */
 check(
-  'the plugin is imported dynamically, so the web bundle never holds it',
-  updates.includes('await native.updater()') &&
-    read('packages/shell-ui/src/host/native.ts').includes("updater: () => import('@tauri-apps/plugin-updater')"),
+  'the shell asks through the core, by the dynamic import the web bundle never holds',
+  updates.includes('await native.core()') &&
+    updates.includes("'check_update'") &&
+    updates.includes("'install_update'") &&
+    !read('packages/shell-ui/src/host/native.ts').includes('plugin-updater'),
+);
+check(
+  "and the core's two commands take nothing from the page but a progress channel",
+  /async fn check_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,?\s*\)/.test(lib) &&
+    /async fn install_update\(\s*updates: State<'_, Updates>,\s*on_event: tauri::ipc::Channel<Downloading>,?\s*\)/.test(
+      lib,
+    ),
 );
 
 /* Where the signatures are read from.

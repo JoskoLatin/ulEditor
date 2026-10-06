@@ -152,14 +152,31 @@ the recommendation:
   the page named, and an address is a message to the site it names: script in
   the page could write into one whatever it had read, and the browser would
   carry it out with no gesture at all. Now the core asks first, in the same
-  three buttons, naming the site as the browser will look it up and then the
-  whole address. Only the program's own links open without asking — the
-  repository, its issues, the LibreOffice download page — compared whole. One
-  question at a time; a link asked for while one is open is not opened. An
-  address with a name before its host (`https://example.com@elsewhere.net/`)
-  is refused outright.
+  three buttons, naming the site — in the title too — as the browser will
+  look it up, and then the address, decoded only as far as printable ASCII.
+  Only the program's own links open without asking — the repository, its
+  issues, the LibreOffice download page — compared whole, and at most one a
+  second. An address with a name before its host
+  (`https://example.com@elsewhere.net/`) or longer than 2048 characters is
+  refused outright. After a no the page may not ask for half a minute, and
+  after three not again this session.
+- **One question at a time.** The language server's, the library's and a
+  link's questions share one lock, so two are never on the screen together;
+  a link asked for while any is open is not opened.
 - **Google Fonts stays in the CSP.** What the page can send there reaches
-  Google and nobody else — a redirect to any other host is held by the same
-  `connect-src` as the first request — and the fetch is the one ADR 0002
-  decided: only when the person presses the
-  button that says so, for the box being typed in.
+  Google and nobody else: a redirect to any other host is held by the same
+  `connect-src` as the first request. The button ADR 0002 gates the fetch on
+  is in the page, so script there could fetch without it — to Google, with
+  the person's address, and to nobody else.
+
+The review of that change found a third way out of the same kind: the
+updater plugin's `check` took a proxy from the page, and Rust would send its
+request through it — the proxy's name and password carrying whatever the page
+had read, past the CSP. The page now has no updater permission at all; it
+asks through two commands of the core, `check_update` and `install_update`,
+which take nothing from it but the channel progress is reported on.
+
+Not measured, and on the board: whether WebView2 lets the page reach the
+network past the CSP through WebRTC (a STUN server's name) or DNS prefetch,
+and whether LibreOffice fetches linked images while converting a document
+the page wrote.

@@ -111,11 +111,20 @@ export async function checkForUpdates(shell: Shell, options: { silent?: boolean 
     : shell.notify.show('info', t('Looking for a new version…'));
 
   try {
-    /* A dynamic import, like every other Tauri API here: the web build must not
-       pull the plugin into its bundle, and it would fail at load rather than at
-       use if it did. */
-    const { check } = await native.updater();
-    const update = (await check()) as Available | null;
+    /* Through the core's own two commands, which take nothing from the page:
+       the plugin's `check` would let script in the page name a proxy for Rust
+       to send the request through (ADR 0005). A dynamic import, like every
+       other Tauri API here: the web build must not pull it into its bundle. */
+    const { invoke, Channel } = await native.core();
+    const found = await invoke<{ version: string; currentVersion: string } | null>('check_update');
+    const update: Available | null = found && {
+      ...found,
+      downloadAndInstall: (onEvent) => {
+        const progress = new Channel<{ event: string; data?: unknown }>();
+        if (onEvent) progress.onmessage = onEvent;
+        return invoke<void>('install_update', { onEvent: progress });
+      },
+    };
     shell.settings.set(LAST_CHECK, Date.now());
     checking?.dispose();
 

@@ -15,8 +15,10 @@
  * - **The page could open the browser on any address** — with whatever it had
  *   read written into it, and no gesture (N6 of the review of ADR 0005). Rust
  *   now asks in a dialog the system draws before any link but the program's
- *   own opens. Every question here is answered "Not now": a yes would open the
- *   browser on the machine running this.
+ *   own opens, and after a no keeps the page from asking for a while. Every
+ *   question here is answered "Not now": a yes would open the browser on the
+ *   machine running this. And the updater, which would send its request
+ *   through any proxy the page named, is reached only through the core.
  * - **A folder taken off the tree stayed in the sandbox** until the program
  *   was closed: searched, listed, open to read and write. It now leaves — and
  *   a document still open from it can still be saved.
@@ -159,8 +161,32 @@ try {
     link.remove();
   });
   const clicked = pressDialog(NOT_NOW, 20);
-  check('a click on an https link asks before the browser opens', /^pressed: Open this link/.test(clicked), clicked);
+  check(
+    'a click on an https link asks before the browser opens, naming the site',
+    /^pressed: Open a link to example\.com\?$/.test(clicked),
+    clicked,
+  );
   await sleep(500);
+
+  /* After a no the page may not ask again at once: a page that asks the
+     moment a question is answered leaves the person nothing to do but yes. */
+  const again = page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke('open_external', { url: 'https://example.com/again', uiLanguage: 'en' }).then(
+      (opened) => `answered: ${opened}`,
+      (err) => `refused: ${err}`,
+    ),
+  );
+  await sleep(1500);
+  /* Looked for briefly, and pressed if it is there, so that a question that
+     should not have come up fails the check rather than hangs it. */
+  const askedAgain = pressDialog(NOT_NOW, 3);
+  const answeredAgain = await again;
+  check(
+    'after a no the page cannot ask again at once',
+    askedAgain === 'no dialog' && answeredAgain.startsWith('refused: After a link is refused'),
+    `${askedAgain}; ${answeredAgain}`,
+  );
+  await sleep(30500);
 
   /* Script in the page asking itself, with something it read in the address,
      and asking again while the first question is open. */
@@ -172,8 +198,22 @@ try {
   check('a link asked for while a question is open is not opened', stacked === false, String(stacked));
   const pressed = pressDialog(NOT_NOW, 20);
   const opened = await asking;
-  check('a link the page asks for itself is asked about', /^pressed: Open this link/.test(pressed), pressed);
+  check('a link the page asks for itself is asked about', /^pressed: Open a link to example\.com\?$/.test(pressed), pressed);
   check('and without a yes the browser is not opened', opened === false, String(opened));
+
+  /* The updater would send its request through any proxy the page named, from
+     Rust, past the CSP — so the page has no permission for the plugin, and
+     asks through the core's own commands, which take no proxy. */
+  /* By its permission, not by the request failing: with the permission, the
+     check is made — through a proxy on a port where nothing listens — and
+     fails just the same. */
+  const updater = await page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke('plugin:updater|check', { proxy: 'http://name:secret@127.0.0.1:9/' }).then(
+      () => 'answered',
+      (err) => String(err),
+    ),
+  );
+  check("the updater plugin's own check, which takes a proxy, is not allowed", /not allowed/i.test(updater), updater);
   check('a link that is not https is refused outright', await refused('open_external', { url: 'file:///C:/Windows/win.ini' }));
   check(
     'and so is one with a name before its host',
