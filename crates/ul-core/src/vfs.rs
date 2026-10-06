@@ -139,16 +139,37 @@ pub struct Workspace {
     granted: Vec<PathBuf>,
     /// Folders nothing is let into, whatever was opened above them.
     protected: Vec<PathBuf>,
-    /// Each document as it was when it was read to be edited, or last saved.
-    seen: std::collections::HashMap<PathBuf, Opened>,
+    /// Each document as it was when it was read to be edited, or last saved,
+    /// by `record_key`.
+    seen: std::collections::HashMap<String, Opened>,
 }
 
-/// A document as it was read to be edited: which file it was, and how it was
-/// protected.
+/// A document as it was read to be edited: where it was, which file it was,
+/// and how it was protected.
 #[derive(Debug, Clone)]
 struct Opened {
+    /// Where it was read from, any link to it followed: where its next
+    /// version goes.
+    at: PathBuf,
     print: Fingerprint,
     protection: Protection,
+}
+
+/// What a document's record is kept under: the path as the page gave it,
+/// with nothing on disk asked. Kept under the path the file system resolved
+/// it to, the record was lost to a replacement that resolved differently —
+/// `NOTES.md` put in place of `notes.md`, which NTFS spells as it is on disk,
+/// or a link in its place — and the save went ahead as on a file nobody had
+/// read, with the replacement's security. Letters are folded where the file
+/// system folds them; on one that does not, two names that differ only so
+/// share a record, which costs a question, never a save without one.
+fn record_key(path: &Path) -> String {
+    let key = display(&normalize(path));
+    if cfg!(any(windows, target_vendor = "apple")) {
+        key.to_lowercase()
+    } else {
+        key
+    }
 }
 
 /// How a document was protected when it was opened — what its next version
@@ -530,13 +551,21 @@ impl Workspace {
     pub fn read_document(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
         use std::io::Read;
 
+        let key = record_key(path.as_ref());
         let resolved = self.resolve(path)?;
         let mut file = open_regular(&resolved)?;
         let print = Fingerprint::of(&file)?;
         let protection = Protection::of(&resolved, &file)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        self.seen.insert(resolved, Opened { print, protection });
+        self.seen.insert(
+            key,
+            Opened {
+                at: resolved,
+                print,
+                protection,
+            },
+        );
         Ok(bytes)
     }
 
@@ -558,56 +587,96 @@ impl Workspace {
         data: &[u8],
         overwrite: bool,
     ) -> Result<(), VfsError> {
+        let key = record_key(path.as_ref());
         let resolved = self.resolve(path)?;
-        let opened = self.seen.get(&resolved).cloned();
+        let opened = self.seen.get(&key).cloned();
         /* Whether the file there now is provably the document as it was
         opened — the one case its own security may be taken from it. Every
         other case of a document opened here gives the new version the
         protection remembered from then: a file that cannot be looked at (held
         open without sharing, or closed to reading by whoever put it there,
-        while what \`carry_over\` asks for is still let through), and one that is
+        while what `carry_over` asks for is still let through), and one that is
         gone, which would otherwise come back with the folder's security. */
-        let source = match (&opened, Fingerprint::at(&resolved)) {
-            (None, _) => Source::Document,
-            (Some(before), Some(now)) if before.print == now => Source::Document,
-            (Some(before), Some(now)) => {
+        let (target, source) = match &opened {
+            None => (resolved, Source::Document),
+            /* The name no longer leads where the document was read from: its
+            letters, or a link, changed under it. Asked about; written over,
+            the new version goes where the document was — whatever has its
+            name there now replaced, not written through — with the document's
+            own protection. */
+            Some(before) if resolved != before.at => {
                 if !overwrite {
-                    return Err(VfsError::Changed(display(&resolved)));
+                    return Err(VfsError::Changed(display(&before.at)));
                 }
-                if before.print.same_file(&now) {
-                    Source::Document
-                } else {
-                    Source::Remembered(&before.protection)
-                }
+                (
+                    self.where_it_was(&before.at)?,
+                    Source::Remembered(&before.protection),
+                )
             }
-            (Some(before), None) => {
-                /* There, and not to be looked at: changed, as far as anybody
-                can tell. Gone: nothing to ask about. */
-                if fs::symlink_metadata(&resolved).is_ok() && !overwrite {
-                    return Err(VfsError::Changed(display(&resolved)));
-                }
-                Source::Remembered(&before.protection)
+            Some(before) => {
+                let source = match Fingerprint::at(&resolved) {
+                    Some(now) if before.print == now => Source::Document,
+                    Some(now) => {
+                        if !overwrite {
+                            return Err(VfsError::Changed(display(&resolved)));
+                        }
+                        if before.print.same_file(&now) {
+                            Source::Document
+                        } else {
+                            Source::Remembered(&before.protection)
+                        }
+                    }
+                    None => {
+                        /* There, and not to be looked at: changed, as far as
+                        anybody can tell. Gone: nothing to ask about. */
+                        if fs::symlink_metadata(&resolved).is_ok() && !overwrite {
+                            return Err(VfsError::Changed(display(&resolved)));
+                        }
+                        Source::Remembered(&before.protection)
+                    }
+                };
+                (resolved, source)
             }
         };
-        self.write_resolved(&resolved, data, &source)?;
+        self.write_resolved(&target, data, &source)?;
 
         /* What the next save compares against: the file as it now is. Its
         protection is what this save gave it. */
-        let now = open_regular(&resolved).ok().and_then(|file| {
+        let now = open_regular(&target).ok().and_then(|file| {
             Some((
                 Fingerprint::of(&file).ok()?,
-                Protection::of(&resolved, &file).ok()?,
+                Protection::of(&target, &file).ok()?,
             ))
         });
         match now {
             Some((print, protection)) => {
-                self.seen.insert(resolved, Opened { print, protection });
+                self.seen.insert(
+                    key,
+                    Opened {
+                        at: target,
+                        print,
+                        protection,
+                    },
+                );
             }
             None => {
-                self.seen.remove(&resolved);
+                self.seen.remove(&key);
             }
         }
         Ok(())
+    }
+
+    /// Where a document read from `at` is written when its name no longer
+    /// leads there: `at` itself, so long as its folder is still that folder
+    /// and still let in.
+    fn where_it_was(&self, at: &Path) -> Result<PathBuf, VfsError> {
+        let (Some(folder), Some(name)) = (at.parent(), at.file_name()) else {
+            return Err(VfsError::NotAFile(display(at)));
+        };
+        if self.resolve(folder)? != folder {
+            return Err(VfsError::OutsideWorkspace(display(at)));
+        }
+        Ok(folder.join(name))
     }
 
     /// Reads only the start of a file — enough for format detection without
@@ -2078,6 +2147,38 @@ mod tests {
         assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
     }
 
+    /// The document's folder swapped for a link — a junction on Windows — to
+    /// another folder in the root, with a file of the same name there: asked
+    /// about, and with a yes still not written through the link. The folder the
+    /// document was read from is not there any more.
+    #[test]
+    fn a_document_whose_folder_was_swapped_for_a_link_is_not_written_through_it() {
+        let mut links = crate::testing::Links::default();
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("folder-swapped")).unwrap();
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let file = sub.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(elsewhere.join("notes.md"), "somebody else's").unwrap();
+        fs::remove_file(&file).unwrap();
+        fs::remove_dir(&sub).unwrap();
+        links.folder(&sub, &elsewhere);
+
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        let written = workspace.save(&file, b"mine", true);
+        assert!(written.is_err(), "written through the link");
+        assert_eq!(
+            fs::read_to_string(elsewhere.join("notes.md")).unwrap(),
+            "somebody else's"
+        );
+    }
+
     /// A file nobody read here, a new one included, is saved as it always was.
     #[test]
     fn a_file_not_read_here_is_saved_as_before() {
@@ -2194,6 +2295,40 @@ mod tests {
         );
     }
 
+    /// Put in the document's place under its name in other letters —
+    /// `NOTES.md` for `notes.md`, the same name to NTFS, while the path the
+    /// file system hands back is spelled as the replacement is. Asked about,
+    /// and written over only with the document's own security.
+    #[cfg(windows)]
+    #[test]
+    fn a_replacement_named_in_other_letters_is_asked_about() {
+        let (mut workspace, file, _) = closed_document("other-letters");
+        fs::remove_file(&file).unwrap();
+        let upper = file.with_file_name("NOTES.md");
+        fs::write(&upper, "planted").unwrap();
+        icacls(&upper, &["/grant", "*S-1-5-32-546:(R)"]);
+        assert!(
+            sddl(&upper).contains(";;;BG)"),
+            "the test could not plant it"
+        );
+
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&upper).unwrap(), "planted");
+
+        workspace.save(&file, b"mine", true).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+        let after = sddl(&file);
+        assert!(
+            !after.contains(";;;BG)"),
+            "the planted security was carried over: {after}"
+        );
+        assert!(
+            after[after.find("D:").unwrap()..].starts_with("D:P"),
+            "{after}"
+        );
+    }
+
     /// Deleted while it was open: nothing to ask about, and it comes back
     /// closed as it was — not with the folder's security.
     #[cfg(windows)]
@@ -2242,6 +2377,40 @@ mod tests {
         workspace.save(&file, b"mine", false).unwrap();
         let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "{mode:o}");
+    }
+
+    /// Put in the document's place as a link to another file in the folder:
+    /// asked about, and the save then goes where the document was read from —
+    /// the link replaced, with the document's mode — not into the file the
+    /// link points at.
+    #[cfg(unix)]
+    #[test]
+    fn a_document_replaced_by_a_link_is_asked_about_and_not_written_through() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("link-in-place")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        workspace.read_document(&file).unwrap();
+
+        let other = root.join("other.md");
+        fs::write(&other, "somebody else's").unwrap();
+        fs::set_permissions(&other, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(&other, &file).unwrap();
+
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&other).unwrap(), "somebody else's");
+
+        workspace.save(&file, b"mine", true).unwrap();
+        assert_eq!(fs::read_to_string(&other).unwrap(), "somebody else's");
+        let meta = fs::symlink_metadata(&file).unwrap();
+        assert!(meta.is_file(), "the link was written through");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
     }
 
     /// The same on Unix, with the mode.
