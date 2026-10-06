@@ -245,7 +245,7 @@ impl Protection {
                 Some(meta.mode() & 0o777)
             },
             #[cfg(target_os = "macos")]
-            quarantine: macos::quarantine_of(path)?,
+            quarantine: macos::quarantine_of_file(file)?,
         })
     }
 
@@ -1154,6 +1154,14 @@ mod macos {
             position: u32,
             options: i32,
         ) -> isize;
+        fn fgetxattr(
+            fd: i32,
+            name: *const std::ffi::c_char,
+            value: *mut c_void,
+            size: usize,
+            position: u32,
+            options: i32,
+        ) -> isize;
         fn fsetxattr(
             fd: i32,
             name: *const std::ffi::c_char,
@@ -1180,35 +1188,65 @@ mod macos {
         attribute_of(original, QUARANTINE)
     }
 
+    /// The mark an open file carries, if any — asked of the file itself, so
+    /// it is the mark of the file the rest of its protection was read from,
+    /// not of whatever the name leads to a moment later.
+    pub(super) fn quarantine_of_file(file: &fs::File) -> io::Result<Option<Vec<u8>>> {
+        attribute_of_file(file, QUARANTINE)
+    }
+
     pub(super) fn set_quarantine(temp: &fs::File, value: &[u8]) -> io::Result<()> {
         set_attribute(temp, QUARANTINE, value)
     }
 
     /// An extended attribute of a file by its NUL-terminated name, if it has
-    /// one. Its length is asked first and it is read at that length — again,
-    /// if it grew in between — so a mark longer than a guess is carried
-    /// rather than the save failed on `ERANGE`.
+    /// one; read from the file itself, not through a link.
     pub(super) fn attribute_of(original: &Path, name: &[u8]) -> io::Result<Option<Vec<u8>>> {
         let path = CString::new(original.as_os_str().as_bytes())?;
-        let mut value: Vec<u8> = Vec::new();
-        for _ in 0..4 {
+        read_attribute(|value, size| {
             // SAFETY: NUL-terminated path and name, and a buffer of the size
-            // given — none, with a size of nought, to ask the length; the
-            // attribute is read from the document itself, not through a link.
-            let read = unsafe {
+            // given — none, with a size of nought, to ask the length.
+            unsafe {
                 getxattr(
                     path.as_ptr(),
                     name.as_ptr().cast(),
-                    if value.is_empty() {
-                        std::ptr::null_mut()
-                    } else {
-                        value.as_mut_ptr().cast()
-                    },
-                    value.len(),
+                    value,
+                    size,
                     0,
                     XATTR_NOFOLLOW,
                 )
-            };
+            }
+        })
+    }
+
+    /// An extended attribute of an open file by its NUL-terminated name.
+    pub(super) fn attribute_of_file(file: &fs::File, name: &[u8]) -> io::Result<Option<Vec<u8>>> {
+        let fd = file.as_raw_fd();
+        read_attribute(|value, size| {
+            // SAFETY: an open descriptor, the NUL-terminated name, and a
+            // buffer of the size given — none, with a size of nought, to ask
+            // the length.
+            unsafe { fgetxattr(fd, name.as_ptr().cast(), value, size, 0, 0) }
+        })
+    }
+
+    /// Reads an extended attribute through `get`, handed a buffer and its
+    /// size. Its length is asked first and it is read at that length — again,
+    /// if it grew in between — so a mark longer than a guess is carried
+    /// rather than the save failed on `ERANGE`.
+    fn read_attribute(
+        mut get: impl FnMut(*mut c_void, usize) -> isize,
+    ) -> io::Result<Option<Vec<u8>>> {
+        let mut value: Vec<u8> = Vec::new();
+        for _ in 0..4 {
+            let read = get(
+                if value.is_empty() {
+                    std::ptr::null_mut()
+                } else {
+                    value.as_mut_ptr().cast()
+                },
+                value.len(),
+            );
             if read < 0 {
                 let err = io::Error::last_os_error();
                 match err.raw_os_error() {
@@ -3431,7 +3469,14 @@ mod tests {
             eprintln!("skipped: this volume holds no attribute this long");
             return;
         }
-        assert_eq!(macos::attribute_of(&file, name).unwrap(), Some(long));
+        assert_eq!(
+            macos::attribute_of(&file, name).unwrap(),
+            Some(long.clone())
+        );
+        assert_eq!(
+            macos::attribute_of_file(&fs::File::open(&file).unwrap(), name).unwrap(),
+            Some(long)
+        );
         assert_eq!(
             macos::attribute_of(&file, b"org.uleditor.none\0").unwrap(),
             None
