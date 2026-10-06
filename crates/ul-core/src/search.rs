@@ -609,6 +609,25 @@ fn opened_inside(path: &Path, seen: &Look, root: &Path) -> Option<fs::File> {
         .then_some(file)
 }
 
+/// Linux's and Android's answer to where an open file is, through `fds` —
+/// `/proc/self/fd`, or another folder in a test.
+///
+/// A system with no such folder at all — a sandbox or a chroot without
+/// `/proc` — is asked the path instead, as systems are that have no way to
+/// ask the file: every file used to be skipped there, and the search said it
+/// had found nothing. What is opened is still checked to be the file the walk
+/// saw (`same_file`) before this is asked. A folder that is there and does
+/// not answer for a file leaves that file out.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn where_opened_through(fds: &Path, fd: i32, path: &Path) -> Option<PathBuf> {
+    if !fds.is_dir() {
+        return fs::canonicalize(path).ok();
+    }
+    let at = fs::read_link(fds.join(fd.to_string())).ok()?;
+    // A file taken away since it was opened is not one to report.
+    (!at.to_string_lossy().ends_with(" (deleted)")).then_some(at)
+}
+
 /// Where an opened file really is, asked of the open file rather than of the
 /// path: Windows by `GetFinalPathNameByHandleW`, Linux and Android through
 /// `/proc/self/fd`, macOS by `fcntl(F_GETPATH)`. Elsewhere the path is asked,
@@ -622,10 +641,7 @@ fn where_opened(file: &fs::File, path: &Path) -> Option<PathBuf> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use std::os::unix::io::AsRawFd;
-        let _ = path;
-        let at = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()?;
-        // A file taken away since it was opened is not one to report.
-        (!at.to_string_lossy().ends_with(" (deleted)")).then_some(at)
+        where_opened_through(Path::new("/proc/self/fd"), file.as_raw_fd(), path)
     }
     #[cfg(target_vendor = "apple")]
     {
@@ -1286,6 +1302,29 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("the read waited on the FIFO");
         assert!(refused);
+    }
+
+    /// Without `/proc`, a file is placed by its path rather than left out —
+    /// and with it, by the open file, as before.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn without_proc_a_file_is_placed_by_its_path() {
+        use std::os::unix::io::AsRawFd;
+
+        let root = fs::canonicalize(temp_root("no-proc")).unwrap();
+        write(&root, "here.txt", "x");
+        let file = root.join("here.txt");
+        let open = fs::File::open(&file).unwrap();
+
+        let nowhere = root.join("no-proc-here");
+        assert_eq!(
+            where_opened_through(&nowhere, open.as_raw_fd(), &file),
+            Some(file.clone())
+        );
+        assert_eq!(
+            where_opened_through(Path::new("/proc/self/fd"), open.as_raw_fd(), &file),
+            Some(file)
+        );
     }
 
     #[test]
