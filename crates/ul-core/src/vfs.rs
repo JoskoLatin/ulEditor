@@ -263,7 +263,9 @@ impl Workspace {
         for entry in fs::read_dir(&resolved)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let kind = entry.file_type().ok();
+            let is_dir = kind.is_some_and(|t| t.is_dir());
+            let is_link = kind.is_some_and(|t| t.is_symlink());
 
             if is_noise(&name) {
                 continue;
@@ -277,11 +279,31 @@ impl Workspace {
                 continue;
             }
 
-            /* One entry that cannot be looked at — a link to something that is
-            gone, most often — is left out. It used to fail the whole folder,
-            and the tree then dropped the folder as if it had disappeared. */
-            let Ok(stat) = stat_of(&entry.path()) else {
-                continue;
+            /* A link — a symbolic link, or a junction on Windows — is listed as
+            what it is and nothing more. What it points at may be outside every
+            folder that was opened, and its size, its time, whether it can be
+            written and whether it is a folder at all are that place's; a link
+            in somebody's project pointing at a file of yours told them none of
+            it, but the tree said it to anybody looking. Whether it can be
+            opened is `resolve`'s answer, when it is opened. */
+            let stat = if is_link {
+                Stat {
+                    uri: display(&entry.path()),
+                    name: name.clone(),
+                    parent: Some(display(&resolved)),
+                    kind: "link".into(),
+                    size: 0,
+                    modified: None,
+                    readonly: false,
+                }
+            } else {
+                /* One entry that cannot be looked at is left out. It used to
+                fail the whole folder, and the tree then dropped the folder as
+                if it had disappeared. */
+                let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+                    continue;
+                };
+                stat_from(&entry.path(), &meta)
             };
             let detection = if is_dir {
                 detect_by_name("")
@@ -1468,7 +1490,7 @@ mod tests {
     }
 
     /// One link to something that is gone, and the rest of the folder is still
-    /// there to see.
+    /// there to see — the link too, as a link.
     #[test]
     fn a_link_to_something_gone_does_not_hide_the_folder() {
         let mut links = crate::testing::Links::default();
@@ -1485,8 +1507,37 @@ mod tests {
         let root = workspace.add_root(&inside).unwrap();
         let listed = workspace.read_dir(&root).unwrap();
 
-        let names: Vec<&str> = listed.iter().map(|e| e.stat.name.as_str()).collect();
-        assert_eq!(names, ["kept.txt"]);
+        let names: Vec<(&str, &str)> = listed
+            .iter()
+            .map(|e| (e.stat.name.as_str(), e.stat.kind.as_str()))
+            .collect();
+        assert_eq!(names, [("broken", "link"), ("kept.txt", "file")]);
+    }
+
+    /// A link is listed as a link, and nothing about what it points at is told:
+    /// not that it is a folder, not its size, not its time.
+    #[test]
+    fn the_tree_tells_nothing_of_what_a_link_points_at() {
+        let mut links = crate::testing::Links::default();
+        let base = scratch("link-target");
+        let outside = base.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "a size worth hiding").unwrap();
+        let inside = base.join("ws");
+        fs::create_dir_all(&inside).unwrap();
+        links.folder(&inside.join("there"), &outside);
+        #[cfg(unix)]
+        links.file(&inside.join("file-there"), &outside.join("secret.txt"));
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&inside).unwrap();
+        let listed = workspace.read_dir(&root).unwrap();
+
+        assert!(!listed.is_empty());
+        for entry in &listed {
+            assert_eq!(entry.stat.kind, "link", "{}", entry.stat.name);
+            assert_eq!((entry.stat.size, entry.stat.modified), (0, None));
+        }
     }
 
     #[cfg(unix)]

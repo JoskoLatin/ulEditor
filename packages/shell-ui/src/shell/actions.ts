@@ -428,7 +428,7 @@ export async function adoptDropped(
 }
 
 function toNode(
-  entry: { uri: Uri; name: string; kind: 'file' | 'directory'; modified?: number | null },
+  entry: { uri: Uri; name: string; kind: 'file' | 'directory' | 'link'; modified?: number | null },
   depth: number,
 ): TreeNode {
   return {

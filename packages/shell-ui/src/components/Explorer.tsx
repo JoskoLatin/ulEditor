@@ -7,7 +7,15 @@ import { useShell } from '../shell/context.js';
 import { openFolder, openUri, refreshRoot, removeRoot, toggleDirectory } from '../shell/actions.js';
 import { SORT_LABELS, sortTree } from '../shell/tree-sort.js';
 import { selectActiveTabId, useWorkspace, type TreeNode, type TreeSort } from '../state/workspace.js';
-import { FolderIcon, FormatIcon, IconChevron, IconFolderOpen, IconRefresh, IconTrash } from './Icons.js';
+import {
+  FolderIcon,
+  FormatIcon,
+  IconChevron,
+  IconFolderOpen,
+  IconLink,
+  IconRefresh,
+  IconTrash,
+} from './Icons.js';
 
 export function Explorer() {
   const tree = useWorkspace((s) => s.tree);
@@ -57,6 +65,7 @@ function Branch({ node }: { node: TreeNode }) {
   const [busy, setBusy] = useState(false);
 
   const isDir = node.kind === 'directory';
+  const isLink = node.kind === 'link';
   const isRoot = node.depth === 0;
   const descriptor = FORMATS[node.format];
 
@@ -94,12 +103,14 @@ function Branch({ node }: { node: TreeNode }) {
           className="tree-label"
           style={{ paddingLeft: 8 + node.depth * 12 }}
           onClick={onActivate}
-          title={node.name}
+          title={isLink ? t('{name} is a link. Where it points is not shown here.', { name: node.name }) : node.name}
         >
           <span className="chev">{isDir ? <IconChevron size={11} /> : null}</span>
           <span className="fmt-icon">
             {isDir ? (
               <FolderIcon open={node.expanded} size={15} />
+            ) : isLink ? (
+              <IconLink size={15} />
             ) : (
               <FormatIcon family={descriptor.family} size={15} />
             )}

@@ -42,7 +42,7 @@ interface RawStat {
   uri: string;
   name: string;
   parent: string | null;
-  kind: 'file' | 'directory';
+  kind: 'file' | 'directory' | 'link';
   size: number;
   modified: number | null;
   readonly: boolean;

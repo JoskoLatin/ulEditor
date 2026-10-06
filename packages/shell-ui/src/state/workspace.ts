@@ -14,7 +14,7 @@ import { isTauri } from '../host/tauri-fs.js';
 export interface TreeNode {
   uri: Uri;
   name: string;
-  kind: 'file' | 'directory';
+  kind: 'file' | 'directory' | 'link';
   depth: number;
   /** `null` until the directory has been read — it loads lazily on first expand. */
   children: TreeNode[] | null;

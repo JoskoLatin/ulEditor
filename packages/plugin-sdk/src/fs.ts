@@ -19,7 +19,12 @@ export interface FileStat {
   name: string;
   /** The parent directory, or `null` for a workspace root. */
   parent: Uri | null;
-  kind: 'file' | 'directory';
+  /**
+   * `link` is a symbolic link or, on Windows, a junction: listed as what it is,
+   * with nothing told of what it points at (size 0, no time). Opening one goes
+   * through the sandbox like any other path.
+   */
+  kind: 'file' | 'directory' | 'link';
   size: number;
   /** Unix ms. `null` when the platform does not provide it (e.g. some web handles). */
   modified: number | null;

@@ -196,6 +196,7 @@
   "Could not read the folder: {reason}": "Čitanje mape nije uspjelo: {reason}",
   "{name} has unsaved changes.": "{name} ima nespremljene promjene.",
   "{name} is open read-only.": "{name} je otvorena samo za čitanje.",
+  "{name} is a link. Where it points is not shown here.": "{name} je poveznica. Kamo vodi ovdje se ne prikazuje.",
   "Saved: {name}": "Spremljeno: {name}",
   "Saved as {name}": "Spremljeno kao {name}",
   "Save failed: {reason}": "Spremanje nije uspjelo: {reason}",

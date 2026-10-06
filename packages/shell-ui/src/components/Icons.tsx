@@ -56,6 +56,14 @@ export const IconChevron = (p: IconProps) => (
   </Svg>
 );
 
+/** A link: two links of a chain. */
+export const IconLink = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 9.5a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 4l-.75.75" />
+    <path d="M9 6.5a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12l.75-.75" />
+  </Svg>
+);
+
 export const IconClose = (p: IconProps) => (
   <Svg {...p}>
     <path d="m4 4 8 8M12 4l-8 8" />
