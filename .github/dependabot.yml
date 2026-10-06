@@ -1,0 +1,10 @@
+# Dependabot moves the SHA pins of the GitHub Actions the workflows use,
+# once a week, as small pull requests that are easy to read. npm and cargo
+# are kept by hand, with pnpm audit and cargo deny in CI (card 454).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
