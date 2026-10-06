@@ -186,16 +186,16 @@ impl Opened {
 /// it to, the record was lost to a replacement that resolved differently —
 /// `NOTES.md` put in place of `notes.md`, which NTFS spells as it is on disk,
 /// or a link in its place — and the save went ahead as on a file nobody had
-/// read, with the replacement's security. Letters are folded where the file
-/// system folds them; on one that does not, two names that differ only so
-/// share a record, which costs a question, never a save without one.
+/// read, with the replacement's security.
+///
+/// Letters are not folded, though NTFS and APFS fold them: a folder can be
+/// told not to (WSL's, or any with `fsutil file setCaseSensitiveInfo`), and
+/// there `notes.md` and `NOTES.md` are two documents whose records folding
+/// made one — a yes to the one's question then wrote it over the other. A tab
+/// asks for its document by the same path each time; one named in other
+/// letters is a document nobody read under that name.
 fn record_key(path: &Path) -> String {
-    let key = display(&normalize(path));
-    if cfg!(any(windows, target_vendor = "apple")) {
-        key.to_lowercase()
-    } else {
-        key
-    }
+    display(&normalize(path))
 }
 
 /// How a document was protected when it was opened — what its next version
@@ -2482,6 +2482,38 @@ mod tests {
             after[after.find("D:").unwrap()..].starts_with("D:P"),
             "{after}"
         );
+    }
+
+    /// In a folder told to tell letters apart, `notes.md` and `NOTES.md` are
+    /// two documents, both open: each is saved as itself, with no question
+    /// and nothing written over the other.
+    #[cfg(windows)]
+    #[test]
+    fn two_documents_named_apart_only_by_their_letters_are_two() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("letters-apart")).unwrap();
+        let folder = root.join("sensitive");
+        fs::create_dir(&folder).unwrap();
+        let told = std::process::Command::new("fsutil")
+            .args(["file", "setCaseSensitiveInfo"])
+            .arg(display(&folder))
+            .arg("enable")
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if !told {
+            eprintln!("skipped: this folder cannot be told to tell letters apart");
+            return;
+        }
+        let lower = folder.join("notes.md");
+        let upper = folder.join("NOTES.md");
+        fs::write(&lower, "mine").unwrap();
+        fs::write(&upper, "the other").unwrap();
+        workspace.read_document(&lower).unwrap();
+        workspace.read_document(&upper).unwrap();
+
+        workspace.save(&lower, b"mine, edited", false).unwrap();
+        assert_eq!(fs::read_to_string(&upper).unwrap(), "the other");
+        assert_eq!(fs::read_to_string(&lower).unwrap(), "mine, edited");
     }
 
     /// Deleted while it was open: nothing to ask about, and it comes back
