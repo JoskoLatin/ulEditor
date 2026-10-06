@@ -1288,7 +1288,6 @@ mod tests {
         assert!(refused);
     }
 
-    #[cfg(unix)]
     #[test]
     fn ctrl_p_tells_nothing_of_what_a_file_swapped_for_a_link_points_at() {
         /* The walk leaves links out; this is one put in a file's place after
@@ -1298,7 +1297,10 @@ mod tests {
         write(&outside, "secret.txt", "a size worth hiding\n");
         let root = fs::canonicalize(temp_root("listed-root")).unwrap();
         write(&root, "here.txt", "x");
-        links.file(&root.join("there.txt"), &outside.join("secret.txt"));
+        if !links.file(&root.join("there.txt"), &outside.join("secret.txt")) {
+            eprintln!("skipped: this account cannot make a link to a file");
+            return;
+        }
 
         assert!(listed(&root.join("there.txt")).is_none());
         assert_eq!(

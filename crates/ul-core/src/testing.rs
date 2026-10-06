@@ -37,12 +37,18 @@ impl Links {
         self.0.push(link.to_path_buf());
     }
 
-    /// A symbolic link to a file. Unix only: on Windows it needs a privilege
-    /// an ordinary account does not have.
-    #[cfg(unix)]
-    pub(crate) fn file(&mut self, link: &Path, target: &Path) {
+    /// A symbolic link to a file, and whether it could be made: on Windows it
+    /// takes an administrator or Developer Mode, which an ordinary account
+    /// does not have and the CI runner does.
+    pub(crate) fn file(&mut self, link: &Path, target: &Path) -> bool {
+        #[cfg(unix)]
         std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(target, link).is_err() {
+            return false;
+        }
         self.0.push(link.to_path_buf());
+        true
     }
 }
 
@@ -50,7 +56,7 @@ impl Drop for Links {
     fn drop(&mut self) {
         for link in &self.0 {
             #[cfg(windows)]
-            let _ = fs::remove_dir(link);
+            let _ = fs::remove_dir(link).or_else(|_| fs::remove_file(link));
             #[cfg(unix)]
             let _ = fs::remove_file(link);
         }
