@@ -2402,6 +2402,29 @@ mod tests {
         );
     }
 
+    /// The same for a document read to be edited, whose mark is taken from
+    /// the open file it was read from — through a save, and the next one,
+    /// which takes it from what the first one wrote.
+    #[cfg(windows)]
+    #[test]
+    fn a_document_read_and_saved_twice_keeps_its_mark() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("zone-read")).unwrap();
+        let file = root.join("downloaded.docx");
+        fs::write(&file, "before").unwrap();
+        fs::write(zone_stream(&file), "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        workspace.read_document(&file).unwrap();
+
+        workspace.save(&file, b"after", false).unwrap();
+        workspace.save(&file, b"again", false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "again");
+        assert_eq!(
+            fs::read_to_string(zone_stream(&file)).ok().as_deref(),
+            Some("[ZoneTransfer]\r\nZoneId=3\r\n"),
+            "the save took the mark away"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_save_keeps_who_may_read_the_document() {
@@ -3500,6 +3523,11 @@ mod tests {
         assert!(set.success(), "the test could not mark the file");
 
         workspace.write(&file, b"after").unwrap();
+        /* And for a document read to be edited, whose mark is taken from the
+        open file it was read from, through two saves. */
+        workspace.read_document(&file).unwrap();
+        workspace.save(&file, b"again", false).unwrap();
+        workspace.save(&file, b"and again", false).unwrap();
 
         let out = std::process::Command::new("xattr")
             .args(["-p", "com.apple.quarantine"])
