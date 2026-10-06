@@ -119,6 +119,24 @@ check(
   JSON.stringify(written),
 );
 
+/* ── a TIFF, which a webview cannot draw, as a PNG it can ────────────── */
+
+{
+  const made = glue.imageApply(png, { encoding: 'tiff' });
+  const tiff = made.takeBytes();
+  made.free();
+  const shown = glue.imagePreview(tiff);
+  const isPng = shown[0] === 0x89 && shown[1] === 0x50 && shown[2] === 0x4e && shown[3] === 0x47;
+  const back = glue.imageApply(shown, { encoding: 'bmp' });
+  const seen = readBmp(back.takeBytes());
+  back.free();
+  check(
+    'a TIFF is previewed as a PNG of the same picture',
+    isPng && seen.width === 4 && seen.height === 2 && isRed(seen.at(0, 0)) && !isRed(seen.at(3, 1)),
+    `${isPng ? 'PNG' : 'not PNG'}, ${seen.width}×${seen.height}, corner ${seen.at(0, 0)}`,
+  );
+}
+
 /* ── what somebody else's file may not do ────────────────────────────── */
 
 let refused = '';

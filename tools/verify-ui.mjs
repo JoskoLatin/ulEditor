@@ -114,6 +114,47 @@ async function dropFile(page, name, content) {
 }
 
 /**
+ * An uncompressed RGB TIFF, little-endian, white with a red top-left corner —
+ * a format the webview has no decoder for, so drawing one takes the preview.
+ */
+function makeTiff(width, height) {
+  const pixels = Buffer.alloc(width * height * 3, 0xff);
+  pixels.set([255, 0, 0], 0);
+  // Tag, type (3 short, 4 long), count, value — in tag order, as TIFF wants.
+  const entries = [
+    [256, 3, 1, width],
+    [257, 3, 1, height],
+    [258, 3, 3, 0], // BitsPerSample, three of them: an offset, filled in below
+    [259, 3, 1, 1], // no compression
+    [262, 3, 1, 2], // RGB
+    [273, 4, 1, 8], // the pixels start right after the header
+    [277, 3, 1, 3],
+    [278, 3, 1, height],
+    [279, 4, 1, pixels.length],
+    [284, 3, 1, 1],
+  ];
+  const ifdAt = 8 + pixels.length + (pixels.length % 2);
+  const bitsAt = ifdAt + 2 + entries.length * 12 + 4;
+  entries[2][3] = bitsAt;
+  const out = Buffer.alloc(bitsAt + 6);
+  out.write('II', 0);
+  out.writeUInt16LE(42, 2);
+  out.writeUInt32LE(ifdAt, 4);
+  pixels.copy(out, 8);
+  out.writeUInt16LE(entries.length, ifdAt);
+  entries.forEach(([tag, type, count, value], i) => {
+    const at = ifdAt + 2 + i * 12;
+    out.writeUInt16LE(tag, at);
+    out.writeUInt16LE(type, at + 2);
+    out.writeUInt32LE(count, at + 4);
+    if (type === 3 && count === 1) out.writeUInt16LE(value, at + 8);
+    else out.writeUInt32LE(value, at + 8);
+  });
+  [8, 8, 8].forEach((bits, i) => out.writeUInt16LE(bits, bitsAt + i * 2));
+  return out;
+}
+
+/**
  * The buttons in the title bar that the document's name is drawn over, if any.
  *
  * With `1fr auto 1fr` the left side spilled out of its column once it was wider
@@ -681,6 +722,20 @@ try {
   check('the image is displayed', !!imgBox && imgBox.width > 10, `${Math.round(imgBox?.width ?? 0)}px`);
   const imgStatus = await page.locator('.statusbar').innerText();
   check('the dimensions are in the status bar', imgStatus.includes('128 × 128'), imgStatus.replace(/\s+/g, ' ').slice(0, 60));
+
+  /* — a TIFF, which the webview cannot draw: shown through the preview — */
+  await dropFile(page, 'scan.tif', makeTiff(64, 32));
+  const tiffShown = await until(async () => (await page.locator('.statusbar').innerText()).includes('64 × 32'), 15000)
+    .then(() => true)
+    .catch(() => false);
+  const tiffNatural = await page
+    .locator('.ul-img-frame img:visible')
+    .last()
+    .evaluate((img) => `${img.naturalWidth}×${img.naturalHeight}`)
+    .catch(() => 'none');
+  check('a TIFF opens and is drawn at its own size', tiffShown && tiffNatural === '64×32', tiffNatural);
+  await page.locator('.tab').last().locator('.close').click();
+  await until(async () => (await page.locator('.tab').count()) === 5);
 
   /* — tabs — */
   check('five open tabs', (await page.locator('.tab').count()) === 5);

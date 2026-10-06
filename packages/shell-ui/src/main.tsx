@@ -99,7 +99,7 @@ shell.registry.register(
       id: 'org.uleditor.image',
       displayName: 'Image editor',
       matches: {
-        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
+        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'tif', 'tiff', 'image'],
       },
       capabilities: ['view', 'edit', 'export'],
       priority: 30,

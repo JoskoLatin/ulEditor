@@ -25,7 +25,10 @@ import type { ImageInfo, ImageOps, ImageService, ImageWritten, Uri, VirtualFileS
 import type { ImageRequest, ImageResponse } from './image-worker.js';
 
 type Pending = { resolve(response: ImageResponse): void; reject(err: Error): void };
-type Request = { op: 'info'; bytes: ArrayBuffer } | { op: 'apply'; bytes: ArrayBuffer; ops: ImageOps };
+type Request =
+  | { op: 'info'; bytes: ArrayBuffer }
+  | { op: 'preview'; bytes: ArrayBuffer }
+  | { op: 'apply'; bytes: ArrayBuffer; ops: ImageOps };
 
 class ImageWorker {
   #worker: Worker | null = null;
@@ -109,5 +112,10 @@ export class WasmImages implements ImageService {
     const done = answer(await this.#worker.ask({ op: 'apply', bytes, ops }));
     await this.fs.writeBytes(target, new Uint8Array(done.bytes as ArrayBuffer));
     return done.written as ImageWritten;
+  }
+
+  async preview(source: Uri): Promise<Uint8Array> {
+    const bytes = own(await this.fs.readBytes(source));
+    return new Uint8Array(answer(await this.#worker.ask({ op: 'preview', bytes })).bytes as ArrayBuffer);
   }
 }

@@ -159,6 +159,12 @@ export interface ImageService {
   info(source: Uri): Promise<ImageInfo>;
   /** `options.overwriteChanged` as for a file write — see `WriteOptions`. */
   write(source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions): Promise<ImageWritten>;
+  /**
+   * The picture as the bytes of a PNG, upright, for a format the page cannot
+   * draw itself — a TIFF. Optional: a host without it leaves such a picture
+   * undrawn, saying so, as before.
+   */
+  preview?(source: Uri): Promise<Uint8Array>;
 }
 
 /* ── language servers ────────────────────────────────────────────────── */

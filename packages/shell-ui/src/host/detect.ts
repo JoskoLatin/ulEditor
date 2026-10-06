@@ -76,7 +76,7 @@ const CODE_LANGUAGES: Record<string, string> = {
    is visible, so they went to the `properties` mode above. */
 const PLAIN_TEXT = new Set(['txt', 'log', 'csv', 'tsv', 'gitignore']);
 const MARKDOWN = new Set(['md', 'markdown', 'mdx']);
-const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'tif', 'tiff']);
 
 /**
  * Vector drawings. `svg` sits here rather than among the code languages: it is
@@ -268,7 +268,9 @@ tf` — and it is checked here, before anything reads the extension,
     startsWith(bytes, [0xff, 0xd8, 0xff]) || // JPEG
     startsWith(bytes, [0x47, 0x49, 0x46, 0x38]) || // GIF8
     startsWith(bytes, [0x42, 0x4d]) || // BMP
-    (startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) && startsWith(bytes, [0x57, 0x45, 0x42, 0x50], 8))
+    (startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) && startsWith(bytes, [0x57, 0x45, 0x42, 0x50], 8)) ||
+    startsWith(bytes, [0x49, 0x49, 0x2a, 0x00]) || // TIFF, little-endian (II*\0)
+    startsWith(bytes, [0x4d, 0x4d, 0x00, 0x2a]) // TIFF, big-endian (MM\0*)
   ) {
     return { format: 'image', via: 'magic' };
   }

@@ -64,6 +64,8 @@ const MIME: Record<string, string> = {
   bmp: 'image/bmp',
   ico: 'image/x-icon',
   avif: 'image/avif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
   svg: 'image/svg+xml',
 };
 
@@ -173,12 +175,6 @@ class ImageEditor implements EditorInstance {
     const img = document.createElement('img');
     img.alt = this.doc.name;
 
-    // A copy into a fresh buffer — Blob does not accept a view onto shared memory.
-    const blob = new Blob([new Uint8Array(this.bytes).buffer as ArrayBuffer], {
-      type: mimeFor(this.doc.name),
-    });
-    this.#objectUrl = URL.createObjectURL(blob);
-
     frame.appendChild(img);
     stage.appendChild(frame);
     root.append(this.#buildToolbar(), stage);
@@ -189,13 +185,9 @@ class ImageEditor implements EditorInstance {
     this.#frame = frame;
     this.#img = img;
 
-    const loaded = new Promise<boolean>((resolve) => {
-      img.addEventListener('load', () => resolve(true), { once: true });
-      img.addEventListener('error', () => resolve(false), { once: true });
-    });
-    img.src = this.#objectUrl;
+    this.#objectUrl = await this.#draw(img, this.doc.uri, this.bytes, this.doc.name);
 
-    if (!(await loaded)) {
+    if (!this.#objectUrl) {
       stage.replaceChildren();
       const error = document.createElement('div');
       error.className = 'ul-img-error';
@@ -880,21 +872,44 @@ class ImageEditor implements EditorInstance {
     return { uri, lostFidelity: [] };
   }
 
+  /**
+   * Draws a picture into `img`, and answers with the address it was drawn
+   * from — or `null` where it could not be. As it is, where the page can draw
+   * the format; otherwise — a TIFF, which a webview has no decoder for — as
+   * the PNG the host makes of it, which is the same picture upright.
+   */
+  async #draw(img: HTMLImageElement, uri: string, bytes: Uint8Array, name: string): Promise<string | null> {
+    const show = async (blob: Blob): Promise<string | null> => {
+      const url = URL.createObjectURL(blob);
+      const loaded = new Promise<boolean>((resolve) => {
+        img.addEventListener('load', () => resolve(true), { once: true });
+        img.addEventListener('error', () => resolve(false), { once: true });
+      });
+      img.src = url;
+      if (await loaded) return url;
+      URL.revokeObjectURL(url);
+      return null;
+    };
+    // A copy into a fresh buffer — Blob does not accept a view onto shared memory.
+    const own = await show(new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: mimeFor(name) }));
+    const images = this.host.images;
+    if (own || !images.available() || !images.preview) return own;
+    try {
+      const png = await images.preview(uri);
+      return await show(new Blob([new Uint8Array(png).buffer as ArrayBuffer], { type: 'image/png' }));
+    } catch {
+      return null;
+    }
+  }
+
   /** Puts the written file back on the screen. */
   async #reload(uri: string): Promise<void> {
     const img = this.#img;
     if (!img) return;
 
     const bytes = await this.host.fs.readBytes(uri);
-    const blob = new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: mimeFor(uri) });
-    const url = URL.createObjectURL(blob);
-
-    const loaded = new Promise<boolean>((resolve) => {
-      img.addEventListener('load', () => resolve(true), { once: true });
-      img.addEventListener('error', () => resolve(false), { once: true });
-    });
-    img.src = url;
-    if (await loaded) {
+    const url = await this.#draw(img, uri, bytes, uri);
+    if (url) {
       this.#natural = { width: img.naturalWidth, height: img.naturalHeight };
     }
 
@@ -942,7 +957,7 @@ export const imageEditorProvider: EditorProvider = {
   id: 'org.uleditor.image',
   displayName: 'Image editor',
   matches: {
-    extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'image'],
+    extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'tif', 'tiff', 'image'],
     mimeTypes: Object.values(MIME),
   },
   capabilities: ['view', 'edit', 'export'],

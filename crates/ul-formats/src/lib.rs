@@ -258,7 +258,7 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
 // configuration has a shape, and seeing it makes the file easier to read.
 const PLAIN_TEXT: &[&str] = &["txt", "log", "csv", "tsv"];
 const MARKDOWN: &[&str] = &["md", "markdown", "mdx"];
-const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"];
+const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "tif", "tiff"];
 
 /// Vector drawings. `svg` is here rather than among the code languages: it is
 /// markup, but somebody opening one wants to see the picture, and the viewer
@@ -432,7 +432,10 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
         || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
         || bytes.starts_with(b"GIF8")
         || bytes.starts_with(b"BM")
-        || (bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP");
+        || (bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP")
+        // TIFF, little-endian and big-endian: `II* ` and `MM *`.
+        || bytes.starts_with(b"II* ")
+        || bytes.starts_with(b"MM *");
     if is_image {
         return Detection::new(FormatId::Image, DetectedVia::Magic);
     }
@@ -526,6 +529,19 @@ mod tests {
     fn twelve_bytes_are_enough_for_webp() {
         let d = detect("x.bin", b"RIFF    WEBP");
         assert_eq!((d.format, d.via), (FormatId::Image, DetectedVia::Magic));
+    }
+
+    /// A TIFF is a picture by its name and by its first four bytes, in
+    /// either byte order — the image editor reads and writes it.
+    #[test]
+    fn a_tiff_is_a_picture() {
+        for name in ["scan.tif", "scan.TIFF"] {
+            assert_eq!(detect_by_name(name).format, FormatId::Image, "{name}");
+        }
+        for magic in [&b"II*    "[..], &b"MM *   "[..]] {
+            let d = detect("x.bin", magic);
+            assert_eq!((d.format, d.via), (FormatId::Image, DetectedVia::Magic));
+        }
     }
 
     #[test]

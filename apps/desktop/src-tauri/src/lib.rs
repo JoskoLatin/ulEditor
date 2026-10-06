@@ -421,6 +421,16 @@ fn image_info(state: State<'_, AppState>, path: String) -> Result<ImageInfo, Ima
     Ok(ul_image::info(&bytes)?)
 }
 
+/// The picture as a PNG, for a format the webview cannot draw — a TIFF. Read
+/// and decoded here, under ul-image's limits, and handed over as the bytes
+/// of a PNG. A plain read: it remembers nothing, as the document was already
+/// read to be edited when it was opened.
+#[tauri::command]
+fn image_preview(state: State<'_, AppState>, path: String) -> Result<Response, ImageCommandError> {
+    let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
+    Ok(Response::new(ul_image::preview(&bytes)?))
+}
+
 /// Applies a plan and writes the result.
 ///
 /// The bytes are read, transformed and written **without leaving Rust**: a
@@ -1403,6 +1413,7 @@ pub fn run() {
             read_document,
             write_file,
             image_info,
+            image_preview,
             image_write,
             convert_backend,
             convert_to_pdf,

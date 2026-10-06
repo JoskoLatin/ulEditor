@@ -35,4 +35,10 @@ export class TauriImages implements ImageService {
       overwrite: options?.overwriteChanged === true,
     });
   }
+
+  async preview(source: Uri): Promise<Uint8Array> {
+    // Raw bytes, through `tauri::ipc::Response`.
+    const buffer = await invoke<ArrayBuffer | number[]>('image_preview', { path: source });
+    return new Uint8Array(buffer);
+  }
 }

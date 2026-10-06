@@ -371,6 +371,28 @@ pub fn info(bytes: &[u8]) -> Result<Info, ImageError> {
     })
 }
 
+/// The picture as a PNG, stood upright, for a viewer that cannot draw its
+/// own format — a TIFF in a webview, which has no decoder for one.
+///
+/// Decoded under the same limits as an edit, so a file that claims too much
+/// is refused before its pixels are read. Written at the PNG encoder's fast
+/// setting: it is shown and thrown away. A picture in floating point, which
+/// PNG cannot hold, is shown in eight bits a channel.
+pub fn preview(bytes: &[u8]) -> Result<Vec<u8>, ImageError> {
+    let (image, _) = decode(bytes)?;
+    let image = match image {
+        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => {
+            DynamicImage::ImageRgba8(image.to_rgba8())
+        }
+        other => other,
+    };
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, ImageFormat::Png)
+        .map_err(|err| ImageError::Encode(err.to_string()))?;
+    Ok(out.into_inner())
+}
+
 /// Applies a plan and returns the encoded bytes.
 pub fn apply(bytes: &[u8], ops: &Ops) -> Result<(Vec<u8>, Written), ImageError> {
     let source_format = guess(bytes);
@@ -580,6 +602,12 @@ mod wasm {
         }
     }
 
+    /// The picture as a PNG, for a page that cannot draw its format.
+    #[wasm_bindgen(js_name = imagePreview)]
+    pub fn image_preview(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
+        super::preview(bytes).map_err(fail)
+    }
+
     #[wasm_bindgen(js_name = imageApply)]
     pub fn image_apply(bytes: &[u8], ops: JsValue) -> Result<Applied, JsValue> {
         let ops: super::Ops =
@@ -603,6 +631,64 @@ mod tests {
             .write_to(&mut out, ImageFormat::Png)
             .unwrap();
         out.into_inner()
+    }
+
+    /// A TIFF, which a webview cannot draw, is shown as a PNG of the same
+    /// picture — its corner where it was, in eight and in sixteen bits a
+    /// channel.
+    #[test]
+    fn a_tiff_is_previewed_as_the_same_picture_in_png() {
+        let corner = image::load_from_memory(&corner_png()).unwrap();
+        for picture in [
+            corner.clone(),
+            DynamicImage::ImageRgba16(corner.to_rgba16()),
+        ] {
+            let mut tiff = Cursor::new(Vec::new());
+            picture.write_to(&mut tiff, ImageFormat::Tiff).unwrap();
+            let tiff = tiff.into_inner();
+            assert!(tiff.starts_with(b"II*\0") || tiff.starts_with(b"MM\0*"));
+
+            let png = preview(&tiff).unwrap();
+            assert_eq!(guess(&png), Some(ImageFormat::Png));
+            let shown = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(shown.dimensions(), (4, 2));
+            assert_eq!(shown.get_pixel(0, 0), &image::Rgba([255, 0, 0, 255]));
+            assert_eq!(shown.get_pixel(3, 1), &image::Rgba([255, 255, 255, 255]));
+        }
+    }
+
+    /// A TIFF that claims more than the budget is refused by its preview too,
+    /// before anything is allocated for it.
+    #[test]
+    fn a_tiff_claiming_too_much_is_not_previewed() {
+        /* Little-endian TIFF: one IFD, grey in sixteen bits, 60 000 by
+        60 000 pixels — 7.2 GB decoded, far past the budget. Tags in order,
+        as the format wants them. */
+        let mut tiff = b"II*\0\x08\0\0\0".to_vec();
+        let entries: [(u16, u16, u32, u32); 9] = [
+            (256, 4, 1, 60_000), // ImageWidth
+            (257, 4, 1, 60_000), // ImageLength
+            (258, 3, 1, 16),     // BitsPerSample
+            (259, 3, 1, 1),      // Compression: none
+            (262, 3, 1, 1),      // PhotometricInterpretation: BlackIsZero
+            (273, 4, 1, 8),      // StripOffsets
+            (277, 3, 1, 1),      // SamplesPerPixel
+            (278, 4, 1, 60_000), // RowsPerStrip
+            (279, 4, 1, 1),      // StripByteCounts
+        ];
+        tiff.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for (tag, kind, count, value) in entries {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&kind.to_le_bytes());
+            tiff.extend_from_slice(&count.to_le_bytes());
+            tiff.extend_from_slice(&value.to_le_bytes());
+        }
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        let refused = preview(&tiff);
+        assert!(
+            matches!(refused, Err(ImageError::TooLarge(_))),
+            "{refused:?}"
+        );
     }
 
     /// PNG's CRC-32, bit by bit — four lines rather than a dependency.

@@ -13,11 +13,13 @@
 interface UlImage {
   default(input: { module_or_path: URL }): Promise<unknown>;
   imageInfo(bytes: Uint8Array): unknown;
+  imagePreview(bytes: Uint8Array): Uint8Array;
   imageApply(bytes: Uint8Array, ops: unknown): { takeBytes(): Uint8Array; written: unknown; free(): void };
 }
 
 export type ImageRequest =
   | { id: number; base: string; op: 'info'; bytes: ArrayBuffer }
+  | { id: number; base: string; op: 'preview'; bytes: ArrayBuffer }
   | { id: number; base: string; op: 'apply'; bytes: ArrayBuffer; ops: unknown };
 
 export type ImageResponse =
@@ -65,6 +67,11 @@ scope.onmessage = async (event) => {
     const bytes = new Uint8Array(request.bytes);
     if (request.op === 'info') {
       scope.postMessage({ id: request.id, ok: true, info: module.imageInfo(bytes) });
+      return;
+    }
+    if (request.op === 'preview') {
+      const buffer = module.imagePreview(bytes).buffer as ArrayBuffer;
+      scope.postMessage({ id: request.id, ok: true, bytes: buffer }, [buffer]);
       return;
     }
     const applied = module.imageApply(bytes, request.ops);
