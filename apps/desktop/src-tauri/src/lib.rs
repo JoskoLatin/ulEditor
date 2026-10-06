@@ -1080,14 +1080,59 @@ async fn lsp_definition(
             })
         })
         .collect::<Vec<_>>();
-    /* Each file pointed at is offered, to be read, and nothing beside it: a
-    server's answer is not a person pointing at a folder (ADR 0005). */
+    /* A file pointed at in a library is offered, to be read, and nothing
+    beside it: a server's answer is not a person pointing at a folder
+    (ADR 0005). Only there — see `library_source`. */
     offer_files(
         &state,
-        jumps.iter().map(|jump| jump.path.as_str()),
+        jumps
+            .iter()
+            .map(|jump| jump.path.as_str())
+            .filter(|path| library_source(&language, std::path::Path::new(path))),
         Access::Read,
     );
     Ok(jumps)
+}
+
+/// Whether a file a language server pointed at may be offered to the page:
+/// one of that language's own sources, where its libraries are kept — the
+/// Rust toolchain and the crates downloaded (`.rustup`, `.cargo`, or where
+/// `RUSTUP_HOME` and `CARGO_HOME` say), a `node_modules`, a Python
+/// `site-packages` or the stubs a server ships.
+///
+/// Not any file it names: the page writes the documents the server reads, and
+/// a document can make the server name any file at all — `#[path = "…/id_rsa"]
+/// mod x;`, an import of `…/.env` — so its answer is not the person asking
+/// for that file (found by the review of 39e0855). A definition inside the
+/// folders already open needs no offer, and one elsewhere — a sibling project
+/// — is not opened by F12; it is opened as any folder is.
+fn library_source(language: &str, path: &std::path::Path) -> bool {
+    let (extensions, places): (&[&str], &[&str]) = match language {
+        "rust" => (&["rs"], &[".rustup", ".cargo"]),
+        "typescript" | "javascript" => (
+            &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
+            &["node_modules"],
+        ),
+        "python" => (
+            &["py", "pyi"],
+            &["site-packages", "dist-packages", "typeshed-fallback"],
+        ),
+        _ => return false,
+    };
+    let source = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extensions.iter().any(|e| e.eq_ignore_ascii_case(extension)));
+    let in_a_place = path.components().any(|part| {
+        let part = part.as_os_str().to_string_lossy();
+        places.iter().any(|place| place.eq_ignore_ascii_case(&part))
+    });
+    let in_a_home = language == "rust"
+        && ["RUSTUP_HOME", "CARGO_HOME"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .any(|home| path.starts_with(home));
+    source && (in_a_place || in_a_home)
 }
 
 /// What could this word become? — the list, and whether it is the whole list.
@@ -1272,16 +1317,23 @@ fn close_acknowledged(guard: State<'_, CloseGuard>) {
 /// announce the same crash every time somebody switched between English and
 /// Croatian.
 ///
-/// Each report is offered, to be read: the page opens it by claiming it, and
-/// the reports' folder stays shut to it otherwise (ADR 0005).
+/// Each report is let in to be read, and nothing else of the reports' folder,
+/// which stays shut (`Workspace::show_own_file`): Rust shows the page what it
+/// wrote itself. Not as an offer — a language server's answer becomes one,
+/// and must not open a protected folder.
 #[tauri::command]
 fn take_crash_reports(state: State<'_, AppState>) -> Vec<String> {
-    let reports: Vec<String> = crash::unseen()
+    let reports = crash::unseen();
+    let _ = with_workspace(&state, |workspace| {
+        for report in &reports {
+            let _ = workspace.show_own_file(report);
+        }
+        Ok(())
+    });
+    reports
         .into_iter()
         .map(|path| path.display().to_string())
-        .collect();
-    offer_files(&state, reports.iter().map(String::as_str), Access::Read);
-    reports
+        .collect()
 }
 
 /* ── developer tools ─────────────────────────────────────────────────── */
@@ -1686,6 +1738,40 @@ mod tests {
 
     /// A save refused over a changed file reaches the page with a code in
     /// front, which the shell knows it by; the words are for people.
+    /// F12 offers a library's sources, and not a file a document made the
+    /// server name.
+    #[test]
+    fn only_a_librarys_own_sources_are_offered_from_a_definition() {
+        use super::library_source;
+        use std::path::Path;
+        for (language, path) in [
+            ("rust", "C:/Users/a/.rustup/toolchains/stable/lib/rustlib/src/rust/library/core/src/option.rs"),
+            ("rust", "C:/Users/a/.cargo/registry/src/index/serde-1.0.0/src/lib.rs"),
+            ("typescript", "C:/p/node_modules/typescript/lib/lib.dom.d.ts"),
+            ("javascript", "C:/p/node_modules/react/index.js"),
+            ("python", "C:/Python312/Lib/site-packages/requests/api.py"),
+            ("python", "C:/p/node_modules/pyright/dist/typeshed-fallback/stdlib/os/__init__.pyi"),
+        ] {
+            assert!(library_source(language, Path::new(path)), "{language} {path}");
+        }
+        for (language, path) in [
+            ("rust", "C:/Users/a/.ssh/id_rsa"),
+            ("rust", "C:/Users/a/.cargo/credentials.toml"),
+            ("rust", "C:/work/private/src/main.rs"),
+            ("typescript", "C:/p/.env"),
+            ("typescript", "C:/p/node_modules/x/secrets.json"),
+            ("typescript", "C:/work/private/index.ts"),
+            ("python", "C:/Users/a/.aws/credentials"),
+            ("markdown", "C:/p/node_modules/x/README.md"),
+            ("rust", "C:/p/node_modules/x/lib.rs"),
+        ] {
+            assert!(
+                !library_source(language, Path::new(path)),
+                "{language} {path}"
+            );
+        }
+    }
+
     #[test]
     fn a_changed_file_reaches_the_page_as_a_code() {
         use ul_core::vfs::{VfsError, CHANGED_OUTSIDE};

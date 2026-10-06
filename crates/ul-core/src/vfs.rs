@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::consent::{Access, Consent, Kind};
+use crate::consent::{Access, Consent};
 use thiserror::Error;
 
 use ul_formats::{detect, detect_by_name, Detection, PROBE_LEN};
@@ -147,6 +147,10 @@ pub struct Workspace {
     granted: Vec<Consent>,
     /// Folders nothing is let into, whatever was opened above them.
     protected: Vec<PathBuf>,
+    /// Files of the program's own that may be read though they lie in a
+    /// protected folder — the crash reports it wrote. Only `show_own_file`
+    /// adds to it, which Rust alone calls; no grant, offer or claim does.
+    own: Vec<PathBuf>,
     /// Each document as it was when it was read to be edited, or last saved,
     /// by `record_key`.
     seen: std::collections::HashMap<String, Opened>,
@@ -466,6 +470,26 @@ impl Workspace {
         }
     }
 
+    /// A file of the program's own, in a folder `protect` shut, that the page
+    /// may read and nothing more: a crash report, which opens in a tab. Rust
+    /// calls this for files it wrote itself; the page has no way to.
+    pub fn show_own_file(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        if fs::symlink_metadata(path.as_ref())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(VfsError::NotAFile(display(path.as_ref())));
+        }
+        let canonical = fs::canonicalize(path.as_ref())?;
+        if !canonical.is_file() {
+            return Err(VfsError::NotAFile(display(&canonical)));
+        }
+        if !self.own.contains(&canonical) {
+            self.own.push(canonical.clone());
+        }
+        Ok(canonical)
+    }
+
     /// The folders `protect` shut, for the walks that do not go through
     /// `resolve` file by file — search and Ctrl+P.
     pub(crate) fn protected(&self) -> &[PathBuf] {
@@ -665,16 +689,13 @@ impl Workspace {
     /// far.
     fn allows(&self, effective: &Path, access: Access) -> bool {
         if self.protected.iter().any(|dir| effective.starts_with(dir)) {
-            /* Shut, whatever is open above it — but for a file let in on its
-            own and only to be read: what the program offers of its own
-            folder, a crash report it wrote there. Nothing in it is written
-            through any grant, and a grant to write lets nothing in. */
-            return access == Access::Read
-                && self.granted.iter().any(|grant| {
-                    grant.kind == Kind::File
-                        && grant.access == Access::Read
-                        && grant.path == effective
-                });
+            /* Shut, whatever is open above it and whatever was granted or
+            claimed in it — but for a file of the program's own it means to
+            show, a crash report it wrote there, which is read and never
+            written. A grant cannot stand in for that: a read-only offer is
+            what a language server's answer becomes, and a server can be made
+            to name any file (found by the review of 39e0855). */
+            return access == Access::Read && self.own.iter().any(|own| own == effective);
         }
         self.roots.iter().any(|root| effective.starts_with(root))
             || self.granted.iter().any(|grant| {
@@ -3590,33 +3611,35 @@ mod tests {
         workspace.save(&file, b"mine, again", false).unwrap();
     }
 
-    /// The one thing read in a protected folder: a file let in on its own,
-    /// only to be read — a crash report the program offers. Nothing there is
-    /// written, nothing beside it read, and a grant to write lets nothing in.
+    /// The one thing read in a protected folder: a file of the program's own
+    /// it means to show — a crash report. Nothing there is written, nothing
+    /// beside it read, and no grant lets anything in: neither one to read,
+    /// which is what a language server's answer becomes, nor one to write.
     #[test]
-    fn a_protected_folder_lets_read_only_the_file_offered_to_be_read() {
+    fn a_protected_folder_shows_only_its_own_file_and_grants_let_nothing_in() {
         let base = scratch("protected-report");
         let own = base.join("crash");
         fs::create_dir_all(&own).unwrap();
         fs::write(own.join("report.txt"), "boom").unwrap();
-        fs::write(own.join("other.txt"), "x").unwrap();
+        fs::write(own.join("consents.json"), "{}").unwrap();
         let mut workspace = Workspace::new();
         workspace.protect(&own);
         workspace.add_root(&base).unwrap();
 
-        let report = workspace
-            .grant_file(own.join("report.txt"), Access::Read)
-            .unwrap();
+        let report = workspace.show_own_file(own.join("report.txt")).unwrap();
         assert_eq!(workspace.read(&report).unwrap(), b"boom");
         assert!(workspace.write(&report, b"planted").is_err());
-        assert!(workspace.read(own.join("other.txt")).is_err());
         assert!(workspace.read_dir(&own).is_err());
 
-        workspace
-            .grant_file(own.join("other.txt"), Access::ReadWrite)
-            .unwrap();
-        assert!(workspace.read(own.join("other.txt")).is_err());
-        assert!(workspace.write(own.join("other.txt"), b"planted").is_err());
+        let kept = own.join("consents.json");
+        workspace.grant_file(&kept, Access::Read).unwrap();
+        assert!(
+            workspace.read(&kept).is_err(),
+            "a read grant opened a protected file"
+        );
+        workspace.grant_file(&kept, Access::ReadWrite).unwrap();
+        assert!(workspace.read(&kept).is_err());
+        assert!(workspace.write(&kept, b"planted").is_err());
     }
 
     /// A folder let in only to be read lists its files as read-only and
