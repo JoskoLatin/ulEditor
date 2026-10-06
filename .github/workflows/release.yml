@@ -309,6 +309,9 @@ jobs:
       - name: Say why nothing was signed
         if: env.PUBLISH == 'true' && env.HAS_SIGNING_KEY != 'true'
         run: |
+          # Installers and nothing else, as the signing step checks too: a
+          # builder's own latest.json or .sig must not reach the release.
+          node tools/sign-updates.mjs dist --unsigned
           rm -f dist/*.app.tar.gz
           echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so nothing was signed and no latest.json will be written. The installers in this release are complete; they simply will not be offered as an update. See docs/RELEASE.md."
         shell: bash
@@ -474,13 +477,19 @@ jobs:
       # the runner's disk, used, and removed — in a job that builds nothing.
       # A trial run makes a key of its own instead. The passwords go to the
       # tools through the environment, not on their command lines.
+      # The secrets only when publishing: a trial run never has them in its
+      # environment, whatever the step does. And the certificate a release is
+      # signed with is checked against the one every installed copy has — a
+      # keystore that is not it signs an APK no phone accepts as an update, and
+      # says nothing. It is public: it is in every APK on the release page.
       - name: Sign and check
         env:
           PUBLISH: ${{ needs.plan.outputs.publish }}
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ needs.plan.outputs.publish == 'true' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          KEYSTORE_PASSWORD: ${{ needs.plan.outputs.publish == 'true' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          KEY_ALIAS: ${{ needs.plan.outputs.publish == 'true' && secrets.ANDROID_KEY_ALIAS || '' }}
+          KEY_PASSWORD: ${{ needs.plan.outputs.publish == 'true' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          RELEASE_CERTIFICATE: 20eb776de41ebb615df6592575eea48194fc9ceec4c8a33e6174cf26951c509b
         run: |
           keystore="$RUNNER_TEMP/release.jks"
           trap 'rm -f "$keystore"' EXIT
@@ -507,10 +516,20 @@ jobs:
             "$tools/zipalign" -p -f 4 dist-android/unsigned.apk "$RUNNER_TEMP/aligned.apk"
 
           apk="signed/ulEditor_${version}_android.apk"
+          # No v4 signature: it is a file of its own (.idsig), for installing
+          # over adb while the APK is still copying, and has no place beside it
+          # on a release page.
           "$tools/apksigner" sign --ks "$keystore" --ks-pass env:KEYSTORE_PASSWORD \
             --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+            --v4-signing-enabled false \
             --out "$apk" "$RUNNER_TEMP/aligned.apk"
-          "$tools/apksigner" verify --print-certs "$apk"
+          signed_with=$("$tools/apksigner" verify --print-certs "$apk" |
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          echo "signed with certificate $signed_with"
+          if [ "$PUBLISH" = "true" ] && [ "$signed_with" != "$RELEASE_CERTIFICATE" ]; then
+            echo "::error::The APK is signed with certificate $signed_with, and every installed copy has $RELEASE_CERTIFICATE. No phone would take it as an update. The keystore in Secrets is not the release key — see docs/RELEASE.md."
+            exit 1
+          fi
 
           if [ -f dist-android/unsigned.aab ]; then
             aab="signed/ulEditor_${version}_android.aab"

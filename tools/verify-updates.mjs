@@ -179,7 +179,7 @@ const job = (name) => jobs.get(name) ?? '';
 const holding = (secret) =>
   [...jobs].filter(([, text]) => text.includes(`secrets.${secret}`)).map(([name]) => name);
 const writers = [...jobs]
-  .filter(([, text]) => /contents:\s*write/.test(text))
+  .filter(([, text]) => /contents:\s*write|permissions:\s*write-all/.test(text))
   .map(([name]) => name)
   .sort();
 
@@ -217,8 +217,48 @@ check(
 );
 check(
   'nothing restored from a cache goes into a release',
-  !/uses: Swatinem\/rust-cache|^\s*cache:\s*pnpm/m.test(release),
+  !/uses: (Swatinem\/rust-cache|actions\/cache)|^\s*cache:\s*pnpm/m.test(release),
   'a cache is written by other runs',
+);
+check(
+  'a builder checks out without leaving a token for the build to find',
+  ['desktop-build', 'android-build'].every(
+    (name) =>
+      (job(name).match(/uses: actions\/checkout@/g) ?? []).length ===
+      (job(name).match(/persist-credentials: false/g) ?? []).length,
+  ),
+);
+check(
+  'a signer installs only the signer, and runs no package scripts',
+  (job('desktop-sign').match(/pnpm install[^\n]*/g) ?? []).every(
+    (line) => line.includes('--ignore-scripts') && line.includes('--filter'),
+  ),
+);
+check(
+  'and runs nothing a builder handed on',
+  ['desktop-sign', 'android-sign'].every(
+    (name) => !/node\s+(\.\/)?dist|\bsh\s+(\.\/)?dist|dist(-android)?\/[^\s"]*\.(mjs|js|sh)\b/.test(job(name)),
+  ),
+);
+check(
+  'what a builder handed on is checked to be installers and nothing else, signed or not',
+  /node tools\/sign-updates\.mjs dist --unsigned/.test(job('desktop-sign')),
+  "a builder's own latest.json or .sig must not reach the release",
+);
+check(
+  'the Android secrets are in no step of a trial run',
+  (job('android-sign').match(/secrets\.ANDROID_/g) ?? []).length ===
+    (job('android-sign').match(/publish == 'true' && secrets\.ANDROID_/g) ?? []).length,
+);
+check(
+  "an APK is checked to be signed with the release's certificate",
+  /RELEASE_CERTIFICATE: [0-9a-f]{64}/.test(job('android-sign')) &&
+    job('android-sign').includes('"$signed_with" != "$RELEASE_CERTIFICATE"'),
+  'a keystore that is not the release key signs an APK no phone takes as an update',
+);
+check(
+  'and no v4 signature file goes on the release page with it',
+  job('android-sign').includes('--v4-signing-enabled false'),
 );
 check(
   'a release is signed in the release environment',

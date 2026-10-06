@@ -149,7 +149,18 @@ So the release is three kinds of job that never share what they hold:
 The desktop signer checks every signature against the public key compiled into
 the application before anything goes on ([tools/sign-updates.mjs](../tools/sign-updates.mjs)).
 A secret that is not the application's key fails the release there, rather than
-publishing an update every installation refuses in silence.
+publishing an update every installation refuses in silence. The Android signer
+does the same with the certificate: the SHA-256 of the one every installed copy
+carries (it is public — it is in every APK on the release page) is in the
+workflow, and an APK signed with any other fails the release. Both signers also
+refuse anything from a builder that is not an installer — a `latest.json` or a
+`.sig` of a builder's own never reaches the release page.
+
+**What this does not do.** The signer signs what the builder made. A dependency
+that puts its own code *into* the installer while it is being built still gets
+that installer a valid signature; what the split takes away is that same
+dependency signing, or publishing, anything else. The person who approves the
+signing step is the one check on what was built.
 
 `pnpm verify:updates` holds the split: it fails if a key appears in any job but
 its signer, if a builder holds any secret, if anything but the draft and the
@@ -165,8 +176,10 @@ github.com:** **Settings → Environments → New environment → `release`**, t
    of type *Tag* and a rule `main` of type *Branch* — a release tag, and a
    rebuild, which is started from `main` (below). No other branch can reach the
    keys at all.
-3. **Environment secrets**: the six secrets from the two sections above.
-4. Then delete the same six from **Settings → Secrets and variables → Actions**,
+3. **Environment secrets**: the secrets from the two sections above — six, or
+   five when the update key has no passphrase and so no
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+4. Then delete the same ones from **Settings → Secrets and variables → Actions**,
    so that they exist only where the environment guards them.
 
 Until then the workflow still works: a job in an environment also sees the
@@ -246,6 +259,11 @@ The two are separate on purpose: the workflow comes from `main`, the source code
 from the tag. So a rebuilt installer is built from the same commit as the ones
 already in the release, with a workflow that works. The finished platforms are
 left alone, and what is rebuilt overwrites its own files in the draft.
+
+The scripts the workflow runs — `tools/sign-updates.mjs`,
+`tools/updater-manifest.mjs` — are the tag's, like the source: a fix to one of
+them on `main` does not reach a rebuild of an older tag. A fix of that kind
+needs a new tag.
 
 ## What the installer registers
 

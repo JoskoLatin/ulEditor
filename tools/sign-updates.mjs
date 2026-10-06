@@ -13,7 +13,14 @@
  * application's key would otherwise sign a release every installed copy
  * refuses, in silence; it fails here instead, before anything is published.
  *
+ * And before any of it, the folder is checked to hold installers and nothing
+ * else. The builders are trusted with what they build, not with what goes on
+ * the release page beside it: a `latest.json` or a `.sig` of a builder's own
+ * would otherwise be carried up by the publisher, and a release without a key
+ * would get a manifest after all — of signatures nobody made.
+ *
  *   node tools/sign-updates.mjs <folder> [--pubkey <base64 of the public key file>]
+ *   node tools/sign-updates.mjs <folder> --unsigned     (checks the folder only)
  *
  * The private key is read the way `tauri signer sign` reads it, from
  * `TAURI_SIGNING_PRIVATE_KEY` (its contents) and
@@ -21,7 +28,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,14 +44,35 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  */
 export const SIGNED = /(\.msi|-setup\.exe|\.deb|\.rpm|\.AppImage|\.app\.tar\.gz)$/;
 
+/** What a builder may hand on: an installer of ours, and only as a plain file. */
+export const INSTALLER = /^ulEditor[_-][\w.-]+(\.msi|-setup\.exe|\.deb|\.rpm|\.AppImage|\.dmg|\.app\.tar\.gz)$/;
+
+/** The names in `folder` that are not an installer a builder may hand on. */
+export function unexpected(folder) {
+  return readdirSync(folder).filter(
+    (name) => !INSTALLER.test(name) || !lstatSync(join(folder, name)).isFile(),
+  );
+}
+
 function main() {
   const args = process.argv.slice(2);
   const at = args.indexOf('--pubkey');
   const given = at >= 0 ? args.splice(at, 2)[1] : null;
-  const folder = args[0];
+  const unsigned = args.includes('--unsigned');
+  const folder = args.filter((arg) => arg !== '--unsigned')[0];
   if (!folder || (at >= 0 && !given)) {
-    console.error('Usage: node tools/sign-updates.mjs <folder> [--pubkey <base64>]');
+    console.error('Usage: node tools/sign-updates.mjs <folder> [--pubkey <base64>] [--unsigned]');
     process.exit(2);
+  }
+
+  const strays = unexpected(folder);
+  if (strays.length) {
+    console.error(`Not an installer, and not to be published: ${strays.join(', ')}`);
+    process.exit(1);
+  }
+  if (unsigned) {
+    console.log(`${readdirSync(folder).length} installers, nothing else.`);
+    return;
   }
 
   const conf = JSON.parse(readFileSync(join(ROOT, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
