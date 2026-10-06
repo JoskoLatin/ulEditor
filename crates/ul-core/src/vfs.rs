@@ -871,12 +871,15 @@ mod macos {
     /* From the libc crate's tables (0.2.189), for macOS. */
     const XATTR_NOFOLLOW: i32 = 0x0001;
     const ENOENT: i32 = 2;
+    const ERANGE: i32 = 34;
     const ENOTSUP: i32 = 45;
     const ENOATTR: i32 = 93;
 
     const QUARANTINE: &[u8] = b"com.apple.quarantine\0";
-    /// Far more than a mark macOS writes, which is a line of a few dozen bytes.
-    const LONGEST: usize = 64 * 1024;
+    /// Far more than a mark macOS writes, which is a line of a few dozen
+    /// bytes. A longer one fails the save, rather than be held in memory or
+    /// left off the next version.
+    const LONGEST: usize = 1024 * 1024;
 
     extern "C" {
         fn getxattr(
@@ -910,37 +913,74 @@ mod macos {
     /// The mark a file carries, if any; read from the file itself, not
     /// through a link.
     pub(super) fn quarantine_of(original: &Path) -> io::Result<Option<Vec<u8>>> {
-        let path = CString::new(original.as_os_str().as_bytes())?;
-        let mut value = vec![0u8; LONGEST];
-        // SAFETY: NUL-terminated path and name, and a buffer of the size given;
-        // the attribute is read from the document itself, not through a link.
-        let read = unsafe {
-            getxattr(
-                path.as_ptr(),
-                QUARANTINE.as_ptr().cast(),
-                value.as_mut_ptr().cast(),
-                value.len(),
-                0,
-                XATTR_NOFOLLOW,
-            )
-        };
-        if read < 0 {
-            let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
-                Some(ENOATTR | ENOTSUP | ENOENT) => Ok(None),
-                _ => Err(err),
-            };
-        }
-        value.truncate(read as usize);
-        Ok(Some(value))
+        attribute_of(original, QUARANTINE)
     }
 
     pub(super) fn set_quarantine(temp: &fs::File, value: &[u8]) -> io::Result<()> {
+        set_attribute(temp, QUARANTINE, value)
+    }
+
+    /// An extended attribute of a file by its NUL-terminated name, if it has
+    /// one. Its length is asked first and it is read at that length — again,
+    /// if it grew in between — so a mark longer than a guess is carried
+    /// rather than the save failed on `ERANGE`.
+    pub(super) fn attribute_of(original: &Path, name: &[u8]) -> io::Result<Option<Vec<u8>>> {
+        let path = CString::new(original.as_os_str().as_bytes())?;
+        let mut value: Vec<u8> = Vec::new();
+        for _ in 0..4 {
+            // SAFETY: NUL-terminated path and name, and a buffer of the size
+            // given — none, with a size of nought, to ask the length; the
+            // attribute is read from the document itself, not through a link.
+            let read = unsafe {
+                getxattr(
+                    path.as_ptr(),
+                    name.as_ptr().cast(),
+                    if value.is_empty() {
+                        std::ptr::null_mut()
+                    } else {
+                        value.as_mut_ptr().cast()
+                    },
+                    value.len(),
+                    0,
+                    XATTR_NOFOLLOW,
+                )
+            };
+            if read < 0 {
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(ENOATTR | ENOTSUP | ENOENT) => return Ok(None),
+                    // Longer than when its length was asked: ask again.
+                    Some(ERANGE) => {
+                        value.clear();
+                        continue;
+                    }
+                    _ => return Err(err),
+                }
+            }
+            let read = read as usize;
+            if read > LONGEST {
+                return Err(io::Error::other(format!(
+                    "an extended attribute of {read} bytes, longer than macOS writes"
+                )));
+            }
+            if value.is_empty() && read > 0 {
+                value = vec![0; read];
+                continue;
+            }
+            value.truncate(read);
+            return Ok(Some(value));
+        }
+        Err(io::Error::other(
+            "an extended attribute kept changing while it was read",
+        ))
+    }
+
+    pub(super) fn set_attribute(temp: &fs::File, name: &[u8], value: &[u8]) -> io::Result<()> {
         // SAFETY: an open descriptor, the NUL-terminated name and the bytes.
         let done = unsafe {
             fsetxattr(
                 temp.as_raw_fd(),
-                QUARANTINE.as_ptr().cast(),
+                name.as_ptr().cast(),
                 value.as_ptr().cast(),
                 value.len(),
                 0,
@@ -2621,6 +2661,30 @@ mod tests {
         }
         fs::write(root.join("note.txt"), "text").unwrap();
         assert_eq!(workspace.read(root.join("note.txt")).unwrap(), b"text");
+    }
+
+    /// An extended attribute longer than the 64 KiB once guessed is read
+    /// whole, its length asked first, rather than fail the save on `ERANGE`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_long_extended_attribute_is_read_whole_on_macos() {
+        let dir = scratch("long-attribute");
+        let file = dir.join("doc.md");
+        fs::write(&file, "x").unwrap();
+        let long: Vec<u8> = (0..100 * 1024).map(|i| (i % 251) as u8).collect();
+        let name = b"org.uleditor.test\0";
+        let open = fs::OpenOptions::new().write(true).open(&file).unwrap();
+        if let Err(err) = macos::set_attribute(&open, name, &long) {
+            // E2BIG: a volume that cannot hold one this long cannot hand it back.
+            assert_eq!(err.raw_os_error(), Some(7), "{err}");
+            eprintln!("skipped: this volume holds no attribute this long");
+            return;
+        }
+        assert_eq!(macos::attribute_of(&file, name).unwrap(), Some(long));
+        assert_eq!(
+            macos::attribute_of(&file, b"org.uleditor.none\0").unwrap(),
+            None
+        );
     }
 
     /// A file from the internet stays one through a save on macOS, as on Windows.
