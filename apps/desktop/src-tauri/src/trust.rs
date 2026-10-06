@@ -221,19 +221,36 @@ fn readable(path: &Path) -> String {
         Some(rest) => format!(r"\\{rest}"),
         None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned(),
     };
-    text.chars()
-        .map(|c| {
-            if shown_as_it_is(c) {
-                c.to_string()
-            } else {
-                format!("\\u{{{:04X}}}", c as u32)
-            }
-        })
-        .collect()
+    let mut shown = String::new();
+    let mut previous = '\0';
+    for c in text.chars() {
+        /* A space after a space is a gap somebody made, wide enough to push
+        what follows onto a line of its own. */
+        if shown_as_it_is(c) && !(c == ' ' && previous == ' ') {
+            shown.push(c);
+        } else {
+            shown.push_str(&format!("\\u{{{:04X}}}", c as u32));
+        }
+        previous = c;
+    }
+
+    /* A name long enough to fill the dialog would push the question out of
+    it; the two ends are what tell one folder from another. */
+    const ENDS: usize = 120;
+    let count = shown.chars().count();
+    if count > 2 * ENDS + 1 {
+        let head: String = shown.chars().take(ENDS).collect();
+        let tail: String = shown.chars().skip(count - ENDS).collect();
+        shown = format!("{head}…{tail}");
+    }
+    shown
 }
 
 fn shown_as_it_is(c: char) -> bool {
-    c.is_alphanumeric() || " -_.,()[]{}'!@#$%&+=~;:/\\^`".contains(c)
+    /* Letters that are drawn as nothing: the Hangul fillers. */
+    const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
+    (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
+        || " -_.,()[]{}'!@#$%&+=~;:/\\^`".contains(c)
 }
 
 #[cfg(test)]
@@ -340,6 +357,21 @@ mod tests {
             let asked = question(Some("en"), "rust", Path::new(&format!("/tmp/a{sly}b")));
             assert!(!asked.body.contains(sly), "{:04X}", sly as u32);
         }
+        /* Blank letters, a run of spaces, and a name long enough to fill the
+        dialog. */
+        let asked = question(Some("en"), "rust", Path::new("/tmp/a\u{3164}b   c"));
+        assert!(
+            asked
+                .body
+                .contains("/tmp/a\\u{3164}b \\u{0020}\\u{0020}c\n"),
+            "{}",
+            asked.body
+        );
+        let long = format!("/tmp/{}", "x".repeat(5000));
+        let asked = question(Some("en"), "rust", Path::new(&long));
+        assert!(asked.body.chars().count() < 1000, "{}", asked.body.len());
+        assert!(asked.body.contains('…'));
+
         /* While a name in any script is shown as it is. */
         let asked = question(
             Some("hr"),
