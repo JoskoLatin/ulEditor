@@ -103,15 +103,11 @@ jobs:
       - run: pnpm verify:docx
       - run: pnpm verify:xlsx
 
-      # The rest of the .docx surgery, each a routine of its own over the same
-      # bytes — a paragraph deleted, inserted, joined to the next, split, a
-      # table's rows and cells merged — and the formula engine against its
-      # census. All plain Node; they ran only by hand before (card 454).
-      - run: pnpm verify:delete
-      - run: pnpm verify:insert
-      - run: pnpm verify:join
-      - run: pnpm verify:split
-      - run: pnpm verify:rows
+      # Cells merged across a .docx table, and the formula engine against its
+      # census — plain Node, by hand only until card 454. The other .docx
+      # routines (delete, insert, join, split, rows) stay local on purpose:
+      # half of each is a sweep of a corpus of real documents, which is the
+      # half that proves anything and which a runner has not got.
       - run: pnpm verify:merge
       - run: pnpm verify:formula
 

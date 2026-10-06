@@ -560,19 +560,34 @@ impl Workspace {
     ) -> Result<(), VfsError> {
         let resolved = self.resolve(path)?;
         let opened = self.seen.get(&resolved).cloned();
-        let replaced = match (&opened, Fingerprint::at(&resolved)) {
-            (Some(before), Some(now)) if before.print != now => {
+        /* Whether the file there now is provably the document as it was
+        opened — the one case its own security may be taken from it. Every
+        other case of a document opened here gives the new version the
+        protection remembered from then: a file that cannot be looked at (held
+        open without sharing, or closed to reading by whoever put it there,
+        while what \`carry_over\` asks for is still let through), and one that is
+        gone, which would otherwise come back with the folder's security. */
+        let source = match (&opened, Fingerprint::at(&resolved)) {
+            (None, _) => Source::Document,
+            (Some(before), Some(now)) if before.print == now => Source::Document,
+            (Some(before), Some(now)) => {
                 if !overwrite {
                     return Err(VfsError::Changed(display(&resolved)));
                 }
-                !before.print.same_file(&now)
+                if before.print.same_file(&now) {
+                    Source::Document
+                } else {
+                    Source::Remembered(&before.protection)
+                }
             }
-            /* Unchanged, or never read here, or gone since: as on any save. */
-            _ => false,
-        };
-        let source = match &opened {
-            Some(before) if replaced => Source::Remembered(&before.protection),
-            _ => Source::Document,
+            (Some(before), None) => {
+                /* There, and not to be looked at: changed, as far as anybody
+                can tell. Gone: nothing to ask about. */
+                if fs::symlink_metadata(&resolved).is_ok() && !overwrite {
+                    return Err(VfsError::Changed(display(&resolved)));
+                }
+                Source::Remembered(&before.protection)
+            }
         };
         self.write_resolved(&resolved, data, &source)?;
 
@@ -2010,6 +2025,98 @@ mod tests {
             .map(|p| u16::from_le_bytes([p[0], p[1]]))
             .collect();
         String::from_utf16_lossy(&units)
+    }
+
+    /// A document closed to its owner alone, read to be edited — what both
+    /// tests below start from.
+    #[cfg(windows)]
+    fn closed_document(tag: &str) -> (Workspace, PathBuf, String) {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch(tag)).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let me = std::env::var("USERNAME").unwrap();
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
+        workspace.read_document(&file).unwrap();
+        (workspace, file, me)
+    }
+
+    /// Put in the document's place by somebody who also closed it to reading
+    /// — what `carry_over` asks for is still let through, so that file's
+    /// security would have been carried. It is asked about, and written over
+    /// only with the document's own.
+    #[cfg(windows)]
+    #[test]
+    fn a_replacement_that_cannot_be_looked_at_is_asked_about_and_not_inherited_from() {
+        let (mut workspace, file, me) = closed_document("unreadable");
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+        icacls(&file, &["/deny", &format!("{me}:(RD)")]);
+
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+
+        workspace.save(&file, b"mine", true).unwrap();
+        let after = sddl(&file);
+        assert!(
+            !after.contains(";;;BG)"),
+            "the planted security was carried over: {after}"
+        );
+        assert!(
+            after[after.find("D:").unwrap()..].starts_with("D:P"),
+            "{after}"
+        );
+    }
+
+    /// Deleted while it was open: nothing to ask about, and it comes back
+    /// closed as it was — not with the folder's security.
+    #[cfg(windows)]
+    #[test]
+    fn a_document_deleted_since_it_was_read_comes_back_with_its_own_protection() {
+        let (mut workspace, file, _) = closed_document("deleted");
+        fs::remove_file(&file).unwrap();
+
+        workspace.save(&file, b"mine", false).unwrap();
+        let after = sddl(&file);
+        let dacl = &after[after.find("D:").unwrap()..];
+        assert!(
+            dacl.starts_with("D:P"),
+            "not protected as the document was: {after}"
+        );
+        assert!(
+            !dacl.contains("(A;ID;"),
+            "the folder's entries came in: {after}"
+        );
+    }
+
+    /// The same on Unix: a replacement nobody may read, and a deleted
+    /// document, both come back with the document's own mode.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_replacement_and_a_deleted_document_keep_the_documents_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("unreadable-mode")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        workspace.read_document(&file).unwrap();
+
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o206)).unwrap();
+        let refused = workspace.save(&file, b"mine", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        workspace.save(&file, b"mine", true).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{mode:o}");
+
+        fs::remove_file(&file).unwrap();
+        workspace.save(&file, b"mine", false).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{mode:o}");
     }
 
     /// The same on Unix, with the mode.
