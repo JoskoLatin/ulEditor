@@ -113,3 +113,38 @@ in it and is tested with `cargo test`.
    exists. Is that acceptable?
 3. **A dropped or picked file no longer pulls its folder into search and
    Ctrl+P**, and F12 and converted PDFs open read-only. Is that acceptable?
+
+## Amended after the independent review (2026-10-06)
+
+Built in 9b24a10, c62491b, 6f989cd and 39e0855; the F4 review and the
+re-checks after it changed it in 63f3655 … 7de2922. What differs from the
+decision above:
+
+- **The library asks once on desktop.** The table above rejected a native
+  confirmation for the library, reasoning that a hostile script ignores the
+  interface. That holds for the page's own interface, not for a dialog the
+  system draws, which the script cannot answer — and without one, script in
+  the page could start a scan, claim every document it offered and read them
+  all. So the first scan asks, in the three buttons of the trust question,
+  and a yes is remembered as *the library may look*, not as the folders: the
+  page may still claim only the documents a scan offers. A no lasts the
+  session. The page's `limit` is capped by the core.
+- **F12 offers a library's own sources only.** The page writes the documents
+  a language server reads, so a document can make it name any file. A
+  definition is offered only if, resolved, it is a source of that language
+  where its libraries are kept (`.rustup`/`.cargo`, a `node_modules`,
+  `site-packages`); one inside the open folders needs no offer.
+- **A protected folder is absolute.** Nothing granted, offered or claimed
+  opens one; the crash reports, which the program writes there and shows in
+  a tab, go through a list of its own files only Rust fills.
+- **Claimed offers are kept apart** from what gestures gave (64 against 128),
+  so a page that claims everything pushes out none of the person's consents.
+  A claim takes the widest, then the nearest, consent that covers a path.
+- **Forgetting is what the person means.** "Forget recently opened files"
+  forgets every consent and the library's yes; a folder taken out of Recent
+  takes what is under it with it, and is found by its shown name when its
+  drive is gone.
+
+Left as it was, for Čovik: the CSP lets the page reach `fonts.googleapis.com`,
+and `open_external` opens any `https` link — two ways out of the program the
+review named and this ADR did not decide.
