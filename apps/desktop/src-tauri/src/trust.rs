@@ -282,7 +282,7 @@ pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Questi
             String::new()
         };
         Question {
-            title: format!("Otvoriti link na {site}?"),
+            title: format!("Otvoriti link na {}?", site_end(&site)),
             body: format!(
                 "Link vodi na\n\n{site}\n\n{address}{hidden}\n\n\
                  Sve što piše u adresi šalje se toj stranici. Otvori ga samo ako \
@@ -299,7 +299,7 @@ pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Questi
             String::new()
         };
         Question {
-            title: format!("Open a link to {site}?"),
+            title: format!("Open a link to {}?", site_end(&site)),
             body: format!(
                 "The link goes to\n\n{site}\n\n{address}{hidden}\n\n\
                  Everything in the address is sent to that site. Open it only if \
@@ -310,6 +310,21 @@ pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Questi
             cancel: "Cancel".into(),
         }
     }
+}
+
+/// The end of a site's name, for the title. A title is one line, and Windows
+/// cuts a long one at its end — where the part that tells
+/// `github.com.github.com.….example` from `github.com` is. The body still
+/// shows the whole name.
+#[cfg_attr(mobile, allow(dead_code))]
+fn site_end(site: &str) -> String {
+    const END: usize = 40;
+    let count = site.chars().count();
+    if count <= END {
+        return site.to_owned();
+    }
+    let end: String = site.chars().skip(count - END).collect();
+    format!("…{end}")
 }
 
 /// What the page is told when it may not ask about a link for now.
@@ -649,6 +664,25 @@ mod tests {
         assert!(!asked.body.contains('\u{0430}'), "{}", asked.body);
         assert!(
             asked.title.starts_with("Otvoriti link na xn--"),
+            "{}",
+            asked.title
+        );
+
+        /* A long name keeps its end in the title, where the site really is. */
+        let Some(Link::Other(url)) = link(&format!(
+            "https://{}attacker.example/",
+            "github.com.".repeat(10)
+        )) else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("en"), &url);
+        assert!(
+            asked.title.ends_with("github.com.attacker.example?"),
+            "{}",
+            asked.title
+        );
+        assert!(
+            asked.title.starts_with("Open a link to …"),
             "{}",
             asked.title
         );
