@@ -45,6 +45,8 @@ const { writeAnnotations } = await import(
 );
 
 const checks = [];
+/** Per save that asked: whether the file was still as it was while it asked. */
+const askedFirst = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
@@ -188,22 +190,30 @@ try {
   /**
    * Ctrl+S, then waits for different bytes on disk.
    *
-   * A save with notes is followed by the question about what it could not
-   * reproduce (notes are written without an appearance stream). It stays until
-   * answered, and four of them cover the toolbar, so it is answered here.
+   * A save with notes **asks first** what it cannot reproduce (notes are
+   * written without an appearance stream), and writes only after the answer
+   * (ADR 0004). So the file is read while the question stands — it has to be
+   * the file as it was — and then the question is answered. It used to be the
+   * other way round: written, then asked, and Cancel undid nothing.
    */
+  const answer = (label) => page.locator('.toast .toast-btn', { hasText: label });
   const save = async (path) => {
     const before = await readFile(path);
     await page.keyboard.press('Control+S');
+    const shown = await answer('Save anyway')
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .then(() => true, () => false);
+    if (shown) {
+      askedFirst.push((await readFile(path)).equals(before));
+      await answer('Save anyway').first().click();
+    }
     let written = false;
     for (let i = 0; i < 60 && !written; i++) {
       await sleep(250);
       const now = await readFile(path).catch(() => before);
       written = !now.equals(before);
     }
-    const asked = page.locator('.toast .toast-btn', { hasText: 'Save anyway' });
-    const shown = await asked.first().waitFor({ state: 'visible', timeout: 2000 }).then(() => true, () => false);
-    if (shown) await asked.first().click();
     return written;
   };
 
@@ -262,6 +272,22 @@ try {
 
   await addNote('second, before the second save', { x: 180, y: 90 });
   check('a new note makes it dirty again', await activeDirty());
+
+  /* Cancel to the question about the loss: nothing written, still unsaved. */
+  {
+    const before = await readFile(blank);
+    await page.keyboard.press('Control+S');
+    const shown = await answer('Cancel')
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .then(() => true, () => false);
+    check('a save that loses something asks before it writes', shown);
+    if (shown) await answer('Cancel').first().click();
+    await sleep(1500);
+    check('Cancel leaves the file as it was', (await readFile(blank)).equals(before));
+    check('and the document unsaved', await activeDirty());
+  }
+
   check('the second save reached the disk', await save(blank));
   const twice = await notesOnDisk(blank);
   check(
@@ -377,6 +403,12 @@ try {
 } finally {
   await stopDesktop(session);
 }
+
+check(
+  'every save that asked had written nothing while it asked',
+  askedFirst.length > 0 && askedFirst.every(Boolean),
+  `${askedFirst.filter(Boolean).length} of ${askedFirst.length}`,
+);
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
