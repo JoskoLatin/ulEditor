@@ -160,7 +160,7 @@
         "name": "OpenDocument text",
         "description": "OpenDocument text document",
         "mimeType": "application/vnd.oasis.opendocument.text",
-        "role": "Viewer"
+        "role": "Editor"
       },
       {
         "ext": [
@@ -180,7 +180,7 @@
         "name": "Excel spreadsheet",
         "description": "Excel spreadsheet",
         "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "role": "Viewer"
+        "role": "Editor"
       },
       {
         "ext": [
