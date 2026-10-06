@@ -7,7 +7,14 @@
  * whether a save is allowed gets decided.
  */
 
-import { hasCapability, type DocumentHandle, type Uri } from '@uleditor/plugin-sdk';
+import {
+  ChangedOutsideError,
+  hasCapability,
+  type DocumentHandle,
+  type SavePlan,
+  type SaveResult,
+  type Uri,
+} from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
@@ -474,6 +481,9 @@ export async function toggleDirectory(shell: Shell, node: TreeNode): Promise<voi
 export async function closeTab(shell: Shell, id: string): Promise<void> {
   const tab = useWorkspace.getState().tabs.find((t) => t.id === id);
   if (!tab) return;
+  /* A save of it is waiting for an answer: closing now would leave that save
+     to write into a document nobody has open. */
+  if (pendingSaves.has(id)) return;
 
   if (tab.dirty) {
     const answer = await confirmDiscard(shell, tab);
@@ -506,7 +516,25 @@ function confirmDiscard(shell: Shell, tab: TabState): Promise<'save' | 'discard'
 
 /* ── saving ──────────────────────────────────────────────────────────── */
 
+/**
+ * Tabs with a save waiting on the person. One save per tab at a time: a second
+ * Ctrl+S while the first one's question stands would prepare a second plan
+ * and write twice.
+ */
+const pendingSaves = new Set<string>();
+
+/**
+ * Saves a tab — and asks first, never after (ADR 0004).
+ *
+ * The editor works the save out without writing it (`prepareSave`); if it
+ * would lose something, the person is asked, and only a yes writes. If the
+ * write is refused because the file was changed or replaced outside ulEditor
+ * since it was opened, the person is asked again, and a yes writes over it —
+ * once. Nothing is written before either answer, and a Cancel to either
+ * leaves the file as it is and the tab still unsaved.
+ */
 export async function saveTab(shell: Shell, id: string): Promise<boolean> {
+  if (pendingSaves.has(id)) return false;
   const state = useWorkspace.getState();
   const tab = state.tabs.find((t) => t.id === id);
   const instance = tabInstances.get(id);
@@ -517,14 +545,40 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
     return false;
   }
 
+  pendingSaves.add(id);
   try {
-    const result = await instance.save();
+    const plan: SavePlan = instance.prepareSave
+      ? await instance.prepareSave()
+      : { lost: [], commit: (options) => instance.save(undefined, options) };
 
-    // The editor reported it cannot reproduce everything from the original. We
-    // ask the user BEFORE the change becomes permanent — never silently.
-    if (result.lostFidelity.length > 0) {
-      const answer = await shell.notify.fidelityWarning(tab.uri, result.lostFidelity);
+    if (plan.lost.length > 0) {
+      const answer = await shell.notify.fidelityWarning(tab.uri, plan.lost);
       if (answer === 'cancel') return false;
+    }
+    /* The question is not modal: the tab may have been given another editor
+       while it stood. Its plan is not that editor's to write. */
+    if (tabInstances.get(id) !== instance) return false;
+
+    let result: SaveResult;
+    try {
+      result = await plan.commit();
+    } catch (err) {
+      if (!(err instanceof ChangedOutsideError)) throw err;
+      const answer = await askOverwrite(shell, tab.name);
+      if (answer === 'cancel' || tabInstances.get(id) !== instance) return false;
+      /* Once. A second refusal is reported below as a failed save. */
+      result = await plan.commit({ overwriteChanged: true });
+    }
+
+    /* An editor without `prepareSave` could only say what it lost after it
+       had written. That is told, with no Cancel that could undo nothing. */
+    if (!instance.prepareSave && result.lostFidelity.length > 0) {
+      shell.notify.show(
+        'warning',
+        t('Saved {name}, but not everything from the original could be reproduced.', {
+          name: tab.name,
+        }),
+      );
     }
 
     /* A save that could not write back into its own file wrote a new one —
@@ -546,7 +600,22 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
     if (isAbort(err)) return false;
     shell.notify.show('error', t('Save failed: {reason}', { reason: describe(err) }));
     return false;
+  } finally {
+    pendingSaves.delete(id);
   }
+}
+
+function askOverwrite(shell: Shell, name: string): Promise<'overwrite' | 'cancel'> {
+  return new Promise((resolve) => {
+    const handle = shell.notify.show(
+      'warning',
+      t('{name} was changed outside ulEditor since it was opened.', { name }),
+      [
+        { label: t('Cancel'), run: () => (handle.dispose(), resolve('cancel')) },
+        { label: t('Overwrite'), run: () => (handle.dispose(), resolve('overwrite')) },
+      ],
+    );
+  });
 }
 
 export async function saveActive(shell: Shell): Promise<void> {

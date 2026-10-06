@@ -34,6 +34,7 @@
     "verify:export": "node tools/verify-export.mjs",
     "verify:mermaid": "node tools/verify-mermaid.mjs",
     "verify:updates": "node tools/verify-updates.mjs",
+    "verify:save": "node tools/verify-save.mjs",
     "verify:updater-key": "node tools/verify-updater-key.mjs",
     "verify:release-live": "node tools/verify-release-live.mjs",
     "verify:stale": "node tools/verify-sheet-stale.mjs",

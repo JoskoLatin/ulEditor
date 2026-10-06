@@ -231,7 +231,7 @@ export class Notifications implements NotificationService {
    */
   fidelityWarning(uri: Uri, unsupported: string[]): Promise<'save' | 'cancel'> {
     return new Promise((resolve) => {
-      const name = uri.split('/').pop() ?? uri;
+      const name = uri.split(/[\\/]/).pop() ?? uri;
       const record: ToastRecord = {
         id: this.#next++,
         level: 'warning',

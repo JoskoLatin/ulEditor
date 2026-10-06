@@ -7,9 +7,16 @@
  * webview, on a phone least of all.
  */
 
-import type { ImageInfo, ImageOps, ImageService, ImageWritten, Uri } from '@uleditor/plugin-sdk';
+import type {
+  ImageInfo,
+  ImageOps,
+  ImageService,
+  ImageWritten,
+  Uri,
+  WriteOptions,
+} from '@uleditor/plugin-sdk';
 
-import { invoke } from './tauri-fs.js';
+import { invoke, writeInvoke } from './tauri-fs.js';
 
 export class TauriImages implements ImageService {
   available(): boolean {
@@ -20,7 +27,12 @@ export class TauriImages implements ImageService {
     return invoke<ImageInfo>('image_info', { path: source });
   }
 
-  async write(source: Uri, target: Uri, ops: ImageOps): Promise<ImageWritten> {
-    return invoke<ImageWritten>('image_write', { source, target, ops });
+  async write(source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions): Promise<ImageWritten> {
+    return writeInvoke<ImageWritten>(target, 'image_write', {
+      source,
+      target,
+      ops,
+      overwrite: options?.overwriteChanged === true,
+    });
   }
 }

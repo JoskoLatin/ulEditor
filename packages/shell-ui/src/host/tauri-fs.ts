@@ -8,14 +8,15 @@
  * A URI here is an absolute path on disk.
  */
 
-import type {
-  DirectoryEntry,
-  DocumentHandle,
-  FileStat,
-  FormatDetection,
-  Uri,
-  VirtualFileSystem,
-  WriteOptions,
+import {
+  ChangedOutsideError,
+  type DirectoryEntry,
+  type DocumentHandle,
+  type FileStat,
+  type FormatDetection,
+  type Uri,
+  type VirtualFileSystem,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 
 import { detectByName } from './detect.js';
@@ -31,6 +32,23 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     invokeFn = core.invoke as Invoke;
   }
   return invokeFn<T>(command, args);
+}
+
+/**
+ * What a write refused over a changed file begins with, from Rust
+ * (`ul_core::vfs::CHANGED_OUTSIDE`). A code, so it is matched here rather than
+ * the sentence, which is for people.
+ */
+const CHANGED_OUTSIDE = 'ul:changed-outside:';
+
+/** A write, with Rust's refusal over a changed file turned into its own error. */
+export async function writeInvoke<T>(uri: Uri, command: string, args: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (err) {
+    if (typeof err === 'string' && err.startsWith(CHANGED_OUTSIDE)) throw new ChangedOutsideError(uri);
+    throw err;
+  }
 }
 
 export function isTauri(): boolean {
@@ -89,6 +107,11 @@ export class TauriFileSystem implements VirtualFileSystem {
     return buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
   }
 
+  async #readDocument(uri: Uri): Promise<Uint8Array> {
+    const buffer = await invoke<ArrayBuffer | number[]>('read_document', { path: uri });
+    return buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
+  }
+
   async readText(uri: Uri, encoding = 'utf-8'): Promise<string> {
     return new TextDecoder(encoding).decode(await this.readBytes(uri));
   }
@@ -111,7 +134,9 @@ export class TauriFileSystem implements VirtualFileSystem {
       stat,
       detection,
       async bytes() {
-        cached ??= await fs.readBytes(stat.uri);
+        /* Read as a document: Rust remembers it as it is now, so a save can
+           tell whether somebody changed it while it was open (ADR 0004). */
+        cached ??= await fs.#readDocument(stat.uri);
         return cached;
       },
       async text(encoding = 'utf-8') {
@@ -124,8 +149,12 @@ export class TauriFileSystem implements VirtualFileSystem {
     };
   }
 
-  async writeBytes(uri: Uri, data: Uint8Array, _opts?: WriteOptions): Promise<void> {
-    await invoke('write_file', { path: uri, contents: Array.from(data) });
+  async writeBytes(uri: Uri, data: Uint8Array, opts?: WriteOptions): Promise<void> {
+    await writeInvoke(uri, 'write_file', {
+      path: uri,
+      contents: Array.from(data),
+      overwrite: opts?.overwriteChanged === true,
+    });
   }
 
   async writeText(uri: Uri, data: string, opts?: WriteOptions): Promise<void> {

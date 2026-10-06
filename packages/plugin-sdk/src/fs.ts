@@ -70,9 +70,12 @@ export interface WriteOptions {
  * somebody replaced it, or another program wrote it. Nothing was written.
  */
 export class ChangedOutsideError extends Error {
-  constructor(readonly uri: Uri) {
+  readonly uri: Uri;
+
+  constructor(uri: Uri) {
     super(`${uri} was changed outside ulEditor since it was opened`);
     this.name = 'ChangedOutsideError';
+    this.uri = uri;
   }
 }
 
