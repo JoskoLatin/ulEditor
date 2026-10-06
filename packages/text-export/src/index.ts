@@ -11,7 +11,19 @@
  */
 
 import { zipSync, strToU8 } from 'fflate';
+import * as fontkitModule from '@pdf-lib/fontkit';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+
+/*
+ * `@pdf-lib/fontkit` has an ESM build with a default export and a UMD build
+ * with named ones; Vite takes one and Node the other — as in editor-pdf.
+ */
+interface Fontkit {
+  create(bytes: Uint8Array): { hasGlyphForCodePoint(codePoint: number): boolean };
+}
+const fontkit: Fontkit =
+  (fontkitModule as unknown as { default?: Fontkit }).default ??
+  (fontkitModule as unknown as Fontkit);
 
 export type TextFormat = 'txt' | 'md' | 'docx' | 'pdf';
 
@@ -176,6 +188,58 @@ export async function toPdf(text: string, title: string): Promise<Uint8Array> {
   return doc.save();
 }
 
+/**
+ * Text → PDF in a TrueType font of the caller's — Liberation Sans in the
+ * application, the face pdf.js carries and the PDF editor writes text in. It
+ * has č ć ž š đ, so nothing is folded; a character it has not is written as
+ * `?` and counted, so the loss is reported rather than drawn as a blank.
+ */
+async function toPdfInFont(
+  text: string,
+  title: string,
+  fontBytes: Uint8Array,
+): Promise<{ bytes: Uint8Array; missing: boolean }> {
+  const doc = await PDFDocument.create();
+  doc.setTitle(title);
+  doc.registerFontkit(fontkit as never);
+  const font = await doc.embedFont(fontBytes, { subset: true });
+  const faces = fontkit.create(fontBytes);
+
+  let missing = false;
+  const drawable = (line: string) =>
+    [...line]
+      .map((char) => {
+        const codePoint = char.codePointAt(0) ?? 0;
+        if (codePoint < 0x20 && char !== '\t') return '';
+        if (faces.hasGlyphForCodePoint(codePoint)) return char;
+        missing = true;
+        return '?';
+      })
+      .join('');
+
+  const measure = (value: string) => font.widthOfTextAtSize(value, FONT_SIZE);
+  const usable = PAGE.width - MARGIN * 2;
+  const lines: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    lines.push(...wrapLines(drawable(raw), usable, measure));
+  }
+
+  let page = doc.addPage([PAGE.width, PAGE.height]);
+  let y = PAGE.height - MARGIN;
+  for (const line of lines) {
+    if (y < MARGIN) {
+      page = doc.addPage([PAGE.width, PAGE.height]);
+      y = PAGE.height - MARGIN;
+    }
+    if (line) {
+      page.drawText(line, { x: MARGIN, y, size: FONT_SIZE, font, color: rgb(0.1, 0.1, 0.1) });
+    }
+    y -= LEADING;
+  }
+
+  return { bytes: await doc.save(), missing };
+}
+
 /** Characters WinAnsi does not know → the closest counterpart without a diacritic. */
 const FOLD: Record<string, string> = {
   č: 'c', ć: 'c', ž: 'z', š: 's', đ: 'd',
@@ -195,10 +259,21 @@ export interface ExportResult {
   lost: string[];
 }
 
+export interface ExportOptions {
+  /**
+   * A TrueType font for a PDF — the application passes Liberation Sans, which
+   * has the Croatian letters. Without one the PDF is written in the standard
+   * Helvetica, which has not, and č ć ž š đ are written without their marks
+   * (and the loss reported).
+   */
+  pdfFont?: Uint8Array;
+}
+
 export async function exportText(
   text: string,
   format: TextFormat,
   title: string,
+  options: ExportOptions = {},
 ): Promise<ExportResult> {
   switch (format) {
     case 'txt':
@@ -209,6 +284,13 @@ export async function exportText(
       return { bytes: toDocx(text), lost: [] };
 
     case 'pdf': {
+      if (options.pdfFont) {
+        const { bytes, missing } = await toPdfInFont(text, title, options.pdfFont);
+        return {
+          bytes,
+          lost: missing ? ['Some characters are not in the PDF font and were written as "?".'] : [],
+        };
+      }
       const bytes = await toPdf(text, title);
       const folded = /[^\x00-\xFF]/.test(text);
       return {

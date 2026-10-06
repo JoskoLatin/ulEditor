@@ -3113,4 +3113,5 @@ export async function extractPdfText(
 
 export default pdfEditorProvider;
 export * from './annotations.js';
+export { loadFontBytes } from './fonts.js';
 export * from './document.js';

@@ -183,7 +183,14 @@ export async function saveScratch(shell: Shell): Promise<void> {
     ]);
     if (!target) return;
 
-    const { bytes, lost } = await exportText(text, state.format, state.name);
+    /* Liberation Sans for a PDF — the face the PDF editor writes in — so the
+       Croatian letters are written as they are. Only for a PDF: it comes
+       with the PDF editor's code. */
+    const pdfFont =
+      state.format === 'pdf'
+        ? await (await import('@uleditor/editor-pdf')).loadFontBytes('sans')
+        : undefined;
+    const { bytes, lost } = await exportText(text, state.format, state.name, { pdfFont });
 
     if (lost.length > 0) {
       const answer = await shell.notify.fidelityWarning(target, lost.map((m) => t(m)));

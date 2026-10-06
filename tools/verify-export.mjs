@@ -114,6 +114,46 @@ check('an unknown format falls back to text', formatOf('does-not-exist').id === 
   check('the document breaks into pages', paged.getPageCount() > 1, `${paged.getPageCount()} pages`);
 }
 
+/* ── PDF in the application's font ─────────────────────────────────── */
+
+/*
+ * The application passes Liberation Sans — the face pdf.js carries and the PDF
+ * editor writes in — so the Croatian letters are written as they are. Checked
+ * by reading the text back out of the written file with pdf.js, which is what a
+ * reader does: a font with the glyphs but no way back to the characters would
+ * draw them and lose them on copy.
+ */
+{
+  const { createRequire } = await import('node:module');
+  const { readFile } = await import('node:fs/promises');
+  const requireFromPdf = createRequire(resolve(ROOT, 'packages/editor-pdf/package.json'));
+  const pdfFont = new Uint8Array(
+    await readFile(requireFromPdf.resolve('pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf')),
+  );
+  const pdfjs = await import(pathToFileURL(requireFromPdf.resolve('pdfjs-dist/legacy/build/pdf.mjs')).href);
+  const textOf = async (bytes) => {
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: false }).promise;
+    let text = '';
+    for (let n = 1; n <= doc.numPages; n++) {
+      const content = await (await doc.getPage(n)).getTextContent();
+      text += content.items.map((item) => item.str).join('');
+    }
+    return text;
+  };
+
+  const { bytes, lost } = await exportText(SOURCE, 'pdf', 'Naslov', { pdfFont });
+  const text = await textOf(bytes);
+  check('in its font, the Croatian letters are written as they are', text.includes('čćšžđ'), text.slice(0, 80));
+  check('and nothing is reported lost', lost.length === 0, lost.join(' | '));
+
+  const strange = await exportText('Kanji 漢字 here.', 'pdf', 'x', { pdfFont });
+  check(
+    'a character the font has not is written as ? and reported, not drawn as a blank',
+    (await textOf(strange.bytes)).includes('Kanji ?? here.') && strange.lost.length === 1,
+    `${await textOf(strange.bytes)} | ${strange.lost.join(' | ')}`,
+  );
+}
+
 /* ── line wrapping ───────────────────────────────────────────────────── */
 
 {
