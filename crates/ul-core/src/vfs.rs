@@ -1289,7 +1289,86 @@ pub(crate) mod windows {
     /// What a new version is opened with, and with the right to set its
     /// security where it is to be given one.
     pub(super) const GENERIC_WRITE: u32 = 0x4000_0000;
-    pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = GENERIC_WRITE | 0x0004_0000;
+    pub(super) const WRITE_DAC: u32 = 0x0004_0000;
+    pub(super) const GENERIC_WRITE_AND_WRITE_DAC: u32 = GENERIC_WRITE | WRITE_DAC;
+
+    /// `SECURITY_ATTRIBUTES`, as `CreateFileW` takes it.
+    #[repr(C)]
+    struct SecurityAttributes {
+        length: u32,
+        descriptor: *mut c_void,
+        inherit: i32,
+    }
+
+    /// A security descriptor, self-relative, with a DACL and nothing else:
+    /// protected, and one entry letting the file's owner do anything (OWNER
+    /// RIGHTS, S-1-3-4). Laid out by hand as MS-DTYP 2.4.6 has it, aligned
+    /// as the structures in it want.
+    #[repr(C, align(8))]
+    struct OwnerOnly([u8; 48]);
+
+    const OWNER_ONLY: OwnerOnly = OwnerOnly([
+        /* SECURITY_DESCRIPTOR_RELATIVE: revision 1; control SE_DACL_PRESENT
+        | SE_DACL_PROTECTED | SE_SELF_RELATIVE (0x9004); no owner, group or
+        SACL; the DACL 20 bytes in. */
+        1, 0, 0x04, 0x90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0,
+        /* ACL: revision 2, 28 bytes long, one entry. */
+        2, 0, 28, 0, 1, 0, 0, 0,
+        /* ACCESS_ALLOWED_ACE: no flags, 20 bytes long, FILE_ALL_ACCESS
+        (0x001F01FF) ... */
+        0, 0, 20, 0, 0xFF, 0x01, 0x1F, 0x00,
+        /* ... for S-1-3-4: revision 1, one sub-authority, authority 3
+        (big-endian, six bytes), sub-authority 4. */
+        1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0,
+    ]);
+
+    /// Makes a new file at `path` that nobody but its owner may open until
+    /// it is given a security of its own — how a new version is made where a
+    /// DACL is to be set on it.
+    ///
+    /// Opened for itself alone (`share_mode(0)`), it was still not closed:
+    /// sharing governs what is in a file, not its security, and from its
+    /// making until the document's DACL was set it had the folder's — so an
+    /// account the folder lets change new files' security could open it for
+    /// `WRITE_DAC` in that moment, measured by the independent review, and
+    /// open the next version to itself after the save. Made closed, there is
+    /// no such moment.
+    pub(super) fn create_closed(path: &Path, access: u32, attributes: u32) -> io::Result<fs::File> {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+
+        const CREATE_NEW: u32 = 1;
+        const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut descriptor = OWNER_ONLY;
+        let security = SecurityAttributes {
+            length: std::mem::size_of::<SecurityAttributes>() as u32,
+            descriptor: descriptor.0.as_mut_ptr().cast(),
+            inherit: 0,
+        };
+        // SAFETY: a NUL-terminated name, a valid self-relative descriptor that
+        // lives through the call, and no template.
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                access,
+                0,
+                &security,
+                CREATE_NEW,
+                if attributes == 0 {
+                    FILE_ATTRIBUTE_NORMAL
+                } else {
+                    attributes
+                },
+                null_mut(),
+            )
+        };
+        if handle as isize == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a handle just made and owned by nothing else.
+        Ok(unsafe { fs::File::from_raw_handle(handle) })
+    }
     /// What it takes of the document's attributes at its creation: encryption,
     /// which can only be given then, and being hidden. Encrypted anew, it is for
     /// whoever saves it: anybody else the document had been shared with through
@@ -1455,6 +1534,15 @@ pub(crate) mod windows {
             file_system_name_size: u32,
         ) -> i32;
         fn GetFileInformationByHandle(file: *mut c_void, info: *mut FileInformation) -> i32;
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *const SecurityAttributes,
+            disposition: u32,
+            flags: u32,
+            template: *mut c_void,
+        ) -> *mut c_void;
         fn GetFileInformationByHandleEx(
             file: *mut c_void,
             class: i32,
@@ -1856,7 +1944,17 @@ fn create_beside(path: &Path, source: &Source<'_>) -> std::io::Result<(fs::File,
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        match options.open(&temp) {
+        /* Where its security is to be set, made closed to all but its owner
+        until it is: see `windows::create_closed`. */
+        #[cfg(windows)]
+        let opened = if access & windows::WRITE_DAC != 0 {
+            windows::create_closed(&temp, access | windows::FILE_READ_ATTRIBUTES, attributes)
+        } else {
+            options.open(&temp)
+        };
+        #[cfg(not(windows))]
+        let opened = options.open(&temp);
+        match opened {
             Ok(file) => return Ok((file, temp)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => taken = Some(err),
             /* On Windows a folder or a junction under the name is not "already
@@ -2602,6 +2700,26 @@ mod tests {
             .arg("-h")
             .arg(display(&file))
             .status();
+    }
+
+    /// A new version that is to be given the document's security is made
+    /// closed to all but its owner: from the moment it exists, nobody the
+    /// folder lets in may open it to change its security.
+    #[cfg(windows)]
+    #[test]
+    fn a_new_version_is_made_closed_until_it_has_the_documents_security() {
+        let root = scratch("made-closed");
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let protection = Protection::of(&file, &fs::File::open(&file).unwrap()).unwrap();
+        assert!(protection.has_dacl(), "the test needs a volume with ACLs");
+
+        let (made, temp) = create_beside(&file, &Source::Given(&protection)).unwrap();
+        let after = sddl(&temp);
+        drop(made);
+        let _ = fs::remove_file(&temp);
+        let dacl = &after[after.find("D:").unwrap()..];
+        assert!(dacl.starts_with("D:P(A;;FA;;;OW)"), "{after}");
     }
 
     /// While a save holds the document, nobody can put another file in its
