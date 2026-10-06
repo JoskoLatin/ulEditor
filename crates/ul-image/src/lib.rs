@@ -281,6 +281,61 @@ fn webp_chunks_fit(bytes: &[u8]) -> bool {
     true
 }
 
+/// Whether a TIFF's first image is compressed in a way the limits hold.
+///
+/// A strip compressed with JPEG — Compression 6, or the old 7 — is decoded
+/// by its own JPEG decoder into a buffer sized from the JPEG's header, up to
+/// 16 384 pixels a side, which nothing here or in `image` counts against
+/// [`MOST_BYTES`] (found by the independent review): a mail attachment could
+/// ask for far more, and an allocation that fails ends the program. Such a
+/// TIFF is refused, and said to be; before TIFF opened in the image editor it
+/// did not open at all. Read from the classic TIFF header and its first
+/// directory, in either byte order; a BigTIFF, or a directory that cannot be
+/// read, is refused as well.
+fn tiff_compression_held(bytes: &[u8]) -> bool {
+    let little = match bytes.get(..2) {
+        Some(b"II") => true,
+        Some(b"MM") => false,
+        _ => return false,
+    };
+    let u16_at = |at: usize| -> Option<u16> {
+        let b = bytes.get(at..at + 2)?;
+        Some(if little {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        })
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        let b = bytes.get(at..at + 4)?;
+        Some(if little {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        })
+    };
+    // 42 is classic TIFF; 43 is BigTIFF, with offsets of eight bytes.
+    if u16_at(2) != Some(42) {
+        return false;
+    }
+    let Some(ifd) = u32_at(4).map(|at| at as usize) else {
+        return false;
+    };
+    let Some(count) = u16_at(ifd) else {
+        return false;
+    };
+    for entry in 0..usize::from(count) {
+        let at = ifd + 2 + entry * 12;
+        if u16_at(at) != Some(259) {
+            continue;
+        }
+        // Compression: a SHORT, its value in the first two bytes of the field.
+        return !matches!(u16_at(at + 8), Some(6 | 7) | None);
+    }
+    // No Compression tag: none, which is held.
+    true
+}
+
 /// Opens a decoder with the limits on, and refuses the picture if what it
 /// will allocate is past them — all from the header, before any pixels.
 fn open(bytes: &[u8]) -> Result<impl ImageDecoder + '_, ImageError> {
@@ -291,6 +346,11 @@ fn open(bytes: &[u8]) -> Result<impl ImageDecoder + '_, ImageError> {
     if format == Some(ImageFormat::WebP) && !webp_chunks_fit(bytes) {
         return Err(ImageError::Decode(
             "a WebP chunk claims more bytes than the file holds".to_string(),
+        ));
+    }
+    if format == Some(ImageFormat::Tiff) && !tiff_compression_held(bytes) {
+        return Err(ImageError::UnsupportedFormat(
+            "a TIFF compressed with JPEG, or one whose first image cannot be read".to_string(),
         ));
     }
 
@@ -687,6 +747,50 @@ mod tests {
         let refused = preview(&tiff);
         assert!(
             matches!(refused, Err(ImageError::TooLarge(_))),
+            "{refused:?}"
+        );
+    }
+
+    /// A TIFF compressed with JPEG — whose strips a decoder of its own sizes
+    /// from their own headers, past the budget — is refused before any of it
+    /// is decoded, in either byte order; one without compression is not.
+    #[test]
+    fn a_tiff_compressed_with_jpeg_is_refused() {
+        let tiff = |little: bool, compression: u16| -> Vec<u8> {
+            let (u16b, u32b): (fn(u16) -> [u8; 2], fn(u32) -> [u8; 4]) = if little {
+                (u16::to_le_bytes, u32::to_le_bytes)
+            } else {
+                (u16::to_be_bytes, u32::to_be_bytes)
+            };
+            let mut out = if little {
+                b"II".to_vec()
+            } else {
+                b"MM".to_vec()
+            };
+            out.extend_from_slice(&u16b(42));
+            out.extend_from_slice(&u32b(8));
+            out.extend_from_slice(&u16b(1));
+            out.extend_from_slice(&u16b(259));
+            out.extend_from_slice(&u16b(3));
+            out.extend_from_slice(&u32b(1));
+            out.extend_from_slice(&u16b(compression));
+            out.extend_from_slice(&[0, 0]);
+            out.extend_from_slice(&u32b(0));
+            out
+        };
+        for little in [true, false] {
+            for compression in [6, 7] {
+                assert!(
+                    !tiff_compression_held(&tiff(little, compression)),
+                    "{little} {compression}"
+                );
+            }
+            assert!(tiff_compression_held(&tiff(little, 1)), "{little}");
+            assert!(tiff_compression_held(&tiff(little, 5)), "{little}");
+        }
+        let refused = preview(&tiff(true, 7));
+        assert!(
+            matches!(refused, Err(ImageError::UnsupportedFormat(_))),
             "{refused:?}"
         );
     }

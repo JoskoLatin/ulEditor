@@ -1082,15 +1082,22 @@ async fn lsp_definition(
         .collect::<Vec<_>>();
     /* A file pointed at in a library is offered, to be read, and nothing
     beside it: a server's answer is not a person pointing at a folder
-    (ADR 0005). Only there — see `library_source`. */
-    offer_files(
-        &state,
-        jumps
-            .iter()
-            .map(|jump| jump.path.as_str())
-            .filter(|path| library_source(&language, std::path::Path::new(path))),
-        Access::Read,
-    );
+    (ADR 0005). Only there — see `library_source` — and judged where it
+    really is: the path the server named with its links followed, which is
+    what is offered. Judging the name and offering where it led let a link
+    in a `node_modules` named `x.ts` offer the key it pointed at (found by
+    the review of 63f3655). */
+    {
+        let mut consents = state.consents.lock().expect("the consent lock is poisoned");
+        for jump in &jumps {
+            let Ok(real) = std::fs::canonicalize(&jump.path) else {
+                continue;
+            };
+            if real.is_file() && library_source(&language, &real) {
+                consents.offer(Consent::file(real, Access::Read));
+            }
+        }
+    }
     Ok(jumps)
 }
 
@@ -1131,6 +1138,7 @@ fn library_source(language: &str, path: &std::path::Path) -> bool {
         && ["RUSTUP_HOME", "CARGO_HOME"]
             .iter()
             .filter_map(std::env::var_os)
+            .filter_map(|home| std::fs::canonicalize(home).ok())
             .any(|home| path.starts_with(home));
     source && (in_a_place || in_a_home)
 }

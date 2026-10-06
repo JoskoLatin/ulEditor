@@ -435,9 +435,9 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
         || bytes.starts_with(b"GIF8")
         || bytes.starts_with(b"BM")
         || (bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP")
-        // TIFF, little-endian and big-endian: `II* ` and `MM *`.
-        || bytes.starts_with(b"II* ")
-        || bytes.starts_with(b"MM *");
+        // TIFF, little-endian and big-endian: `II*\0` and `MM\0*`.
+        || bytes.starts_with(b"II*\0")
+        || bytes.starts_with(b"MM\0*");
     if is_image {
         return Detection::new(FormatId::Image, DetectedVia::Magic);
     }
@@ -529,7 +529,7 @@ mod tests {
     /// "by extension"; `verify-formats-parity.mjs` found the difference.
     #[test]
     fn twelve_bytes_are_enough_for_webp() {
-        let d = detect("x.bin", b"RIFF    WEBP");
+        let d = detect("x.bin", b"RIFF\0\0\0\0WEBP");
         assert_eq!((d.format, d.via), (FormatId::Image, DetectedVia::Magic));
     }
 
@@ -540,7 +540,7 @@ mod tests {
         for name in ["scan.tif", "scan.TIFF"] {
             assert_eq!(detect_by_name(name).format, FormatId::Image, "{name}");
         }
-        for magic in [&b"II*    "[..], &b"MM *   "[..]] {
+        for magic in [&b"II*\0\x08\0\0\0"[..], &b"MM\0*\0\0\0\x08"[..]] {
             let d = detect("x.bin", magic);
             assert_eq!((d.format, d.via), (FormatId::Image, DetectedVia::Magic));
         }
