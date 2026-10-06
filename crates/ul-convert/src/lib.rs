@@ -32,8 +32,10 @@
 //!    read, for a filter it does not have, and for the case in (1). The answer
 //!    is whether the output file appeared, so that is what is waited for.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -282,12 +284,56 @@ pub fn to_pdf(
     // A stale file from a previous run would be mistaken for this run's answer.
     let _ = std::fs::remove_file(&expected);
 
-    let mut child = soffice_command(backend, source, outdir, &profile)
+    let child = soffice_command(backend, source, outdir, &profile)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| ConvertError::Start(err.to_string()))?;
+    watch(child, &expected, timeout)
+}
+
+/// How much of what LibreOffice says is kept for the message: a reason is in
+/// the first lines, and the rest is not worth the memory.
+const KEPT: usize = 64 * 1024;
+
+/// A pipe read to its end on a thread of its own from the moment the process
+/// starts, keeping the first `KEPT` bytes.
+///
+/// Read at the end instead, a pipe fills while nobody is reading it — 4 KiB on
+/// Windows, 64 on Linux — and a LibreOffice with that much to say about a
+/// document blocks on its next write, produces nothing, and is killed at the
+/// timeout two minutes later with its reason still in the pipe. What has been
+/// read is shared rather than joined: on Windows the launcher hands the pipe to
+/// the real process, which may hold it open long after the launcher has gone.
+fn drain(pipe: Option<impl Read + Send + 'static>) -> Arc<Mutex<Vec<u8>>> {
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    if let Some(mut pipe) = pipe {
+        let into = Arc::clone(&kept);
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 8192];
+            while let Ok(read) = pipe.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                let mut kept = into.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let room = KEPT.saturating_sub(kept.len());
+                kept.extend_from_slice(&buffer[..read.min(room)]);
+            }
+        });
+    }
+    kept
+}
+
+fn said(kept: &Arc<Mutex<Vec<u8>>>) -> String {
+    let kept = kept.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    String::from_utf8_lossy(&kept).trim().to_string()
+}
+
+/// Waits for LibreOffice's answer, which is a file rather than an exit code.
+fn watch(mut child: Child, expected: &Path, timeout: Duration) -> Result<PathBuf, ConvertError> {
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
 
     /*
      * The file is what is waited for, not the process. On Windows the process
@@ -300,13 +346,13 @@ pub fn to_pdf(
     let deadline = Instant::now() + timeout;
     loop {
         if expected.is_file()
-            && std::fs::metadata(&expected)
+            && std::fs::metadata(expected)
                 .map(|m| m.len() > 0)
                 .unwrap_or(false)
         {
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(expected);
+            return Ok(expected.to_path_buf());
         }
 
         match child.try_wait() {
@@ -315,19 +361,12 @@ pub fn to_pdf(
                 the same moment the process ended. */
                 std::thread::sleep(Duration::from_millis(250));
                 if expected.is_file() {
-                    return Ok(expected);
+                    return Ok(expected.to_path_buf());
                 }
-                let output = child.wait_with_output().ok();
-                let said = output
-                    .map(|out| {
-                        let text = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                        if text.is_empty() {
-                            String::from_utf8_lossy(&out.stdout).trim().to_string()
-                        } else {
-                            text
-                        }
-                    })
-                    .unwrap_or_default();
+                let said = match said(&stderr) {
+                    text if text.is_empty() => said(&stdout),
+                    text => text,
+                };
                 return Err(ConvertError::Refused(if said.is_empty() {
                     "nothing".to_string()
                 } else {
@@ -350,6 +389,50 @@ pub fn to_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Not a check of its own: the noisy child the next test starts — this
+    /// same test binary, asked for this one test, with the variable set.
+    #[test]
+    fn noisy_child() {
+        if std::env::var_os("UL_CONVERT_NOISY_CHILD").is_some() {
+            use std::io::Write;
+            let line = [b'x'; 1024];
+            let mut err = std::io::stderr().lock();
+            for _ in 0..1024 {
+                let _ = err.write_all(&line);
+            }
+            std::process::exit(3);
+        }
+    }
+
+    #[test]
+    fn a_libreoffice_with_a_lot_to_say_is_heard_rather_than_left_to_time_out() {
+        /* A megabyte on stderr and no file: the refusal it is, at once, with
+        the start of what it said. With its pipes read only at the end it
+        filled them, blocked on the next write, and was killed at the timeout
+        with its reason still inside. */
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::noisy_child", "--nocapture"])
+            .env("UL_CONVERT_NOISY_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let nowhere = std::env::temp_dir().join("ul-convert-never-written.pdf");
+        let started = Instant::now();
+        match watch(child, &nowhere, Duration::from_secs(20)) {
+            Err(ConvertError::Refused(said)) => {
+                assert!(said.starts_with("xxxx"), "{}", &said[..said.len().min(80)]);
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "{:?}",
+                    started.elapsed()
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn libreoffice_is_started_with_nothing_relative_to_look_in() {
