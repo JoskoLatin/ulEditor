@@ -151,8 +151,34 @@ struct Opened {
     /// Where it was read from, any link to it followed: where its next
     /// version goes.
     at: PathBuf,
-    print: Fingerprint,
+    /// Which file it was, and how; none once a save cannot tell which file
+    /// it left there — then no file there is taken for it again.
+    print: Option<Fingerprint>,
     protection: Protection,
+    /// The file `protection` was read from, or none where it is what a save
+    /// here gave a version it then lost sight of. Only a file provably this
+    /// one hands its own security to the next version; any other gets
+    /// `protection`.
+    owner: Option<Fingerprint>,
+}
+
+impl Opened {
+    /// What a document read from `file` is remembered as.
+    fn of(at: PathBuf, print: Fingerprint, protection: Protection) -> Self {
+        Self {
+            at,
+            print: Some(print.clone()),
+            protection,
+            owner: Some(print),
+        }
+    }
+
+    /// Whether `now` is provably the file the protection was read from.
+    fn is_owner(&self, now: &Fingerprint) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.same_file(now))
+    }
 }
 
 /// What a document's record is kept under: the path as the page gave it,
@@ -183,6 +209,13 @@ struct Protection {
     dacl: Option<windows::Dacl>,
     #[cfg(windows)]
     mark: Option<Vec<u8>>,
+    /// When it was made: a rename would make the next version today.
+    #[cfg(windows)]
+    created: Option<std::time::SystemTime>,
+    /// Encrypted with EFS, or hidden — what it is, its next version is from
+    /// the start, encryption being something only a file's creation gives.
+    #[cfg(windows)]
+    attributes: u32,
     #[cfg(unix)]
     mode: Option<u32>,
     #[cfg(target_os = "macos")]
@@ -194,15 +227,22 @@ impl Protection {
     /// a save could not then give the document its own protection back.
     fn of(path: &Path, file: &fs::File) -> io::Result<Self> {
         let _ = (path, file);
+        #[cfg(any(windows, unix))]
+        let meta = file.metadata()?;
         Ok(Self {
             #[cfg(windows)]
             dacl: windows::dacl_of(file)?,
             #[cfg(windows)]
             mark: mark_of(path),
+            #[cfg(windows)]
+            created: meta.created().ok(),
+            #[cfg(windows)]
+            attributes: std::os::windows::fs::MetadataExt::file_attributes(&meta)
+                & windows::KEPT_ATTRIBUTES,
             #[cfg(unix)]
             mode: {
                 use std::os::unix::fs::MetadataExt;
-                Some(file.metadata()?.mode() & 0o777)
+                Some(meta.mode() & 0o777)
             },
             #[cfg(target_os = "macos")]
             quarantine: macos::quarantine_of(path)?,
@@ -226,11 +266,30 @@ impl Protection {
             if let Some(dacl) = &self.dacl {
                 windows::set_dacl(temp_file, dacl)?;
             }
+            if let Some(created) = self.created {
+                use std::os::windows::fs::FileTimesExt;
+                temp_file.set_times(fs::FileTimes::new().set_created(created))?;
+            }
             if let Some(mark) = &self.mark {
                 fs::write(zone_stream(temp), mark)?;
             }
         }
         Ok(())
+    }
+
+    /// Keeps a mark of the internet `other` carries where this has none: a
+    /// file read again that is not the one this was read from does not give
+    /// its security, but a mark on it says where its content came from.
+    fn keep_marks_of(&mut self, other: &Self) {
+        let _ = other;
+        #[cfg(windows)]
+        if self.mark.is_none() {
+            self.mark.clone_from(&other.mark);
+        }
+        #[cfg(target_os = "macos")]
+        if self.quarantine.is_none() {
+            self.quarantine.clone_from(&other.quarantine);
+        }
     }
 
     #[cfg(windows)]
@@ -241,11 +300,19 @@ impl Protection {
 
 /// Where the next version takes its protection from.
 enum Source<'a> {
-    /// The file in the document's place now, as on any save.
+    /// The file in the document's place now, read by name as on any write
+    /// of a file nobody read here.
     Document,
-    /// What the document had when it was opened: the file there now is not
-    /// it.
-    Remembered(&'a Protection),
+    /// This: the document's own, read from it the moment it was provably the
+    /// document, or remembered from when it was opened.
+    Given(&'a Protection),
+}
+
+/// A new version as it was written, asked of the file itself before it took
+/// the document's place: what a save remembers of it.
+struct Written {
+    print: Fingerprint,
+    protection: Protection,
 }
 
 /// Which file a document is, and how it was: what `Workspace::save` compares
@@ -291,6 +358,34 @@ impl Fingerprint {
         open_regular(path)
             .ok()
             .and_then(|file| Self::of(&file).ok())
+    }
+
+    /// Whether `other` has this one's ID, where both have one that tells.
+    /// Where either does not, there is nothing to tell them apart by and they
+    /// are taken for the same — which can let a save go ahead without a
+    /// question, never let a file hand on its security: that takes
+    /// `same_file`, which an ID that does not tell never passes.
+    fn same_id(&self, other: &Self) -> bool {
+        #[cfg(windows)]
+        {
+            match (&self.id, &other.id) {
+                (Some(a), Some(b))
+                    if *a != windows::Identity::Unknown && *b != windows::Identity::Unknown =>
+                {
+                    a == b
+                }
+                _ => true,
+            }
+        }
+        #[cfg(unix)]
+        {
+            self.id == other.id
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = other;
+            true
+        }
     }
 
     /// Whether `other` is the same file, as far as can be told: the same ID
@@ -558,14 +653,25 @@ impl Workspace {
         let protection = Protection::of(&resolved, &file)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        self.seen.insert(
-            key,
-            Opened {
-                at: resolved,
-                print,
-                protection,
-            },
-        );
+        /* Read again — after a save, or to take in somebody else's change —
+        it is what is in it now that is agreed to, not the security of
+        whatever file is there: one that is not provably the file the
+        protection was read from does not replace it, and only a mark of the
+        internet on it is kept. An editor reads its document again after
+        every save, and a file put in its place in that moment would
+        otherwise hand its security to every save after. */
+        let opened = match self.seen.remove(&key) {
+            Some(mut before) if !before.is_owner(&print) => {
+                before.protection.keep_marks_of(&protection);
+                Opened {
+                    at: resolved,
+                    print: Some(print),
+                    ..before
+                }
+            }
+            _ => Opened::of(resolved, print, protection),
+        };
+        self.seen.insert(key, opened);
         Ok(bytes)
     }
 
@@ -594,9 +700,11 @@ impl Workspace {
         opened — the one case its own security may be taken from it. Every
         other case of a document opened here gives the new version the
         protection remembered from then: a file that cannot be looked at (held
-        open without sharing, or closed to reading by whoever put it there,
-        while what `carry_over` asks for is still let through), and one that is
-        gone, which would otherwise come back with the folder's security. */
+        open without sharing, or closed to reading by whoever put it there),
+        one that is gone, which would otherwise come back with the folder's
+        security, and one on a volume whose IDs do not tell files apart. */
+        let own: Protection;
+        let mut held = None;
         let (target, source) = match &opened {
             None => (resolved, Source::Document),
             /* The name no longer leads where the document was read from: its
@@ -610,59 +718,60 @@ impl Workspace {
                 }
                 (
                     self.where_it_was(&before.at)?,
-                    Source::Remembered(&before.protection),
+                    Source::Given(&before.protection),
                 )
             }
             Some(before) => {
-                let source = match Fingerprint::at(&resolved) {
-                    Some(now) if before.print == now => Source::Document,
-                    Some(now) => {
-                        if !overwrite {
+                /* Opened once, and everything taken from that one open file:
+                a name leads to one file a moment and to another the next, so
+                asking it twice — whether it changed, then for its security —
+                could have the second answer from a file put there between
+                the two. On Windows it is held, too, until the new version
+                takes its place: nobody may write to it or take it away in the
+                meantime, and what was checked is what is replaced. */
+                held = open_held(&resolved).ok();
+                let now = held.as_ref().and_then(|file| Fingerprint::of(file).ok());
+                let source = match (&held, now) {
+                    (Some(file), Some(now)) => {
+                        if before.print.as_ref() != Some(&now) && !overwrite {
                             return Err(VfsError::Changed(display(&resolved)));
                         }
-                        if before.print.same_file(&now) {
-                            Source::Document
+                        if before.is_owner(&now) {
+                            own = Protection::of(&resolved, file)?;
+                            Source::Given(&own)
                         } else {
-                            Source::Remembered(&before.protection)
+                            Source::Given(&before.protection)
                         }
                     }
-                    None => {
+                    _ => {
                         /* There, and not to be looked at: changed, as far as
                         anybody can tell. Gone: nothing to ask about. */
                         if fs::symlink_metadata(&resolved).is_ok() && !overwrite {
                             return Err(VfsError::Changed(display(&resolved)));
                         }
-                        Source::Remembered(&before.protection)
+                        Source::Given(&before.protection)
                     }
                 };
                 (resolved, source)
             }
         };
-        self.write_resolved(&target, data, &source)?;
+        let written = self.write_resolved(&target, data, &source, held)?;
 
-        /* What the next save compares against: the file as it now is. Its
-        protection is what this save gave it. */
-        let now = open_regular(&target).ok().and_then(|file| {
-            Some((
-                Fingerprint::of(&file).ok()?,
-                Protection::of(&target, &file).ok()?,
-            ))
-        });
-        match now {
-            Some((print, protection)) => {
-                self.seen.insert(
-                    key,
-                    Opened {
-                        at: target,
-                        print,
-                        protection,
-                    },
-                );
-            }
-            None => {
-                self.seen.remove(&key);
-            }
-        }
+        /* What the next save compares against: the new version, so long as
+        the file in its place now is it — asked by which file it is, since
+        between the rename and this the name is anybody's. One that is not,
+        or cannot be looked at, is never taken for it; the protection kept is
+        what this save gave, read from the new version before it was let go. */
+        let now = Fingerprint::at(&target).filter(|now| now.same_id(&written.print));
+        self.seen.insert(
+            key,
+            Opened {
+                at: target,
+                print: now.clone(),
+                protection: written.protection,
+                owner: now,
+            },
+        );
         Ok(())
     }
 
@@ -709,17 +818,20 @@ impl Workspace {
     /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
         let resolved = self.resolve(path)?;
-        self.write_resolved(&resolved, data, &Source::Document)
+        self.write_resolved(&resolved, data, &Source::Document, None)
+            .map(|_| ())
     }
 
     /// `write`, for a path already resolved, with the protection the new
-    /// version is to have from `source` (see `save`).
+    /// version is to have from `source` (see `save`). `held` is the document,
+    /// let go only just before the new version takes its place.
     fn write_resolved(
         &self,
         resolved: &Path,
         data: &[u8],
         source: &Source<'_>,
-    ) -> Result<(), VfsError> {
+        held: Option<fs::File>,
+    ) -> Result<Written, VfsError> {
         use std::io::Write;
 
         let resolved = resolved.to_path_buf();
@@ -736,7 +848,7 @@ impl Workspace {
 
         let carried = match source {
             Source::Document => carry_over(&resolved, &file, &temp),
-            Source::Remembered(protection) => protection.give(&file, &temp),
+            Source::Given(protection) => protection.give(&file, &temp),
         };
         let written = carried.and_then(|()| file.write_all(data));
         /* Sharing is decided stream by stream: until its security was set, a
@@ -753,16 +865,30 @@ impl Workspace {
             ))),
             Err(err) => Err(err),
         });
+        /* What the new version is and how it is protected, asked of it while
+        it is still this program's alone. */
+        let written = written.and_then(|()| {
+            Ok(Written {
+                print: Fingerprint::of(&file)?,
+                protection: Protection::of(&temp, &file)?,
+            })
+        });
         drop(file);
-        if let Err(err) = written {
-            let _ = fs::remove_file(&temp);
-            return Err(err.into());
-        }
+        let written = match written {
+            Ok(written) => written,
+            Err(err) => {
+                let _ = fs::remove_file(&temp);
+                return Err(err.into());
+            }
+        };
         #[cfg(unix)]
         if let Err(err) = still_the_folder(folder) {
             let _ = fs::remove_file(&temp);
             return Err(err);
         }
+        /* Let go only now: held, the document could not be replaced by the
+        rename either. */
+        drop(held);
         /* A rename replaces a link in the document's place rather than
         writing through it, and takes the document away only by putting the
         new version there. */
@@ -771,7 +897,7 @@ impl Workspace {
             return Err(err.into());
         }
         sweep_leftovers(&resolved);
-        Ok(())
+        Ok(written)
     }
 }
 
@@ -846,6 +972,30 @@ const O_NONBLOCK: Option<i32> = None;
 /// refused before a byte is read — a folder included, which a read refused
 /// anyway. Where the flag's value is not known here, the question is asked of
 /// the path before opening, as before.
+/// The document a save is about to replace, opened to be looked at and held
+/// until the new version takes its place: on Windows nobody else may write
+/// to it, rename it or delete it while it is held, so the file checked is the
+/// file replaced. A program that has it open to write meanwhile makes it one
+/// that cannot be looked at, which is asked about. Unix has no such hold, and
+/// the moment between the look and the rename stays.
+fn open_held(path: &Path) -> Result<fs::File, VfsError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(windows::FILE_SHARE_READ)
+            .open(path)?;
+        if file.metadata()?.is_file() {
+            Ok(file)
+        } else {
+            Err(VfsError::NotAFile(display(path)))
+        }
+    }
+    #[cfg(not(windows))]
+    open_regular(path)
+}
+
 pub(crate) fn open_regular(path: &Path) -> Result<fs::File, VfsError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -1130,6 +1280,7 @@ pub(crate) mod windows {
     const READ_CONTROL: u32 = 0x0002_0000;
     pub(super) const FILE_READ_ATTRIBUTES: u32 = 0x80;
     const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    pub(super) const FILE_SHARE_READ: u32 = 0x1;
     const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
     const FILE_LIST_DIRECTORY: u32 = 0x1;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
@@ -1649,18 +1800,22 @@ pub(crate) mod windows {
 
 /// A temporary file beside `path` that did not exist until now.
 fn create_beside(path: &Path, source: &Source<'_>) -> std::io::Result<(fs::File, PathBuf)> {
+    #[cfg(unix)]
     let document = matches!(source, Source::Document);
     /* Encrypted with EFS, or hidden: what the document is, its next version is
     from the start. Encryption cannot be given to a file later. Nothing of a
     file that is not the document. */
     #[cfg(windows)]
-    let attributes = fs::symlink_metadata(path)
-        .ok()
-        .filter(|meta| document && meta.is_file())
-        .map(|meta| {
-            std::os::windows::fs::MetadataExt::file_attributes(&meta) & windows::KEPT_ATTRIBUTES
-        })
-        .unwrap_or(0);
+    let attributes = match source {
+        Source::Document => fs::symlink_metadata(path)
+            .ok()
+            .filter(|meta| meta.is_file())
+            .map(|meta| {
+                std::os::windows::fs::MetadataExt::file_attributes(&meta) & windows::KEPT_ATTRIBUTES
+            })
+            .unwrap_or(0),
+        Source::Given(protection) => protection.attributes,
+    };
 
     /* The right to set its security is asked for only where there is a
     security to give it: a share that does not grant it would otherwise refuse
@@ -1668,7 +1823,7 @@ fn create_beside(path: &Path, source: &Source<'_>) -> std::io::Result<(fs::File,
     #[cfg(windows)]
     let access = if match source {
         Source::Document => windows::has_acl_to_carry(path),
-        Source::Remembered(protection) => protection.has_dacl(),
+        Source::Given(protection) => protection.has_dacl(),
     } {
         windows::GENERIC_WRITE_AND_WRITE_DAC
     } else {
@@ -2348,6 +2503,124 @@ mod tests {
             !dacl.contains("(A;ID;"),
             "the folder's entries came in: {after}"
         );
+    }
+
+    /// Put in the document's place and then read again — as an editor reads
+    /// its document after every save — the planted file is what is edited,
+    /// but its security is not what the next version gets: the file it was
+    /// remembered from is not this one.
+    #[cfg(windows)]
+    #[test]
+    fn a_replacement_read_again_does_not_hand_on_its_security() {
+        let (mut workspace, file, _) = closed_document("read-again");
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+        assert_eq!(workspace.read_document(&file).unwrap(), b"planted");
+
+        workspace.save(&file, b"mine", false).unwrap();
+        let after = sddl(&file);
+        assert!(
+            !after.contains(";;;BG)"),
+            "the planted security was carried over: {after}"
+        );
+        assert!(
+            after[after.find("D:").unwrap()..].starts_with("D:P"),
+            "{after}"
+        );
+    }
+
+    /// Its own security changed while it was open — by the person, in the
+    /// file's properties — is the document's, and the next version keeps it,
+    /// with when it was made and its being hidden.
+    #[cfg(windows)]
+    #[test]
+    fn the_documents_own_security_changed_while_open_is_kept() {
+        use std::os::windows::fs::{FileTimesExt, MetadataExt};
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("own-change")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let me = std::env::var("USERNAME").unwrap();
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
+        let made =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_created(made))
+            .unwrap();
+        let hidden = std::process::Command::new("attrib")
+            .arg("+h")
+            .arg(display(&file))
+            .status()
+            .unwrap();
+        assert!(hidden.success());
+        workspace.read_document(&file).unwrap();
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+
+        workspace.save(&file, b"mine, edited", false).unwrap();
+        assert!(sddl(&file).contains(";;;BG)"), "{}", sddl(&file));
+        let meta = fs::metadata(&file).unwrap();
+        assert_eq!(meta.created().unwrap(), made);
+        assert_ne!(meta.file_attributes() & 0x2, 0, "no longer hidden");
+        let _ = std::process::Command::new("attrib")
+            .arg("-h")
+            .arg(display(&file))
+            .status();
+    }
+
+    /// While a save holds the document, nobody can put another file in its
+    /// place nor write into it: what was checked is what is replaced.
+    #[cfg(windows)]
+    #[test]
+    fn a_held_document_can_be_neither_replaced_nor_written() {
+        let root = scratch("held");
+        let file = root.join("notes.md");
+        let other = root.join("planted.md");
+        fs::write(&file, "mine").unwrap();
+        fs::write(&other, "planted").unwrap();
+
+        let held = open_held(&file).unwrap();
+        assert!(fs::rename(&other, &file).is_err(), "replaced while held");
+        assert!(
+            fs::OpenOptions::new().write(true).open(&file).is_err(),
+            "written while held"
+        );
+        assert!(fs::remove_file(&file).is_err(), "deleted while held");
+        drop(held);
+
+        fs::rename(&other, &file).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "planted");
+    }
+
+    /// The same two on Unix, with the mode.
+    #[cfg(unix)]
+    #[test]
+    fn a_replacement_read_again_does_not_hand_on_its_mode_and_the_documents_own_does() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("read-again-mode")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        workspace.read_document(&file).unwrap();
+
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        workspace.save(&file, b"mine, edited", false).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "the document's own change was lost: {mode:o}");
+
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o606)).unwrap();
+        workspace.read_document(&file).unwrap();
+        workspace.save(&file, b"mine", false).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "the planted mode was carried over: {mode:o}");
     }
 
     /// The same on Unix: a replacement nobody may read, and a deleted
