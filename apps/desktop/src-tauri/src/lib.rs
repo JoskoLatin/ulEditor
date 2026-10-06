@@ -695,9 +695,9 @@ async fn convert_to_pdf(
 /// Script in the page can start a scan, and every document the scan found
 /// was offered for it to claim and read — Documents, Downloads, Desktop and
 /// Pictures, with no gesture at all (found by the independent review of
-/// 39e0855). It cannot answer this. A no lasts the session; a yes is a
-/// remembered consent to read those folders, taken back with the rest by
-/// "Forget recently opened files".
+/// 39e0855). It cannot answer this. A no lasts the session; a yes is
+/// remembered — that the library may look, not the folders granted — and
+/// taken back with the rest by "Forget recently opened files".
 #[cfg(desktop)]
 async fn library_allowed(
     app: &tauri::AppHandle,
@@ -709,15 +709,11 @@ async fn library_allowed(
     use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
     let consented = || {
-        let consents = state.consents.lock().expect("the consent lock is poisoned");
-        roots.iter().all(|root| {
-            std::fs::canonicalize(root).is_ok_and(|real| {
-                consents
-                    .remembered()
-                    .iter()
-                    .any(|kept| kept.kind == Kind::Folder && kept.covers(&real))
-            })
-        })
+        state
+            .consents
+            .lock()
+            .expect("the consent lock is poisoned")
+            .library_allowed()
     };
     if consented() {
         return true;
@@ -759,15 +755,16 @@ async fn library_allowed(
     };
 
     match asked.answer(pressed.as_deref()) {
+        /* A yes lets the library look, and no more: the folders are not
+        granted, and the page may claim only the documents a scan offers —
+        not anything else lying in Downloads (found by the automated review
+        of 54b2819). */
         trust::Answer::Trust => {
-            let _ = with_consents(state, |_, consents| {
-                for root in roots {
-                    if let Ok(real) = std::fs::canonicalize(root) {
-                        let _ = consents.remember(Consent::folder(real, Access::Read));
-                    }
-                }
-                Ok(())
-            });
+            let _ = state
+                .consents
+                .lock()
+                .expect("the consent lock is poisoned")
+                .allow_library();
             true
         }
         trust::Answer::NotNow => {

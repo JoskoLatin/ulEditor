@@ -88,6 +88,8 @@ struct Kept {
     consents: Vec<Consent>,
     #[serde(default)]
     claimed: Vec<Consent>,
+    #[serde(default)]
+    library: bool,
 }
 
 /// The consents of this installation: what gestures gave and what was
@@ -103,6 +105,10 @@ pub struct Consents {
     /// What the page claimed of an offer, newest first — a list of its own.
     claimed: Vec<Consent>,
     offered: std::collections::HashMap<PathBuf, Consent>,
+    /// Whether the person let the library look through their folders: a
+    /// yes to that, and nothing more — what it lets the page read is still
+    /// only what a scan offers, never the folders whole.
+    library: bool,
 }
 
 /// A path as it is shown, without the `\?\` the resolved form carries on
@@ -147,6 +153,7 @@ impl Consents {
             remembered: kept.consents,
             claimed: kept.claimed,
             offered: std::collections::HashMap::new(),
+            library: kept.library,
         };
         consents.remembered.truncate(MOST_REMEMBERED);
         consents.claimed.truncate(MOST_CLAIMED);
@@ -186,7 +193,22 @@ impl Consents {
     /// claimed for this session. `None`: nobody consented to it, and the page
     /// asked anyway.
     pub fn claim(&mut self, path: &Path) -> Option<Consent> {
-        if let Some(at) = self.remembered.iter().position(|kept| kept.covers(path)) {
+        /* Of the gestures' consents that cover it, the one that goes furthest,
+        and of those the nearest: a folder let in to be read above a file
+        given to be written must not narrow the file. */
+        let widest = self
+            .remembered
+            .iter()
+            .enumerate()
+            .filter(|(_, kept)| kept.covers(path))
+            .max_by_key(|(_, kept)| {
+                (
+                    kept.access == Access::ReadWrite,
+                    kept.path.components().count(),
+                )
+            })
+            .map(|(at, _)| at);
+        if let Some(at) = widest {
             let kept = self.remembered.remove(at);
             self.remembered.insert(0, kept.clone());
             let _ = self.save();
@@ -210,6 +232,11 @@ impl Consents {
     /// what was just forgotten. Compared as shown as well as resolved, so a
     /// folder on a stick that is gone is still forgotten.
     pub fn forget(&mut self, path: &Path) -> io::Result<()> {
+        /* An empty path is under nothing and over everything: it forgets
+        nothing, rather than all. */
+        if path.as_os_str().is_empty() {
+            return Ok(());
+        }
         let gone = Consent::folder(plain(path), Access::Read);
         let forgotten = |kept: &Consent| gone.covers(&plain(&kept.path));
         let before = self.remembered.len() + self.claimed.len();
@@ -222,12 +249,26 @@ impl Consents {
         self.save()
     }
 
-    /// Forgets every consent, given or claimed, and every offer — what
-    /// "Forget recently opened files" means to the person.
+    /// Forgets every consent, given or claimed, every offer and the library's
+    /// yes — what "Forget recently opened files" means to the person.
     pub fn forget_all(&mut self) -> io::Result<()> {
         self.remembered.clear();
         self.claimed.clear();
         self.offered.clear();
+        self.library = false;
+        self.save()
+    }
+
+    /// Whether the person let the library look through their folders.
+    pub fn library_allowed(&self) -> bool {
+        self.library
+    }
+
+    /// Remembers that the person let the library look — and only that: the
+    /// folders it looks in are not granted, and the page may still claim only
+    /// the documents a scan offers.
+    pub fn allow_library(&mut self) -> io::Result<()> {
+        self.library = true;
         self.save()
     }
 
@@ -240,6 +281,7 @@ impl Consents {
         let kept = Kept {
             consents: self.remembered.clone(),
             claimed: self.claimed.clone(),
+            library: self.library,
         };
         let bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
         let fresh = file.with_extension("json.new");
@@ -475,11 +517,15 @@ mod tests {
             .unwrap();
         consents.offer(Consent::file("/library/x.pdf", Access::Read));
         consents.claim(Path::new("/library/x.pdf"));
+        consents.allow_library().unwrap();
+        assert!(Consents::load(file.clone()).library_allowed());
         consents.forget_all().unwrap();
+        assert!(!consents.library_allowed());
         assert_eq!(consents.claim(Path::new("/projects/ul")), None);
         assert_eq!(consents.claim(Path::new("/library/x.pdf")), None);
         let again = Consents::load(file);
         assert!(again.remembered().is_empty() && again.claimed().is_empty());
+        assert!(!again.library_allowed());
     }
 
     /// A list that cannot be written still lets the page claim what it may.
@@ -489,5 +535,47 @@ mod tests {
         let mut consents = Consents::load(dir.join("gone").join("consents.json"));
         consents.offer(Consent::file("/library/x.pdf", Access::Read));
         assert!(consents.claim(Path::new("/library/x.pdf")).is_some());
+    }
+
+    /// The library let look lets nothing be claimed by itself: only what a
+    /// scan offers.
+    #[test]
+    fn the_library_let_look_grants_no_folder() {
+        let mut consents = Consents::in_memory();
+        consents.allow_library().unwrap();
+        assert!(consents.library_allowed());
+        assert_eq!(consents.claim(Path::new("/home/a/Downloads/id_rsa")), None);
+        consents.offer(Consent::file("/home/a/Documents/ugovor.pdf", Access::Read));
+        assert!(consents
+            .claim(Path::new("/home/a/Documents/ugovor.pdf"))
+            .is_some());
+        assert_eq!(
+            consents.claim(Path::new("/home/a/Documents/other.txt")),
+            None
+        );
+    }
+
+    /// A folder let in to be read above a file given to be written does not
+    /// narrow the file; an empty path forgets nothing.
+    #[test]
+    fn the_widest_and_nearest_consent_is_claimed() {
+        let file = Consent::file("/home/a/Documents/ugovor.docx", Access::ReadWrite);
+        let folder = Consent::folder("/home/a/Documents", Access::Read);
+        for order in [
+            [file.clone(), folder.clone()],
+            [folder.clone(), file.clone()],
+        ] {
+            let mut consents = Consents::in_memory();
+            for consent in order {
+                consents.remember(consent).unwrap();
+            }
+            let claimed = consents.claim(Path::new("/home/a/Documents/ugovor.docx"));
+            assert_eq!(
+                claimed.map(|c| (c.kind, c.access)),
+                Some((Kind::File, Access::ReadWrite))
+            );
+            consents.forget(Path::new("")).unwrap();
+            assert_eq!(consents.remembered().len(), 2);
+        }
     }
 }

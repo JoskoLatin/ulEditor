@@ -182,8 +182,8 @@ pub(crate) fn library_question(
             title: "Pregledati dokumente na računalu?".into(),
             body: format!(
                 "Knjižnica traži dokumente u mapama\n\n{folders}\n\n\
-                 i prikazuje ih ovdje, da se otvore samo za čitanje. Za to ulEditor \
-                 smije čitati te mape.\n\n\
+                 i prikazuje ih ovdje, da se otvore samo za čitanje. Otvoriti se \
+                 mogu samo dokumenti koje pronađe.\n\n\
                  „Dopusti” se pamti, a opoziva ga „Zaboravi nedavno otvorene datoteke”."
             ),
             not_now: "Ne sada".into(),
@@ -195,8 +195,8 @@ pub(crate) fn library_question(
             title: "Look through your documents?".into(),
             body: format!(
                 "The library looks for documents in\n\n{folders}\n\n\
-                 and lists them here, to be opened read-only. For that, ulEditor \
-                 reads these folders.\n\n\
+                 and lists them here, to be opened read-only. Only the documents \
+                 it finds can be opened.\n\n\
                  \"Allow\" is remembered; \"Forget recently opened files\" takes it back."
             ),
             not_now: "Not now".into(),
