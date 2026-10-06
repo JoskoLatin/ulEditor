@@ -30,11 +30,12 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash, createPublicKey, verify } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { readPublicKey, storedId as idOf, verifySignature } from './update-signature.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -44,28 +45,13 @@ function check(name, passed, detail = '') {
   console.log(`[${passed ? '  ok  ' : ' FAIL '}] ${name}${detail ? `  — ${detail}` : ''}`);
 }
 
-/**
- * Both halves are minisign, and Tauri wraps each of them in base64 once more:
- * `tauri.conf.json` holds base64 of the public key *file*, and a `.sig` holds
- * base64 of the whole signature *file*. Decoding once gives the minisign text
- * in both cases — two comment lines and the payload between them.
- */
-const unwrap = (text) => Buffer.from(text.trim(), 'base64').toString('utf8');
-const payloadLines = (text) =>
-  text.split(/\r?\n/).filter((line) => line && !/^(un)?trusted comment:/.test(line));
-
+/* How the two halves are wrapped, and how a signature is checked, is in
+   update-signature.mjs — shared with the release, which checks every
+   artefact it signs the same way. */
 const conf = JSON.parse(readFileSync(join(ROOT, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
 const configured = conf.plugins?.updater?.pubkey ?? '';
 
-let publicKey = null;
-let commentedId = null;
-try {
-  const text = unwrap(configured);
-  commentedId = /minisign public key:\s*([0-9A-Fa-f]{16})/.exec(text)?.[1] ?? null;
-  publicKey = Buffer.from(payloadLines(text)[0] ?? '', 'base64');
-} catch {
-  publicKey = Buffer.alloc(0);
-}
+const { bytes: publicKey, commentedId } = readPublicKey(configured);
 
 check(
   'the application carries an Ed25519 minisign public key',
@@ -78,7 +64,7 @@ check(
  * stores them. A pubkey pasted from one key under the comment line of another
  * would pass every other check here and fail only on somebody else's machine.
  */
-const storedId = Buffer.from(publicKey.subarray(2, 10)).reverse().toString('hex').toUpperCase();
+const storedId = idOf(publicKey);
 check(
   'the key id in its own comment line is the key underneath it',
   commentedId !== null && commentedId.toUpperCase() === storedId,
@@ -134,39 +120,20 @@ try {
     ],
     { cwd: ROOT, stdio: 'pipe' },
   );
-  signature = Buffer.from(payloadLines(unwrap(readFileSync(`${payload}.sig`, 'utf8')))[0], 'base64');
+  signature = readFileSync(`${payload}.sig`, 'utf8');
 } catch (error) {
   check('the key signs', false, String(error.message ?? error).split('\n')[0]);
 }
 
 if (signature) {
-  check('the key signs', true, `${signature.length} bytes`);
-
-  check(
-    'the signature names the key the application trusts',
-    signature.subarray(2, 10).equals(publicKey.subarray(2, 10)),
-    `${signature.subarray(2, 10).toString('hex')} vs ${publicKey.subarray(2, 10).toString('hex')}`,
-  );
-
-  /**
-   * "ED" signs a BLAKE2b-512 hash of the file, "Ed" the file itself. Tauri
-   * produces the first; both are read here so a change in its CLI shows up as a
-   * failure to verify rather than silently checking the wrong bytes.
-   */
-  const prehashed = signature.subarray(0, 2).toString('latin1') === 'ED';
-  const digest = (bytes) => (prehashed ? createHash('blake2b512').update(bytes).digest() : bytes);
-  const ed25519 = createPublicKey({
-    // SubjectPublicKeyInfo for Ed25519 is a fixed 12-byte prefix and the key.
-    key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), publicKey.subarray(10)]),
-    format: 'der',
-    type: 'spki',
-  });
+  check('the key signs', true);
 
   const content = readFileSync(payload);
+  const verified = verifySignature(content, signature, publicKey);
   check(
-    'a signature made with this key verifies against that public key',
-    verify(null, digest(content), ed25519, signature.subarray(10)),
-    prehashed ? 'prehashed, BLAKE2b-512' : 'over the file itself',
+    'a signature made with this key verifies against the public key the application carries',
+    verified.ok,
+    verified.reason,
   );
 
   /**
@@ -175,7 +142,7 @@ if (signature) {
    */
   check(
     'the same key refuses a file that was altered after signing',
-    !verify(null, digest(Buffer.concat([content, Buffer.from('!')])), ed25519, signature.subarray(10)),
+    !verifySignature(Buffer.concat([content, Buffer.from('!')]), signature, publicKey).ok,
   );
 }
 

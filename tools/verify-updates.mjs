@@ -16,7 +16,8 @@
  * - the window is allowed to check, install and restart;
  * - the plugin is registered in Rust, and desktop-only;
  * - the release workflow signs, and does it in a way that cannot break a
- *   release that has no key;
+ *   release that has no key — in a job of its own that builds nothing, while
+ *   the builders hold no secret and the publishers no key;
  * - the manifest names artefacts the release actually contains, and leaves out
  *   a platform whose signature is missing rather than offering an update every
  *   application on it would refuse.
@@ -157,25 +158,89 @@ check(
 /* ── the release ─────────────────────────────────────────────────────── */
 
 const release = read('.github/workflows/release.yml');
+
+/* The jobs, each as its own text: a name two spaces in, and a colon. A key
+   that is only in the right job is the whole point of the split, and it is a
+   property of the file, so it is read off the file. */
+const jobs = new Map();
+{
+  let current = null;
+  for (const line of release.slice(release.indexOf('\njobs:\n')).split(/\r?\n/).slice(2)) {
+    const named = /^ {2}([a-z][a-z0-9-]*):\s*$/.exec(line);
+    if (named) {
+      current = named[1];
+      jobs.set(current, '');
+    } else if (current) {
+      jobs.set(current, `${jobs.get(current)}${line}\n`);
+    }
+  }
+}
+const job = (name) => jobs.get(name) ?? '';
+const holding = (secret) =>
+  [...jobs].filter(([, text]) => text.includes(`secrets.${secret}`)).map(([name]) => name);
+const writers = [...jobs]
+  .filter(([, text]) => /contents:\s*write/.test(text))
+  .map(([name]) => name)
+  .sort();
+
 check(
-  'the release passes the signing key to the bundler',
-  release.includes('TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}'),
+  'nothing in the release may write unless its job asks',
+  /\npermissions: \{\}\r?\n/.test(release),
 );
 check(
-  'updater artifacts are asked for only when there is a key to sign them with',
-  release.includes("if: env.HAS_SIGNING_KEY == 'true'") &&
+  'the update key is given to the desktop signer and nothing else',
+  holding('TAURI_SIGNING_PRIVATE_KEY').join() === 'desktop-sign',
+  holding('TAURI_SIGNING_PRIVATE_KEY').join(', ') || 'no job',
+);
+check(
+  'the Android key to the Android signer and nothing else',
+  holding('ANDROID_KEYSTORE_BASE64').join() === 'android-sign',
+  holding('ANDROID_KEYSTORE_BASE64').join(', ') || 'no job',
+);
+check(
+  'the builders hold no secret at all',
+  ['desktop-build', 'android-build'].every((name) => jobs.has(name) && !job(name).includes('secrets.')),
+);
+check(
+  'the signers build nothing, and run no package scripts',
+  ['desktop-sign', 'android-sign'].every((name) => !/tauri (android )?build|cargo /.test(job(name))) &&
+    /pnpm install [^\n]*--ignore-scripts/.test(job('desktop-sign')),
+);
+check(
+  'only the draft and the publishers may write to the repository',
+  writers.join() === 'android-publish,create-release,desktop-publish',
+  writers.join(', '),
+);
+check(
+  'and none of them holds a signing key',
+  writers.every((name) => !/secrets\.(TAURI_SIGNING|ANDROID_KEY)/.test(job(name))),
+);
+check(
+  'nothing restored from a cache goes into a release',
+  !/uses: Swatinem\/rust-cache|^\s*cache:\s*pnpm/m.test(release),
+  'a cache is written by other runs',
+);
+check(
+  'a release is signed in the release environment',
+  ['desktop-sign', 'android-sign'].every((name) =>
+    job(name).includes("environment: ${{ needs.plan.outputs.publish == 'true' && 'release' || 'trial' }}"),
+  ),
+);
+check(
+  'updater artifacts are asked for by the builder, never by tauri.conf.json',
+  /createUpdaterArtifacts=true/.test(job('desktop-build')) &&
     !JSON.stringify(conf.bundle).includes('createUpdaterArtifacts'),
-  'otherwise a release without the secret would fail instead of merely offering no update',
+  'on in the file, a build without a key would fail instead of merely offering no update',
+);
+check(
+  "every signature is checked against the application's key before anything is published",
+  /node tools\/sign-updates\.mjs dist\r?\n/.test(job('desktop-sign')) &&
+    /needs: \[plan, create-release, desktop-sign\]/.test(job('desktop-publish')),
 );
 check(
   'the manifest is written once, after every builder',
-  release.includes('needs: [create-release, desktop]') &&
-    release.includes('node tools/updater-manifest.mjs'),
-);
-check(
-  "and tauri-action is told not to write one of its own",
-  release.includes('includeUpdaterJson: false'),
-  'four builders each writing latest.json leaves one platform on the page',
+  /needs: \[plan, desktop-build\]/.test(job('desktop-sign')) &&
+    job('desktop-publish').includes('node tools/updater-manifest.mjs'),
 );
 
 /* ── the manifest itself, over a release that never happened ─────────── */

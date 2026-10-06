@@ -9,9 +9,31 @@ name: Release
 # we get all three platforms at once as a bonus.
 #
 # One tag gives one release with everything inside — desktop installers and the
-# phone APK. That is why `create-release` goes first and opens the draft itself:
-# were a build to open it, five parallel jobs would race to create it and we
-# would end up with five half-filled releases.
+# phone APK. That is why `create-release` opens the draft once, by itself: were
+# a builder to open it, five parallel jobs would race to create it and we would
+# end up with five half-filled releases.
+#
+# **Building, signing and publishing are three jobs that do not share a key.**
+# A build runs other people's code — every npm package's build step, every
+# cargo build script and proc-macro. When the update key and a token that may
+# write to the release were in that same step, any one of them could sign and
+# publish an update every installed copy would accept. So:
+#
+# - the builders have no secret at all and may only read the repository; they
+#   restore no cache, so nothing a CI run left behind is in the build;
+# - the signers get only a key, and build nothing: the installers come in as
+#   files, are signed, and every signature is checked against the key the
+#   application carries before anything goes on;
+# - the publishers get only the right to write to the release, and no key.
+#
+# The signers run in the `release` environment, which is where the keys belong
+# and where GitHub can make a run wait for a person to approve it — see
+# docs/RELEASE.md, "Who may sign".
+#
+# Started by hand with no tag, the whole thing is a trial run: this branch is
+# built and signed with keys made for the run and thrown away with it, and
+# nothing is published. That is how a change to this file is tried without a
+# release.
 
 on:
   push:
@@ -23,8 +45,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build, and it must already exist (v0.1.0)'
-        required: true
+        description: 'Tag to build into its release, and it must already exist (v0.1.0). Empty: a trial run of this branch that publishes nothing'
+        required: false
+        default: ''
       platforms:
         description: 'Which builders to run'
         required: true
@@ -32,24 +55,25 @@ on:
         type: choice
         options: [all, desktop, android]
 
-permissions:
-  contents: write
+# Nothing by default; each job asks for what it needs.
+permissions: {}
 
 jobs:
-  create-release:
-    name: Open the release draft
+  plan:
+    name: What this run is
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      release_id: ${{ steps.draft.outputs.result }}
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
+      publish: ${{ steps.plan.outputs.publish }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      # A release without a tag makes no sense: name, version and links all hang off it.
-      - name: Determine the tag
-        id: tag
+      - name: Tag, source and whether anything is published
+        id: plan
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
@@ -57,26 +81,34 @@ jobs:
             tag="$INPUT_TAG"
           fi
           if [[ -z "$tag" ]]; then
-            echo "::error::Releases are built from a tag only. Run: git tag v0.1.0 && git push origin v0.1.0"
-            exit 1
+            echo "::notice::No tag: a trial run of $GITHUB_REF ($GITHUB_SHA). It is built and signed with keys made for this run, and nothing is published."
+            { echo "tag="; echo "ref=$GITHUB_SHA"; echo "publish=false"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # Checked here rather than left to the builders: a typo in the input
           # would otherwise surface twenty minutes later, as a checkout failure
           # in four jobs at once.
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+          if ! git ls-remote --exit-code --tags "$REPOSITORY" "refs/tags/$tag" >/dev/null; then
             echo "::error::There is no tag $tag in this repository."
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          { echo "tag=$tag"; echo "ref=$tag"; echo "publish=true"; } >> "$GITHUB_OUTPUT"
         shell: bash
 
+  create-release:
+    name: Open the release draft
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Draft
-        id: draft
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         # Through the environment rather than written into the script: an
         # expression in the script is pasted into the code before it runs.
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
         with:
           result-encoding: string
           script: |
@@ -104,31 +136,41 @@ jobs:
             });
             return String(data.id);
 
-  desktop:
-    name: ${{ matrix.label }}
-    needs: create-release
+  # ── desktop ────────────────────────────────────────────────────────────
+
+  desktop-build:
+    name: Build ${{ matrix.label }}
+    needs: plan
     if: inputs.platforms != 'android'
     runs-on: ${{ matrix.os }}
-    env:
-      # A secret cannot be read in an `if:` directly, so its presence becomes a
-      # string here and the steps below branch on that.
-      HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             label: Windows (MSI + NSIS)
+            slug: windows
             args: ''
+            bundle: target/release/bundle
           - os: macos-latest
             label: macOS (Apple Silicon)
+            slug: macos-aarch64
             args: '--target aarch64-apple-darwin'
+            bundle: target/aarch64-apple-darwin/release/bundle
+            arch: aarch64
           - os: macos-latest
             label: macOS (Intel)
+            slug: macos-x64
             args: '--target x86_64-apple-darwin'
+            bundle: target/x86_64-apple-darwin/release/bundle
+            arch: x64
           - os: ubuntu-latest
             label: Linux (deb + AppImage)
+            slug: linux
             args: ''
+            bundle: target/release/bundle
 
     steps:
       # The tag, not the branch the run was started from: a rebuild has to
@@ -136,7 +178,8 @@ jobs:
       # these are the same commit anyway.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
 
       - name: System dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -146,94 +189,197 @@ jobs:
             librsvg2-dev patchelf libxdo-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev
 
+      # No rust-cache and no pnpm cache here: a cache is written by other runs,
+      # and what is in it would be in the installers.
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: './ -> target'
-
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      # Updater artifacts are signed, and signing needs a key. Without one the
-      # installers are still built and the release is still complete — only the
-      # `.sig` files and the manifest are missing, so the program on somebody's
-      # machine simply never offers this version. That is a much better failure
-      # than a release that does not happen, which is what enabling this in
-      # `tauri.conf.json` unconditionally would produce: `tauri build` refuses
-      # to create updater artifacts it cannot sign.
-      - name: Ask for updater artifacts, if there is a key to sign them with
-        if: env.HAS_SIGNING_KEY == 'true'
+      # `tauri build` makes the macOS updater bundle (`.app.tar.gz`) only when
+      # it is asked for updater artifacts, and it refuses to make those unless
+      # it can sign them. So it is given a key made here and now, which signs
+      # nothing anybody will see: those signatures are left behind with the
+      # runner, and the release's own are made by the signing job. The public
+      # key compiled into the application is the one in tauri.conf.json, not
+      # this one.
+      - name: A key for this build only
         run: |
+          pnpm --filter @uleditor/desktop exec tauri signer generate --ci -p "" -w "$RUNNER_TEMP/build-only.key"
+          echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/build-only.key")" >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
           node -e "const f='apps/desktop/src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f,'utf8'));c.bundle.createUpdaterArtifacts=true;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
-          node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json');if(!c.bundle.createUpdaterArtifacts)process.exit(1);console.log('updater artifacts: on')"
         shell: bash
 
-      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The private half of the update key. It never touches the repository;
-          # besides this secret it exists only as the file it was made in (see
-          # docs/RELEASE.md). The public half is compiled into the application,
-          # which is what makes an update refusable.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: apps/desktop
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
-          # The manifest is written by a job of its own once every builder has
-          # finished — see `updater-manifest` below.
-          includeUpdaterJson: false
+      - name: Build
+        run: pnpm --filter @uleditor/desktop exec tauri build ${{ matrix.args }}
+        shell: bash
 
-  updater-manifest:
-    name: The update manifest
-    needs: [create-release, desktop]
-    if: inputs.platforms != 'android'
+      # The installers under the names the release has always had. Tauri names
+      # each macOS updater bundle `ulEditor.app.tar.gz` whichever processor it
+      # is for, so the architecture goes into the name — the manifest finds the
+      # two by it (tools/updater-manifest.mjs).
+      - name: Collect
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist
+          for kind in msi nsis deb rpm appimage dmg; do
+            for f in "$BUNDLE/$kind"/*; do
+              case "$f" in
+                *.msi|*-setup.exe|*.deb|*.rpm|*.AppImage|*.dmg) cp "$f" dist/ ;;
+              esac
+            done
+          done
+          for f in "$BUNDLE"/macos/*.app.tar.gz; do
+            [ -f "$f" ] && cp "$f" "dist/$(basename "$f" .app.tar.gz)_${ARCH}.app.tar.gz"
+          done
+          ls -l dist
+          if [ -z "$(ls dist)" ]; then
+            echo "::error::Nothing was built into $BUNDLE."
+            exit 1
+          fi
+        shell: bash
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-desktop-${{ matrix.slug }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop-sign:
+    name: Sign the desktop updates
+    needs: [plan, desktop-build]
     runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.publish == 'true' && 'release' || 'trial' }}
+    permissions:
+      contents: read
     env:
+      PUBLISH: ${{ needs.plan.outputs.publish }}
+      # A secret cannot be read in an `if:` directly, so its presence becomes a
+      # string here and the steps below branch on that.
       HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
+      # For the signer and the check that follows it — nothing here is built
+      # or run from this checkout but those two.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
-
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @uleditor/desktop
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: build-desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Sign, and check every signature
+        if: env.PUBLISH == 'true' && env.HAS_SIGNING_KEY == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node tools/sign-updates.mjs dist
+        shell: bash
+
+      # The same steps with a key made for the run, checked against that key:
+      # what a trial proves is that signing and its check work, not the key.
+      - name: Sign a trial run with a key made for it
+        if: env.PUBLISH != 'true'
+        run: |
+          pnpm --filter @uleditor/desktop exec tauri signer generate --ci -p "" -w "$RUNNER_TEMP/trial.key"
+          TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/trial.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+            node tools/sign-updates.mjs dist --pubkey "$(cat "$RUNNER_TEMP/trial.key.pub")"
+        shell: bash
+
+      # Without the secret a release still happens: the installers go on, and
+      # only the update is missing — the program on somebody's machine simply
+      # never offers this version. The macOS updater bundles are left off, as
+      # they always were without a key: unsigned, nothing can use them.
+      - name: Say why nothing was signed
+        if: env.PUBLISH == 'true' && env.HAS_SIGNING_KEY != 'true'
+        run: |
+          rm -f dist/*.app.tar.gz
+          echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so nothing was signed and no latest.json will be written. The installers in this release are complete; they simply will not be offered as an update. See docs/RELEASE.md."
+        shell: bash
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-signed
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+          # A signing job run again replaces what it made the first time.
+          overwrite: true
+
+  desktop-publish:
+    name: Publish the desktop installers
+    needs: [plan, create-release, desktop-sign]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: desktop-signed
+          path: dist
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+        shell: bash
 
       # One manifest, written out of what is actually attached to the release.
       # Four builders each writing their own would leave whichever finished last
       # on the page, and the other three platforms would stop seeing updates
       # with no error anywhere — see the comment in the script.
       - name: latest.json
-        if: env.HAS_SIGNING_KEY == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.create-release.outputs.tag }}
-        run: node tools/updater-manifest.mjs "$TAG"
-        shell: bash
-
-      - name: Say why there is no manifest
-        if: env.HAS_SIGNING_KEY != 'true'
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so nothing was signed and no latest.json was written. The installers in this release are complete; they simply will not be offered as an update. See docs/RELEASE.md."
+          if ls dist/*.sig >/dev/null 2>&1; then
+            node tools/updater-manifest.mjs "$TAG"
+          else
+            echo "Nothing was signed, so there is no manifest to write."
+          fi
         shell: bash
 
-  android:
-    name: Android (APK + AAB)
-    needs: create-release
+  # ── Android ────────────────────────────────────────────────────────────
+
+  android-build:
+    name: Build Android (APK + AAB)
+    needs: plan
     if: inputs.platforms != 'desktop'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
@@ -260,69 +406,145 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: './ -> target'
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      # The key never touches the repository. Here it is written out of Secrets
-      # onto the runner's disk, which is wiped as soon as the job ends.
-      - name: Signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 is missing. See docs/RELEASE.md."
-            exit 1
-          fi
-          cd apps/desktop/src-tauri/gen/android
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
-          cat > keystore.properties <<EOF
-          storeFile=$(pwd)/keystore.jks
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-        shell: bash
-
+      # No keystore here: without `keystore.properties` gradle builds the
+      # release unsigned (build.gradle.kts), and the signing job signs it.
       - name: Build APK and AAB
         env:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: pnpm --filter @uleditor/desktop exec tauri android build --apk --aab --target aarch64 armv7
 
-      # Gradle names the output after the module (`app-universal-release.apk`),
-      # which on the release page, next to `ulEditor_0.1.0_x64.msi`, looks like
-      # somebody else's file. It is renamed to match the desktop installers.
-      - name: Rename and publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.create-release.outputs.tag }}
+      - name: Collect
         run: |
-          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           out=apps/desktop/src-tauri/gen/android/app/build/outputs
           mkdir -p dist-android
-
-          apk=$(find "$out/apk" -name '*-release.apk' 2>/dev/null | head -1)
+          apk=$(find "$out/apk" -name '*-release-unsigned.apk' -o -name '*-release.apk' 2>/dev/null | head -1)
           aab=$(find "$out/bundle" -name '*-release.aab' 2>/dev/null | head -1)
-
           if [ -z "$apk" ]; then
             echo "::error::No APK was produced — check the output of the step above."
             exit 1
           fi
-
-          cp "$apk" "dist-android/ulEditor_${version}_android.apk"
+          cp "$apk" dist-android/unsigned.apk
           if [ -n "$aab" ]; then
-            cp "$aab" "dist-android/ulEditor_${version}_android.aab"
+            cp "$aab" dist-android/unsigned.aab
+          fi
+          ls -l dist-android
+        shell: bash
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-android
+          path: dist-android/
+          if-no-files-found: error
+          retention-days: 1
+
+  android-sign:
+    name: Sign Android
+    needs: [plan, android-build]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.publish == 'true' && 'release' || 'trial' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+          sparse-checkout: apps/desktop/src-tauri/tauri.conf.json
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: build-android
+          path: dist-android
+
+      # The key never touches the repository. It is written out of Secrets onto
+      # the runner's disk, used, and removed — in a job that builds nothing.
+      # A trial run makes a key of its own instead. The passwords go to the
+      # tools through the environment, not on their command lines.
+      - name: Sign and check
+        env:
+          PUBLISH: ${{ needs.plan.outputs.publish }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          if [ "$PUBLISH" = "true" ]; then
+            if [ -z "$KEYSTORE_BASE64" ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 is missing. See docs/RELEASE.md."
+              exit 1
+            fi
+            echo "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+          else
+            export KEYSTORE_PASSWORD=trial-only KEY_PASSWORD=trial-only KEY_ALIAS=trial
+            keytool -genkeypair -keystore "$keystore" -storepass:env KEYSTORE_PASSWORD \
+              -keypass:env KEY_PASSWORD -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 \
+              -validity 1 -dname "CN=ulEditor trial run"
           fi
 
-          gh release upload "$TAG" dist-android/* --clobber
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          mkdir -p signed
+
+          # Aligned before it is signed, as apksigner requires; 16 KB pages for
+          # the native libraries where this zipalign knows them, 4 KB where not.
+          "$tools/zipalign" -P 16 -f 4 dist-android/unsigned.apk "$RUNNER_TEMP/aligned.apk" ||
+            "$tools/zipalign" -p -f 4 dist-android/unsigned.apk "$RUNNER_TEMP/aligned.apk"
+
+          apk="signed/ulEditor_${version}_android.apk"
+          "$tools/apksigner" sign --ks "$keystore" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+            --out "$apk" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --print-certs "$apk"
+
+          if [ -f dist-android/unsigned.aab ]; then
+            aab="signed/ulEditor_${version}_android.aab"
+            cp dist-android/unsigned.aab "$aab"
+            jarsigner -keystore "$keystore" -storepass:env KEYSTORE_PASSWORD \
+              -keypass:env KEY_PASSWORD "$aab" "$KEY_ALIAS"
+            jarsigner -verify "$aab"
+          fi
+          ls -l signed
+        shell: bash
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-signed
+          path: signed/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  android-publish:
+    name: Publish Android
+    needs: [plan, create-release, android-sign]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: android-signed
+          path: signed
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: gh release upload "$TAG" signed/* --clobber --repo "$GITHUB_REPOSITORY"
         shell: bash

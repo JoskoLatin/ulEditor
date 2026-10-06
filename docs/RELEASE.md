@@ -45,7 +45,8 @@ Then turn the key into text GitHub can store:
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("uleditor-release.jks")) | Set-Clipboard
 ```
 
-And enter four values under **Settings → Secrets and variables → Actions**:
+And enter four values as secrets of the `release` environment — **Settings →
+Environments → release** (see [Who may sign](#who-may-sign)):
 
 | Secret | Contents |
 | --- | --- |
@@ -80,7 +81,7 @@ in [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) under
 command above makes one that does, and then the second secret below is needed
 too.
 
-Two values under **Settings → Secrets and variables → Actions**:
+Two values as secrets of the `release` environment, beside the Android ones:
 
 | Secret | Contents |
 | --- | --- |
@@ -115,10 +116,9 @@ else's machine, which is why this signs rather than compares.
 **Without the secret a release still happens.** The installers are built and
 attached as always; only the `.sig` files and `latest.json` are missing, so the
 program on somebody's machine simply never offers that version. A warning says
-so in the log of the `The update manifest` job. That is deliberate: enabling
-updater artifacts in `tauri.conf.json` unconditionally would make `tauri build`
-refuse to build at all without a key, and a release that does not happen is a
-much worse failure than one that is not offered as an update.
+so in the log of the `Sign the desktop updates` job. That is deliberate: a
+release that does not happen is a much worse failure than one that is not
+offered as an update.
 
 `latest.json` is written by one job after every builder has finished, out of
 what is actually attached to the release — see
@@ -130,6 +130,54 @@ Which artefact serves which platform is not a free choice: Windows updates
 through the NSIS `-setup.exe` because an MSI cannot replace a running program,
 macOS through the `.app.tar.gz` because a `.dmg` cannot be installed silently,
 and Linux through the AppImage because a `.deb` needs root.
+
+## Who may sign
+
+A build runs other people's code: every npm package's build step, every cargo
+build script and procedural macro, whatever a restored cache holds. If the
+update key and a token that may write to the release were in the same step as
+all of that, any one of them could sign an update of its own and publish it, and
+every installed copy would accept it — the signature is exactly what it checks.
+So the release is three kinds of job that never share what they hold:
+
+| Job | Holds | Does |
+| --- | --- | --- |
+| `Build …` (five of them) | nothing — no secret, read-only, no cache | builds the installers and hands them on as files |
+| `Sign the desktop updates`, `Sign Android` | one key each | signs those files and checks every signature; builds nothing, runs no package script |
+| `Publish …` | the right to write to the release | attaches what was signed and writes `latest.json`; holds no key |
+
+The desktop signer checks every signature against the public key compiled into
+the application before anything goes on ([tools/sign-updates.mjs](../tools/sign-updates.mjs)).
+A secret that is not the application's key fails the release there, rather than
+publishing an update every installation refuses in silence.
+
+`pnpm verify:updates` holds the split: it fails if a key appears in any job but
+its signer, if a builder holds any secret, if anything but the draft and the
+publishers may write, or if a cache is restored into a release.
+
+**The keys belong to the `release` environment, and that is a step done once on
+github.com:** **Settings → Environments → New environment → `release`**, then
+
+1. **Required reviewers**: yourself. Every release then stops before signing and
+   waits for an approval on its Actions page — a run that somebody else started,
+   or that a changed workflow file started, signs nothing until you say so.
+2. **Deployment branches and tags**: *Selected branches and tags*, a rule `v*`
+   of type *Tag* and a rule `main` of type *Branch* — a release tag, and a
+   rebuild, which is started from `main` (below). No other branch can reach the
+   keys at all.
+3. **Environment secrets**: the six secrets from the two sections above.
+4. Then delete the same six from **Settings → Secrets and variables → Actions**,
+   so that they exist only where the environment guards them.
+
+Until then the workflow still works: a job in an environment also sees the
+repository's secrets, and GitHub makes the environment the first time a run
+names it — without the guard.
+
+**A trial run publishes nothing.** **Actions → Release → Run workflow** with the
+`tag` field left empty builds the branch it is started from, signs it with keys
+made for that run and checks the signatures against them, and then stops: no
+draft, no upload, no release key. That is how a change to the workflow is tried
+before a tag depends on it. Its files stay on the run's page for a day.
 
 ## Publishing
 
@@ -179,8 +227,9 @@ everybody else got a 404.
 ## When one builder fails
 
 Re-running the failed job from the Actions page is right when the failure was the
-runner's fault and nothing needs changing: it attaches to the same draft rather
-than opening a second one.
+runner's fault and nothing needs changing: the signing and publishing jobs after
+it run again with it, and attach to the same draft rather than opening a second
+one.
 
 It is the wrong move once the fix is a change to the workflow file itself. A
 re-run takes the workflow from the tag, which is the version that just failed, so
