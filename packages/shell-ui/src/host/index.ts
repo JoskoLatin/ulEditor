@@ -14,7 +14,7 @@ import type {
   Uri,
   VirtualFileSystem,
 } from '@uleditor/plugin-sdk';
-import { isLocale, type Locale } from '@uleditor/i18n';
+import { getLocale, isLocale, type Locale } from '@uleditor/i18n';
 
 import { BrowserFileSystem, hasFileSystemAccess, type WaitingRoot } from './browser-fs.js';
 import { TauriFileSystem, isTauri } from './tauri-fs.js';
@@ -96,10 +96,14 @@ export function createShell(): Shell {
   const fs = desktop ? new TauriFileSystem() : new BrowserFileSystem();
 
   /* Desktop goes through Rust: the webview's own `window.open` would put the
-     page inside another webview, not in the person's browser. */
+     page inside another webview, not in the person's browser. Rust asks the
+     person first about any link but the program's own (ADR 0005), in the
+     language the interface is in. */
   const openExternal = desktop
     ? (url: string) => {
-        void import('@tauri-apps/api/core').then(({ invoke }) => invoke('open_external', { url }));
+        void import('@tauri-apps/api/core').then(({ invoke }) =>
+          invoke('open_external', { url, uiLanguage: getLocale() }),
+        );
       }
     : (url: string) => {
         window.open(url, '_blank', 'noopener');

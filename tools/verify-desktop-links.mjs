@@ -11,8 +11,12 @@
  *   (`routeExternalLinks`) and Rust refuses any navigation off the
  *   application's own pages (`stays_in_app`). Both are checked, each on its
  *   own: a click is taken over in the page, and a navigation the page starts
- *   anyway goes nowhere. Only `http` links are clicked, which open nothing —
- *   an `https` one would open the browser on the machine running this.
+ *   anyway goes nowhere.
+ * - **The page could open the browser on any address** — with whatever it had
+ *   read written into it, and no gesture (N6 of the review of ADR 0005). Rust
+ *   now asks in a dialog the system draws before any link but the program's
+ *   own opens. Every question here is answered "Not now": a yes would open the
+ *   browser on the machine running this.
  * - **A folder taken off the tree stayed in the sandbox** until the program
  *   was closed: searched, listed, open to read and write. It now leaves — and
  *   a document still open from it can still be saved.
@@ -31,7 +35,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside, pressDialog } from './desktop-session.mjs';
+
+/** The first of the three buttons in the core's questions: the safe answer. */
+const NOT_NOW = 1004;
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -138,6 +145,40 @@ try {
       page.url(),
     );
   }
+
+  /* ── a link out is asked about ──────────────────────────────────── */
+
+  /* A person clicking an https link in a document: the shell hands it to
+     Rust, which asks before the browser opens. */
+  await page.evaluate(() => {
+    const link = document.createElement('a');
+    link.href = 'https://example.com/clicked';
+    link.textContent = 'a link out';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  });
+  const clicked = pressDialog(NOT_NOW, 20);
+  check('a click on an https link asks before the browser opens', /^pressed: Open this link/.test(clicked), clicked);
+  await sleep(500);
+
+  /* Script in the page asking itself, with something it read in the address,
+     and asking again while the first question is open. */
+  const asking = page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke('open_external', { url: 'https://example.com/?data=secret', uiLanguage: 'en' }),
+  );
+  await sleep(1500);
+  const stacked = await invoke('open_external', { url: 'https://example.org/', uiLanguage: 'en' });
+  check('a link asked for while a question is open is not opened', stacked === false, String(stacked));
+  const pressed = pressDialog(NOT_NOW, 20);
+  const opened = await asking;
+  check('a link the page asks for itself is asked about', /^pressed: Open this link/.test(pressed), pressed);
+  check('and without a yes the browser is not opened', opened === false, String(opened));
+  check('a link that is not https is refused outright', await refused('open_external', { url: 'file:///C:/Windows/win.ini' }));
+  check(
+    'and so is one with a name before its host',
+    await refused('open_external', { url: 'https://github.com@example.com/' }),
+  );
 
   /* ── a folder off the tree ──────────────────────────────────────── */
 

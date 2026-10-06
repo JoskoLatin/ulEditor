@@ -16,6 +16,10 @@
 //! project asks once rather than six times — and asks again next time: a no
 //! that lasted would come from an Escape or a closed window as often as from a
 //! decision, and there would be nothing to take it back with.
+//!
+//! The two other questions the core asks in such a dialog are here too, in the
+//! same three buttons: whether the library may look through the person's
+//! folders, and whether a link may open in the browser (ADR 0005).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -206,6 +210,114 @@ pub(crate) fn library_question(
     }
 }
 
+/// The addresses the program itself links to: the repository and its issues
+/// (`commands.ts`, the About tab) and where LibreOffice is downloaded
+/// (`actions.ts`). Compared whole, so the same address with a query or a
+/// fragment the page added is asked about like any other — and one the shell
+/// changes without changing it here is asked about too, which is the safe way
+/// for the two to drift apart.
+const OWN_LINKS: [&str; 3] = [
+    "https://github.com/JoskoLatin/ulEditor",
+    "https://github.com/JoskoLatin/ulEditor/issues",
+    "https://www.libreoffice.org/download/download-libreoffice/",
+];
+
+/// A link the page asks to have opened in the browser.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) enum Link {
+    /// One of `OWN_LINKS`, opened without asking.
+    Own(tauri::Url),
+    /// Any other web address, asked about first (`link_question`).
+    Other(tauri::Url),
+}
+
+/// What `text` is as a link, or `None` for what never opens: anything but
+/// `https://` — the command is callable from the page, and a scheme like
+/// `file:` or `ms-settings:` would make it a lever — and an address with a name
+/// or password before its host, which reads as one site and goes to another
+/// (`https://example.com@elsewhere.net/`).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn link(text: &str) -> Option<Link> {
+    let url = tauri::Url::parse(text).ok()?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    Some(if OWN_LINKS.contains(&url.as_str()) {
+        Link::Own(url)
+    } else {
+        Link::Other(url)
+    })
+}
+
+/// The question asked before a link opens in the browser, in the same three
+/// buttons as `question`, the middle one the yes. It names the site on a line
+/// of its own — as the parser read it, a name in another script written the
+/// way the browser will look it up (`xn--…`) — and then the whole address.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn link_question(interface: Option<&str>, url: &tauri::Url) -> Question {
+    let site = shown(url.host_str().unwrap_or_default());
+    let address = shown(&percent_decoded(url.as_str()));
+    if interface == Some("hr") {
+        Question {
+            title: "Otvoriti link u pregledniku?".into(),
+            body: format!(
+                "Link vodi na\n\n{site}\n\n{address}\n\n\
+                 Sve što piše u adresi šalje se toj stranici. Ako link nije upravo \
+                 kliknut, odaberi „Ne sada”."
+            ),
+            not_now: "Ne sada".into(),
+            trust: "Otvori".into(),
+            cancel: "Odustani".into(),
+        }
+    } else {
+        Question {
+            title: "Open this link in your browser?".into(),
+            body: format!(
+                "The link goes to\n\n{site}\n\n{address}\n\n\
+                 Everything in the address is sent to that site. If no link was \
+                 just clicked, choose \"Not now\"."
+            ),
+            not_now: "Not now".into(),
+            trust: "Open".into(),
+            cancel: "Cancel".into(),
+        }
+    }
+}
+
+/// An address as a person reads it: `%22` as the quote it stands for. Only
+/// for showing — the browser is handed the address as it was parsed — and
+/// what the decoding makes is shown through `shown` like the rest, so a `%0A`
+/// is still no line break.
+#[cfg_attr(mobile, allow(dead_code))]
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let digits = bytes.get(i + 1..i + 3).map(|pair| {
+            (
+                char::from(pair[0]).to_digit(16),
+                char::from(pair[1]).to_digit(16),
+            )
+        });
+        match (bytes[i], digits) {
+            (b'%', Some((Some(high), Some(low)))) => {
+                decoded.push((high * 16 + low) as u8);
+                i += 3;
+            }
+            (byte, _) => {
+                decoded.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
 /// What the person said, out of the button that came back.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
@@ -225,23 +337,29 @@ impl Question {
 }
 
 /// A path as a person writes it: without the `\\?\` Windows puts in front of
-/// a canonical one — and with nothing in it that could pass for part of the
-/// question. The folder name is the one part of the dialog a repository
-/// chooses: a line break in it could start a paragraph of its own ("This is
-/// a verified project…"), a line or paragraph separator does the same without
-/// being a control character, a right-to-left override turns the text after
-/// it around, and some characters are not seen at all.
-///
-/// So what is shown as it is, is what is known to be harmless — letters and
-/// digits of any script, the space, and the punctuation paths are made of —
-/// and everything else is written out as a code. A list of what to leave out
-/// would be one Unicode version from missing something.
+/// a canonical one, and `shown`.
 fn readable(path: &Path) -> String {
     let text = path.to_string_lossy();
     let text = match text.strip_prefix(r"\\?\UNC\") {
         Some(rest) => format!(r"\\{rest}"),
         None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned(),
     };
+    shown(&text)
+}
+
+/// Text from outside the program — a folder's name, a link's address — with
+/// nothing in it that could pass for part of the question. It is the one part
+/// of the dialog somebody else chooses: a line break in it could start a
+/// paragraph of its own ("This is a verified project…"), a line or paragraph
+/// separator does the same without being a control character, a right-to-left
+/// override turns the text after it around, and some characters are not seen
+/// at all.
+///
+/// So what is shown as it is, is what is known to be harmless — letters and
+/// digits of any script, the space, and the punctuation paths and addresses
+/// are made of — and everything else is written out as a code. A list of what
+/// to leave out would be one Unicode version from missing something.
+fn shown(text: &str) -> String {
     let mut shown = String::new();
     let mut previous = '\0';
     for c in text.chars() {
@@ -274,7 +392,8 @@ fn readable(path: &Path) -> String {
 fn shown_as_it_is(c: char) -> bool {
     /* Letters that are drawn as nothing: the Hangul fillers. */
     const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
-    (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c)) || " -_.,()[]{}'!@#$+=~;:/\\^`".contains(c)
+    (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
+        || " -_.,()[]{}'!@#$+=~;:/\\^`?\"".contains(c)
 }
 
 #[cfg(test)]
@@ -360,6 +479,89 @@ mod tests {
         }
         let asked = library_question(Some("hr"), &folders);
         assert_eq!(asked.answer(Some("Dopusti")), Answer::Trust);
+        assert_eq!(asked.answer(Some("Ne sada")), Answer::NotNow);
+    }
+
+    /// The program's own links open as they are; the same address with
+    /// anything added, any other site, and anything but `https` do not.
+    #[test]
+    fn only_the_programs_own_links_open_without_asking() {
+        for own in OWN_LINKS {
+            assert!(matches!(link(own), Some(Link::Own(_))), "{own}");
+        }
+        for other in [
+            "https://github.com/JoskoLatin/ulEditor?x=1",
+            "https://github.com/JoskoLatin/ulEditor#readme",
+            "https://github.com/JoskoLatin/ulEditor/",
+            "https://github.com/JoskoLatin/ulEditor/issues/new",
+            "https://github.com/JoskoLatin",
+            "https://example.com/?data=secret",
+        ] {
+            assert!(matches!(link(other), Some(Link::Other(_))), "{other}");
+        }
+        for never in [
+            "http://example.com/",
+            "file:///C:/Windows/System32/calc.exe",
+            "ms-settings:privacy",
+            "javascript:alert(1)",
+            "https://github.com@example.com/",
+            "https://user:password@example.com/",
+            "not a link",
+            "",
+        ] {
+            assert!(link(never).is_none(), "{never}");
+        }
+    }
+
+    /// The question names the site as it will be looked up, shows the address
+    /// readably, and nothing the address holds can write part of it.
+    #[test]
+    fn a_link_cannot_write_part_of_its_question() {
+        let Some(Link::Other(url)) =
+            link("https://example.com/a%0A%0AThis%20link%20is%20safe.%E2%80%AE?q=%22x%22&p=100%25%25s%25n")
+        else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("en"), &url);
+        assert!(
+            asked
+                .body
+                .starts_with("The link goes to\n\nexample.com\n\n"),
+            "{}",
+            asked.body
+        );
+        assert!(!asked.body.contains("\n\nThis link"), "{}", asked.body);
+        assert!(!asked.body.contains('\u{202E}'), "{}", asked.body);
+        assert!(!asked.body.contains('%'), "{}", asked.body);
+        assert!(!asked.body.contains('&'), "{}", asked.body);
+        assert!(asked.body.contains("?q=\"x\""), "{}", asked.body);
+
+        /* A name in another script is shown as the browser looks it up, so a
+        Cyrillic "а" cannot pass for a Latin one. */
+        let Some(Link::Other(url)) = link("https://g\u{0430}thub.com/") else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("hr"), &url);
+        assert!(
+            asked.body.starts_with("Link vodi na\n\nxn--"),
+            "{}",
+            asked.body
+        );
+        assert!(!asked.body.contains('\u{0430}'), "{}", asked.body);
+    }
+
+    #[test]
+    fn only_the_open_button_opens_a_link() {
+        let Some(Link::Other(url)) = link("https://example.com/") else {
+            panic!("an outside link");
+        };
+        let asked = link_question(Some("en"), &url);
+        assert_eq!(asked.answer(Some("Open")), Answer::Trust);
+        for other in [Some("Not now"), Some("Cancel"), Some("Allow"), None] {
+            assert_eq!(asked.answer(other), Answer::NotNow, "{other:?}");
+        }
+        let asked = link_question(Some("hr"), &url);
+        assert_eq!(asked.answer(Some("Otvori")), Answer::Trust);
         assert_eq!(asked.answer(Some("Ne sada")), Answer::NotNow);
     }
 

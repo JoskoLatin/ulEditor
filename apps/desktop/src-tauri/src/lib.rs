@@ -35,6 +35,9 @@ struct AppState {
     /// A no to the library, for this session: asked again next time.
     #[cfg_attr(mobile, allow(dead_code))]
     library_declined: std::sync::atomic::AtomicBool,
+    /// Held while the person is asked whether a link may open in the browser.
+    #[cfg_attr(mobile, allow(dead_code))]
+    link_asking: tokio::sync::Mutex<()>,
 }
 
 /// The language servers, and the way their news reaches the window.
@@ -274,40 +277,68 @@ async fn pick_save_target(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// Opens a web link in the system browser.
+/// Opens a web link in the system browser, and says whether it did.
 ///
-/// Only `https://` — the command is callable from the webview, and a scheme
-/// like `file:` or `ms-settings:` would make it a lever it must not be. The
-/// shell asks for it when a document names a font the machine does not have,
-/// to send the person to a search for it.
+/// Only `https://` (`trust::link`). And only after asking, unless the link is
+/// one of the program's own: the command is callable from the page, an
+/// address is a message to the site it names, and script in the page could
+/// write into one whatever it had read — the browser would carry it out of
+/// the program with no gesture at all (found by the independent review of
+/// ADR 0005). The person clicking a link in a document, or asking for a search
+/// for a font the screen does not have, answers the question; script cannot.
+///
+/// One question at a time, and a link asked for while one is open is not
+/// opened rather than queued: a page cannot stack dialogs up behind each
+/// other.
 #[cfg(desktop)]
 #[tauri::command]
-fn open_external(url: String) -> Result<(), VfsError> {
-    if !url.starts_with("https://") {
-        return Err(VfsError::Unsupported(
-            "Only web links open outside the application.".into(),
-        ));
-    }
+async fn open_external(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    ui_language: Option<String>,
+) -> Result<bool, VfsError> {
+    let url = match trust::link(&url) {
+        Some(trust::Link::Own(url)) => url,
+        Some(trust::Link::Other(url)) => {
+            let Ok(_asking) = state.link_asking.try_lock() else {
+                return Ok(false);
+            };
+            let asked = trust::link_question(ui_language.as_deref(), &url);
+            let answer = ask(&app, &asked, tauri_plugin_dialog::MessageDialogKind::Info).await;
+            if answer != trust::Answer::Trust {
+                return Ok(false);
+            }
+            url
+        }
+        None => {
+            return Err(VfsError::Unsupported(
+                "Only web links open outside the application.".into(),
+            ))
+        }
+    };
 
+    /* The address as it was parsed and shown, not as the page wrote it. */
+    let url = url.as_str();
     #[cfg(target_os = "windows")]
     // `rundll32 url.dll` rather than `cmd /C start`: `start` reads `&` in a
     // query string as a command separator.
     let spawned = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", &url])
+        .args(["url.dll,FileProtocolHandler", url])
         .spawn();
     #[cfg(target_os = "macos")]
-    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    let spawned = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    let spawned = std::process::Command::new("xdg-open").arg(url).spawn();
 
-    spawned.map(|_| ()).map_err(VfsError::from)
+    spawned.map(|_| true).map_err(VfsError::from)
 }
 
 /// On a phone the browser is reached through an Intent, which needs the plugin
 /// we have not taken yet. Said out loud rather than silently swallowed.
 #[cfg(mobile)]
 #[tauri::command]
-fn open_external(_url: String) -> Result<(), VfsError> {
+fn open_external(_url: String) -> Result<bool, VfsError> {
     Err(VfsError::Unsupported(
         "Opening the browser is not wired up on mobile devices yet.".into(),
     ))
@@ -689,6 +720,46 @@ async fn convert_to_pdf(
     Ok(output)
 }
 
+/// Asks a question in a dialog the system draws — which the page can neither
+/// answer nor word — and waits for the answer. A dialog that went away without
+/// one is a no.
+async fn ask(
+    app: &tauri::AppHandle,
+    asked: &trust::Question,
+    kind: tauri_plugin_dialog::MessageDialogKind,
+) -> trust::Answer {
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let dialog = app
+        .dialog()
+        .message(asked.body.clone())
+        .title(asked.title.clone())
+        .kind(kind)
+        /* The safe answers where Enter and Escape land — see `trust::Question`. */
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            asked.not_now.clone(),
+            asked.trust.clone(),
+            asked.cancel.clone(),
+        ));
+    /* Owned by the window, so it cannot end up behind it while what asked
+    waits for it. Desktop only: a phone has one window, and the plugin has no
+    parent to set there. */
+    #[cfg(desktop)]
+    let dialog = match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    };
+    dialog.show_with_result(move |pressed| {
+        let _ = tx.send(pressed);
+    });
+    let pressed = match rx.await {
+        Ok(MessageDialogResult::Custom(label)) => Some(label),
+        _ => None,
+    };
+    asked.answer(pressed.as_deref())
+}
+
 /// Whether the library may look through `roots` on desktop: a consent to read
 /// them, given once in a dialog the system draws and remembered (ADR 0005).
 ///
@@ -706,7 +777,7 @@ async fn library_allowed(
     interface: Option<&str>,
 ) -> bool {
     use std::sync::atomic::Ordering;
-    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+    use tauri_plugin_dialog::MessageDialogKind;
 
     let consented = || {
         state
@@ -730,31 +801,7 @@ async fn library_allowed(
     }
 
     let asked = trust::library_question(interface, roots);
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let dialog = app
-        .dialog()
-        .message(asked.body.clone())
-        .title(asked.title.clone())
-        .kind(MessageDialogKind::Info)
-        /* The safe answers where Enter and Escape land — see `trust::Question`. */
-        .buttons(MessageDialogButtons::YesNoCancelCustom(
-            asked.not_now.clone(),
-            asked.trust.clone(),
-            asked.cancel.clone(),
-        ));
-    let dialog = match app.get_webview_window("main") {
-        Some(window) => dialog.parent(&window),
-        None => dialog,
-    };
-    dialog.show_with_result(move |pressed| {
-        let _ = tx.send(pressed);
-    });
-    let pressed = match rx.await {
-        Ok(MessageDialogResult::Custom(label)) => Some(label),
-        _ => None,
-    };
-
-    match asked.answer(pressed.as_deref()) {
+    match ask(app, &asked, MessageDialogKind::Info).await {
         /* A yes lets the library look, and no more: the folders are not
         granted, and the page may claim only the documents a scan offers —
         not anything else lying in Downloads (found by the automated review
@@ -860,7 +907,7 @@ async fn may_start(
     project: &std::path::Path,
     interface: Option<&str>,
 ) -> bool {
-    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+    use tauri_plugin_dialog::MessageDialogKind;
 
     let verdict = |lsp: &LspState| {
         lsp.trust
@@ -884,37 +931,10 @@ async fn may_start(
     }
 
     let asked = trust::question(interface, language, project);
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let dialog = app
-        .dialog()
-        .message(asked.body.clone())
-        .title(asked.title.clone())
-        .kind(MessageDialogKind::Warning)
-        /* The safe answers where Enter and Escape land — see `trust::Question`. */
-        .buttons(MessageDialogButtons::YesNoCancelCustom(
-            asked.not_now.clone(),
-            asked.trust.clone(),
-            asked.cancel.clone(),
-        ));
-    /* Owned by the window, so it cannot end up behind it while every file
-    that opens waits for it. Desktop only: a phone has one window, and the
-    plugin has no parent to set there. */
-    #[cfg(desktop)]
-    let dialog = match app.get_webview_window("main") {
-        Some(window) => dialog.parent(&window),
-        None => dialog,
-    };
-    dialog.show_with_result(move |pressed| {
-        let _ = tx.send(pressed);
-    });
-    /* A dialog that went away without an answer is a no. */
-    let pressed = match rx.await {
-        Ok(MessageDialogResult::Custom(label)) => Some(label),
-        _ => None,
-    };
+    let answer = ask(app, &asked, MessageDialogKind::Warning).await;
 
     let mut trust = lsp.trust.lock().expect("the trust list is poisoned");
-    match asked.answer(pressed.as_deref()) {
+    match answer {
         /* Kept for the session even when it cannot be written down. */
         trust::Answer::Trust => {
             let _ = trust.trust(project);
@@ -1687,6 +1707,7 @@ pub fn run() {
                 consents: Mutex::new(consents),
                 library_asking: tokio::sync::Mutex::new(()),
                 library_declined: std::sync::atomic::AtomicBool::new(false),
+                link_asking: tokio::sync::Mutex::new(()),
             });
             /* The files the program was started with are a gesture too: granted
             now, and opened when the page asks for them. */

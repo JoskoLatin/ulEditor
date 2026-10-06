@@ -145,6 +145,21 @@ decision above:
   takes what is under it with it, and is found by its shown name when its
   drive is gone.
 
-Left as it was, for Čovik: the CSP lets the page reach `fonts.googleapis.com`,
-and `open_external` opens any `https` link — two ways out of the program the
-review named and this ADR did not decide.
+Two ways out of the program the review named, decided afterwards by Čovik on
+the recommendation:
+
+- **A link asks before it opens.** `open_external` opened any `https` address
+  the page named, and an address is a message to the site it names: script in
+  the page could write into one whatever it had read, and the browser would
+  carry it out with no gesture at all. Now the core asks first, in the same
+  three buttons, naming the site as the browser will look it up and then the
+  whole address. Only the program's own links open without asking — the
+  repository, its issues, the LibreOffice download page — compared whole. One
+  question at a time; a link asked for while one is open is not opened. An
+  address with a name before its host (`https://example.com@elsewhere.net/`)
+  is refused outright.
+- **Google Fonts stays in the CSP.** What the page can send there reaches
+  Google and nobody else — a redirect to any other host is held by the same
+  `connect-src` as the first request — and the fetch is the one ADR 0002
+  decided: only when the person presses the
+  button that says so, for the box being typed in.
