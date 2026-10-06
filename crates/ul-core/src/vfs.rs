@@ -140,7 +140,91 @@ pub struct Workspace {
     /// Folders nothing is let into, whatever was opened above them.
     protected: Vec<PathBuf>,
     /// Each document as it was when it was read to be edited, or last saved.
-    seen: std::collections::HashMap<PathBuf, Fingerprint>,
+    seen: std::collections::HashMap<PathBuf, Opened>,
+}
+
+/// A document as it was read to be edited: which file it was, and how it was
+/// protected.
+#[derive(Debug, Clone)]
+struct Opened {
+    print: Fingerprint,
+    protection: Protection,
+}
+
+/// How a document was protected when it was opened — what its next version
+/// is given if the file has been replaced meanwhile and the person said to
+/// write over it. Neither the replacement's protection (somebody else's,
+/// which could open the content to them) nor none at all (the folder's,
+/// which could open it wider than the document was): the document's own.
+#[derive(Debug, Clone, Default)]
+struct Protection {
+    #[cfg(windows)]
+    dacl: Option<windows::Dacl>,
+    #[cfg(windows)]
+    mark: Option<Vec<u8>>,
+    #[cfg(unix)]
+    mode: Option<u32>,
+    #[cfg(target_os = "macos")]
+    quarantine: Option<Vec<u8>>,
+}
+
+impl Protection {
+    /// Read from the open document. One that cannot be read fails the open:
+    /// a save could not then give the document its own protection back.
+    fn of(path: &Path, file: &fs::File) -> io::Result<Self> {
+        let _ = (path, file);
+        Ok(Self {
+            #[cfg(windows)]
+            dacl: windows::dacl_of(file)?,
+            #[cfg(windows)]
+            mark: mark_of(path),
+            #[cfg(unix)]
+            mode: {
+                use std::os::unix::fs::MetadataExt;
+                Some(file.metadata()?.mode() & 0o777)
+            },
+            #[cfg(target_os = "macos")]
+            quarantine: macos::quarantine_of(path)?,
+        })
+    }
+
+    /// Gives the new version this protection, before anything is in it.
+    fn give(&self, temp_file: &fs::File, temp: &Path) -> io::Result<()> {
+        let _ = (temp_file, temp);
+        #[cfg(target_os = "macos")]
+        if let Some(mark) = &self.quarantine {
+            macos::set_quarantine(temp_file, mark)?;
+        }
+        #[cfg(unix)]
+        if let Some(mode) = self.mode {
+            use std::os::unix::fs::PermissionsExt;
+            temp_file.set_permissions(fs::Permissions::from_mode(mode))?;
+        }
+        #[cfg(windows)]
+        {
+            if let Some(dacl) = &self.dacl {
+                windows::set_dacl(temp_file, dacl)?;
+            }
+            if let Some(mark) = &self.mark {
+                fs::write(zone_stream(temp), mark)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn has_dacl(&self) -> bool {
+        self.dacl.is_some()
+    }
+}
+
+/// Where the next version takes its protection from.
+enum Source<'a> {
+    /// The file in the document's place now, as on any save.
+    Document,
+    /// What the document had when it was opened: the file there now is not
+    /// it.
+    Remembered(&'a Protection),
 }
 
 /// Which file a document is, and how it was: what `Workspace::save` compares
@@ -449,9 +533,10 @@ impl Workspace {
         let resolved = self.resolve(path)?;
         let mut file = open_regular(&resolved)?;
         let print = Fingerprint::of(&file)?;
+        let protection = Protection::of(&resolved, &file)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        self.seen.insert(resolved, print);
+        self.seen.insert(resolved, Opened { print, protection });
         Ok(bytes)
     }
 
@@ -460,12 +545,13 @@ impl Workspace {
     /// and nothing is written, until the person says to (`overwrite`).
     ///
     /// Overwriting a file that was **replaced** — a different file under the
-    /// same name — writes a new file into the folder: it does not take that
-    /// file's security, attributes or streams, which are whoever put it
-    /// there's, and could make the person's content readable to them. A file
-    /// only written in place is the same file, and its security is carried
-    /// over as on any save. A file nobody read here is written as `write`
-    /// writes it.
+    /// same name — gives the new version the protection the document had when
+    /// it was opened (`Protection`): not the replacement's, which is whoever
+    /// put it there's and could make the person's content readable to them,
+    /// and not merely the folder's, which could open it wider than the
+    /// document was. A file only written in place is the same file, and its
+    /// security is carried over as on any save. A file nobody read here is
+    /// written as `write` writes it.
     pub fn save(
         &mut self,
         path: impl AsRef<Path>,
@@ -473,20 +559,34 @@ impl Workspace {
         overwrite: bool,
     ) -> Result<(), VfsError> {
         let resolved = self.resolve(path)?;
-        let inherit = match (self.seen.get(&resolved), Fingerprint::at(&resolved)) {
-            (Some(before), Some(now)) if *before != now => {
+        let opened = self.seen.get(&resolved).cloned();
+        let replaced = match (&opened, Fingerprint::at(&resolved)) {
+            (Some(before), Some(now)) if before.print != now => {
                 if !overwrite {
                     return Err(VfsError::Changed(display(&resolved)));
                 }
-                before.same_file(&now)
+                !before.print.same_file(&now)
             }
             /* Unchanged, or never read here, or gone since: as on any save. */
-            _ => true,
+            _ => false,
         };
-        self.write_resolved(&resolved, data, inherit)?;
-        match Fingerprint::at(&resolved) {
-            Some(print) => {
-                self.seen.insert(resolved, print);
+        let source = match &opened {
+            Some(before) if replaced => Source::Remembered(&before.protection),
+            _ => Source::Document,
+        };
+        self.write_resolved(&resolved, data, &source)?;
+
+        /* What the next save compares against: the file as it now is. Its
+        protection is what this save gave it. */
+        let now = open_regular(&resolved).ok().and_then(|file| {
+            Some((
+                Fingerprint::of(&file).ok()?,
+                Protection::of(&resolved, &file).ok()?,
+            ))
+        });
+        match now {
+            Some((print, protection)) => {
+                self.seen.insert(resolved, Opened { print, protection });
             }
             None => {
                 self.seen.remove(&resolved);
@@ -525,13 +625,17 @@ impl Workspace {
     /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
         let resolved = self.resolve(path)?;
-        self.write_resolved(&resolved, data, true)
+        self.write_resolved(&resolved, data, &Source::Document)
     }
 
-    /// `write`, for a path already resolved. `inherit` is whether the new
-    /// version takes the document's security, attributes and marks; a
-    /// document somebody replaced does not hand them on (`save`).
-    fn write_resolved(&self, resolved: &Path, data: &[u8], inherit: bool) -> Result<(), VfsError> {
+    /// `write`, for a path already resolved, with the protection the new
+    /// version is to have from `source` (see `save`).
+    fn write_resolved(
+        &self,
+        resolved: &Path,
+        data: &[u8],
+        source: &Source<'_>,
+    ) -> Result<(), VfsError> {
         use std::io::Write;
 
         let resolved = resolved.to_path_buf();
@@ -544,12 +648,11 @@ impl Workspace {
         pointed. See `hold_folder`. */
         #[cfg(windows)]
         let _held = windows::hold_folder(folder)?;
-        let (mut file, temp) = create_beside(&resolved, inherit)?;
+        let (mut file, temp) = create_beside(&resolved, source)?;
 
-        let carried = if inherit {
-            carry_over(&resolved, &file, &temp)
-        } else {
-            Ok(())
+        let carried = match source {
+            Source::Document => carry_over(&resolved, &file, &temp),
+            Source::Remembered(protection) => protection.give(&file, &temp),
         };
         let written = carried.and_then(|()| file.write_all(data));
         drop(file);
@@ -769,6 +872,15 @@ mod macos {
     /// carry. A mark that is there and cannot be read or written fails the
     /// save rather than leave the next version unmarked.
     pub(super) fn carry_quarantine(original: &Path, temp: &fs::File) -> io::Result<()> {
+        match quarantine_of(original)? {
+            Some(mark) => set_quarantine(temp, &mark),
+            None => Ok(()),
+        }
+    }
+
+    /// The mark a file carries, if any; read from the file itself, not
+    /// through a link.
+    pub(super) fn quarantine_of(original: &Path) -> io::Result<Option<Vec<u8>>> {
         let path = CString::new(original.as_os_str().as_bytes())?;
         let mut value = vec![0u8; LONGEST];
         // SAFETY: NUL-terminated path and name, and a buffer of the size given;
@@ -786,12 +898,16 @@ mod macos {
         if read < 0 {
             let err = io::Error::last_os_error();
             return match err.raw_os_error() {
-                Some(ENOATTR | ENOTSUP | ENOENT) => Ok(()),
+                Some(ENOATTR | ENOTSUP | ENOENT) => Ok(None),
                 _ => Err(err),
             };
         }
         value.truncate(read as usize);
-        // SAFETY: an open descriptor, the NUL-terminated name and the bytes read.
+        Ok(Some(value))
+    }
+
+    pub(super) fn set_quarantine(temp: &fs::File, value: &[u8]) -> io::Result<()> {
+        // SAFETY: an open descriptor, the NUL-terminated name and the bytes.
         let done = unsafe {
             fsetxattr(
                 temp.as_raw_fd(),
@@ -917,6 +1033,117 @@ pub(crate) mod windows {
             control: *mut u16,
             revision: *mut u32,
         ) -> i32;
+        fn GetSecurityDescriptorLength(descriptor: *mut c_void) -> u32;
+        fn GetSecurityDescriptorDacl(
+            descriptor: *mut c_void,
+            present: *mut i32,
+            dacl: *mut *mut c_void,
+            defaulted: *mut i32,
+        ) -> i32;
+    }
+
+    /// A document's DACL as it was when it was opened: the security
+    /// descriptor itself, self-relative, kept in memory — aligned to eight,
+    /// as the structures in it want — and whether it was protected from
+    /// inheriting.
+    #[derive(Debug, Clone)]
+    pub(crate) struct Dacl {
+        descriptor: Vec<u64>,
+        protected: bool,
+    }
+
+    /// The DACL of an open file, kept; `None` on a volume that keeps no ACLs.
+    pub(crate) fn dacl_of(file: &fs::File) -> io::Result<Option<Dacl>> {
+        if !keeps_acls(file)? {
+            return Ok(None);
+        }
+        let mut dacl = null_mut();
+        let mut descriptor = null_mut();
+        // SAFETY: a handle of an open file; the out-pointers are valid, and the
+        // descriptor the call allocates is freed below.
+        let status = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                &mut dacl,
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let kept = (|| {
+            let mut control = 0u16;
+            let mut revision = 0u32;
+            // SAFETY: the descriptor GetSecurityInfo returned, still allocated.
+            if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: as above; the length is of the self-relative descriptor.
+            let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
+            let mut kept = vec![0u64; length.div_ceil(8)];
+            // SAFETY: `length` bytes from the descriptor into a buffer at least
+            // that long; the two do not overlap.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    descriptor.cast::<u8>(),
+                    kept.as_mut_ptr().cast::<u8>(),
+                    length,
+                );
+            }
+            Ok(Dacl {
+                descriptor: kept,
+                protected: control & SE_DACL_PROTECTED != 0,
+            })
+        })();
+        // SAFETY: allocated by GetSecurityInfo, freed once.
+        unsafe { LocalFree(descriptor) };
+        kept.map(Some)
+    }
+
+    /// Gives `to` a DACL kept by `dacl_of`, protected or inheriting as it was.
+    pub(crate) fn set_dacl(to: &fs::File, kept: &Dacl) -> io::Result<()> {
+        let descriptor = kept.descriptor.as_ptr() as *mut c_void;
+        let mut present = 0i32;
+        let mut defaulted = 0i32;
+        let mut dacl = null_mut();
+        // SAFETY: a self-relative descriptor this process copied whole and
+        // keeps alive for the call; the out-pointers are valid.
+        if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if present == 0 {
+            return Ok(());
+        }
+        let protection = if kept.protected {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        // SAFETY: the DACL points into the kept descriptor, alive for the
+        // call; the handle was opened with WRITE_DAC.
+        let status = unsafe {
+            SetSecurityInfo(
+                to.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | protection,
+                null_mut(),
+                null_mut(),
+                dacl,
+                std::ptr::null(),
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        Ok(())
     }
 
     #[link(name = "kernel32")]
@@ -1214,14 +1441,15 @@ pub(crate) mod windows {
 }
 
 /// A temporary file beside `path` that did not exist until now.
-fn create_beside(path: &Path, inherit: bool) -> std::io::Result<(fs::File, PathBuf)> {
+fn create_beside(path: &Path, source: &Source<'_>) -> std::io::Result<(fs::File, PathBuf)> {
+    let document = matches!(source, Source::Document);
     /* Encrypted with EFS, or hidden: what the document is, its next version is
     from the start. Encryption cannot be given to a file later. Nothing of a
-    document that is not to be inherited from. */
+    file that is not the document. */
     #[cfg(windows)]
     let attributes = fs::symlink_metadata(path)
         .ok()
-        .filter(|meta| inherit && meta.is_file())
+        .filter(|meta| document && meta.is_file())
         .map(|meta| {
             std::os::windows::fs::MetadataExt::file_attributes(&meta) & windows::KEPT_ATTRIBUTES
         })
@@ -1231,7 +1459,10 @@ fn create_beside(path: &Path, inherit: bool) -> std::io::Result<(fs::File, PathB
     security to give it: a share that does not grant it would otherwise refuse
     every save, a first one included. */
     #[cfg(windows)]
-    let access = if inherit && windows::has_acl_to_carry(path) {
+    let access = if match source {
+        Source::Document => windows::has_acl_to_carry(path),
+        Source::Remembered(protection) => protection.has_dacl(),
+    } {
         windows::GENERIC_WRITE_AND_WRITE_DAC
     } else {
         windows::GENERIC_WRITE
@@ -1239,7 +1470,7 @@ fn create_beside(path: &Path, inherit: bool) -> std::io::Result<(fs::File, PathB
     /* Where there is a document, readable by its owner alone until it is given
     the document's own mode in `carry_over`; a first save keeps the defaults. */
     #[cfg(unix)]
-    let replacing = inherit && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
+    let replacing = !document || fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
 
     let mut taken = None;
     for attempt in 0..16 {
@@ -1729,6 +1960,10 @@ mod tests {
         let root = workspace.add_root(scratch("planted-acl")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
+        /* The document closed to its owner alone: what its next version must
+        have again, rather than the folder's wider security. */
+        let me = std::env::var("USERNAME").unwrap();
+        icacls(&file, &["/inheritance:r", "/grant:r", &format!("{me}:(F)")]);
         workspace.read_document(&file).unwrap();
 
         fs::remove_file(&file).unwrap();
@@ -1747,6 +1982,17 @@ mod tests {
         assert!(
             !after.contains(GUESTS),
             "the planted security was carried over: {after}"
+        );
+        /* Closed as the document was: protected, and nothing inherited from
+        the folder. */
+        let dacl = &after[after.find("D:").unwrap()..];
+        assert!(
+            dacl.starts_with("D:P"),
+            "not protected as the document was: {after}"
+        );
+        assert!(
+            !dacl.contains("(A;ID;"),
+            "the folder's entries came in: {after}"
         );
     }
 
@@ -1776,6 +2022,7 @@ mod tests {
         let root = workspace.add_root(scratch("planted-mode")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
         workspace.read_document(&file).unwrap();
 
         fs::remove_file(&file).unwrap();
@@ -1784,7 +2031,8 @@ mod tests {
 
         workspace.save(&file, b"mine", true).unwrap();
         let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
-        assert_ne!(mode, 0o606, "the planted mode was carried over");
+        /* The document's own, not the planted one and not the default. */
+        assert_eq!(mode, 0o600, "{mode:o}");
     }
 
     /// The program's own folder stays shut with its parent open — read,
