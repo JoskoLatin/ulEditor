@@ -253,7 +253,10 @@ check(
 check(
   "an APK is checked to be signed with the release's certificate",
   /RELEASE_CERTIFICATE: [0-9a-f]{64}/.test(job('android-sign')) &&
-    job('android-sign').includes('"$signed_with" != "$RELEASE_CERTIFICATE"'),
+    job('android-sign').includes('"$signed_with" != "$RELEASE_CERTIFICATE"') &&
+    /* And reading nothing fails too, in a trial as well: apksigner names its
+       signers differently from one build-tools to the next. */
+    job('android-sign').includes('[ -z "$signed_with" ]'),
   'a keystore that is not the release key signs an APK no phone takes as an update',
 );
 check(

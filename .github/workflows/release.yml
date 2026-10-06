@@ -523,9 +523,17 @@ jobs:
             --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
             --v4-signing-enabled false \
             --out "$apk" "$RUNNER_TEMP/aligned.apk"
+          # Every signer apksigner reports, however it names them — older
+          # build-tools say "Signer #1", newer "V3.0 Signer" — and they must
+          # all be one certificate. Nothing found is a failure in a trial too:
+          # a check that reads nothing would pass every release it should stop.
           signed_with=$("$tools/apksigner" verify --print-certs "$apk" |
-            sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          echo "signed with certificate $signed_with"
+            sed -n 's/^.*[Ss]igner.* certificate SHA-256 digest: *//p' | sort -u)
+          echo "signed with certificate: $signed_with"
+          if [ -z "$signed_with" ] || [ "$(printf '%s\n' "$signed_with" | wc -l)" -ne 1 ]; then
+            echo "::error::Could not read one certificate from apksigner: '$signed_with'."
+            exit 1
+          fi
           if [ "$PUBLISH" = "true" ] && [ "$signed_with" != "$RELEASE_CERTIFICATE" ]; then
             echo "::error::The APK is signed with certificate $signed_with, and every installed copy has $RELEASE_CERTIFICATE. No phone would take it as an update. The keystore in Secrets is not the release key — see docs/RELEASE.md."
             exit 1
