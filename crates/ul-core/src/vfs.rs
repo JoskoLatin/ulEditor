@@ -326,6 +326,10 @@ struct Written {
 struct Fingerprint {
     #[cfg(windows)]
     id: Option<windows::Identity>,
+    /// On another machine — a share, or WSL's 9P — whose IDs and times are
+    /// that machine's to give.
+    #[cfg(windows)]
+    remote: bool,
     #[cfg(unix)]
     id: (u64, u64),
     /// When it was made. With the ID, what tells a file from one made in its
@@ -343,6 +347,8 @@ impl Fingerprint {
         Ok(Self {
             #[cfg(windows)]
             id: windows::identity(file).ok(),
+            #[cfg(windows)]
+            remote: windows::is_remote(file),
             #[cfg(unix)]
             id: {
                 use std::os::unix::fs::MetadataExt;
@@ -392,12 +398,24 @@ impl Fingerprint {
     /// and the same birth. Where either is not known, it is not — what is not
     /// known to be the same file does not get to hand its security to the
     /// next version.
+    ///
+    /// On Windows only a whole ID of a volume on this machine tells. A 64-bit
+    /// index is given again to the next file made where the file system frees
+    /// it — measured on WSL's 9P, with ext4 behind it — and a file on another
+    /// machine has whatever ID and times that machine gives it: over 9P the
+    /// "birth" is a time anybody can set, and a Samba server answers with
+    /// inodes and with a birth its files' owners can write. Such a file is
+    /// written over with the protection remembered from when the document was
+    /// opened — which also means a change of its security made while it was
+    /// open is not kept there.
     fn same_file(&self, other: &Self) -> bool {
         let born_together = matches!((self.created, other.created), (Some(a), Some(b)) if a == b);
         #[cfg(windows)]
         {
             born_together
-                && matches!((&self.id, &other.id), (Some(a), Some(b)) if a == b && *a != windows::Identity::Unknown)
+                && !self.remote
+                && !other.remote
+                && matches!((&self.id, &other.id), (Some(a @ windows::Identity::Long(..)), Some(b)) if a == b)
         }
         #[cfg(unix)]
         {
@@ -1555,6 +1573,28 @@ pub(crate) mod windows {
     const FILE_ID_INFO: i32 = 18;
     /// `FileStreamInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
     const FILE_STREAM_INFO: i32 = 7;
+    /// `FileRemoteProtocolInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
+    const FILE_REMOTE_PROTOCOL_INFO: i32 = 13;
+
+    /// Whether an open file is on another machine. Asked of the file: the
+    /// class is answered only for a file reached through a network
+    /// redirector — measured: an SMB share and WSL's 9P answer, NTFS here
+    /// refuses with error 87 — whatever path or drive letter led to it.
+    pub(crate) fn is_remote(file: &fs::File) -> bool {
+        /* FILE_REMOTE_PROTOCOL_INFO is 116 bytes; only whether it is given
+        matters. */
+        let mut info = [0u64; 32];
+        // SAFETY: a handle of an open file, and a buffer of the size given,
+        // larger than the structure.
+        unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FILE_REMOTE_PROTOCOL_INFO,
+                info.as_mut_ptr().cast(),
+                std::mem::size_of_val(&info) as u32,
+            ) != 0
+        }
+    }
 
     /// The streams of an open file other than its content and its
     /// `Zone.Identifier`, by name (`:name:$DATA`). None on a volume that keeps
@@ -2700,6 +2740,28 @@ mod tests {
             .arg("-h")
             .arg(display(&file))
             .status();
+    }
+
+    /// Only a whole ID of a volume on this machine tells the same file: a
+    /// 64-bit index, and anything on another machine, never does — however
+    /// alike the two looks are.
+    #[cfg(windows)]
+    #[test]
+    fn only_a_whole_local_id_tells_the_same_file() {
+        let born = Some(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1));
+        let print = |id: windows::Identity, remote: bool| Fingerprint {
+            id: Some(id),
+            remote,
+            created: born,
+            modified: born,
+            len: 1,
+        };
+        let long = windows::Identity::Long(7, [1; 16]);
+        let short = windows::Identity::Short(7, 42);
+
+        assert!(print(long.clone(), false).same_file(&print(long.clone(), false)));
+        assert!(!print(long.clone(), true).same_file(&print(long, true)));
+        assert!(!print(short.clone(), false).same_file(&print(short, false)));
     }
 
     /// A new version that is to be given the document's security is made
