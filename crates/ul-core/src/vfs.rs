@@ -277,14 +277,26 @@ impl Protection {
         Ok(())
     }
 
-    /// Keeps a mark of the internet `other` carries where this has none: a
-    /// file read again that is not the one this was read from does not give
-    /// its security, but a mark on it says where its content came from.
-    fn keep_marks_of(&mut self, other: &Self) {
+    /// Takes from `other` whatever of it is stricter than this, where
+    /// stricter can be told: a file read again that is not the one this was
+    /// read from does not give its security, but neither does a document
+    /// put in its place more closed come out of a save less so. A mark of
+    /// the internet on either is kept, encryption and being hidden on either
+    /// are kept, and on Unix only what both modes allow is allowed. Two
+    /// DACLs have no such meet: there, this one — the document's as it was
+    /// opened — is what the next version gets.
+    fn keep_the_stricter_of(&mut self, other: &Self) {
         let _ = other;
         #[cfg(windows)]
-        if self.mark.is_none() {
-            self.mark.clone_from(&other.mark);
+        {
+            if self.mark.is_none() {
+                self.mark.clone_from(&other.mark);
+            }
+            self.attributes |= other.attributes;
+        }
+        #[cfg(unix)]
+        if let (Some(mine), Some(theirs)) = (self.mode, other.mode) {
+            self.mode = Some(mine & theirs);
         }
         #[cfg(target_os = "macos")]
         if self.quarantine.is_none() {
@@ -674,13 +686,13 @@ impl Workspace {
         /* Read again — after a save, or to take in somebody else's change —
         it is what is in it now that is agreed to, not the security of
         whatever file is there: one that is not provably the file the
-        protection was read from does not replace it, and only a mark of the
-        internet on it is kept. An editor reads its document again after
+        protection was read from does not replace it, and only what of it is
+        stricter is kept (`keep_the_stricter_of`). An editor reads its document again after
         every save, and a file put in its place in that moment would
         otherwise hand its security to every save after. */
         let opened = match self.seen.remove(&key) {
             Some(mut before) if !before.is_owner(&print) => {
-                before.protection.keep_marks_of(&protection);
+                before.protection.keep_the_stricter_of(&protection);
                 Opened {
                     at: resolved,
                     print: Some(print),
@@ -713,7 +725,22 @@ impl Workspace {
     ) -> Result<(), VfsError> {
         let key = record_key(path.as_ref());
         let resolved = self.resolve(path)?;
-        let opened = self.seen.get(&key).cloned();
+        let opened = self
+            .seen
+            .get(&key)
+            .or_else(|| {
+                /* Not read under this spelling: the same place read under
+                another — the same file in other letters, by its short name,
+                through a link to it — is that document, not one nobody read,
+                which would be saved over without a question. Where two
+                spellings of it were read, the first of them by name. */
+                self.seen
+                    .iter()
+                    .filter(|(_, opened)| opened.at == resolved)
+                    .min_by(|a, b| a.0.cmp(b.0))
+                    .map(|(_, opened)| opened)
+            })
+            .cloned();
         /* Whether the file there now is provably the document as it was
         opened — the one case its own security may be taken from it. Every
         other case of a document opened here gives the new version the
@@ -2700,6 +2727,51 @@ mod tests {
         );
     }
 
+    /// A replacement read again that is hidden leaves the next version
+    /// hidden, though its security is not taken: what is stricter of it is.
+    #[cfg(windows)]
+    #[test]
+    fn a_hidden_replacement_read_again_leaves_the_next_version_hidden() {
+        use std::os::windows::fs::MetadataExt;
+
+        let (mut workspace, file, _) = closed_document("hidden-again");
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        let attrib = |flag: &str| {
+            std::process::Command::new("attrib")
+                .arg(flag)
+                .arg(display(&file))
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(attrib("+h"));
+        workspace.read_document(&file).unwrap();
+
+        workspace.save(&file, b"mine", false).unwrap();
+        let hidden = fs::metadata(&file).unwrap().file_attributes() & 0x2 != 0;
+        let _ = attrib("-h");
+        assert!(hidden, "no longer hidden");
+    }
+
+    /// The document read under one spelling and saved under another — the
+    /// same file, to NTFS — is the document read, and a change somebody else
+    /// made is asked about rather than saved over.
+    #[cfg(windows)]
+    #[test]
+    fn a_document_saved_under_another_spelling_is_still_the_document_read() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("spelling")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        workspace.read_document(&file).unwrap();
+        fs::write(&file, "theirs, and longer").unwrap();
+
+        let refused = workspace.save(root.join("NOTES.md"), b"mine, edited", false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "theirs, and longer");
+    }
+
     /// Its own security changed while it was open — by the person, in the
     /// file's properties — is the document's, and the next version keeps it,
     /// with when it was made and its being hidden.
@@ -2832,7 +2904,32 @@ mod tests {
         workspace.read_document(&file).unwrap();
         workspace.save(&file, b"mine", false).unwrap();
         let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o640, "the planted mode was carried over: {mode:o}");
+        /* Only what both allow: not the planted file's reading and writing
+        by anybody, and not the group's reading it did not allow. */
+        assert_eq!(mode, 0o600, "the planted mode was carried over: {mode:o}");
+    }
+
+    /// Put in the document's place more closed than the document was, and
+    /// read again: the next version is not opened wider than either.
+    #[cfg(unix)]
+    #[test]
+    fn a_more_closed_replacement_read_again_stays_closed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("closed-again")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "shared").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        workspace.read_document(&file).unwrap();
+
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "private").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        workspace.read_document(&file).unwrap();
+        workspace.save(&file, b"private, edited", false).unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "opened wider than it was: {mode:o}");
     }
 
     /// The same on Unix: a replacement nobody may read, and a deleted
