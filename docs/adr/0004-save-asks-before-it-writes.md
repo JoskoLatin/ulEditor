@@ -48,8 +48,8 @@ length, recorded when the file is read and after each write ulEditor makes. A
 write that finds them different is refused with an error the shell recognises
 by a fixed code, not by its wording. A write that was consented to over a file
 whose **identity** changed does not take that file's security, attributes or
-streams: they belong to whoever put it there. It is written as a new file into
-the folder.
+streams: they belong to whoever put it there. It gets the protection the
+document had when it was opened (see *Amended after the independent review*).
 
 ## Why
 
@@ -67,7 +67,9 @@ the folder.
 - **The two questions do not contradict each other.** Losses are about the
   content and are answered without touching the disk; the replaced file is
   about the destination and is asked by the write itself — the check and the
-  write are one Rust operation, with no moment between them.
+  write are one Rust operation. On Windows the document is held from the check
+  until the new version replaces it; on Unix, which has no such hold, the
+  moment between the two stays.
 
 ## Rejected
 
@@ -108,3 +110,54 @@ the folder.
    pass `options` through.
 5. `verify-desktop-pdf-notes`: the file's bytes are the same until the answer,
    and after Cancel.
+
+## Amended after the independent review (2026-10-06)
+
+The F4 review of steps 1–5 did not pass it. What `Workspace` does now, each
+rule with its test in `vfs.rs`:
+
+- **Which record.** A document's record is kept under the path exactly as the
+  page gave it, never under what the file system resolves it to: on NTFS that is
+  spelled as the file on disk, and a replacement named `NOTES.md` for
+  `notes.md` found no record and was saved over without a question. The record
+  also keeps where the document was read from. A save whose name leads elsewhere
+  now — other letters, a link put in its place, its folder swapped for a link —
+  asks; with a yes it writes where the document was, replacing what has its name
+  rather than writing through it, and is refused if that folder is gone. A save
+  under another spelling of the same place finds that place's record.
+- **One look.** The document is opened once for a save: whether it changed,
+  which file it is and its security all come from that open file, which on
+  Windows is held — nobody may write to it, rename it or delete it — until the
+  new version replaces it. The record of the new version is asked of the new
+  version before it is let go, and kept as the document only if the file under
+  the name after the rename has its ID.
+- **Whose protection.** The next version takes the document's own security only
+  from a file provably the one it was read from: the same whole ID of a volume
+  on this machine, and the same birth. Otherwise — a replacement, a 64-bit ID
+  (WSL's 9P, FAT), any file on another machine — it gets the protection
+  remembered from when the document was opened. Reading the document again
+  agrees to its content, not to the security of whatever file is there: the
+  remembered protection stays, and only what of the new file is stricter is
+  added — a mark of the internet, encryption or being hidden, and on Unix only
+  what both modes allow.
+- **Made closed.** Where a DACL is to be set, the new version is made with one
+  that lets its owner alone in, and a stream nobody wrote fails the save.
+
+What that costs, chosen knowingly:
+
+- Two DACLs cannot be intersected. A document replaced by a more closed one,
+  read again and saved, gets the DACL it had when it was first opened.
+- On a network share, a change of a document's security made while it is open
+  is not kept by the next save there.
+- A document another program holds open for writing — Word — is "changed
+  outside" rather than "in use" when saved.
+- On a volume with no file IDs, a file put in the document's place with the same
+  times and length is saved over without a question; its security is still never
+  taken.
+
+Not changed: a save over a file nobody read here (Save As) still takes that
+file's security, as decided above; and the first save of a file made seconds
+before on WSL's 9P can be asked about once, its "birth" being a time 9P makes
+up. Keeping the record by a token `read_document` hands the page, rather than by
+the path, would end the question of spellings altogether; it changes the
+contract between page and host and has a card of its own (495).
