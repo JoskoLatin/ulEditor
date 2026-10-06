@@ -209,8 +209,136 @@ fn harden_with(command: &mut Command, path: Option<std::ffi::OsString>) {
 fn soffice_command(backend: &Backend, source: &Path, outdir: &Path, profile: &Path) -> Command {
     let mut command = Command::new(&backend.path);
     harden(&mut command);
+    tree::separate(&mut command);
     command.args(arguments(source, outdir, profile));
     command
+}
+
+/// Everything a conversion started, so that a conversion given up on takes
+/// all of it with it.
+///
+/// On Windows the program started is a launcher, `soffice.com`, which starts
+/// `soffice.bin` and can be gone before it is; the timeout killed only the
+/// launcher, and a document that never finished converting — a `.ps` is a
+/// program, and one can loop for ever — kept a processor busy until the
+/// person logged out. So the launcher goes into a job the moment it exists,
+/// what it starts after is in the job with it, and the timeout ends the job.
+/// On Unix the conversion is a process group of its own, ended the same way.
+///
+/// Only a timeout ends the tree. A conversion that finished is left to exit
+/// by itself: `soffice.bin` may still be closing the file the PDF is in.
+mod tree {
+    use std::process::{Child, Command};
+
+    /// Makes what `command` starts a tree that can be ended whole.
+    pub(crate) fn separate(command: &mut Command) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        #[cfg(not(unix))]
+        let _ = command;
+    }
+
+    pub(crate) struct Tree {
+        #[cfg(windows)]
+        job: Option<windows::Job>,
+        #[cfg(unix)]
+        group: i32,
+    }
+
+    impl Tree {
+        /// The tree `child` is the root of — on Windows, from here on: what it
+        /// started before this is not in it, which is why this is asked right
+        /// after the start, while it is still loading.
+        pub(crate) fn of(child: &Child) -> Self {
+            #[cfg(windows)]
+            {
+                Self {
+                    job: windows::Job::holding(child),
+                }
+            }
+            #[cfg(unix)]
+            {
+                Self {
+                    group: child.id() as i32,
+                }
+            }
+            #[cfg(not(any(windows, unix)))]
+            {
+                let _ = child;
+                Self {}
+            }
+        }
+
+        /// Ends everything in the tree.
+        pub(crate) fn end(&self) {
+            #[cfg(windows)]
+            if let Some(job) = &self.job {
+                job.end();
+            }
+            #[cfg(unix)]
+            {
+                extern "C" {
+                    fn kill(pid: i32, signal: i32) -> i32;
+                }
+                const SIGKILL: i32 = 9;
+                // SAFETY: a negative pid is the process group the child leads
+                // (`process_group(0)`); the call takes plain integers.
+                unsafe { kill(-self.group, SIGKILL) };
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    mod windows {
+        use std::ffi::c_void;
+        use std::os::windows::io::AsRawHandle;
+        use std::process::Child;
+        use std::ptr::null_mut;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> *mut c_void;
+            fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+            fn TerminateJobObject(job: *mut c_void, exit_code: u32) -> i32;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+
+        /// A job without "kill on close": closing it leaves what is in it
+        /// running, so only `end` ends anything.
+        pub(crate) struct Job(*mut c_void);
+
+        impl Job {
+            /// `None` where a job cannot be made or joined; the conversion
+            /// runs as it did before, and only the launcher is killed.
+            pub(crate) fn holding(child: &Child) -> Option<Self> {
+                // SAFETY: no attributes and no name; the handle is closed on drop.
+                let job = unsafe { CreateJobObjectW(null_mut(), std::ptr::null()) };
+                if job.is_null() {
+                    return None;
+                }
+                let job = Self(job);
+                // SAFETY: a job just made, and the handle of a child that has
+                // not been waited for, so still valid.
+                (unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) } != 0)
+                    .then_some(job)
+            }
+
+            pub(crate) fn end(&self) {
+                // SAFETY: a job handle this owns.
+                unsafe { TerminateJobObject(self.0, 1) };
+            }
+        }
+
+        impl Drop for Job {
+            fn drop(&mut self) {
+                // SAFETY: closed once, here.
+                unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
 }
 
 /// What the output of a conversion is called.
@@ -339,6 +467,7 @@ fn said(kept: &Arc<Mutex<Vec<u8>>>) -> String {
 
 /// Waits for LibreOffice's answer, which is a file rather than an exit code.
 fn watch(mut child: Child, expected: &Path, timeout: Duration) -> Result<PathBuf, ConvertError> {
+    let tree = tree::Tree::of(&child);
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
 
@@ -385,6 +514,7 @@ fn watch(mut child: Child, expected: &Path, timeout: Duration) -> Result<PathBuf
         }
 
         if Instant::now() > deadline {
+            tree.end();
             let _ = child.kill();
             let _ = child.wait();
             return Err(ConvertError::Timeout(timeout.as_secs()));
@@ -410,6 +540,88 @@ mod tests {
             }
             std::process::exit(3);
         }
+    }
+
+    /// Not a check of its own: the child of the next test, which starts a
+    /// grandchild, says which, and waits for ever — as a launcher that left
+    /// its `soffice.bin` stuck would.
+    #[test]
+    fn tree_child() {
+        if let Some(pids) = std::env::var_os("UL_CONVERT_TREE_PIDS") {
+            let mut grandchild = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "tests::tree_grandchild", "--nocapture"])
+                .env("UL_CONVERT_TREE_GRANDCHILD", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            std::fs::write(pids, grandchild.id().to_string()).unwrap();
+            // Waits as long as the grandchild does, which is the point.
+            let _ = grandchild.wait();
+        }
+    }
+
+    /// Not a check of its own: the grandchild, which only waits.
+    #[test]
+    fn tree_grandchild() {
+        if std::env::var_os("UL_CONVERT_TREE_GRANDCHILD").is_some() {
+            std::thread::sleep(Duration::from_secs(120));
+        }
+    }
+
+    fn running(pid: u32) -> bool {
+        if cfg!(windows) {
+            let listed = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&listed.stdout).contains(&pid.to_string())
+        } else {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+    }
+
+    #[test]
+    fn a_conversion_given_up_on_ends_everything_it_started() {
+        /* A launcher that started a process and never returns: at the
+        timeout, the process it started goes too, not only the launcher. */
+        let pids = std::env::temp_dir().join(format!("ul-convert-tree-{}", std::process::id()));
+        let _ = std::fs::remove_file(&pids);
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "tests::tree_child", "--nocapture"])
+            .env("UL_CONVERT_TREE_PIDS", &pids)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        tree::separate(&mut command);
+        let child = command.spawn().unwrap();
+
+        let nowhere = std::env::temp_dir().join("ul-convert-tree-never-written.pdf");
+        let answer = watch(child, &nowhere, Duration::from_secs(4));
+        assert!(
+            matches!(answer, Err(ConvertError::Timeout(4))),
+            "{answer:?}"
+        );
+
+        let grandchild: u32 = std::fs::read_to_string(&pids)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let _ = std::fs::remove_file(&pids);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while running(grandchild) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(
+            !running(grandchild),
+            "process {grandchild} outlived the conversion"
+        );
     }
 
     #[test]
