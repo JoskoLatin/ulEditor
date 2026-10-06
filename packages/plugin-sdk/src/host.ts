@@ -4,7 +4,7 @@
  */
 
 import type { Disposable, Event } from './events.js';
-import type { VirtualFileSystem, Uri } from './fs.js';
+import type { VirtualFileSystem, Uri, WriteOptions } from './fs.js';
 
 /* ── commands ────────────────────────────────────────────────────────── */
 
@@ -73,11 +73,12 @@ export interface NotificationAction {
 export interface NotificationService {
   show(level: NotificationLevel, message: string, actions?: NotificationAction[]): Disposable;
   /**
-   * A warning about fidelity loss on save.
-   *
-   * An editor that knows it cannot reproduce everything from the source document
-   * MUST call this before saving. Quietly corrupting a user's formatting is the
-   * one mistake that destroys trust in an editor for good.
+   * A warning about fidelity loss on save — asked by the **shell**, from what
+   * an editor's `prepareSave` reported, before it lets the save be written.
+   * An editor does not call it: an editor that asked itself would have to be
+   * trusted not to write first, and none did (ADR 0004). Quietly corrupting a
+   * user's formatting is the one mistake that destroys trust in an editor for
+   * good.
    */
   fidelityWarning(uri: Uri, unsupported: string[]): Promise<'save' | 'cancel'>;
 }
@@ -156,7 +157,8 @@ export interface ImageWritten {
 export interface ImageService {
   available(): boolean;
   info(source: Uri): Promise<ImageInfo>;
-  write(source: Uri, target: Uri, ops: ImageOps): Promise<ImageWritten>;
+  /** `options.overwriteChanged` as for a file write — see `WriteOptions`. */
+  write(source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions): Promise<ImageWritten>;
 }
 
 /* ── language servers ────────────────────────────────────────────────── */

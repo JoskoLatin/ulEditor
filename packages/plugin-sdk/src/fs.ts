@@ -57,6 +57,23 @@ export interface DocumentHandle {
 export interface WriteOptions {
   /** When `true`, the previous content is kept as a `.bak` beside the file. */
   backup?: boolean;
+  /**
+   * Write over a file that was changed or replaced outside ulEditor since it
+   * was opened. Without it such a write is refused with `ChangedOutsideError`.
+   * Set for one write, after the person said so — never kept.
+   */
+  overwriteChanged?: boolean;
+}
+
+/**
+ * A write refused because the file is not what it was when it was opened:
+ * somebody replaced it, or another program wrote it. Nothing was written.
+ */
+export class ChangedOutsideError extends Error {
+  constructor(readonly uri: Uri) {
+    super(`${uri} was changed outside ulEditor since it was opened`);
+    this.name = 'ChangedOutsideError';
+  }
 }
 
 export interface VirtualFileSystem {

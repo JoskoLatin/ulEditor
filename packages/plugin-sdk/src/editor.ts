@@ -8,7 +8,7 @@
 
 import type { Event } from './events.js';
 import type { ClipboardPayload } from './clipboard.js';
-import type { DocumentHandle, Uri } from './fs.js';
+import type { DocumentHandle, Uri, WriteOptions } from './fs.js';
 import type { EditorHost } from './host.js';
 import type { ReadingOptions, ReadingSession } from './reading.js';
 
@@ -59,6 +59,29 @@ export interface SaveResult {
   lostFidelity: string[];
 }
 
+/**
+ * A save worked out and not yet written — see ADR 0004.
+ *
+ * The shell asks about `lost` before it calls `commit`, so nothing is written
+ * before the person has answered. Four rules:
+ *
+ * 1. `prepareSave` writes nothing and records nothing as saved. It may finish
+ *    an edit in progress; if the save is then cancelled the document simply
+ *    stays dirty.
+ * 2. `commit` records as saved **what was prepared**, not what the editor
+ *    holds when the write returns: the question is not modal, and the person
+ *    may have typed while it was showing.
+ * 3. `commit` may be called again after a refused write (the file changed
+ *    outside ulEditor, and the person said overwrite), with the same bytes and
+ *    the same chosen path.
+ * 4. `lost` holds finished, translated sentences.
+ */
+export interface SavePlan {
+  /** What this save cannot reproduce. Empty for a complete round trip. */
+  lost: string[];
+  commit(options?: WriteOptions): Promise<SaveResult>;
+}
+
 export interface SaveTarget {
   uri: Uri;
   /** When given, the editor exports to that format instead of saving the source one. */
@@ -70,7 +93,23 @@ export interface EditorInstance {
   unmount(): void;
 
   isDirty(): boolean;
-  save(target?: SaveTarget): Promise<SaveResult>;
+
+  /**
+   * Works out a save without writing it — see `SavePlan`.
+   *
+   * An editor that can return a non-empty `lostFidelity` implements this, so
+   * that the person is asked before anything is written. One that never loses
+   * anything may leave it out: the shell then saves through `save`.
+   */
+  prepareSave?(target?: SaveTarget): Promise<SavePlan>;
+
+  /**
+   * Saves in one step. `options` are passed to the write as they come — the
+   * shell sends `overwriteChanged` only after the person said so. For an
+   * editor with `prepareSave` this is `prepareSave` then `commit`, so a host
+   * that does not ask still hears what was lost.
+   */
+  save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult>;
 
   undo(): void;
   redo(): void;
