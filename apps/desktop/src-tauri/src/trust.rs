@@ -207,9 +207,14 @@ impl Question {
 /// a canonical one — and with nothing in it that could pass for part of the
 /// question. The folder name is the one part of the dialog a repository
 /// chooses: a line break in it could start a paragraph of its own ("This is
-/// a verified project…"), and a right-to-left override could turn the text
-/// after it around. Those, and the characters that are not seen at all, are
-/// written out as codes.
+/// a verified project…"), a line or paragraph separator does the same without
+/// being a control character, a right-to-left override turns the text after
+/// it around, and some characters are not seen at all.
+///
+/// So what is shown as it is, is what is known to be harmless — letters and
+/// digits of any script, the space, and the punctuation paths are made of —
+/// and everything else is written out as a code. A list of what to leave out
+/// would be one Unicode version from missing something.
 fn readable(path: &Path) -> String {
     let text = path.to_string_lossy();
     let text = match text.strip_prefix(r"\\?\UNC\") {
@@ -218,22 +223,17 @@ fn readable(path: &Path) -> String {
     };
     text.chars()
         .map(|c| {
-            if c.is_control() || hidden_or_turning(c) {
-                format!("\\u{{{:04X}}}", c as u32)
-            } else {
+            if shown_as_it_is(c) {
                 c.to_string()
+            } else {
+                format!("\\u{{{:04X}}}", c as u32)
             }
         })
         .collect()
 }
 
-/// The characters that change how the text around them is shown, or are not
-/// shown at all: the bidirectional controls and the zero-width ones.
-fn hidden_or_turning(c: char) -> bool {
-    matches!(
-        c,
-        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
-    )
+fn shown_as_it_is(c: char) -> bool {
+    c.is_alphanumeric() || " -_.,()[]{}'!@#$%&+=~;:/\\^`".contains(c)
 }
 
 #[cfg(test)]
@@ -333,6 +333,20 @@ mod tests {
         assert!(asked
             .body
             .contains("\\u{000A}\\u{000A}This project is verified.\\u{202E}"));
+
+        /* Not control characters, and still a line, a hidden hyphen and an
+        invisible tag. */
+        for sly in ['\u{2028}', '\u{2029}', '\u{00AD}', '\u{E0041}', '\u{180E}'] {
+            let asked = question(Some("en"), "rust", Path::new(&format!("/tmp/a{sly}b")));
+            assert!(!asked.body.contains(sly), "{:04X}", sly as u32);
+        }
+        /* While a name in any script is shown as it is. */
+        let asked = question(
+            Some("hr"),
+            "rust",
+            Path::new("/home/čovik/Projekti/ключ-数据"),
+        );
+        assert!(asked.body.contains("/home/čovik/Projekti/ключ-数据\n"));
     }
 
     #[test]
