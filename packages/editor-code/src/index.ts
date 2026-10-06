@@ -47,6 +47,7 @@ import {
   type FindResult,
   type SaveResult,
   type SaveTarget,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
@@ -376,10 +377,10 @@ class CodeEditor implements EditorInstance, CodeIntel {
     return this.#dirty;
   }
 
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
     const uri = target?.uri ?? this.doc.uri;
     const text = this.#text();
-    await this.host.fs.writeText(uri, text);
+    await this.host.fs.writeText(uri, text, options);
     this.#savedText = text;
     this.#recomputeDirty();
 

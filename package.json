@@ -25,7 +25,7 @@
     "rust:test": "cargo test --workspace",
     "rust:lint": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
     "rust:wasm": "cargo build -p ul-formats --target wasm32-unknown-unknown --release",
-    "check": "pnpm typecheck && pnpm verify:providers && pnpm verify:version && pnpm verify:languages && pnpm verify:recent && pnpm verify:i18n && pnpm build && pnpm rust:lint && pnpm rust:test",
+    "check": "pnpm typecheck && pnpm verify:providers && pnpm verify:version && pnpm verify:languages && pnpm verify:recent && pnpm verify:save && pnpm verify:i18n && pnpm build && pnpm rust:lint && pnpm rust:test",
     "clean": "pnpm -r exec rimraf dist node_modules/.vite",
     "verify:reading": "node tools/verify-reading.mjs",
     "verify:viewers": "node tools/verify-viewers.mjs",

@@ -37,8 +37,10 @@ import {
   type FindResult,
   type ReadingOptions,
   type ReadingSession,
+  type SavePlan,
   type SaveResult,
   type SaveTarget,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 
 import { PagedFlow, headingOutline, showHit, textNodesOf, wordCount } from '@uleditor/reader-core';
@@ -2073,7 +2075,7 @@ class DocumentPreviewEditor implements EditorInstance {
     return this.#dirty;
   }
 
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
     const source = this.preview.source;
     /* A view with no seam declares no `edit` capability, so the shell never
        offers this — the guard is for the keyboard shortcut, which asks the
@@ -2094,8 +2096,15 @@ class DocumentPreviewEditor implements EditorInstance {
     const divided: DividedPiece[] = [...this.#cuts].map(([index, parts]) => ({ index, parts }));
     const joined = [...this.#joins].sort((a, b) => a - b);
     const rows = this.#written();
+    /* The plan these bytes hold, taken before the write: what is typed while
+       it is on its way is not in them. */
+    const key = this.#key();
 
-    await this.host.fs.writeBytes(uri, source.write(edits, added, removed, divided, joined, rows, this.#merges));
+    await this.host.fs.writeBytes(
+      uri,
+      source.write(edits, added, removed, divided, joined, rows, this.#merges),
+      options,
+    );
 
     /*
      * Nothing is cleared and nothing is committed. Every save writes the file as
@@ -2104,7 +2113,7 @@ class DocumentPreviewEditor implements EditorInstance {
      * your mind about a paragraph you added is something a person can do. What
      * is recorded is simply which plan the file on disk now holds.
      */
-    this.#saved = this.#key();
+    this.#saved = key;
     this.#emitDirty();
 
     /*
@@ -2648,18 +2657,27 @@ class XlsxPreviewEditor implements EditorInstance {
     return this.#dirty;
   }
 
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  /**
+   * The save worked out, not written (ADR 0004): the bytes from the edits as
+   * they are now, and what a conversion cannot carry. The shell commits it
+   * once the person has answered.
+   */
+  async prepareSave(target?: SaveTarget): Promise<SavePlan> {
     /* A value still being typed is part of what is saved — measured, a cell
        typed into and saved without leaving it wrote the value it had before.
        The shell does not ask the caret to leave, so the save does. */
     const typing = document.activeElement;
     if (typing instanceof HTMLElement && typing.isContentEditable && this.#root?.contains(typing)) typing.blur();
 
-    if (this.workbook.convert) return this.#saveAsConverted(target);
+    /* What is saved is the edits as they are now; what is typed while the
+       question stands stays an edit, unsaved, after the save. */
+    const written = new Map(this.#edits);
+
+    if (this.workbook.convert) return this.#planConverted(written, target);
 
     const { archive } = this.workbook;
     if (!archive) throw new Error(t('The workbook cannot be written.'));
-    if (this.workbook.kind === 'odf') return this.#saveOds(archive, target);
+    if (this.workbook.kind === 'odf') return this.#planOds(archive, written, target);
 
     const uri = target?.uri ?? this.doc.uri;
 
@@ -2667,7 +2685,7 @@ class XlsxPreviewEditor implements EditorInstance {
        sheet, everything else passes through untouched. */
     const parts = new Map<string, string>();
     const bySheet = new Map<number, { ref: string; value: string }[]>();
-    for (const [key, value] of this.#edits) {
+    for (const [key, value] of written) {
       const [indexPart, refPart] = key.split(':') as [string, string];
       const [row, col] = refPart.split(',').map(Number) as [number, number];
       const list = bySheet.get(Number(indexPart)) ?? [];
@@ -2681,32 +2699,31 @@ class XlsxPreviewEditor implements EditorInstance {
       if (!sheet || xml === null) continue;
       parts.set(sheet.path, applyCellEdits(xml, findCells(xml), edits));
     }
+    const bytes = writeXlsx(archive, parts);
 
-    await this.host.fs.writeBytes(uri, writeXlsx(archive, parts));
+    /* No fidelity warning here for the same reason `DocumentPreviewEditor`
+       gives none: only the rewritten elements changed. The stale formula
+       caches are handled, not lost — the workbook recalculates when Excel
+       opens it. */
+    return {
+      lost: [],
+      commit: async (options?: WriteOptions) => {
+        await this.host.fs.writeBytes(uri, bytes, options);
 
-    /*
-     * What was saved becomes the new starting point — the archive parts, and
-     * the cell map the grid draws from. Without this the next save would begin
-     * from the original parts with an empty edit list and quietly revert.
-     */
-    const encoder = new TextEncoder();
-    for (const [path, xml] of parts) archive[path] = encoder.encode(xml);
-    for (const [key, value] of this.#edits) {
-      const [indexPart, refPart] = key.split(':') as [string, string];
-      const cells = this.workbook.sheets[Number(indexPart)]?.cells;
-      if (!cells) continue;
-      if (value === '') cells.delete(refPart);
-      else cells.set(refPart, this.#typedCell(value));
-    }
-    this.#edits.clear();
-    this.#undoStack = [];
-    this.#redoStack = [];
-    this.#emitDirty();
+        /* What was saved becomes the new starting point — the archive parts,
+           and the cell map the grid draws from. Without this the next save
+           would begin from the original parts with an empty edit list and
+           quietly revert. */
+        const encoder = new TextEncoder();
+        for (const [path, xml] of parts) archive[path] = encoder.encode(xml);
+        this.#settleWritten(written);
+        return { uri, lostFidelity: [] };
+      },
+    };
+  }
 
-    /* No fidelity warning here for the same reason `DocumentPreviewEditor` gives
-       none: only the rewritten elements changed. The stale formula caches are
-       handled, not lost — the workbook recalculates when Excel opens it. */
-    return { uri, lostFidelity: [] };
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
+    return (await this.prepareSave(target)).commit(options);
   }
 
   /**
@@ -2720,40 +2737,34 @@ class XlsxPreviewEditor implements EditorInstance {
    * `content.xml` — so the edits carry a sheet ordinal and a row and column,
    * and the writer splits the repeated groups they land in.
    */
-  async #saveOds(archive: Archive, target?: SaveTarget): Promise<SaveResult> {
+  #planOds(archive: Archive, written: Map<string, string>, target?: SaveTarget): SavePlan {
     const uri = target?.uri ?? this.doc.uri;
     const xml = readText(archive, 'content.xml');
     if (xml === null) throw new Error(t('The workbook cannot be written.'));
 
     const edits: OdsEdit[] = [];
-    for (const [key, value] of this.#edits) {
+    for (const [key, value] of written) {
       const [indexPart, refPart] = key.split(':') as [string, string];
       const [row, col] = refPart.split(',').map(Number) as [number, number];
       edits.push({ sheet: Number(indexPart), row, col, value });
     }
 
     const next = applyOdsEdits(xml, edits);
-    await this.host.fs.writeBytes(uri, writeOdf(archive, next));
-
-    /* What was saved becomes the new starting point — the part and the cell
-       map the grid draws from. Without this the next save would begin from the
-       original bytes with an empty edit list, and quietly revert. */
-    archive['content.xml'] = new TextEncoder().encode(next);
-    for (const [key, value] of this.#edits) {
-      const [indexPart, refPart] = key.split(':') as [string, string];
-      const cells = this.workbook.sheets[Number(indexPart)]?.cells;
-      if (!cells) continue;
-      if (value === '') cells.delete(refPart);
-      else cells.set(refPart, this.#typedCell(value));
-    }
-    this.#edits.clear();
-    this.#undoStack = [];
-    this.#redoStack = [];
-    this.#emitDirty();
+    const bytes = writeOdf(archive, next);
 
     /* No fidelity warning, for the reason the other two in-place saves give
        none: only the rewritten cells changed. */
-    return { uri, lostFidelity: [] };
+    return {
+      lost: [],
+      commit: async (options?: WriteOptions) => {
+        await this.host.fs.writeBytes(uri, bytes, options);
+        /* What was saved becomes the new starting point — the part and the
+           cell map the grid draws from. */
+        archive['content.xml'] = new TextEncoder().encode(next);
+        this.#settleWritten(written);
+        return { uri, lostFidelity: [] };
+      },
+    };
   }
 
   /**
@@ -2765,36 +2776,82 @@ class XlsxPreviewEditor implements EditorInstance {
    * new extension; later saves go back to the same place, so `Ctrl+S` twice
    * does not produce two files.
    *
-   * `lostFidelity` carries what the conversion cannot bring along, so the
-   * shell can ask before it happens — the project's central rule, and the one
-   * case in this editor where it genuinely applies.
+   * `lost` carries what the conversion cannot bring along, so the shell asks
+   * before it happens — the project's central rule, and the one case in this
+   * editor where it genuinely applies. Then where: the picker is part of the
+   * commit, so the person is asked about the loss first, and a write refused
+   * and tried again goes to the same place without asking twice.
+   *
+   * The new file is built from the cells **with the edits in them**. It used
+   * to be built from the cells alone, and the edits were moved into them only
+   * after the write — so the first converting save wrote the workbook as it
+   * was opened, without what had been typed.
    */
-  async #saveAsConverted(target?: SaveTarget): Promise<SaveResult> {
+  #planConverted(written: Map<string, string>, target?: SaveTarget): SavePlan {
     const convert = this.workbook.convert!;
-    const uri = target?.uri ?? convert.target ?? (await this.#pickConvertTarget());
-    if (!uri) throw new DOMException('The save was cancelled.', 'AbortError');
-
-    await this.host.fs.writeBytes(uri, buildXlsx(this.workbook.sheets));
-
-    /* Where it went, so the next save goes to the same file rather than asking
-       again — and the losses are reported only for the save that first writes
-       it, since the second save of the same grid loses nothing new. */
+    /* The losses are reported only for the save that first writes the new
+       file; the second save of the same grid loses nothing new. */
     const first = convert.target === undefined;
-    convert.target = uri;
+    const lost = first ? convert.losses.map((loss) => t(loss)) : [];
+    const sheets = this.workbook.sheets.map((sheet, index) => ({
+      ...sheet,
+      cells: this.#withEdits(sheet.cells, index, written),
+    }));
+    const bytes = buildXlsx(sheets);
+    let chosen = target?.uri ?? convert.target;
 
-    for (const [key, value] of this.#edits) {
+    return {
+      lost,
+      commit: async (options?: WriteOptions) => {
+        chosen ??= (await this.#pickConvertTarget()) ?? undefined;
+        if (!chosen) throw new DOMException('The save was cancelled.', 'AbortError');
+
+        await this.host.fs.writeBytes(chosen, bytes, options);
+        // Where it went, so the next save goes to the same file.
+        convert.target = chosen;
+        this.#settleWritten(written);
+        return { uri: chosen, lostFidelity: lost };
+      },
+    };
+  }
+
+  /** A sheet's cells with the edits for it applied, the sheet's own untouched. */
+  #withEdits<C>(cells: Map<string, C>, index: number, written: Map<string, string>): Map<string, C> {
+    const next = new Map(cells);
+    for (const [key, value] of written) {
+      const cut = key.indexOf(':');
+      if (Number(key.slice(0, cut)) !== index) continue;
+      const ref = key.slice(cut + 1);
+      if (value === '') next.delete(ref);
+      else next.set(ref, this.#typedCell(value) as unknown as C);
+    }
+    return next;
+  }
+
+  /**
+   * After a write: the edits it held go into the cells the grid draws from,
+   * and out of the edit list — those, and only those. A cell typed into again
+   * while the question stood keeps its newer edit, and the sheet stays
+   * unsaved with it.
+   */
+  #settleWritten(written: Map<string, string>): void {
+    for (const [key, value] of written) {
       const [indexPart, refPart] = key.split(':') as [string, string];
       const cells = this.workbook.sheets[Number(indexPart)]?.cells;
       if (!cells) continue;
       if (value === '') cells.delete(refPart);
       else cells.set(refPart, this.#typedCell(value));
     }
-    this.#edits.clear();
-    this.#undoStack = [];
-    this.#redoStack = [];
+    for (const [key, value] of written) {
+      if (this.#edits.get(key) === value) this.#edits.delete(key);
+    }
+    /* The history is of edits now in the file; with nothing typed since, it
+       is history of nothing. */
+    if (this.#edits.size === 0) {
+      this.#undoStack = [];
+      this.#redoStack = [];
+    }
     this.#emitDirty();
-
-    return { uri, lostFidelity: first ? convert.losses.map((loss) => t(loss)) : [] };
   }
 
   async #pickConvertTarget(): Promise<string | null> {

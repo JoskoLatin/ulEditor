@@ -33,6 +33,7 @@ import {
   type ReadingSession,
   type SaveResult,
   type SaveTarget,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 
 import { PagedFlow, headingOutline, wordCount } from '@uleditor/reader-core';
@@ -418,10 +419,10 @@ class MarkdownEditor implements EditorInstance {
     return this.#dirty;
   }
 
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
     const uri = target?.uri ?? this.doc.uri;
     const text = this.#text();
-    await this.host.fs.writeText(uri, text);
+    await this.host.fs.writeText(uri, text, options);
     this.#savedText = text;
     this.#recomputeDirty();
     return { uri, lostFidelity: [] };

@@ -715,7 +715,9 @@ export async function dropImported(source: Uint8Array, ids: readonly string[]): 
 export function fidelityGaps(annotations: Annotation[]): string[] {
   const gaps: string[] = [];
   if (annotations.some((a) => a.kind === 'note' && a.text.length > 0)) {
-    gaps.push('Notes are saved without their own appearance stream (/AP) — some readers show a default icon.');
+    gaps.push(
+      t('Notes are saved without their own appearance stream (/AP) — some readers show a default icon.'),
+    );
   }
   return gaps;
 }

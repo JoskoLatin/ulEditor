@@ -29,6 +29,7 @@ import {
   type ImageOps,
   type SaveResult,
   type SaveTarget,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
@@ -829,7 +830,7 @@ class ImageEditor implements EditorInstance {
    * because what the window shows has to be what was written, including
    * whatever the encoder did on the way.
    */
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
     const images = this.host.images;
     if (!images.available()) {
       throw new Error(t('Image editing needs the desktop application.'));
@@ -854,7 +855,7 @@ class ImageEditor implements EditorInstance {
         );
       }
     }
-    const written = await images.write(this.doc.uri, uri, this.#plan());
+    const written = await images.write(this.doc.uri, uri, this.#plan(), options);
 
     this.#rotate = 0;
     this.#flipH = false;

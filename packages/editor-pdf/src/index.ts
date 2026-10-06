@@ -29,8 +29,10 @@ import {
   type ReadingOutlineItem,
   type ReadingProgress,
   type ReadingSession,
+  type SavePlan,
   type SaveResult,
   type SaveTarget,
+  type WriteOptions,
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
@@ -2790,13 +2792,22 @@ class PdfEditor implements EditorInstance {
     return this.#dirty;
   }
 
-  async save(target?: SaveTarget): Promise<SaveResult> {
+  /**
+   * The file as it would be written, and what it cannot keep — written only
+   * when the shell commits, after the person has answered (ADR 0004).
+   */
+  async prepareSave(target?: SaveTarget): Promise<SavePlan> {
     const uri = target?.uri ?? this.docHandle.uri;
     // Unfinished typing is saved along with the rest, not lost.
     this.#finishTextEdit();
     // ...including a retype still being written into the source.
     await this.#committing;
 
+    /* What is saved is what is here now. Whatever the person does while the
+       question stands is not in these bytes, and stays unsaved after them. */
+    const annotations = this.#annotationState();
+    const redactions = this.#redactions;
+    const source = this.source;
     const { bytes, lost } = await saveDocument(
       this.source,
       [...this.#plan],
@@ -2806,24 +2817,39 @@ class PdfEditor implements EditorInstance {
       this.#redactions,
       [...this.#dropped],
     );
-    await this.host.fs.writeBytes(uri, bytes);
+    const losses = [...lost, ...fidelityGaps(this.#annotations)];
 
-    /* Ours stay ours. The next save starts from `source` again, the bytes as
-       opened, so it has to write them again — marking them imported here, which
-       is what this used to do, left them out of every save after the first. */
-    this.#savedAnnotations = this.#annotationState();
-    /* The marks stay: every save starts from the untouched source, so the
-       redaction is repeated with the same outcome — and removing a mark still
-       brings the text back, which is the only way changing your mind can be
-       offered at all. */
-    this.#redactions = this.#redactions.map((r) => ({ ...r, applied: true }));
-    // The bytes on screen are now the bytes on disk.
-    this.#sourceEdited = false;
-    this.#markDirty();
-    this.#syncToolbar();
-    this.#emitStatus();
+    return {
+      lost: losses,
+      commit: async (options?: WriteOptions) => {
+        await this.host.fs.writeBytes(uri, bytes, options);
 
-    return { uri, lostFidelity: [...lost, ...fidelityGaps(this.#annotations)] };
+        /* Ours stay ours. The next save starts from `source` again, the bytes
+           as opened, so it has to write them again — marking them imported
+           here, which is what this used to do, left them out of every save
+           after the first. */
+        this.#savedAnnotations = annotations;
+        /* The marks stay: every save starts from the untouched source, so the
+           redaction is repeated with the same outcome — and removing a mark
+           still brings the text back, which is the only way changing your
+           mind can be offered at all. Only the marks that were in these bytes
+           are applied. */
+        this.#redactions = this.#redactions.map((r) =>
+          redactions.includes(r) ? { ...r, applied: true } : r,
+        );
+        // The bytes on screen are the bytes on disk, unless retyped since.
+        if (this.source === source) this.#sourceEdited = false;
+        this.#markDirty();
+        this.#syncToolbar();
+        this.#emitStatus();
+
+        return { uri, lostFidelity: losses };
+      },
+    };
+  }
+
+  async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
+    return (await this.prepareSave(target)).commit(options);
   }
 
   undo(): void {

@@ -1219,6 +1219,80 @@ try {
     await until(async () => (await page.locator('.tab[data-dirty="true"]').count()) > 0, 10000),
   );
 
+  /*
+   * And now the save itself. A dropped file is read-only in the web build, so
+   * a second copy is opened through the open picker — which the page is given
+   * here, with a save picker beside it, so the written bytes can be looked at.
+   * Two things the order of a save decides (ADR 0004): the person is asked
+   * about what the conversion loses before anything is written, and what was
+   * typed is in the file written. It was not, until 2026-10-06 — the new .xlsx
+   * was built from the cells before the typed values went into them.
+   */
+  const xlsBytes = Array.from(makeXls());
+  await page.evaluate((bytes) => {
+    window.__savedXlsx = null;
+    const writableHandle = (name, file) => ({
+      kind: 'file',
+      name,
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+      getFile: async () => file(),
+      createWritable: async () => {
+        const chunks = [];
+        return {
+          write: async (data) =>
+            chunks.push(new Uint8Array(data instanceof ArrayBuffer ? data : await new Blob([data]).arrayBuffer())),
+          close: async () => {
+            window.__savedXlsx = new Uint8Array(await new Blob(chunks).arrayBuffer());
+          },
+        };
+      },
+    });
+    window.showOpenFilePicker = async () => [
+      writableHandle('cjenik-za-spremiti.xls', () => new File([new Uint8Array(bytes)], 'cjenik-za-spremiti.xls')),
+    ];
+    window.showSaveFilePicker = async ({ suggestedName }) =>
+      writableHandle(suggestedName, () => new File([window.__savedXlsx ?? new Uint8Array()], suggestedName));
+  }, xlsBytes);
+  await page.keyboard.press('Control+O');
+  const saveBook = page.locator('.ul-sheet-book:visible');
+  await until(async () => (await page.locator('.tab', { hasText: 'cjenik-za-spremiti' }).count()) > 0, 10000);
+  const saveCell = saveBook.locator('td[data-ref="1,1"]');
+  await saveCell.waitFor({ timeout: 20000 });
+  await saveCell.dblclick();
+  await saveCell.evaluate((el) => {
+    el.textContent = '4321';
+  });
+  await saveCell.press('Enter');
+
+  await page.keyboard.press('Control+S');
+  const lossAsked = await until(
+    async () => (await page.locator('.toast button', { hasText: 'Save anyway' }).count()) > 0,
+    10000,
+  );
+  check(
+    'a converting save asks about what it loses',
+    lossAsked,
+    lossAsked ? '' : (await page.locator('.toast').allInnerTexts()).join(' | ').slice(0, 200),
+  );
+  check('and nothing is written while it asks', (await page.evaluate(() => window.__savedXlsx)) === null);
+  if (lossAsked) await page.locator('.toast button', { hasText: 'Save anyway' }).first().click();
+  const written = await until(async () => (await page.evaluate(() => window.__savedXlsx)) !== null, 10000);
+  const savedBytes = written ? await page.evaluate(() => Array.from(window.__savedXlsx)) : null;
+  let typedInFile = false;
+  if (savedBytes) {
+    const { unzipSync, strFromU8 } = await import('fflate');
+    const parts = unzipSync(new Uint8Array(savedBytes));
+    typedInFile = Object.entries(parts).some(
+      ([name, bytes]) => name.startsWith('xl/worksheets/') && strFromU8(bytes).includes('4321'),
+    );
+  }
+  check(
+    'the converted .xlsx holds what was typed',
+    typedInFile,
+    savedBytes ? `${savedBytes.length} bytes` : 'nothing written',
+  );
+
   /* — OpenDocument — */
 
   /*

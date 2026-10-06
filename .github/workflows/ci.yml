@@ -65,6 +65,11 @@ jobs:
       # reach it. This drives the module directly.
       - run: pnpm verify:recent
 
+      # A save asks before it writes, and once more before it writes over a
+      # file changed outside ulEditor (ADR 0004). Driven through the shell's
+      # own saveTab, with an editor that counts what is done to it.
+      - run: pnpm verify:save
+
       # The tree's ordering is a pure function over nodes, and the cases worth
       # pinning are ones a screenshot would never show — a Croatian name in the
       # right place, slika2 before slika10, an entry with no date going last.

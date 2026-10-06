@@ -198,6 +198,7 @@
   "{name} is open read-only.": "{name} je otvorena samo za čitanje.",
   "{name} was changed outside ulEditor since it was opened.": "{name} je promijenjen izvan ulEditora otkad je otvoren.",
   "Overwrite": "Prepiši",
+  "Notes are saved without their own appearance stream (/AP) — some readers show a default icon.": "Bilješke se spremaju bez vlastitog prikaza (/AP) — neki čitači pokazuju zadanu ikonu.",
   "Saved {name}, but not everything from the original could be reproduced.": "Spremljeno: {name}, ali nije se moglo zadržati sve iz originala.",
   "{name} is a link. Where it points is not shown here.": "{name} je poveznica. Kamo vodi ovdje se ne prikazuje.",
   "Saved: {name}": "Spremljeno: {name}",
