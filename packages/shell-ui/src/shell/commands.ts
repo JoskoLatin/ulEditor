@@ -361,7 +361,9 @@ export function registerCommands(shell: Shell): () => void {
       id: 'file.forgetRecent',
       title: t('Forget recently opened files'),
       category: t('File'),
-      when: () => hasRecent(shell),
+      /* On desktop the core may remember more than the list shows, so it
+         can always be forgotten. */
+      when: () => hasRecent(shell) || Boolean(shell.fs.forgetConsents),
       run: () => {
         clearRecent(shell);
         shell.notify.show('info', t('The list of recent files is empty again.'));

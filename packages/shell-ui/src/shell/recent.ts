@@ -89,8 +89,14 @@ export function forget(shell: Shell, uri: Uri): void {
   }
 }
 
+/**
+ * Empties the recent lists, and on desktop forgets every consent the core
+ * remembered with them: what the person sees go is what goes (ADR 0005). The
+ * list shows ten; the core keeps more.
+ */
 export function clearRecent(shell: Shell): void {
   for (const key of Object.keys(LIMITS) as Key[]) shell.settings.set(key, []);
+  void shell.fs.forgetConsents?.();
 }
 
 /** Whether there is anything to show at all — the section is hidden otherwise. */

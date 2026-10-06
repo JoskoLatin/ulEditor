@@ -325,7 +325,7 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
                 return Ok(stat);
             }
             let real = std::fs::canonicalize(&raw)?;
-            match consents.claim(&real)? {
+            match consents.claim(&real) {
                 Some(consent) => {
                     admit(workspace, &consent)?;
                     workspace.stat(&real)
@@ -364,6 +364,14 @@ fn forget_root(
         }
         Ok(())
     })
+}
+
+/// Forgets every consent, given or claimed — "Forget recently opened files".
+/// What is open now stays open; nothing is let in again after a restart
+/// until it is handed over again.
+#[tauri::command]
+fn forget_consents(state: State<'_, AppState>) -> Result<(), VfsError> {
+    with_consents(&state, |_, consents| Ok(consents.forget_all()?))
 }
 
 #[tauri::command]
@@ -1609,6 +1617,7 @@ pub fn run() {
             pick_files,
             pick_save_target,
             adopt_paths,
+            forget_consents,
             forget_root,
             roots,
             read_directory,

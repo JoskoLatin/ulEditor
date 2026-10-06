@@ -76,22 +76,56 @@ impl Consent {
 /// The most consents remembered. The oldest go first.
 pub const MOST_REMEMBERED: usize = 128;
 
+/// The most claimed offers remembered, apart from what gestures gave: a
+/// page that claims everything a list offered fills these, and pushes out
+/// none of the person's own consents.
+pub const MOST_CLAIMED: usize = 64;
+
 /// What is kept on disk.
 #[derive(Default, Serialize, Deserialize)]
 struct Kept {
     #[serde(default)]
     consents: Vec<Consent>,
+    #[serde(default)]
+    claimed: Vec<Consent>,
 }
 
-/// The consents of this installation: the remembered ones, kept across
-/// restarts, and what was offered in this session.
+/// The consents of this installation: what gestures gave and what was
+/// claimed of an offer, kept across restarts, and what was offered in this
+/// session.
 #[derive(Debug, Default, Clone)]
 pub struct Consents {
     /// Where the remembered ones are kept; `None` keeps them for this session
     /// only (a folder that could not be made, or a test).
     file: Option<PathBuf>,
+    /// What gestures gave, newest first.
     remembered: Vec<Consent>,
-    offered: Vec<Consent>,
+    /// What the page claimed of an offer, newest first — a list of its own.
+    claimed: Vec<Consent>,
+    offered: std::collections::HashMap<PathBuf, Consent>,
+}
+
+/// A path as it is shown, without the `\?\` the resolved form carries on
+/// Windows: what two spellings of one place are compared by when the place
+/// itself is gone and cannot be resolved again — a stick pulled out.
+fn plain(path: &Path) -> PathBuf {
+    PathBuf::from(crate::vfs::display(path))
+}
+
+/// Keeps one consent for `consent.path` in `list`, first, the wider access
+/// winning over a narrower one already there, and no more than `most`.
+fn keep_first(list: &mut Vec<Consent>, consent: Consent, most: usize) {
+    let wider = list
+        .iter()
+        .find(|kept| kept.path == consent.path && kept.kind == consent.kind)
+        .is_some_and(|kept| kept.access == Access::ReadWrite);
+    list.retain(|kept| kept.path != consent.path);
+    let mut consent = consent;
+    if wider {
+        consent.access = Access::ReadWrite;
+    }
+    list.insert(0, consent);
+    list.truncate(most);
 }
 
 impl Consents {
@@ -104,74 +138,96 @@ impl Consents {
     /// read remembers nothing — every folder is opened again by hand, which is
     /// the safe way to be wrong.
     pub fn load(file: PathBuf) -> Self {
-        let remembered = std::fs::read(&file)
+        let kept = std::fs::read(&file)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok())
-            .map(|kept| kept.consents)
             .unwrap_or_default();
         let mut consents = Self {
             file: Some(file),
-            remembered,
-            offered: Vec::new(),
+            remembered: kept.consents,
+            claimed: kept.claimed,
+            offered: std::collections::HashMap::new(),
         };
         consents.remembered.truncate(MOST_REMEMBERED);
+        consents.claimed.truncate(MOST_CLAIMED);
         consents
     }
 
-    /// The remembered consents, newest first.
+    /// What the page claimed of an offer, newest first.
+    pub fn claimed(&self) -> &[Consent] {
+        &self.claimed
+    }
+
+    /// What gestures gave, newest first.
     pub fn remembered(&self) -> &[Consent] {
         &self.remembered
     }
 
     /// Remembers a consent a gesture gave: first in the list, in place of an
-    /// earlier one for the same path, and written at once.
+    /// earlier one for the same path — keeping the wider of the two — and
+    /// written at once.
     pub fn remember(&mut self, consent: Consent) -> io::Result<()> {
-        self.remembered.retain(|kept| kept.path != consent.path);
-        self.remembered.insert(0, consent);
-        self.remembered.truncate(MOST_REMEMBERED);
+        keep_first(&mut self.remembered, consent, MOST_REMEMBERED);
         self.save()
     }
 
     /// Offers what a list Rust made holds, for this session: the page may
     /// claim it, and nothing beside it.
     pub fn offer(&mut self, consent: Consent) {
-        self.offered.retain(|kept| kept.path != consent.path);
-        self.offered.push(consent);
+        self.offered.insert(consent.path.clone(), consent);
     }
 
     /// What the page may have of `path`, which the caller has resolved to its
-    /// canonical form: what was offered for it, or a remembered consent that
-    /// covers it. A claimed offer is remembered — a session restored later
-    /// finds it — and a remembered consent moves to the front. `None`: nobody
-    /// consented to it, and the page asked anyway.
-    pub fn claim(&mut self, path: &Path) -> io::Result<Option<Consent>> {
-        if let Some(offered) = self.offered.iter().find(|offer| offer.path == path) {
-            let offered = offered.clone();
-            self.remember(offered.clone())?;
-            return Ok(Some(offered));
+    /// canonical form: what a gesture's consent covers, what was offered for
+    /// it, or what it claimed of an offer before. A gesture's consent goes
+    /// furthest and is taken first; a claimed offer is kept in a list of its
+    /// own, so that a session restored later finds it without it pushing out
+    /// anything the person gave. A list that cannot be written keeps what was
+    /// claimed for this session. `None`: nobody consented to it, and the page
+    /// asked anyway.
+    pub fn claim(&mut self, path: &Path) -> Option<Consent> {
+        if let Some(at) = self.remembered.iter().position(|kept| kept.covers(path)) {
+            let kept = self.remembered.remove(at);
+            self.remembered.insert(0, kept.clone());
+            let _ = self.save();
+            return Some(kept);
         }
-        let Some(at) = self.remembered.iter().position(|kept| kept.covers(path)) else {
-            return Ok(None);
-        };
-        let kept = self.remembered.remove(at);
-        self.remembered.insert(0, kept.clone());
-        self.save()?;
-        Ok(Some(kept))
+        if let Some(offered) = self.offered.get(path).cloned() {
+            keep_first(&mut self.claimed, offered.clone(), MOST_CLAIMED);
+            let _ = self.save();
+            return Some(offered);
+        }
+        let at = self.claimed.iter().position(|kept| kept.covers(path))?;
+        let kept = self.claimed.remove(at);
+        self.claimed.insert(0, kept.clone());
+        let _ = self.save();
+        Some(kept)
     }
 
-    /// Forgets the consent for `path` — a folder taken out of Recent — and
-    /// what was offered of it this session: an offer left standing would let
-    /// the page claim straight back what was just forgotten, and remember it
-    /// again.
+    /// Forgets the consent for `path` — a folder taken out of Recent — with
+    /// everything under it, given or claimed, and what was offered of it this
+    /// session: an offer left standing would let the page claim straight back
+    /// what was just forgotten. Compared as shown as well as resolved, so a
+    /// folder on a stick that is gone is still forgotten.
     pub fn forget(&mut self, path: &Path) -> io::Result<()> {
-        let gone = Consent::folder(path, Access::Read);
-        self.offered
-            .retain(|offer| offer.path != path && !gone.covers(&offer.path));
-        let before = self.remembered.len();
-        self.remembered.retain(|kept| kept.path != path);
-        if self.remembered.len() == before {
+        let gone = Consent::folder(plain(path), Access::Read);
+        let forgotten = |kept: &Consent| gone.covers(&plain(&kept.path));
+        let before = self.remembered.len() + self.claimed.len();
+        self.offered.retain(|_, offer| !forgotten(offer));
+        self.remembered.retain(|kept| !forgotten(kept));
+        self.claimed.retain(|kept| !forgotten(kept));
+        if self.remembered.len() + self.claimed.len() == before {
             return Ok(());
         }
+        self.save()
+    }
+
+    /// Forgets every consent, given or claimed, and every offer — what
+    /// "Forget recently opened files" means to the person.
+    pub fn forget_all(&mut self) -> io::Result<()> {
+        self.remembered.clear();
+        self.claimed.clear();
+        self.offered.clear();
         self.save()
     }
 
@@ -183,6 +239,7 @@ impl Consents {
         };
         let kept = Kept {
             consents: self.remembered.clone(),
+            claimed: self.claimed.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
         let fresh = file.with_extension("json.new");
@@ -267,28 +324,20 @@ mod tests {
             .remember(Consent::folder("/projects/ul", Access::ReadWrite))
             .unwrap();
 
-        let offered = consents.claim(Path::new("/library/ugovor.pdf")).unwrap();
+        let offered = consents.claim(Path::new("/library/ugovor.pdf"));
         assert_eq!(offered.map(|c| c.access), Some(Access::Read));
-        /* Claimed, the offer is remembered: a restored session finds it. */
+        /* Claimed, the offer is kept: a restored session finds it. */
         assert!(consents
-            .remembered()
+            .claimed()
             .iter()
             .any(|c| c.path == Path::new("/library/ugovor.pdf")));
 
-        let under = consents
-            .claim(Path::new("/projects/ul/src/main.rs"))
-            .unwrap();
+        let under = consents.claim(Path::new("/projects/ul/src/main.rs"));
         assert_eq!(under.map(|c| c.kind), Some(Kind::Folder));
 
-        assert_eq!(
-            consents.claim(Path::new("/library/other.pdf")).unwrap(),
-            None
-        );
-        assert_eq!(
-            consents.claim(Path::new("/projects/ulx/a.rs")).unwrap(),
-            None
-        );
-        assert_eq!(consents.claim(Path::new("/Windows")).unwrap(), None);
+        assert_eq!(consents.claim(Path::new("/library/other.pdf")), None);
+        assert_eq!(consents.claim(Path::new("/projects/ulx/a.rs")), None);
+        assert_eq!(consents.claim(Path::new("/Windows")), None);
     }
 
     #[test]
@@ -309,7 +358,7 @@ mod tests {
             .remember(Consent::folder("/projects/ul", Access::ReadWrite))
             .unwrap();
         consents.forget(Path::new("/projects/ul")).unwrap();
-        assert_eq!(consents.claim(Path::new("/projects/ul")).unwrap(), None);
+        assert_eq!(consents.claim(Path::new("/projects/ul")), None);
         assert!(Consents::load(file).remembered().is_empty());
     }
 
@@ -320,18 +369,125 @@ mod tests {
         let mut consents = Consents::in_memory();
         consents.offer(Consent::file("/library/ugovor.pdf", Access::Read));
         consents.offer(Consent::file("/library/sub/plan.pdf", Access::Read));
-        consents.claim(Path::new("/library/ugovor.pdf")).unwrap();
+        consents.claim(Path::new("/library/ugovor.pdf"));
 
         consents.forget(Path::new("/library/ugovor.pdf")).unwrap();
-        assert_eq!(
-            consents.claim(Path::new("/library/ugovor.pdf")).unwrap(),
-            None
-        );
+        assert_eq!(consents.claim(Path::new("/library/ugovor.pdf")), None);
 
         consents.forget(Path::new("/library/sub")).unwrap();
+        assert_eq!(consents.claim(Path::new("/library/sub/plan.pdf")), None);
+    }
+
+    /// A page that claims everything a list offered fills a list of its own,
+    /// and pushes out none of the person's consents.
+    #[test]
+    fn claimed_offers_push_out_no_gesture() {
+        let mut consents = Consents::in_memory();
+        for n in 0..MOST_REMEMBERED {
+            consents
+                .remember(Consent::file(format!("/given/f{n}"), Access::ReadWrite))
+                .unwrap();
+        }
+        for n in 0..MOST_CLAIMED + 10 {
+            let path = format!("/library/d{n}.pdf");
+            consents.offer(Consent::file(&path, Access::Read));
+            consents.claim(Path::new(&path));
+        }
+        assert_eq!(consents.remembered().len(), MOST_REMEMBERED);
+        assert!(consents
+            .remembered()
+            .iter()
+            .all(|c| c.path.starts_with("/given")));
+        assert_eq!(consents.claimed().len(), MOST_CLAIMED);
+    }
+
+    /// A file a dialog gave to be written, offered later only to be read, is
+    /// claimed as far as the dialog gave — and remembering it again to be
+    /// read does not narrow it.
+    #[test]
+    fn the_wider_consent_wins() {
+        let mut consents = Consents::in_memory();
+        consents
+            .remember(Consent::file("/a/notes.md", Access::ReadWrite))
+            .unwrap();
+        consents.offer(Consent::file("/a/notes.md", Access::Read));
         assert_eq!(
-            consents.claim(Path::new("/library/sub/plan.pdf")).unwrap(),
-            None
+            consents.claim(Path::new("/a/notes.md")).map(|c| c.access),
+            Some(Access::ReadWrite)
         );
+        assert!(consents.claimed().is_empty());
+
+        consents
+            .remember(Consent::file("/a/notes.md", Access::Read))
+            .unwrap();
+        assert_eq!(consents.remembered()[0].access, Access::ReadWrite);
+    }
+
+    /// A folder forgotten takes what is under it with it, given or claimed,
+    /// and is forgotten by its shown name when its resolved one is gone — a
+    /// stick pulled out.
+    #[test]
+    fn a_forgotten_folder_takes_what_is_under_it() {
+        let mut consents = Consents::in_memory();
+        /* The resolved form as Windows gives it, and the shown one the page
+        has once the stick is gone. Written as Windows paths: the shown form
+        is what `display` makes of them there. */
+        let (stick, notes, pdf, shown) = if cfg!(windows) {
+            (
+                r"\\?\E:\stick",
+                r"\\?\E:\stick\notes.md",
+                r"\\?\E:\stick\a.pdf",
+                r"E:\stick",
+            )
+        } else {
+            (
+                "/media/stick",
+                "/media/stick/notes.md",
+                "/media/stick/a.pdf",
+                "/media/stick",
+            )
+        };
+        consents
+            .remember(Consent::folder(stick, Access::ReadWrite))
+            .unwrap();
+        consents
+            .remember(Consent::file(notes, Access::ReadWrite))
+            .unwrap();
+        consents.offer(Consent::file(pdf, Access::Read));
+        consents.claim(Path::new(pdf));
+        consents.forget(Path::new(shown)).unwrap();
+        assert!(
+            consents.remembered().is_empty(),
+            "{:?}",
+            consents.remembered()
+        );
+        assert!(consents.claimed().is_empty(), "{:?}", consents.claimed());
+    }
+
+    /// Forgetting everything leaves nothing to claim, after a restart too.
+    #[test]
+    fn everything_forgotten_is_forgotten() {
+        let dir = scratch("forget-all");
+        let file = dir.join("consents.json");
+        let mut consents = Consents::load(file.clone());
+        consents
+            .remember(Consent::folder("/projects/ul", Access::ReadWrite))
+            .unwrap();
+        consents.offer(Consent::file("/library/x.pdf", Access::Read));
+        consents.claim(Path::new("/library/x.pdf"));
+        consents.forget_all().unwrap();
+        assert_eq!(consents.claim(Path::new("/projects/ul")), None);
+        assert_eq!(consents.claim(Path::new("/library/x.pdf")), None);
+        let again = Consents::load(file);
+        assert!(again.remembered().is_empty() && again.claimed().is_empty());
+    }
+
+    /// A list that cannot be written still lets the page claim what it may.
+    #[test]
+    fn a_claim_stands_when_the_list_cannot_be_written() {
+        let dir = scratch("unwritable");
+        let mut consents = Consents::load(dir.join("gone").join("consents.json"));
+        consents.offer(Consent::file("/library/x.pdf", Access::Read));
+        assert!(consents.claim(Path::new("/library/x.pdf")).is_some());
     }
 }

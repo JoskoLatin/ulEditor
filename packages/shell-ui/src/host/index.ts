@@ -52,6 +52,8 @@ export type ShellFileSystem = VirtualFileSystem & {
    * desktop's consent to it as well — a folder taken out of Recent (ADR 0005).
    */
   forgetRoot?(uri: Uri, keep?: Uri[], remember?: boolean): Promise<void>;
+  /** Forgets every consent the desktop remembered — "Forget recently opened files". */
+  forgetConsents?(): Promise<void>;
 };
 
 export type Platform = 'desktop' | 'web';

@@ -196,6 +196,10 @@ export class TauriFileSystem implements VirtualFileSystem {
     await invoke('forget_root', { path: uri, keep, remember });
   }
 
+  async forgetConsents(): Promise<void> {
+    await invoke('forget_consents');
+  }
+
   async pickDirectory(): Promise<DirectoryEntry | null> {
     const raw = await invoke<RawStat | null>('pick_directory');
     return raw ? (toStat(raw) as DirectoryEntry) : null;

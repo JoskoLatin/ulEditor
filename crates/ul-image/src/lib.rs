@@ -324,13 +324,30 @@ fn tiff_compression_held(bytes: &[u8]) -> bool {
     let Some(count) = u16_at(ifd) else {
         return false;
     };
+    /* Every Compression tag in the directory, read as the decoder reads it:
+    by its own type. A SHORT holds its value in the first two bytes of the
+    field and a LONG in all four — read as a SHORT, a big-endian LONG 7 is a
+    0 — and a directory naming the compression twice is refused rather than
+    guessed at, since which of the two a decoder takes is its own business
+    (both found by the automated review of 94e3316). */
+    let mut named = 0;
     for entry in 0..usize::from(count) {
         let at = ifd + 2 + entry * 12;
-        if u16_at(at) != Some(259) {
+        let Some(tag) = u16_at(at) else {
+            return false;
+        };
+        if tag != 259 {
             continue;
         }
-        // Compression: a SHORT, its value in the first two bytes of the field.
-        return !matches!(u16_at(at + 8), Some(6 | 7) | None);
+        named += 1;
+        let value = match (u16_at(at + 2), u32_at(at + 4)) {
+            (Some(3), Some(1)) => u16_at(at + 8).map(u32::from),
+            (Some(4), Some(1)) => u32_at(at + 8),
+            _ => None,
+        };
+        if named > 1 || matches!(value, Some(6 | 7) | None) {
+            return false;
+        }
     }
     // No Compression tag: none, which is held.
     true
@@ -796,6 +813,61 @@ mod tests {
             }
             assert!(tiff_compression_held(&tiff(little, 1)), "{little}");
             assert!(tiff_compression_held(&tiff(little, 5)), "{little}");
+
+            /* The tag as a LONG, twice over, or with two values. */
+            let entries = |list: &[(u16, u32, u32)]| -> Vec<u8> {
+                let mut out = if little {
+                    b"II".to_vec()
+                } else {
+                    b"MM".to_vec()
+                };
+                let u16b = |v: u16| {
+                    if little {
+                        v.to_le_bytes()
+                    } else {
+                        v.to_be_bytes()
+                    }
+                };
+                let u32b = |v: u32| {
+                    if little {
+                        v.to_le_bytes()
+                    } else {
+                        v.to_be_bytes()
+                    }
+                };
+                out.extend_from_slice(&u16b(42));
+                out.extend_from_slice(&u32b(8));
+                out.extend_from_slice(&u16b(list.len() as u16));
+                for &(kind, count, value) in list {
+                    out.extend_from_slice(&u16b(259));
+                    out.extend_from_slice(&u16b(kind));
+                    out.extend_from_slice(&u32b(count));
+                    if kind == 3 {
+                        out.extend_from_slice(&u16b(value as u16));
+                        out.extend_from_slice(&[0, 0]);
+                    } else {
+                        out.extend_from_slice(&u32b(value));
+                    }
+                }
+                out.extend_from_slice(&u32b(0));
+                out
+            };
+            assert!(
+                !tiff_compression_held(&entries(&[(4, 1, 7)])),
+                "LONG 7, {little}"
+            );
+            assert!(
+                tiff_compression_held(&entries(&[(4, 1, 1)])),
+                "LONG 1, {little}"
+            );
+            assert!(
+                !tiff_compression_held(&entries(&[(3, 1, 1), (3, 1, 7)])),
+                "twice, {little}"
+            );
+            assert!(
+                !tiff_compression_held(&entries(&[(3, 2, 1)])),
+                "two values, {little}"
+            );
         }
         let refused = preview(&tiff(true, 7));
         assert!(
