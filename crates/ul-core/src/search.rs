@@ -615,15 +615,24 @@ fn opened_inside(path: &Path, seen: &Look, root: &Path) -> Option<fs::File> {
 /// A system with no such folder at all — a sandbox or a chroot without
 /// `/proc` — is asked the path instead, as systems are that have no way to
 /// ask the file: every file used to be skipped there, and the search said it
-/// had found nothing. What is opened is still checked to be the file the walk
-/// saw (`same_file`) before this is asked. A folder that is there and does
-/// not answer for a file leaves that file out.
+/// had found nothing. The path is then taken only if it leads to the very
+/// file opened (device and inode): the look the walk took, which the open
+/// file is checked against, followed whatever links the folders above it
+/// were by then, so it does not by itself say where the file is. What is
+/// left is a folder swapped and swapped back three times over between the
+/// open and the question. A folder that is there and does not answer for a
+/// file leaves that file out.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn where_opened_through(fds: &Path, fd: i32, path: &Path) -> Option<PathBuf> {
+fn where_opened_through(fds: &Path, file: &fs::File, path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::io::AsRawFd;
+
     if !fds.is_dir() {
-        return fs::canonicalize(path).ok();
+        let at = fs::canonicalize(path).ok()?;
+        let (there, opened) = (fs::metadata(&at).ok()?, file.metadata().ok()?);
+        return (there.dev() == opened.dev() && there.ino() == opened.ino()).then_some(at);
     }
-    let at = fs::read_link(fds.join(fd.to_string())).ok()?;
+    let at = fs::read_link(fds.join(file.as_raw_fd().to_string())).ok()?;
     // A file taken away since it was opened is not one to report.
     (!at.to_string_lossy().ends_with(" (deleted)")).then_some(at)
 }
@@ -640,8 +649,7 @@ fn where_opened(file: &fs::File, path: &Path) -> Option<PathBuf> {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        use std::os::unix::io::AsRawFd;
-        where_opened_through(Path::new("/proc/self/fd"), file.as_raw_fd(), path)
+        where_opened_through(Path::new("/proc/self/fd"), file, path)
     }
     #[cfg(target_vendor = "apple")]
     {
@@ -1309,8 +1317,6 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn without_proc_a_file_is_placed_by_its_path() {
-        use std::os::unix::io::AsRawFd;
-
         let root = fs::canonicalize(temp_root("no-proc")).unwrap();
         write(&root, "here.txt", "x");
         let file = root.join("here.txt");
@@ -1318,13 +1324,19 @@ mod tests {
 
         let nowhere = root.join("no-proc-here");
         assert_eq!(
-            where_opened_through(&nowhere, open.as_raw_fd(), &file),
+            where_opened_through(&nowhere, &open, &file),
             Some(file.clone())
         );
         assert_eq!(
-            where_opened_through(Path::new("/proc/self/fd"), open.as_raw_fd(), &file),
-            Some(file)
+            where_opened_through(Path::new("/proc/self/fd"), &open, &file),
+            Some(file.clone())
         );
+
+        /* The path leading by now to another file: not where the one opened
+        is, and nothing is said of it. */
+        fs::rename(&file, root.join("away.txt")).unwrap();
+        write(&root, "here.txt", "another");
+        assert_eq!(where_opened_through(&nowhere, &open, &file), None);
     }
 
     #[test]
@@ -1337,7 +1349,7 @@ mod tests {
         let root = fs::canonicalize(temp_root("listed-root")).unwrap();
         write(&root, "here.txt", "x");
         if !links.file(&root.join("there.txt"), &outside.join("secret.txt")) {
-            eprintln!("skipped: this account cannot make a link to a file");
+            crate::testing::skip("this account cannot make a link to a file");
             return;
         }
 

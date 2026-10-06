@@ -25,6 +25,17 @@ fn link_folder(link: &Path, target: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
 }
 
+/// A test that cannot do what it is for on this machine says so and ends —
+/// except on CI (`CI` is set on GitHub's runners), which can, and where a
+/// test that ended so would pass a check that never ran.
+pub(crate) fn skip(why: &str) {
+    assert!(
+        std::env::var_os("CI").is_none(),
+        "{why}: on CI the check has to run"
+    );
+    eprintln!("skipped: {why}");
+}
+
 /// The links a test made, taken away when it ends, passed or failed: a loop
 /// left in the temporary folder waits for the next tool that follows links.
 /// Taking a link away leaves what it points at.
