@@ -22,6 +22,15 @@
  * `~/.cargo` — and the desktop sandbox has never been told about those, so the
  * jump is also a test of re-adopting a path.
  *
+ * **And before any of it, the question.** A server runs the project's own code
+ * — rust-analyzer builds it — so the first file of a project asks, in a dialog
+ * Windows draws, whether to trust it (`trust.rs`). One project is answered
+ * "Not now", and nothing may be marked in it however long one waits; the one
+ * the rest of this works in is answered "Trust and start", and only that one is
+ * written down. The dialog is answered from outside the program, by its button
+ * ids, as a person would — the page has no way to answer it, which is the
+ * point of it.
+ *
  * The one thing this cannot rush is rust-analyzer: it loads the sysroot and runs
  * `cargo check` before it says anything, which is tens of seconds on a cold
  * cache. Under the application that check is not blocked by anything — unlike
@@ -30,9 +39,10 @@
  *   node tools/verify-desktop-lsp.mjs
  */
 
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { basename, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { startDesktop, stopDesktop } from './desktop-session.mjs';
@@ -59,6 +69,73 @@ const FIXED = [
   '',
 ].join('\n');
 
+/**
+ * Presses one button of the trust question the application asks before a
+ * language server starts, and returns its title — or why it could not.
+ *
+ * The question is a Windows task dialog: class `#32770`, owned by the
+ * application's process. rfd numbers its custom buttons 1004, 1008 and 1001
+ * (yes, no, cancel), which are "Not now", "Trust and start" and "Never for this
+ * folder" here, and `TDM_CLICK_BUTTON` (WM_USER + 102) presses one. Waited for,
+ * up to `seconds`, since it comes up on a thread of its own.
+ */
+const NOT_NOW = 1004;
+const TRUST = 1008;
+function answerTrust(button, seconds = 60) {
+  const script = `
+Add-Type @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class UlTrust {
+  delegate bool Each(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Each f, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static string Press(uint pid, int button) {
+    IntPtr dialog = IntPtr.Zero; string title = "";
+    EnumWindows((h, l) => {
+      uint owner; GetWindowThreadProcessId(h, out owner);
+      if (owner != pid || !IsWindowVisible(h)) return true;
+      var name = new StringBuilder(64); GetClassName(h, name, 64);
+      if (name.ToString() != "#32770") return true;
+      var text = new StringBuilder(256); GetWindowText(h, text, 256);
+      dialog = h; title = text.ToString(); return false;
+    }, IntPtr.Zero);
+    if (dialog == IntPtr.Zero) return "no dialog";
+    PostMessage(dialog, 0x0466, (IntPtr)button, IntPtr.Zero);
+    return "pressed: " + title;
+  }
+}
+'@
+$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -like '*\\target\\debug\\*' } | Select-Object -First 1).ProcessId
+$said = 'no application'
+for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
+  $said = [UlTrust]::Press([uint32]$app, ${button})
+  if ($said -like 'pressed*') { break }
+  Start-Sleep -Milliseconds 250
+}
+$said`;
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+  });
+  return (out.stdout ?? '').trim().split(/\r?\n/).pop() || (out.stderr ?? '').trim();
+}
+
+/** A crate of its own, outside this repository, with `text` as its main.rs. */
+async function crate(text) {
+  const dir = await mkdtemp(join(tmpdir(), 'ul-lsp-app-'));
+  await writeFile(
+    join(dir, 'Cargo.toml'),
+    '[package]\nname = "proba"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n',
+    'utf8',
+  );
+  await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(dir, 'src', 'main.rs'), text, 'utf8');
+  return dir;
+}
+
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
@@ -81,36 +158,55 @@ try {
   const { page } = session;
   check('attached to the desktop application', true);
 
-  /* A crate of its own, outside this repository: rust-analyzer runs
+  /* Crates of their own, outside this repository: rust-analyzer runs
      `cargo metadata`, and a directory inside another workspace that is not one
-     of its members is a project cargo refuses to describe. */
-  const workspace = await mkdtemp(join(tmpdir(), 'ul-lsp-app-'));
-  await writeFile(
-    join(workspace, 'Cargo.toml'),
-    '[package]\nname = "proba"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n',
-    'utf8',
-  );
-  await mkdir(join(workspace, 'src'), { recursive: true });
-  await writeFile(join(workspace, 'src', 'main.rs'), BROKEN, 'utf8');
+     of its members is a project cargo refuses to describe. One is not trusted;
+     the other is where everything below happens. */
+  const untrusted = await crate(BROKEN);
+  const workspace = await crate(BROKEN);
 
   const served = await page.evaluate(
     () => window.__TAURI_INTERNALS__.invoke('lsp_languages'),
   );
   check('the application was asked which languages it can serve', Array.isArray(served), (served ?? []).join(', ') || 'none');
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  /* Opened by its path through the palette, one project at a time: the
+     palette lists every root, and both files are called main.rs. */
+  const openMain = async (dir) => {
+    await page.evaluate(
+      (path) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [path] }),
+      dir,
+    );
+    await page.keyboard.press('Control+P');
+    await page.waitForSelector('.palette-input input', { timeout: 10000 });
+    await page.locator('.palette-input input').fill('main.rs');
+    /* Each item carries its path as its title; the folder name tells the two apart. */
+    const item = `.palette-item[title*="${basename(dir)}"]`;
+    await page.waitForSelector(item, { timeout: 15000 });
+    await page.locator(item).first().click();
+    await page.waitForSelector('.cm-content', { timeout: 30000 });
+  };
 
-  await page.keyboard.press('Control+P');
-  await page.waitForSelector('.palette-input input', { timeout: 10000 });
-  await page.locator('.palette-input input').fill('main.rs');
-  await page.waitForSelector('.palette-item', { timeout: 15000 });
-  await page.locator('.palette-item').first().click();
+  if (served.includes('rust')) {
+    await openMain(untrusted);
+    const asked = answerTrust(NOT_NOW);
+    check('a project nobody has trusted asks before its server starts', asked.startsWith('pressed'), asked);
+    /* Long enough for rust-analyzer to have said something, had it started:
+       the trusted project below is marked well within this on a warm cache. */
+    await new Promise((r) => setTimeout(r, 20000));
+    const marks = await page.locator('.cm-lint-marker-error').count();
+    check('and "Not now" starts nothing', marks === 0, `${marks} marks after 20 s`);
+    /* Closed, so that the editor below is the only one on the page. */
+    await page.keyboard.press('Control+W');
+    await page.waitForSelector('.cm-content', { state: 'detached', timeout: 10000 });
+  }
 
-  await page.waitForSelector('.cm-content', { timeout: 30000 });
+  await openMain(workspace);
   check('the file is open in the code editor', true);
+  if (served.includes('rust')) {
+    const asked = answerTrust(TRUST);
+    check('the next project asks too, and is trusted', asked.startsWith('pressed'), asked);
+  }
 
   if (!served.includes('rust')) {
     /* No rust-analyzer on this machine. That is a correct outcome with its own
@@ -163,6 +259,16 @@ try {
         async () => (await page.locator('.cm-lint-marker-error').count()) === 0,
         180000,
       );
+      const kept = JSON.parse(
+        await readFile(join(session.profile, 'trusted-projects.json'), 'utf8').catch(() => '{}'),
+      );
+      const trusted = (kept.trusted ?? []).map((p) => p.replace(/^\\\\\?\\/, ''));
+      check(
+        'only the trusted project is written down, in the scratch profile',
+        trusted.length === 1 && trusted[0].toLowerCase() === workspace.toLowerCase(),
+        trusted.join(', ') || 'nothing',
+      );
+
       check(
         'and the marks go when the mistake does',
         cleared,

@@ -70,6 +70,9 @@ export async function startDesktop(opts = {}) {
          open lands in the real recent list and the real session. A check that
          restarts the program passes the one it got back, to start again in it. */
       WEBVIEW2_USER_DATA_FOLDER: (profile = opts.profile ?? (await mkdtemp(join(tmpdir(), 'ul-profile-')))),
+      /* And the Rust side's own answers — which projects a language server may
+         run in (trust.rs) — go into the same scratch profile, not the person's. */
+      UL_DATA_DIR: profile,
     },
     /* Silent, unless somebody is trying to find out why a check fails.
        `UL_DESKTOP_LOG=1` lets the application's own output through, which is

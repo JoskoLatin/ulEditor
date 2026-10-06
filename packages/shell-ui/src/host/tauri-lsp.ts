@@ -30,6 +30,8 @@ import {
   type Uri,
 } from '@uleditor/plugin-sdk';
 
+import { getLocale } from '@uleditor/i18n';
+
 import { invoke } from './tauri-fs.js';
 
 /** The shape the Rust side emits. */
@@ -49,7 +51,10 @@ export class TauriLanguageServers implements LanguageService {
 
   async open(uri: Uri, language: string, text: string): Promise<boolean> {
     await this.#listen();
-    return invoke<boolean>('lsp_open', { path: uri, language, text });
+    /* The interface language goes along for the one question Rust may ask
+       first — whether this project is trusted to run its code (trust.rs). It
+       picks which wording, never what the wording says. */
+    return invoke<boolean>('lsp_open', { path: uri, language, text, uiLanguage: getLocale() });
   }
 
   async change(uri: Uri, language: string, version: number, text: string): Promise<void> {

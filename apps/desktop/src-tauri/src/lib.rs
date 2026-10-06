@@ -7,6 +7,7 @@
 use std::sync::Mutex;
 
 mod crash;
+mod trust;
 
 use tauri::ipc::Response;
 use tauri::{Manager, State};
@@ -33,6 +34,11 @@ struct LspState {
     /// Handed to every server as it starts; the receiving end is read by a
     /// thread that turns each message into an event for the window.
     sink: std::sync::mpsc::Sender<LspEvent>,
+    /// The projects a server may start in — see `trust.rs`.
+    trust: Mutex<trust::ProjectTrust>,
+    /// Held while the person is being asked, so that a restored session
+    /// opening several files of one project asks once.
+    asking: tokio::sync::Mutex<()>,
 }
 
 /// Files the program was asked to open when it started.
@@ -559,18 +565,85 @@ fn lsp_languages() -> Vec<String> {
         .collect()
 }
 
-/// A document is open: start a server if one is installed, and tell it.
+/// Whether a language server may start in `project`: asked of the person the
+/// first time, in a dialog the system draws, and remembered (`trust.rs`).
+/// `interface` picks the language the question is in, and nothing else.
+async fn may_start(
+    app: &tauri::AppHandle,
+    lsp: &LspState,
+    language: &str,
+    project: &std::path::Path,
+    interface: Option<&str>,
+) -> bool {
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+
+    let _asking = lsp.asking.lock().await;
+    let verdict = lsp
+        .trust
+        .lock()
+        .expect("the trust list is poisoned")
+        .verdict(project);
+    match verdict {
+        trust::Verdict::Trusted => return true,
+        trust::Verdict::Declined => return false,
+        trust::Verdict::Ask => {}
+    }
+
+    let asked = trust::question(interface, language, project);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(asked.body.clone())
+        .title(asked.title.clone())
+        .kind(MessageDialogKind::Warning)
+        /* The safe answer first, where Enter lands — see `trust::Question`. */
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            asked.not_now.clone(),
+            asked.trust.clone(),
+            asked.never.clone(),
+        ))
+        .show_with_result(move |pressed| {
+            let _ = tx.send(pressed);
+        });
+    /* A dialog that went away without an answer is a no. */
+    let pressed = match rx.await {
+        Ok(MessageDialogResult::Custom(label)) => Some(label),
+        _ => None,
+    };
+
+    let mut trust = lsp.trust.lock().expect("the trust list is poisoned");
+    match asked.answer(pressed.as_deref()) {
+        /* Kept for the session even when it cannot be written down. */
+        trust::Answer::Trust => {
+            let _ = trust.trust(project);
+            true
+        }
+        trust::Answer::Never => {
+            let _ = trust.refuse(project);
+            false
+        }
+        trust::Answer::NotNow => {
+            trust.decline(project);
+            false
+        }
+    }
+}
+
+/// A document is open: start a server if one is installed and the project is
+/// trusted, and tell it.
 ///
 /// Returns whether anything is listening. `false` is not a failure — it is the
-/// ordinary answer on a machine without that server installed, and the editor
-/// uses it to stop expecting underlines rather than to report a problem.
+/// ordinary answer on a machine without that server installed, or for a
+/// project the person did not trust, and the editor uses it to stop expecting
+/// underlines rather than to report a problem.
 #[tauri::command]
 async fn lsp_open(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     lsp: State<'_, LspState>,
     path: String,
     language: String,
     text: String,
+    ui_language: Option<String>,
 ) -> Result<bool, LspCommandError> {
     if ul_lsp::find_server(&language).is_none() {
         return Ok(false);
@@ -589,6 +662,13 @@ async fn lsp_open(
     /* The project rather than the folder that was opened: `C:\dev` may hold
     fifty crates, and rust-analyzer pointed at it would index all of them. */
     let project = ul_lsp::project_root_for(&language, &file, &root);
+
+    /* Before the server, not inside it: starting is what runs the project's
+    code, so the question comes first — every time a document opens,
+    including the ones a restored session opens by itself. */
+    if !may_start(&app, &lsp, &language, &project, ui_language.as_deref()).await {
+        return Ok(false);
+    }
 
     let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
     let server = servers.ensure(
@@ -1167,9 +1247,24 @@ pub fn run() {
              * window anywhere. This is the only place the two meet.
              */
             let (sink, news) = std::sync::mpsc::channel::<LspEvent>();
+            /* Where a yes is kept. A folder that cannot be made keeps it for
+            this session only: the person is asked again next time, which is
+            the safe way for this to fail. */
+            /* `UL_DATA_DIR` is for the desktop checks, which start the program
+            on a scratch profile and must not leave their test projects in the
+            person's own answers. Whoever sets a process's environment already
+            chooses what it opens, so it grants nothing new. */
+            let trusted = std::env::var_os("UL_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| app.path().app_config_dir().ok())
+                .filter(|dir| private_folder(dir).is_ok())
+                .map(|dir| trust::ProjectTrust::load(dir.join("trusted-projects.json")))
+                .unwrap_or_default();
             app.manage(LspState {
                 servers: Mutex::new(Servers::new()),
                 sink,
+                trust: Mutex::new(trusted),
+                asking: tokio::sync::Mutex::new(()),
             });
 
             let handle = app.handle().clone();
