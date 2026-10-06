@@ -159,8 +159,14 @@ impl Consents {
         Ok(Some(kept))
     }
 
-    /// Forgets the consent for `path` — a folder taken out of Recent.
+    /// Forgets the consent for `path` — a folder taken out of Recent — and
+    /// what was offered of it this session: an offer left standing would let
+    /// the page claim straight back what was just forgotten, and remember it
+    /// again.
     pub fn forget(&mut self, path: &Path) -> io::Result<()> {
+        let gone = Consent::folder(path, Access::Read);
+        self.offered
+            .retain(|offer| offer.path != path && !gone.covers(&offer.path));
         let before = self.remembered.len();
         self.remembered.retain(|kept| kept.path != path);
         if self.remembered.len() == before {
@@ -305,5 +311,27 @@ mod tests {
         consents.forget(Path::new("/projects/ul")).unwrap();
         assert_eq!(consents.claim(Path::new("/projects/ul")).unwrap(), None);
         assert!(Consents::load(file).remembered().is_empty());
+    }
+
+    /// Forgotten, a file that was offered this session is not claimed straight
+    /// back through its offer — nor a file offered inside a forgotten folder.
+    #[test]
+    fn a_forgotten_offer_is_not_claimed_back() {
+        let mut consents = Consents::in_memory();
+        consents.offer(Consent::file("/library/ugovor.pdf", Access::Read));
+        consents.offer(Consent::file("/library/sub/plan.pdf", Access::Read));
+        consents.claim(Path::new("/library/ugovor.pdf")).unwrap();
+
+        consents.forget(Path::new("/library/ugovor.pdf")).unwrap();
+        assert_eq!(
+            consents.claim(Path::new("/library/ugovor.pdf")).unwrap(),
+            None
+        );
+
+        consents.forget(Path::new("/library/sub")).unwrap();
+        assert_eq!(
+            consents.claim(Path::new("/library/sub/plan.pdf")).unwrap(),
+            None
+        );
     }
 }
