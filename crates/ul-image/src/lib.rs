@@ -757,10 +757,19 @@ mod tests {
     #[test]
     fn a_tiff_compressed_with_jpeg_is_refused() {
         let tiff = |little: bool, compression: u16| -> Vec<u8> {
-            let (u16b, u32b): (fn(u16) -> [u8; 2], fn(u32) -> [u8; 4]) = if little {
-                (u16::to_le_bytes, u32::to_le_bytes)
-            } else {
-                (u16::to_be_bytes, u32::to_be_bytes)
+            let u16b = |v: u16| {
+                if little {
+                    v.to_le_bytes()
+                } else {
+                    v.to_be_bytes()
+                }
+            };
+            let u32b = |v: u32| {
+                if little {
+                    v.to_le_bytes()
+                } else {
+                    v.to_be_bytes()
+                }
             };
             let mut out = if little {
                 b"II".to_vec()
