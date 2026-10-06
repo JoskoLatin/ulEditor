@@ -18,11 +18,14 @@
 
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside, pressDialog } from './desktop-session.mjs';
+
+/** The first of the three buttons in the core's questions: the safe answer. */
+const NOT_NOW = 1004;
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -102,6 +105,37 @@ try {
     'a navigation with a query goes nowhere',
     page.url() === home && (await page.locator('.shell').count()) > 0,
     page.url(),
+  );
+
+  /* ── the library asks the person first ───────────────────────────── */
+
+  /* A scan the page starts is asked about in a dialog the system draws,
+     which the page cannot answer. "Not now" is pressed — "Allow" would have
+     this check read the person's real folders. */
+  const scanning = page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke('scan_library', { limit: 1e9, uiLanguage: 'en' }).then(
+      () => 'scanned',
+      (err) => String(err),
+    ),
+  );
+  await sleep(1000);
+  const pressed = pressDialog(NOT_NOW, 30);
+  const scanned = await scanning;
+  check('a library scan the page starts is asked about first', pressed.startsWith('pressed'), pressed);
+  check('and without a yes nothing is scanned', /not allowed/.test(scanned), scanned);
+  const askedAgain = await page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke('scan_library', { limit: 10 }).then(
+      () => 'scanned',
+      (err) => String(err),
+    ),
+  );
+  check('a no lasts the session: asked again, it is not asked', /not allowed/.test(askedAgain), askedAgain);
+  const documents = join(homedir(), 'Documents');
+  const fromLibrary = await invoke('adopt_paths', { paths: [documents] });
+  check(
+    'and nothing in the library folders can be claimed',
+    Array.isArray(fromLibrary) && fromLibrary.length === 0,
+    JSON.stringify(fromLibrary),
   );
 
   /* ── what the system hands over is ───────────────────────────────── */

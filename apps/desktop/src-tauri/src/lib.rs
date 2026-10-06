@@ -27,6 +27,14 @@ struct AppState {
     /// was offered this session (ADR 0005). Locked after `workspace`, never
     /// before it.
     consents: Mutex<Consents>,
+    /// Held while the person is asked whether the library may look, so two
+    /// scans ask once. Desktop only: on a phone "All files access" is the
+    /// consent.
+    #[cfg_attr(mobile, allow(dead_code))]
+    library_asking: tokio::sync::Mutex<()>,
+    /// A no to the library, for this session: asked again next time.
+    #[cfg_attr(mobile, allow(dead_code))]
+    library_declined: std::sync::atomic::AtomicBool,
 }
 
 /// The language servers, and the way their news reaches the window.
@@ -431,14 +439,36 @@ async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat
 /// Documents, Downloads, Desktop and Pictures whole, to read and to write.
 #[tauri::command]
 async fn scan_library(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     limit: Option<usize>,
+    ui_language: Option<String>,
 ) -> Result<LibraryScan, VfsError> {
     // Missing folders are expected — the list is the same for every device.
     let usable: Vec<_> = ul_core::default_roots()
         .into_iter()
         .filter(|root| root.is_dir())
         .collect();
+    /* No more than the list was ever meant to hold, whatever the page asks. */
+    let limit = Some(
+        limit
+            .unwrap_or(ul_core::library::DEFAULT_LIMIT)
+            .min(ul_core::library::DEFAULT_LIMIT),
+    );
+
+    /* On desktop the person is asked first, once (see `library_allowed`). */
+    #[cfg(desktop)]
+    if !library_allowed(&app, &state, &usable, ui_language.as_deref()).await {
+        return Err(VfsError::Unsupported(
+            if ui_language.as_deref() == Some("hr") {
+                "Knjižnici nije dopušteno pregledati tvoje mape.".into()
+            } else {
+                "The library was not allowed to look through your folders.".into()
+            },
+        ));
+    }
+    #[cfg(mobile)]
+    let _ = (&app, &ui_language);
 
     /* Walked outside the lock, on a copy, like a search: a walk of Documents,
     Downloads, Desktop and Pictures held every command that needs the
@@ -531,10 +561,19 @@ fn image_info(state: State<'_, AppState>, path: String) -> Result<ImageInfo, Ima
 /// and decoded here, under ul-image's limits, and handed over as the bytes
 /// of a PNG. A plain read: it remembers nothing, as the document was already
 /// read to be edited when it was opened.
+///
+/// Decoded off the thread the window draws on: a large TIFF takes seconds,
+/// and a command that is not `async` runs there.
 #[tauri::command]
-fn image_preview(state: State<'_, AppState>, path: String) -> Result<Response, ImageCommandError> {
+async fn image_preview(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Response, ImageCommandError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&path))?;
-    Ok(Response::new(ul_image::preview(&bytes)?))
+    let png = tauri::async_runtime::spawn_blocking(move || ul_image::preview(&bytes))
+        .await
+        .map_err(|err| ImageError::Decode(err.to_string()))??;
+    Ok(Response::new(png))
 }
 
 /// Applies a plan and writes the result.
@@ -648,6 +687,94 @@ async fn convert_to_pdf(
     cache, and that folder has no business in the tree or a search. */
     offer_files(&state, [output.as_str()], Access::Read);
     Ok(output)
+}
+
+/// Whether the library may look through `roots` on desktop: a consent to read
+/// them, given once in a dialog the system draws and remembered (ADR 0005).
+///
+/// Script in the page can start a scan, and every document the scan found
+/// was offered for it to claim and read — Documents, Downloads, Desktop and
+/// Pictures, with no gesture at all (found by the independent review of
+/// 39e0855). It cannot answer this. A no lasts the session; a yes is a
+/// remembered consent to read those folders, taken back with the rest by
+/// "Forget recently opened files".
+#[cfg(desktop)]
+async fn library_allowed(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    roots: &[std::path::PathBuf],
+    interface: Option<&str>,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+
+    let consented = || {
+        let consents = state.consents.lock().expect("the consent lock is poisoned");
+        roots.iter().all(|root| {
+            std::fs::canonicalize(root).is_ok_and(|real| {
+                consents
+                    .remembered()
+                    .iter()
+                    .any(|kept| kept.kind == Kind::Folder && kept.covers(&real))
+            })
+        })
+    };
+    if consented() {
+        return true;
+    }
+    if state.library_declined.load(Ordering::Relaxed) {
+        return false;
+    }
+    let _asking = state.library_asking.lock().await;
+    if consented() {
+        return true;
+    }
+    if state.library_declined.load(Ordering::Relaxed) {
+        return false;
+    }
+
+    let asked = trust::library_question(interface, roots);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let dialog = app
+        .dialog()
+        .message(asked.body.clone())
+        .title(asked.title.clone())
+        .kind(MessageDialogKind::Info)
+        /* The safe answers where Enter and Escape land — see `trust::Question`. */
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            asked.not_now.clone(),
+            asked.trust.clone(),
+            asked.cancel.clone(),
+        ));
+    let dialog = match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    };
+    dialog.show_with_result(move |pressed| {
+        let _ = tx.send(pressed);
+    });
+    let pressed = match rx.await {
+        Ok(MessageDialogResult::Custom(label)) => Some(label),
+        _ => None,
+    };
+
+    match asked.answer(pressed.as_deref()) {
+        trust::Answer::Trust => {
+            let _ = with_consents(state, |_, consents| {
+                for root in roots {
+                    if let Ok(real) = std::fs::canonicalize(root) {
+                        let _ = consents.remember(Consent::folder(real, Access::Read));
+                    }
+                }
+                Ok(())
+            });
+            true
+        }
+        trust::Answer::NotNow => {
+            state.library_declined.store(true, Ordering::Relaxed);
+            false
+        }
+    }
 }
 
 /// A folder only its owner can enter, made if it is not there.
@@ -1225,12 +1352,24 @@ const LONGEST_REPORT: usize = 64 * 1024;
 /// error rather than a rich one: there is nothing useful to do about a crash
 /// report that could not be written, and something that has to be *done* about
 /// it is the beginning of a loop.
+///
+/// No more than `MOST_REPORTS` a run: the page can call this, and a runaway —
+/// or script in the page — writing report after report would fill the disk,
+/// which old reports are trimmed of only at the next start.
 #[tauri::command]
 fn record_crash(text: String) -> Result<String, String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+    if WRITTEN.fetch_add(1, Ordering::Relaxed) >= MOST_REPORTS {
+        return Err("enough reports were written this run".into());
+    }
     crash::write(&within_limit(text))
         .map(|path| path.display().to_string())
         .map_err(|err| err.to_string())
 }
+
+/// The most reports the window may write in one run.
+const MOST_REPORTS: usize = 16;
 
 /// The report, cut to at most `LONGEST_REPORT` bytes when it is longer.
 ///
@@ -1430,12 +1569,27 @@ pub fn run() {
      * one would fight the first over the same file.
      */
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
         /* Imported here rather than at the top of the file: on Android neither
         this block nor the macOS one below is compiled, and an import nothing
         uses is an error under `-D warnings`. */
         use tauri::Emitter;
-        let paths = paths_from(argv.into_iter());
+        /* A relative path is the second copy's, from where it was started:
+        read against that folder, not this copy's. */
+        let paths: Vec<String> = paths_from(argv.into_iter())
+            .into_iter()
+            .map(|path| {
+                let given = std::path::Path::new(&path);
+                if given.is_relative() {
+                    std::path::Path::new(&cwd)
+                        .join(given)
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    path
+                }
+            })
+            .collect();
         if !paths.is_empty() {
             /* A second double-click is a gesture: granted here, in Rust, before
             the page is told (ADR 0005). */
@@ -1534,6 +1688,8 @@ pub fn run() {
             app.manage(AppState {
                 workspace: Mutex::new(workspace),
                 consents: Mutex::new(consents),
+                library_asking: tokio::sync::Mutex::new(()),
+                library_declined: std::sync::atomic::AtomicBool::new(false),
             });
             /* The files the program was started with are a gesture too: granted
             now, and opened when the page asks for them. */

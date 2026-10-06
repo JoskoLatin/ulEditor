@@ -166,6 +166,46 @@ pub(crate) fn question(interface: Option<&str>, language: &str, project: &Path) 
     }
 }
 
+/// The question asked once before the library looks through the person's
+/// folders on desktop (ADR 0005), in the same three buttons as `question`,
+/// the middle one the yes. Script in the page can start a scan; it cannot
+/// answer this. Desktop only.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn library_question(
+    interface: Option<&str>,
+    folders: &[std::path::PathBuf],
+) -> Question {
+    let folders: Vec<String> = folders.iter().map(|folder| readable(folder)).collect();
+    let folders = folders.join("\n");
+    if interface == Some("hr") {
+        Question {
+            title: "Pregledati dokumente na računalu?".into(),
+            body: format!(
+                "Knjižnica traži dokumente u mapama\n\n{folders}\n\n\
+                 i prikazuje ih ovdje, da se otvore samo za čitanje. Za to ulEditor \
+                 smije čitati te mape.\n\n\
+                 „Dopusti” se pamti, a opoziva ga „Zaboravi nedavno otvorene datoteke”."
+            ),
+            not_now: "Ne sada".into(),
+            trust: "Dopusti".into(),
+            cancel: "Odustani".into(),
+        }
+    } else {
+        Question {
+            title: "Look through your documents?".into(),
+            body: format!(
+                "The library looks for documents in\n\n{folders}\n\n\
+                 and lists them here, to be opened read-only. For that, ulEditor \
+                 reads these folders.\n\n\
+                 \"Allow\" is remembered; \"Forget recently opened files\" takes it back."
+            ),
+            not_now: "Not now".into(),
+            trust: "Allow".into(),
+            cancel: "Cancel".into(),
+        }
+    }
+}
+
 /// What the person said, out of the button that came back.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
@@ -300,6 +340,27 @@ mod tests {
         for other in [Some("Not now"), Some("Cancel"), Some("OK"), Some(""), None] {
             assert_eq!(asked.answer(other), Answer::NotNow, "{other:?}");
         }
+    }
+
+    /// The library's question names its folders as a person writes them, and
+    /// only its own allow button is a yes, in either language.
+    #[test]
+    fn only_the_allow_button_lets_the_library_look() {
+        let folders = [std::path::PathBuf::from("/home/a/Documents\nThis is safe.")];
+        let asked = library_question(Some("en"), &folders);
+        assert!(!asked.body.contains("\nThis is safe."), "{}", asked.body);
+        assert_eq!(asked.answer(Some("Allow")), Answer::Trust);
+        for other in [
+            Some("Not now"),
+            Some("Cancel"),
+            Some("Trust and start"),
+            None,
+        ] {
+            assert_eq!(asked.answer(other), Answer::NotNow, "{other:?}");
+        }
+        let asked = library_question(Some("hr"), &folders);
+        assert_eq!(asked.answer(Some("Dopusti")), Answer::Trust);
+        assert_eq!(asked.answer(Some("Ne sada")), Answer::NotNow);
     }
 
     #[test]

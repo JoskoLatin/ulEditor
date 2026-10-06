@@ -45,7 +45,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside, pressDialog } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -83,45 +83,7 @@ const FIXED = [
 const NOT_NOW = 1004;
 const TRUST = 1008;
 function answerTrust(button, seconds = 60) {
-  const script = `
-Add-Type @'
-using System; using System.Runtime.InteropServices; using System.Text;
-public static class UlTrust {
-  delegate bool Each(IntPtr h, IntPtr l);
-  [DllImport("user32.dll")] static extern bool EnumWindows(Each f, IntPtr l);
-  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-  public static string Press(uint pid, int button) {
-    IntPtr dialog = IntPtr.Zero; string title = "";
-    EnumWindows((h, l) => {
-      uint owner; GetWindowThreadProcessId(h, out owner);
-      if (owner != pid || !IsWindowVisible(h)) return true;
-      var name = new StringBuilder(64); GetClassName(h, name, 64);
-      if (name.ToString() != "#32770") return true;
-      var text = new StringBuilder(256); GetWindowText(h, text, 256);
-      dialog = h; title = text.ToString(); return false;
-    }, IntPtr.Zero);
-    if (dialog == IntPtr.Zero) return "no dialog";
-    PostMessage(dialog, 0x0466, (IntPtr)button, IntPtr.Zero);
-    return "pressed: " + title;
-  }
-}
-'@
-$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -like '*\\target\\debug\\*' } | Select-Object -First 1).ProcessId
-$said = 'no application'
-for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
-  $said = [UlTrust]::Press([uint32]$app, ${button})
-  if ($said -like 'pressed*') { break }
-  Start-Sleep -Milliseconds 250
-}
-$said`;
-  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    encoding: 'utf8',
-  });
-  return (out.stdout ?? '').trim().split(/\r?\n/).pop() || (out.stderr ?? '').trim();
+  return pressDialog(button, seconds);
 }
 
 /** A crate of its own, outside this repository, with `text` as its main.rs. */

@@ -17,6 +17,7 @@
  */
 
 import { create } from 'zustand';
+import { getLocale } from '@uleditor/i18n';
 import { type FormatId, type Uri } from '@uleditor/plugin-sdk';
 
 import { isTauri } from '../host/tauri-fs.js';
@@ -99,7 +100,9 @@ export async function scanLibrary(): Promise<void> {
 
   try {
     const { invoke } = await native.core();
-    const scan = await invoke<RawScan>('scan_library', { limit: 2000 });
+    /* The language the interface is in, for the question the core asks on
+       desktop before the library first looks (ADR 0005). */
+    const scan = await invoke<RawScan>('scan_library', { limit: 2000, uiLanguage: getLocale() });
 
     /*
      * An empty list alongside scanned folders but not one file seen means the

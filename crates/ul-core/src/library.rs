@@ -33,7 +33,7 @@ use crate::vfs::{display, is_noise, is_scratch, VfsError, Workspace};
 const MAX_DEPTH: usize = 6;
 
 /// Upper bound on the number of entries; beyond that nobody reads the list anyway.
-const DEFAULT_LIMIT: usize = 2000;
+pub const DEFAULT_LIMIT: usize = 2000;
 
 /// How many images are kept at most.
 ///
