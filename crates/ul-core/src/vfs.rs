@@ -670,6 +670,20 @@ impl Workspace {
             Source::Remembered(protection) => protection.give(&file, &temp),
         };
         let written = carried.and_then(|()| file.write_all(data));
+        /* Sharing is decided stream by stream: until its security was set, a
+        new version shut to every other opener of its content could still be
+        given a stream of somebody else's, which the rename would then carry
+        into the document's place. Any stream but its content and the mark
+        written here fails the save. */
+        #[cfg(windows)]
+        let written = written.and_then(|()| match windows::foreign_streams(&file) {
+            Ok(foreign) if foreign.is_empty() => Ok(()),
+            Ok(foreign) => Err(std::io::Error::other(format!(
+                "a stream was added to the new version while it was written: {}",
+                foreign.join(", ")
+            ))),
+            Err(err) => Err(err),
+        });
         drop(file);
         if let Err(err) = written {
             let _ = fs::remove_file(&temp);
@@ -1005,7 +1019,7 @@ pub(crate) mod windows {
     const SE_DACL_PROTECTED: u16 = 0x1000;
     const FILE_PERSISTENT_ACLS: u32 = 0x8;
     const READ_CONTROL: u32 = 0x0002_0000;
-    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    pub(super) const FILE_READ_ATTRIBUTES: u32 = 0x80;
     const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
     const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
     const FILE_LIST_DIRECTORY: u32 = 0x1;
@@ -1191,6 +1205,75 @@ pub(crate) mod windows {
 
     /// `FileIdInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
     const FILE_ID_INFO: i32 = 18;
+    /// `FileStreamInfo` of `FILE_INFO_BY_HANDLE_CLASS`.
+    const FILE_STREAM_INFO: i32 = 7;
+
+    /// The streams of an open file other than its content and its
+    /// `Zone.Identifier`, by name (`:name:$DATA`). None on a volume that keeps
+    /// no streams. More than fit in 64 KiB of names are reported as foreign:
+    /// nobody's document has that many on purpose.
+    pub(crate) fn foreign_streams(file: &fs::File) -> io::Result<Vec<String>> {
+        const ALLOWED: [&str; 2] = ["::$DATA", ":Zone.Identifier:$DATA"];
+        let mut buffer = vec![0u64; 8192];
+        // SAFETY: a handle of an open file, and a buffer of the size given,
+        // aligned to eight as the entries in it want.
+        let answered = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FILE_STREAM_INFO,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+            )
+        } != 0;
+        if !answered {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                // No streams at all on this volume (FAT), or none to list.
+                Some(1 | 38 | 50 | 87) => Ok(Vec::new()),
+                // ERROR_MORE_DATA: more than fit.
+                Some(234) => Ok(vec!["(more streams than fit)".to_owned()]),
+                _ => Err(err),
+            };
+        }
+
+        let bytes: &[u8] =
+            // SAFETY: the buffer is `buffer.len() * 8` bytes and outlives the slice.
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), buffer.len() * 8) };
+        let read_u32 =
+            |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let mut foreign = Vec::new();
+        let mut at = 0usize;
+        loop {
+            /* FILE_STREAM_INFO: next offset, name length in bytes, two 64-bit
+            sizes, then the name in UTF-16. */
+            let next = read_u32(at);
+            let length = read_u32(at + 4);
+            let start = at + 24;
+            if start + length > bytes.len() {
+                foreign.push("(a stream that could not be read)".to_owned());
+                break;
+            }
+            let name: Vec<u16> = bytes[start..start + length]
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            let name = String::from_utf16_lossy(&name);
+            if !ALLOWED
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(&name))
+            {
+                foreign.push(name);
+            }
+            if next == 0 {
+                break;
+            }
+            at += next;
+            if at + 24 > bytes.len() {
+                break;
+            }
+        }
+        Ok(foreign)
+    }
 
     /// `FILE_ID_INFO`: the volume's serial number and the file's 128-bit ID.
     #[repr(C)]
@@ -1499,7 +1582,9 @@ fn create_beside(path: &Path, source: &Source<'_>) -> std::io::Result<(fs::File,
             use std::os::windows::fs::OpenOptionsExt;
             options
                 .share_mode(0)
-                .access_mode(access)
+                /* And the right to read its attributes, to ask which streams
+                it has before it takes the document's place. */
+                .access_mode(access | windows::FILE_READ_ATTRIBUTES)
                 .attributes(attributes);
         }
         #[cfg(unix)]
@@ -2170,6 +2255,28 @@ mod tests {
 
         let _ = workspace.add_root(&own);
         assert!(workspace.read(&answers).is_err());
+    }
+
+    /// A stream that is not the content or the mark is found, and a file with
+    /// only those has none.
+    #[cfg(windows)]
+    #[test]
+    fn a_stream_somebody_added_is_found() {
+        let dir = scratch("streams");
+        let file = dir.join("doc.md");
+        fs::write(&file, "x").unwrap();
+        fs::write(zone_stream(&file), "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        let open = |path: &Path| fs::OpenOptions::new().read(true).open(path).unwrap();
+        assert_eq!(
+            windows::foreign_streams(&open(&file)).unwrap(),
+            Vec::<String>::new()
+        );
+
+        fs::write(format!("{}:planted", display(&file)), "somebody else's").unwrap();
+        assert_eq!(
+            windows::foreign_streams(&open(&file)).unwrap(),
+            vec![":planted:$DATA".to_owned()]
+        );
     }
 
     /// One link to something that is gone, and the rest of the folder is still
