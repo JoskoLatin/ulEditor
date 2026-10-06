@@ -258,7 +258,9 @@ const CODE_LANGUAGES: &[(&str, &str)] = &[
 // configuration has a shape, and seeing it makes the file easier to read.
 const PLAIN_TEXT: &[&str] = &["txt", "log", "csv", "tsv"];
 const MARKDOWN: &[&str] = &["md", "markdown", "mdx"];
-const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "tif", "tiff"];
+const IMAGES: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif", "tif", "tiff",
+];
 
 /// Vector drawings. `svg` is here rather than among the code languages: it is
 /// markup, but somebody opening one wants to see the picture, and the viewer
