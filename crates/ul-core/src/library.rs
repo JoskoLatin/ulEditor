@@ -491,7 +491,7 @@ mod tests {
         fs::write(dir.join("ugovor.pdf"), b"%PDF").unwrap();
 
         let mut workspace = Workspace::new();
-        workspace.grant_folder(&dir).unwrap();
+        workspace.grant_folder(&dir, crate::Access::Read).unwrap();
 
         assert!(
             workspace.roots().is_empty(),

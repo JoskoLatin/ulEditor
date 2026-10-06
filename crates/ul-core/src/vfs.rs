@@ -9,6 +9,8 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::consent::{Access, Consent};
 use thiserror::Error;
 
 use ul_formats::{detect, detect_by_name, Detection, PROBE_LEN};
@@ -33,6 +35,10 @@ pub enum VfsError {
     /// say so (`Workspace::save`).
     #[error("{0} was changed outside ulEditor since it was opened")]
     Changed(String),
+    /// Let in to be read and not written — a document from the library, a
+    /// definition a language server pointed at (ADR 0005).
+    #[error("{0} is open read-only")]
+    ReadOnly(String),
     #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
@@ -136,7 +142,9 @@ pub(crate) fn is_scratch(name: &str) -> bool {
 #[derive(Debug, Default, Clone)]
 pub struct Workspace {
     roots: Vec<PathBuf>,
-    granted: Vec<PathBuf>,
+    /// Folders and files let in without being opened, each to be read or
+    /// also written (ADR 0005).
+    granted: Vec<Consent>,
     /// Folders nothing is let into, whatever was opened above them.
     protected: Vec<PathBuf>,
     /// Each document as it was when it was read to be edited, or last saved,
@@ -496,15 +504,58 @@ impl Workspace {
     /// without recording it the write that follows is refused by our own
     /// sandbox. The folder still does not belong in the tree: saving a
     /// converted spreadsheet somewhere is not asking to browse there.
-    pub fn grant_folder(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+    pub fn grant_folder(
+        &mut self,
+        path: impl AsRef<Path>,
+        access: Access,
+    ) -> Result<PathBuf, VfsError> {
         let canonical = fs::canonicalize(path.as_ref())?;
         if !canonical.is_dir() {
             return Err(VfsError::NotADirectory(display(&canonical)));
         }
-        if !self.granted.contains(&canonical) {
-            self.granted.push(canonical.clone());
-        }
+        self.grant(Consent::folder(canonical.clone(), access));
         Ok(canonical)
+    }
+
+    /// Lets in what a consent names. The same path granted twice keeps the
+    /// wider of the two: a read-only offer of a file already opened to be
+    /// written does not take the writing away.
+    fn grant(&mut self, consent: Consent) {
+        match self
+            .granted
+            .iter_mut()
+            .find(|kept| kept.path == consent.path && kept.kind == consent.kind)
+        {
+            Some(kept) => {
+                if consent.access == Access::ReadWrite {
+                    kept.access = Access::ReadWrite;
+                }
+            }
+            None => self.granted.push(consent),
+        }
+    }
+
+    /// A file chosen in a save dialog, which need not exist yet: that file,
+    /// to be written, and nothing beside it — choosing where to save is not
+    /// opening the folder. Its folder has to exist, and the name not be a
+    /// link: a link put there would have the save written wherever it points.
+    pub fn grant_future_file(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        let normalized = normalize(path.as_ref());
+        let (Some(folder), Some(name)) = (normalized.parent(), normalized.file_name()) else {
+            return Err(VfsError::NotAFile(display(&normalized)));
+        };
+        let folder = fs::canonicalize(folder)?;
+        if !folder.is_dir() {
+            return Err(VfsError::NotADirectory(display(&folder)));
+        }
+        let target = folder.join(name);
+        if let Ok(meta) = fs::symlink_metadata(&target) {
+            if !meta.is_file() {
+                return Err(VfsError::NotAFile(display(&target)));
+            }
+        }
+        self.grant(Consent::file(target.clone(), Access::ReadWrite));
+        Ok(target)
     }
 
     /// One file, and nothing beside it.
@@ -516,7 +567,11 @@ impl Workspace {
     /// file is let in — and not through a link: a link in a project pointing out
     /// of it is refused when it is opened, and a definition that names the link
     /// must not let in what it points at.
-    pub fn grant_file(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+    pub fn grant_file(
+        &mut self,
+        path: impl AsRef<Path>,
+        access: Access,
+    ) -> Result<PathBuf, VfsError> {
         if fs::symlink_metadata(path.as_ref())?
             .file_type()
             .is_symlink()
@@ -527,9 +582,7 @@ impl Workspace {
         if !canonical.is_file() {
             return Err(VfsError::NotAFile(display(&canonical)));
         }
-        if !self.granted.contains(&canonical) {
-            self.granted.push(canonical.clone());
-        }
+        self.grant(Consent::file(canonical.clone(), access));
         Ok(canonical)
     }
 
@@ -540,51 +593,92 @@ impl Workspace {
     /// and write. Matched by the folder itself and by how it was shown, since a
     /// folder that is gone cannot be resolved any more.
     ///
-    /// The roots only. A folder inside one the library or a save dialog let in
-    /// (`grant_folder`) leaves the tree, the search and Ctrl+P, and can still be
-    /// read and written through that grant — which is the library's to answer
-    /// for (card 470).
-    pub fn forget_root(&mut self, path: impl AsRef<Path>) {
+    /// What of it stays open is `keep`: the files the page still has open in
+    /// it, each let in on its own, to be written, if it really is a file
+    /// under that root — resolved before the root goes. Anything else in
+    /// `keep` is passed over: the page can narrow, never widen (ADR 0005).
+    pub fn forget_root(&mut self, path: impl AsRef<Path>, keep: &[PathBuf]) {
         let path = path.as_ref();
         let canonical = fs::canonicalize(path).ok();
         let shown = display(path);
-        self.roots
-            .retain(|root| canonical.as_ref() != Some(root) && display(root) != shown);
+        let going: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .filter(|root| canonical.as_ref() == Some(root) || display(root) == shown)
+            .cloned()
+            .collect();
+        for root in &going {
+            for file in keep {
+                let Ok(real) = fs::canonicalize(file) else {
+                    continue;
+                };
+                if real.starts_with(root)
+                    && real.is_file()
+                    && !self.protected.iter().any(|dir| real.starts_with(dir))
+                {
+                    self.grant(Consent::file(real, Access::ReadWrite));
+                }
+            }
+        }
+        self.roots.retain(|root| !going.contains(root));
     }
 
-    /// Resolves a path and checks that it stays inside one of the roots.
+    /// Resolves a path to be read and checks that it stays inside what was
+    /// let in.
     ///
     /// `..` is removed lexically first, because a file that does not exist yet
     /// (save-as) cannot be resolved by the file system at all — and then as
     /// much of the path as does exist is resolved for real, so a symlink out of
     /// the workspace is caught. See `canonical_prefix`.
     pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        self.resolve_for(path.as_ref(), Access::Read)
+    }
+
+    /// Resolves a path to be written: as `resolve`, and only where what let it
+    /// in lets it be written — a root, or a grant to read and write. One let
+    /// in only to be read is `ReadOnly`.
+    pub fn resolve_for_write(&self, path: impl AsRef<Path>) -> Result<PathBuf, VfsError> {
+        self.resolve_for(path.as_ref(), Access::ReadWrite)
+    }
+
+    fn resolve_for(&self, path: &Path, access: Access) -> Result<PathBuf, VfsError> {
         if self.roots.is_empty() && self.granted.is_empty() {
             return Err(VfsError::NoWorkspace);
         }
 
-        let normalized = normalize(path.as_ref());
+        let normalized = normalize(path);
 
         // A symlink can lead outside; the real path is what gets checked.
         let effective = canonical_prefix(&normalized);
 
-        let allowed = !self.protected.iter().any(|dir| effective.starts_with(dir))
-            && self
-                .roots
-                .iter()
-                .chain(self.granted.iter())
-                .any(|root| effective.starts_with(root));
-
-        if allowed {
+        if self.allows(&effective, access) {
             Ok(effective)
+        } else if access == Access::ReadWrite && self.allows(&effective, Access::Read) {
+            Err(VfsError::ReadOnly(display(&normalized)))
         } else {
             Err(VfsError::OutsideWorkspace(display(&normalized)))
         }
     }
 
+    /// Whether a path already resolved may be had for `access`: outside every
+    /// protected folder, and inside a root or under a grant that goes that
+    /// far.
+    fn allows(&self, effective: &Path, access: Access) -> bool {
+        !self.protected.iter().any(|dir| effective.starts_with(dir))
+            && (self.roots.iter().any(|root| effective.starts_with(root))
+                || self.granted.iter().any(|grant| {
+                    grant.covers(effective)
+                        && (access == Access::Read || grant.access == Access::ReadWrite)
+                }))
+    }
+
+    /// What is told of a file, `readonly` included where it was let in only
+    /// to be read — which is how the interface knows to say so.
     pub fn stat(&self, path: impl AsRef<Path>) -> Result<Stat, VfsError> {
         let resolved = self.resolve(path)?;
-        stat_of(&resolved)
+        let mut stat = stat_of(&resolved)?;
+        stat.readonly |= !self.allows(&resolved, Access::ReadWrite);
+        Ok(stat)
     }
 
     pub fn read_dir(&self, path: impl AsRef<Path>) -> Result<Vec<DirEntry>, VfsError> {
@@ -620,7 +714,7 @@ impl Workspace {
             in somebody's project pointing at a file of yours told them none of
             it, but the tree said it to anybody looking. Whether it can be
             opened is `resolve`'s answer, when it is opened. */
-            let stat = if is_link {
+            let mut stat = if is_link {
                 Stat {
                     uri: display(&entry.path()),
                     name: name.clone(),
@@ -644,6 +738,8 @@ impl Workspace {
             } else {
                 detect_by_name(&name)
             };
+            // Let in only to be read, it says so.
+            stat.readonly |= !self.allows(&entry.path(), Access::ReadWrite);
             entries.push(DirEntry { stat, detection });
         }
 
@@ -724,7 +820,7 @@ impl Workspace {
         overwrite: bool,
     ) -> Result<(), VfsError> {
         let key = record_key(path.as_ref());
-        let resolved = self.resolve(path)?;
+        let resolved = self.resolve_for_write(path)?;
         /* Not read under this spelling: the same place read under another —
         the same file in other letters, by its short name, through a link to
         it — is that document, not one nobody read, which would be saved over
@@ -836,10 +932,20 @@ impl Workspace {
         let (Some(folder), Some(name)) = (at.parent(), at.file_name()) else {
             return Err(VfsError::NotAFile(display(at)));
         };
-        if self.resolve(folder)? != folder {
+        /* The folder still that folder — not swapped for a link since — and
+        the document one this program may write. */
+        if fs::canonicalize(folder).ok().as_deref() != Some(folder) {
             return Err(VfsError::OutsideWorkspace(display(at)));
         }
-        Ok(folder.join(name))
+        let target = folder.join(name);
+        if !self.allows(&target, Access::ReadWrite) {
+            return Err(if self.allows(&target, Access::Read) {
+                VfsError::ReadOnly(display(at))
+            } else {
+                VfsError::OutsideWorkspace(display(at))
+            });
+        }
+        Ok(target)
     }
 
     /// Reads only the start of a file — enough for format detection without
@@ -871,7 +977,7 @@ impl Workspace {
     /// a name somebody has taken — a file, a link, a link to nothing — is
     /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
-        let resolved = self.resolve(path)?;
+        let resolved = self.resolve_for_write(path)?;
         self.write_resolved(&resolved, data, &Source::Document, None)
             .map(|_| ())
     }
@@ -3438,6 +3544,87 @@ mod tests {
         assert!(matches!(detected, Err(VfsError::NotAFile(_))));
     }
 
+    /// A file let in only to be read is read, said to be read-only, and
+    /// written by neither a write nor a save — read to be edited first or not.
+    #[test]
+    fn a_file_let_in_to_be_read_is_not_written() {
+        let base = scratch("read-only");
+        let file = base.join("ugovor.md");
+        fs::write(&file, "theirs").unwrap();
+        let mut workspace = Workspace::new();
+        workspace.grant_file(&file, Access::Read).unwrap();
+
+        assert_eq!(workspace.read_document(&file).unwrap(), b"theirs");
+        assert!(workspace.stat(&file).unwrap().readonly);
+        let written = workspace.write(&file, b"mine");
+        assert!(matches!(written, Err(VfsError::ReadOnly(_))), "{written:?}");
+        let saved = workspace.save(&file, b"mine", true);
+        assert!(matches!(saved, Err(VfsError::ReadOnly(_))), "{saved:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "theirs");
+
+        /* Let in again to be written — by a dialog — it is. */
+        workspace.grant_file(&file, Access::ReadWrite).unwrap();
+        assert!(!workspace.stat(&file).unwrap().readonly);
+        workspace.save(&file, b"mine", false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+        /* And a read-only offer of it after does not take that away. */
+        workspace.grant_file(&file, Access::Read).unwrap();
+        workspace.save(&file, b"mine, again", false).unwrap();
+    }
+
+    /// A folder let in only to be read lists its files as read-only and
+    /// writes none of them, a new one included.
+    #[test]
+    fn a_folder_let_in_to_be_read_lists_read_only_and_writes_nothing() {
+        let base = scratch("read-only-folder");
+        fs::write(base.join("a.md"), "a").unwrap();
+        let mut workspace = Workspace::new();
+        workspace.grant_folder(&base, Access::Read).unwrap();
+
+        let listed = workspace.read_dir(&base).unwrap();
+        assert!(listed.iter().all(|entry| entry.stat.readonly), "{listed:?}");
+        assert!(matches!(
+            workspace.write(base.join("new.md"), b"x"),
+            Err(VfsError::ReadOnly(_))
+        ));
+        assert!(!base.join("new.md").exists());
+    }
+
+    /// A file chosen in a save dialog is let in to be written, though it does
+    /// not exist yet — and nothing beside it.
+    #[test]
+    fn a_file_chosen_to_save_into_is_let_in_alone() {
+        let base = scratch("future");
+        let mut workspace = Workspace::new();
+        let target = workspace.grant_future_file(base.join("izvoz.pdf")).unwrap();
+
+        workspace.write(&target, b"%PDF").unwrap();
+        assert_eq!(fs::read(base.join("izvoz.pdf")).unwrap(), b"%PDF");
+        assert!(workspace.write(base.join("beside.pdf"), b"x").is_err());
+        assert!(workspace.read_dir(&base).is_err());
+    }
+
+    /// A root taken away keeps the files still open in it, each on its own,
+    /// and nothing else of it — nor anything named that was never in it.
+    #[test]
+    fn a_folder_forgotten_keeps_only_the_files_still_open_in_it() {
+        let base = scratch("forget-keep");
+        let root = base.join("project");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("open.md"), "o").unwrap();
+        fs::write(root.join("closed.md"), "c").unwrap();
+        fs::write(base.join("outside.md"), "x").unwrap();
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(&root).unwrap();
+
+        workspace.forget_root(&root, &[root.join("open.md"), base.join("outside.md")]);
+        assert!(workspace.roots().is_empty());
+        workspace.write(root.join("open.md"), b"still").unwrap();
+        assert!(workspace.read(root.join("closed.md")).is_err());
+        assert!(workspace.read(base.join("outside.md")).is_err());
+        assert!(workspace.read_dir(&root).is_err());
+    }
+
     /// Only the file a language server pointed at is let in, not its folder.
     #[test]
     fn a_granted_file_lets_in_that_file_and_nothing_beside_it() {
@@ -3446,7 +3633,9 @@ mod tests {
         fs::write(base.join("beside.rs"), "fn not_asked_for() {}").unwrap();
 
         let mut workspace = Workspace::new();
-        let granted = workspace.grant_file(base.join("definition.rs")).unwrap();
+        let granted = workspace
+            .grant_file(base.join("definition.rs"), Access::ReadWrite)
+            .unwrap();
 
         assert!(workspace.read(&granted).is_ok());
         assert!(matches!(
@@ -3455,7 +3644,7 @@ mod tests {
         ));
         assert!(workspace.roots().is_empty(), "the folder became a root");
         assert!(matches!(
-            workspace.grant_file(&base),
+            workspace.grant_file(&base, Access::ReadWrite),
             Err(VfsError::NotAFile(_))
         ));
     }
@@ -3469,7 +3658,7 @@ mod tests {
         let root = workspace.add_root(&base).unwrap();
         assert!(workspace.read(root.join("note.txt")).is_ok());
 
-        workspace.forget_root(display(&root));
+        workspace.forget_root(display(&root), &[]);
 
         assert!(workspace.roots().is_empty());
         assert!(workspace.read(root.join("note.txt")).is_err());
@@ -3517,7 +3706,7 @@ mod tests {
 
         let mut workspace = Workspace::new();
         assert!(matches!(
-            workspace.grant_file(base.join("pointer.rs")),
+            workspace.grant_file(base.join("pointer.rs"), Access::ReadWrite),
             Err(VfsError::NotAFile(_))
         ));
         assert!(workspace.read(base.join("outside.rs")).is_err());

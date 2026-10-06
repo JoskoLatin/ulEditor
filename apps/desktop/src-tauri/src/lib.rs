@@ -180,7 +180,9 @@ async fn pick_save_target(
     };
 
     if let Some(parent) = path.parent() {
-        with_workspace(&state, |workspace| workspace.grant_folder(parent))?;
+        with_workspace(&state, |workspace| {
+            workspace.grant_folder(parent, ul_core::Access::ReadWrite)
+        })?;
     }
 
     Ok(Some(path.to_string_lossy().into_owned()))
@@ -263,7 +265,7 @@ fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Sta
 #[tauri::command]
 fn grant_file(state: State<'_, AppState>, path: String) -> Result<Stat, VfsError> {
     with_workspace(&state, |workspace| {
-        let granted = workspace.grant_file(&path)?;
+        let granted = workspace.grant_file(&path, ul_core::Access::ReadWrite)?;
         workspace.stat(&granted)
     })
 }
@@ -272,7 +274,7 @@ fn grant_file(state: State<'_, AppState>, path: String) -> Result<Stat, VfsError
 #[tauri::command]
 fn forget_root(state: State<'_, AppState>, path: String) -> Result<(), VfsError> {
     with_workspace(&state, |workspace| {
-        workspace.forget_root(&path);
+        workspace.forget_root(&path, &[]);
         Ok(())
     })
 }
@@ -348,7 +350,10 @@ async fn scan_library(
         let mut usable = Vec::new();
         for root in &roots {
             // Missing folders are expected — the list is the same for every device.
-            if workspace.grant_folder(root).is_ok() {
+            if workspace
+                .grant_folder(root, ul_core::Access::ReadWrite)
+                .is_ok()
+            {
                 usable.push(root.clone());
             }
         }
