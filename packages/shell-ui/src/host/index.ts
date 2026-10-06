@@ -46,9 +46,12 @@ export type ShellFileSystem = VirtualFileSystem & {
   }>;
   /** The web keeps its folders across a reload; see `BrowserFileSystem`. */
   restoreRoots?(): Promise<{ ready: DirectoryEntry[]; waiting: WaitingRoot[] }>;
-  forgetRoot?(uri: Uri): Promise<void>;
-  /** One file let in without its folder; desktop only. See `Workspace::grant_file`. */
-  grantFile?(uri: Uri): Promise<DocumentHandle>;
+  /**
+   * A folder off the tree is out of the sandbox too. `keep`: the files still
+   * open in it, which stay in on their own. `remember: false` forgets the
+   * desktop's consent to it as well — a folder taken out of Recent (ADR 0005).
+   */
+  forgetRoot?(uri: Uri, keep?: Uri[], remember?: boolean): Promise<void>;
 };
 
 export type Platform = 'desktop' | 'web';

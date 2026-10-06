@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -73,10 +73,7 @@ try {
   await writeFile(join(workspace, 'crtez.eps'), EPS, 'utf8');
   const before = (await readdir(workspace)).sort();
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
 
   await page.keyboard.press('Control+P');
   await page.waitForSelector('.palette-input input', { timeout: 10000 });

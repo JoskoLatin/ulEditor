@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::consent::{Access, Consent};
+use crate::consent::{Access, Consent, Kind};
 use thiserror::Error;
 
 use ul_formats::{detect, detect_by_name, Detection, PROBE_LEN};
@@ -664,12 +664,23 @@ impl Workspace {
     /// protected folder, and inside a root or under a grant that goes that
     /// far.
     fn allows(&self, effective: &Path, access: Access) -> bool {
-        !self.protected.iter().any(|dir| effective.starts_with(dir))
-            && (self.roots.iter().any(|root| effective.starts_with(root))
-                || self.granted.iter().any(|grant| {
-                    grant.covers(effective)
-                        && (access == Access::Read || grant.access == Access::ReadWrite)
-                }))
+        if self.protected.iter().any(|dir| effective.starts_with(dir)) {
+            /* Shut, whatever is open above it — but for a file let in on its
+            own and only to be read: what the program offers of its own
+            folder, a crash report it wrote there. Nothing in it is written
+            through any grant, and a grant to write lets nothing in. */
+            return access == Access::Read
+                && self.granted.iter().any(|grant| {
+                    grant.kind == Kind::File
+                        && grant.access == Access::Read
+                        && grant.path == effective
+                });
+        }
+        self.roots.iter().any(|root| effective.starts_with(root))
+            || self.granted.iter().any(|grant| {
+                grant.covers(effective)
+                    && (access == Access::Read || grant.access == Access::ReadWrite)
+            })
     }
 
     /// What is told of a file, `readonly` included where it was let in only
@@ -2336,6 +2347,13 @@ pub(crate) fn display(path: &Path) -> String {
     }
 }
 
+/// A path in the form the sandbox keeps it — as much of it resolved as
+/// exists, the rest as written — for a caller that has to match one it kept
+/// when the thing itself may be gone.
+pub fn canonical_path(path: impl AsRef<Path>) -> PathBuf {
+    canonical_prefix(&normalize(path.as_ref()))
+}
+
 /// Canonicalises as much of a path as exists, keeping the rest as it was written.
 ///
 /// A file that is not there yet cannot be canonicalised, and on Windows that is
@@ -3570,6 +3588,35 @@ mod tests {
         /* And a read-only offer of it after does not take that away. */
         workspace.grant_file(&file, Access::Read).unwrap();
         workspace.save(&file, b"mine, again", false).unwrap();
+    }
+
+    /// The one thing read in a protected folder: a file let in on its own,
+    /// only to be read — a crash report the program offers. Nothing there is
+    /// written, nothing beside it read, and a grant to write lets nothing in.
+    #[test]
+    fn a_protected_folder_lets_read_only_the_file_offered_to_be_read() {
+        let base = scratch("protected-report");
+        let own = base.join("crash");
+        fs::create_dir_all(&own).unwrap();
+        fs::write(own.join("report.txt"), "boom").unwrap();
+        fs::write(own.join("other.txt"), "x").unwrap();
+        let mut workspace = Workspace::new();
+        workspace.protect(&own);
+        workspace.add_root(&base).unwrap();
+
+        let report = workspace
+            .grant_file(own.join("report.txt"), Access::Read)
+            .unwrap();
+        assert_eq!(workspace.read(&report).unwrap(), b"boom");
+        assert!(workspace.write(&report, b"planted").is_err());
+        assert!(workspace.read(own.join("other.txt")).is_err());
+        assert!(workspace.read_dir(&own).is_err());
+
+        workspace
+            .grant_file(own.join("other.txt"), Access::ReadWrite)
+            .unwrap();
+        assert!(workspace.read(own.join("other.txt")).is_err());
+        assert!(workspace.write(own.join("other.txt"), b"planted").is_err());
     }
 
     /// A folder let in only to be read lists its files as read-only and

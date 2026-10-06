@@ -45,7 +45,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -174,10 +174,7 @@ try {
   /* Opened by its path through the palette, one project at a time: the
      palette lists every root, and both files are called main.rs. */
   const openMain = async (dir) => {
-    await page.evaluate(
-      (path) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [path] }),
-      dir,
-    );
+    await openFromOutside(page, [dir]);
     await page.keyboard.press('Control+P');
     await page.waitForSelector('.palette-input input', { timeout: 10000 });
     await page.locator('.palette-input input').fill('main.rs');

@@ -19,7 +19,7 @@ import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -68,10 +68,7 @@ try {
    * session and the window reloaded — which is exactly what happens to
    * somebody who closes the program with a folder open and starts it again.
    */
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
   await page.evaluate((dir) => {
     const key = 'uleditor.settings';
     const stored = JSON.parse(localStorage.getItem(key) ?? '{}');

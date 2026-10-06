@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isLocal, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { isLocal, startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PHRASE = 'ULEDITOR OFFLINE OCR';
@@ -72,10 +72,7 @@ try {
      timed out before it reached OCR at all. */
   const workspace = await mkdtemp(join(tmpdir(), 'ul-ocr-'));
   await writeFile(join(workspace, 'offline.png'), Buffer.from(bytes));
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
   await page.keyboard.press('Control+P');
   await page.waitForSelector('.palette-input input', { timeout: 10000 });
   await page.locator('.palette-input input').fill('offline.png');

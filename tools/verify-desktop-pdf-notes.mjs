@@ -36,7 +36,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PDFDocument, PDFName, PDFArray, StandardFonts } from 'pdf-lib';
 
 import { makePdf } from './fixtures.mjs';
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -171,10 +171,7 @@ try {
   const { page } = session;
   check('attached to the desktop application', true);
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
 
   const open = async (name) => {
     await page.keyboard.press('Control+P');

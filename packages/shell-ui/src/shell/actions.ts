@@ -102,22 +102,17 @@ export async function openUri(
   opts?: {
     quiet?: boolean;
     /**
-     * Whether a refused open may register the file's folder and try again.
+     * Whether a refused open may claim the file and try again.
      *
      * Only for a file somebody pointed at earlier — the recent list, the
      * session, the library — or a definition the language server pointed at.
-     * Not for a search hit or a name from Ctrl+P: those come from walking the
-     * folders already open, so a refusal there means the walk reached outside
-     * them, and the retry used to make that outside folder part of the sandbox.
+     * The core lets in only what it offered or what a remembered consent
+     * covers, as far as that goes (ADR 0005): a library document or a
+     * definition is let in to be read, and nothing beside it. Not for a search
+     * hit or a name from Ctrl+P: those come from walking the folders already
+     * open, so a refusal there means the walk reached outside them.
      */
     adopt?: boolean;
-    /**
-     * Whether a refused open may let in this one file, and not its folder: a
-     * definition the language server pointed at. The server's answer is not a
-     * person pointing at a folder, and adopting it put the standard library in
-     * the tree, in every search and open to writing.
-     */
-    grant?: boolean;
   },
 ): Promise<void> {
   try {
@@ -128,14 +123,6 @@ export async function openUri(
        open of a remembered file is refused. Pointing at the file again is the
        same explicit gesture the file picker makes, so it re-registers the
        file's folder and the open is tried once more. */
-    if (opts?.grant && shell.fs.grantFile) {
-      try {
-        await openDocument(shell, await shell.fs.grantFile(uri));
-        return;
-      } catch {
-        /* The original error stands. */
-      }
-    }
     if (opts?.adopt && shell.fs.adoptPaths) {
       try {
         const [doc] = (await shell.fs.adoptPaths([uri])).documents;
@@ -214,9 +201,10 @@ export async function openThroughLibreOffice(shell: Shell, uri: Uri): Promise<vo
     const path = await shell.convert.toPdfFile(uri);
     working.dispose();
 
-    /* The PDF alone is let in, not the folder it was written to: that is the
-       program's own cache, and has no business in the tree or a search. */
-    const document = await shell.fs.grantFile?.(path).catch(() => undefined);
+    /* The PDF alone is claimed — the core offered it, to be read — not the
+       folder it was written to: that is the program's own cache, and has no
+       business in the tree or a search. */
+    const document = (await shell.fs.adoptPaths?.([path]).catch(() => undefined))?.documents[0];
     if (!document) {
       shell.notify.show('error', t('The conversion produced a file this program could not open.'));
       return;
@@ -339,12 +327,17 @@ export async function refreshRoot(shell: Shell, root: TreeNode): Promise<void> {
     shell.notify.show('info', t('{name}: {n} entries', { name: root.name, n: children.length }));
   } catch (err) {
     setTree(tree.filter((n) => n.uri !== root.uri));
-    forget(shell, root.uri);
-    /* Not out of the desktop's sandbox: a folder that could not be read just
-       now — a stick pulled out, a share that blinked — may be back in a moment,
-       and a document open from it has to be able to save when it is. The web
-       has nothing to keep, and lets the folder's handle go. */
-    if (shell.platform !== 'desktop') void shell.fs.forgetRoot?.(root.uri);
+    if (shell.platform === 'desktop') {
+      /* Out of the sandbox, as Remove does, keeping the documents open from it
+         — a document open from it has to be able to save — and the folder in
+         Recent: a stick pulled out, a share that blinked, may be back in a
+         moment, and opening it again is a click (ADR 0005). */
+      void releaseRoot(shell, root.uri, true);
+    } else {
+      /* The web has nothing to keep, and lets the folder's handle go. */
+      forget(shell, root.uri);
+      void shell.fs.forgetRoot?.(root.uri);
+    }
     shell.notify.show('error', t('Could not read the folder: {reason}', { reason: describe(err) }));
   }
 }
@@ -361,25 +354,25 @@ export function removeRoot(shell: Shell, root: TreeNode): void {
   const { tree, setTree } = useWorkspace.getState();
   setTree(tree.filter((node) => node.uri !== root.uri));
   forget(shell, root.uri);
-  void releaseRoot(shell, root.uri);
+  void releaseRoot(shell, root.uri, false);
 }
 
 /**
  * Lets a folder go from the sandbox, keeping what is open from it.
  *
  * On the desktop a folder off the tree leaves the sandbox as well. A document
- * still open from it is let in on its own first — otherwise its next save would
- * be refused as outside the folders that are open, which is the work somebody
- * is in the middle of.
+ * still open from it stays in on its own — otherwise its next save would be
+ * refused as outside the folders that are open, which is the work somebody is
+ * in the middle of. `remember: false` forgets the consent to the folder too: it
+ * was taken out of Recent.
  */
-async function releaseRoot(shell: Shell, uri: Uri): Promise<void> {
+async function releaseRoot(shell: Shell, uri: Uri, remember: boolean): Promise<void> {
   if (!shell.fs.forgetRoot) return;
   const inside = useWorkspace
     .getState()
     .tabs.map((tab) => tab.uri)
     .filter((tab) => tab.startsWith(`${uri}\\`) || tab.startsWith(`${uri}/`));
-  for (const tab of inside) await shell.fs.grantFile?.(tab).catch(() => undefined);
-  await shell.fs.forgetRoot(uri);
+  await shell.fs.forgetRoot(uri, inside, remember);
 }
 
 /**
@@ -397,7 +390,7 @@ export async function openRecentFolder(shell: Shell, root: { uri: Uri; name: str
     forget(shell, root.uri);
     // A folder that is in the tree already stays in it, and in the sandbox.
     if (!useWorkspace.getState().tree.some((node) => node.uri === root.uri)) {
-      void releaseRoot(shell, root.uri);
+      void releaseRoot(shell, root.uri, false);
     }
     shell.notify.show('error', t('Could not open the folder: {reason}', { reason: describe(err) }));
   }

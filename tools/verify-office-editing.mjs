@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { unzipSync, strFromU8 } from 'fflate';
 
 import { makeDocx, makeOdt } from './fixtures.mjs';
-import { alreadyRunning, ALREADY_RUNNING, killTree } from './desktop-session.mjs';
+import { alreadyRunning, ALREADY_RUNNING, killTree, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9336;
@@ -127,10 +127,7 @@ try {
     await page.waitForTimeout(200);
   }
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
 
   const open = async (name) => {
     await page.keyboard.press('Control+P');

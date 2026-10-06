@@ -30,7 +30,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -84,10 +84,7 @@ async function until(condition, timeout) {
 async function changeADocument(page) {
   const workspace = await mkdtemp(join(tmpdir(), 'ul-close-'));
   await writeFile(join(workspace, 'biljeska.txt'), 'Prvi redak.\n');
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
   await page.keyboard.press('Control+P');
   await page.waitForSelector('.palette-input input', { timeout: 10000 });
   await page.locator('.palette-input input').fill('biljeska.txt');

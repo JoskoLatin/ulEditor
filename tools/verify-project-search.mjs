@@ -6,7 +6,7 @@
  * work. So the program itself is brought up here with the WebView2 debug port
  * open and Playwright attaches to it over CDP — the same binary the user runs.
  *
- * The workspace is registered with the `adopt_paths` command, because the system
+ * The workspace is handed over from outside (`openFromOutside`), because the system
  * folder-picker dialog cannot be driven from a script.
  *
  *   node tools/verify-project-search.mjs [--headed]
@@ -20,7 +20,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { makeDocx, makeEpub, makePdf, makeXlsx } from './fixtures.mjs';
-import { killTree } from './desktop-session.mjs';
+import { killTree, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9333;
@@ -92,11 +92,11 @@ try {
   check('running in the Tauri environment, not in a browser', platform);
 
   /* — the workspace — */
-  const added = await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
+  const registered = await openFromOutside(page, [workspace]).then(
+    () => true,
+    () => false,
   );
-  check('the folder was registered as a workspace', Array.isArray(added) && added.length === 1);
+  check('the folder was registered as a workspace', registered);
 
   /* — search over text — */
   await page.keyboard.press('Control+Shift+H');

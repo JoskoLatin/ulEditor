@@ -15,13 +15,18 @@ use tauri_plugin_dialog::DialogExt;
 
 use ul_convert::{Backend, ConvertError};
 use ul_core::{
-    Detection, DirEntry, LibraryScan, SearchOutcome, SearchQuery, Stat, VfsError, Workspace,
+    Access, Consent, Consents, Detection, DirEntry, Kind, LibraryScan, SearchOutcome, SearchQuery,
+    Stat, VfsError, Workspace,
 };
 use ul_image::{ImageError, Info as ImageInfo, Ops as ImageOps, Written};
 use ul_lsp::{Event as LspEvent, LspError, Servers};
 
 struct AppState {
     workspace: Mutex<Workspace>,
+    /// What the person consented to, remembered across restarts, and what
+    /// was offered this session (ADR 0005). Locked after `workspace`, never
+    /// before it.
+    consents: Mutex<Consents>,
 }
 
 /// The language servers, and the way their news reaches the window.
@@ -60,6 +65,79 @@ fn with_workspace<T>(
         .lock()
         .expect("the workspace lock is poisoned");
     f(&mut guard)
+}
+
+/// `with_workspace`, with the consents beside it — locked in that order.
+fn with_consents<T>(
+    state: &AppState,
+    f: impl FnOnce(&mut Workspace, &mut Consents) -> Result<T, VfsError>,
+) -> Result<T, VfsError> {
+    let mut workspace = state
+        .workspace
+        .lock()
+        .expect("the workspace lock is poisoned");
+    let mut consents = state.consents.lock().expect("the consent lock is poisoned");
+    f(&mut workspace, &mut consents)
+}
+
+/// What a gesture the operating system drew gives — a dialog, a drop onto
+/// the window, a path the program was started or reached with (ADR 0005):
+/// a folder opened, or a file alone without its folder, to be read and
+/// written, and remembered. A path that is neither — gone, or a device —
+/// gives nothing. A list that cannot be written keeps the consent for this
+/// session: refusing the gesture over a full disk would be the program's
+/// fault shown as the person's.
+fn grant_gesture(
+    workspace: &mut Workspace,
+    consents: &mut Consents,
+    path: &std::path::Path,
+) -> Result<(), VfsError> {
+    if path.is_dir() {
+        let root = workspace.add_root(path)?;
+        let _ = consents.remember(Consent::folder(root, Access::ReadWrite));
+    } else if path.is_file() {
+        let file = workspace.grant_file(path, Access::ReadWrite)?;
+        let _ = consents.remember(Consent::file(file, Access::ReadWrite));
+    }
+    Ok(())
+}
+
+/// Every path a gesture brought, granted; one that cannot be is passed over
+/// and the rest still are.
+fn grant_gestures<P: AsRef<std::path::Path>>(state: &AppState, paths: &[P]) {
+    let _ = with_consents(state, |workspace, consents| {
+        for path in paths {
+            if let Err(err) = grant_gesture(workspace, consents, path.as_ref()) {
+                eprintln!(
+                    "[uleditor] not granted: {} — {err}",
+                    path.as_ref().display()
+                );
+            }
+        }
+        Ok(())
+    });
+}
+
+/// Lets into the sandbox what a claimed consent names, as far as it goes.
+fn admit(workspace: &mut Workspace, consent: &Consent) -> Result<(), VfsError> {
+    match (consent.kind, consent.access) {
+        (Kind::Folder, Access::ReadWrite) => workspace.add_root(&consent.path).map(|_| ()),
+        (Kind::Folder, access) => workspace.grant_folder(&consent.path, access).map(|_| ()),
+        (Kind::File, access) => workspace.grant_file(&consent.path, access).map(|_| ()),
+    }
+}
+
+/// Offers files a list Rust made holds — the library, a language server's
+/// answer, a conversion's output — for the page to claim, to be read.
+fn offer_files<'a>(state: &AppState, paths: impl IntoIterator<Item = &'a str>, access: Access) {
+    let mut consents = state.consents.lock().expect("the consent lock is poisoned");
+    for path in paths {
+        if let Ok(real) = std::fs::canonicalize(path) {
+            if real.is_file() {
+                consents.offer(Consent::file(real, access));
+            }
+        }
+    }
 }
 
 /// A copy of the sandbox, for a walk of the whole tree.
@@ -104,9 +182,9 @@ async fn pick_directory(
         return Ok(None);
     };
 
-    with_workspace(&state, |workspace| {
-        let root = workspace.add_root(&path)?;
-        workspace.stat(&root).map(Some)
+    with_consents(&state, |workspace, consents| {
+        grant_gesture(workspace, consents, &path)?;
+        workspace.stat(&path).map(Some)
     })
 }
 
@@ -139,12 +217,10 @@ async fn pick_files(
     let mut out = Vec::new();
     for path in paths {
         let Ok(path) = path.into_path() else { continue };
-        // A individually chosen file becomes its own root — the user pointed at
-        // it explicitly, but that does not open the whole folder around it.
-        let stat = with_workspace(&state, |workspace| {
-            if let Some(parent) = path.parent() {
-                workspace.add_root(parent)?;
-            }
+        /* The file chosen, and not the folder around it: pointing at a file
+        is not asking for its folder in the search and Ctrl+P (ADR 0005). */
+        let stat = with_consents(&state, |workspace, consents| {
+            grant_gesture(workspace, consents, &path)?;
             workspace.stat(&path)
         })?;
         out.push(stat);
@@ -154,13 +230,13 @@ async fn pick_files(
 
 /// Where a converted or exported file should go.
 ///
-/// The chosen folder is **granted** before the path is handed back. Choosing a
+/// The chosen file is **granted** before the path is handed back. Choosing a
 /// file in a dialog the operating system drew is the strongest permission there
 /// is — stronger than anything this program could ask for itself — and without
 /// recording it the write that follows was refused by our own sandbox, with a
 /// message saying the file escaped a workspace the user had just pointed at.
-/// Granted rather than opened: naming a folder to save into is not asking to
-/// browse it, so it stays out of the tree.
+/// The file alone, to be written, though it does not exist yet: naming where
+/// to save is neither opening the folder nor letting the rest of it in.
 #[tauri::command]
 async fn pick_save_target(
     app: tauri::AppHandle,
@@ -179,11 +255,13 @@ async fn pick_save_target(
         return Ok(None);
     };
 
-    if let Some(parent) = path.parent() {
-        with_workspace(&state, |workspace| {
-            workspace.grant_folder(parent, ul_core::Access::ReadWrite)
-        })?;
-    }
+    /* That file, to be written, though it does not exist yet — and not the
+    folder it goes into (ADR 0005). */
+    with_consents(&state, |workspace, consents| {
+        let target = workspace.grant_future_file(&path)?;
+        let _ = consents.remember(Consent::file(target, Access::ReadWrite));
+        Ok(())
+    })?;
 
     Ok(Some(path.to_string_lossy().into_owned()))
 }
@@ -229,52 +307,61 @@ fn open_external(_url: String) -> Result<(), VfsError> {
 
 /* ── file system ─────────────────────────────────────────────────────── */
 
-/// Takes in paths the user pointed at — dropped onto the window, or remembered
-/// from an earlier session and clicked in the recent list.
+/// What the page asks to have — a document or folder it was told about, one
+/// restored from the last session, one in the recent list.
 ///
-/// Both are explicit user gestures, so the parent folder of each file is
-/// added as a root — otherwise the sandbox would refuse it immediately. A folder
-/// becomes a root in its own right. A path that no longer exists adds nothing:
-/// it is reported by its stat failing, not by quietly widening the sandbox
-/// with its parent.
+/// The page **claims**; it never grants (ADR 0005). A path already let in is
+/// confirmed. Otherwise it has to be one Rust offered this session — the
+/// library, a language server's answer, a conversion — or one a remembered
+/// consent covers, and it is let in as far as that consent goes. Anything
+/// else is refused, however it is asked: code in the webview that names
+/// `C:\Windows` gets nothing. One refused path does not bring down the rest.
 #[tauri::command]
 fn adopt_paths(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<Stat>, VfsError> {
     let mut out = Vec::new();
     for raw in paths {
-        let path = std::path::PathBuf::from(&raw);
-        let stat = with_workspace(&state, |workspace| {
-            if path.is_dir() {
-                workspace.add_root(&path)?;
-            } else if let Some(parent) = path.parent().filter(|_| path.is_file()) {
-                workspace.add_root(parent)?;
+        let stat = with_consents(&state, |workspace, consents| {
+            if let Ok(stat) = workspace.stat(&raw) {
+                return Ok(stat);
             }
-            workspace.stat(&path)
+            let real = std::fs::canonicalize(&raw)?;
+            match consents.claim(&real)? {
+                Some(consent) => {
+                    admit(workspace, &consent)?;
+                    workspace.stat(&real)
+                }
+                None => Err(VfsError::OutsideWorkspace(raw.clone())),
+            }
         });
-        // One failed path must not bring down the whole drop.
         match stat {
             Ok(stat) => out.push(stat),
-            Err(err) => eprintln!("[uleditor] adopted path refused: {raw} — {err}"),
+            Err(err) => eprintln!("[uleditor] claimed path refused: {raw} — {err}"),
         }
     }
     Ok(out)
 }
 
-/// One file a language server pointed at, let in without its folder — see
-/// `Workspace::grant_file`. F12 into the standard library used to adopt the
-/// folder, which put it in the tree, in every search and open to writing.
+/// A folder taken off the tree leaves the sandbox as well, keeping the files
+/// still open in it (`keep`, which can only narrow). `remember: false` — a
+/// folder taken out of Recent — forgets the consent too; a folder that only
+/// could not be read just now stays remembered, to be opened again.
 #[tauri::command]
-fn grant_file(state: State<'_, AppState>, path: String) -> Result<Stat, VfsError> {
-    with_workspace(&state, |workspace| {
-        let granted = workspace.grant_file(&path, ul_core::Access::ReadWrite)?;
-        workspace.stat(&granted)
-    })
-}
-
-/// A folder taken off the tree leaves the sandbox as well.
-#[tauri::command]
-fn forget_root(state: State<'_, AppState>, path: String) -> Result<(), VfsError> {
-    with_workspace(&state, |workspace| {
-        workspace.forget_root(&path, &[]);
+fn forget_root(
+    state: State<'_, AppState>,
+    path: String,
+    keep: Option<Vec<String>>,
+    remember: Option<bool>,
+) -> Result<(), VfsError> {
+    let keep: Vec<std::path::PathBuf> = keep
+        .unwrap_or_default()
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+    with_consents(&state, |workspace, consents| {
+        workspace.forget_root(&path, &keep);
+        if !remember.unwrap_or(false) {
+            consents.forget(&ul_core::vfs::canonical_path(&path))?;
+        }
         Ok(())
     })
 }
@@ -330,36 +417,42 @@ async fn list_files(state: State<'_, AppState>, limit: usize) -> Result<Vec<Stat
 /// A survey of the device in search of documents.
 ///
 /// The locations looked at come from `ul_core::default_roots()` and depend on
-/// the platform. A scanned folder becomes a **library root**, not an ordinary
-/// root: a document from the list must be openable, but those folders have no
-/// business in the explorer tree — otherwise a single glance at the library on
-/// desktop would drop Documents, Downloads and Desktop among the user's opened
-/// folders.
+/// the platform. The folders are walked and granted nothing: each document
+/// found is **offered**, and let in when the page claims it by opening it — to
+/// be read on desktop (ADR 0005). A glance at the library used to grant
+/// Documents, Downloads, Desktop and Pictures whole, to read and to write.
 #[tauri::command]
 async fn scan_library(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> Result<LibraryScan, VfsError> {
-    let roots = ul_core::default_roots();
+    // Missing folders are expected — the list is the same for every device.
+    let usable: Vec<_> = ul_core::default_roots()
+        .into_iter()
+        .filter(|root| root.is_dir())
+        .collect();
 
-    /* The folders are granted under the lock and walked outside it, on a copy,
-    like a search: a walk of Documents, Downloads, Desktop and Pictures held
-    every command that needs the sandbox — saving among them — until it was
-    done. */
-    let (usable, workspace) = with_workspace(&state, |workspace| {
-        let mut usable = Vec::new();
-        for root in &roots {
-            // Missing folders are expected — the list is the same for every device.
-            if workspace
-                .grant_folder(root, ul_core::Access::ReadWrite)
-                .is_ok()
-            {
-                usable.push(root.clone());
-            }
-        }
-        Ok((usable, workspace.clone()))
-    })?;
-    workspace.scan_library(&usable, limit)
+    /* Walked outside the lock, on a copy, like a search: a walk of Documents,
+    Downloads, Desktop and Pictures held every command that needs the
+    sandbox — saving among them — until it was done. */
+    let workspace = with_workspace(&state, |workspace| Ok(workspace.clone()))?;
+    let scan = workspace.scan_library(&usable, limit)?;
+
+    /* The folders are granted nothing; each document found is offered, for
+    the page to claim when it is opened (ADR 0005). To be read on desktop,
+    where opening one to write is a gesture of its own; on a phone, where
+    the system's "All files access" is the consent, to be written too. */
+    let access = if cfg!(mobile) {
+        Access::ReadWrite
+    } else {
+        Access::Read
+    };
+    offer_files(
+        &state,
+        scan.entries.iter().map(|entry| entry.uri.as_str()),
+        access,
+    );
+    Ok(scan)
 }
 
 #[tauri::command]
@@ -542,7 +635,11 @@ async fn convert_to_pdf(
         &profile,
         std::time::Duration::from_secs(120),
     )?;
-    Ok(output.to_string_lossy().into_owned())
+    let output = output.to_string_lossy().into_owned();
+    /* The PDF alone is offered, to be read: it is a copy in the program's own
+    cache, and that folder has no business in the tree or a search. */
+    offer_files(&state, [output.as_str()], Access::Read);
+    Ok(output)
 }
 
 /// A folder only its owner can enter, made if it is not there.
@@ -965,7 +1062,7 @@ async fn lsp_definition(
         return Ok(Vec::new());
     };
 
-    Ok(ul_lsp::parse_locations(&answer)
+    let jumps = ul_lsp::parse_locations(&answer)
         .into_iter()
         /* A location this side cannot turn into a path is dropped rather than
         passed on: rust-analyzer answers about the standard library with a
@@ -982,7 +1079,15 @@ async fn lsp_definition(
                 end_column: found.span.end_column,
             })
         })
-        .collect())
+        .collect::<Vec<_>>();
+    /* Each file pointed at is offered, to be read, and nothing beside it: a
+    server's answer is not a person pointing at a folder (ADR 0005). */
+    offer_files(
+        &state,
+        jumps.iter().map(|jump| jump.path.as_str()),
+        Access::Read,
+    );
+    Ok(jumps)
 }
 
 /// What could this word become? — the list, and whether it is the whole list.
@@ -1166,12 +1271,17 @@ fn close_acknowledged(guard: State<'_, CloseGuard>) {
 /// window reloads when the language changes, and a list that survived would
 /// announce the same crash every time somebody switched between English and
 /// Croatian.
+///
+/// Each report is offered, to be read: the page opens it by claiming it, and
+/// the reports' folder stays shut to it otherwise (ADR 0005).
 #[tauri::command]
-fn take_crash_reports() -> Vec<String> {
-    crash::unseen()
+fn take_crash_reports(state: State<'_, AppState>) -> Vec<String> {
+    let reports: Vec<String> = crash::unseen()
         .into_iter()
         .map(|path| path.display().to_string())
-        .collect()
+        .collect();
+    offer_files(&state, reports.iter().map(String::as_str), Access::Read);
+    reports
 }
 
 /* ── developer tools ─────────────────────────────────────────────────── */
@@ -1259,6 +1369,9 @@ pub fn run() {
         use tauri::Emitter;
         let paths = paths_from(argv.into_iter());
         if !paths.is_empty() {
+            /* A second double-click is a gesture: granted here, in Rust, before
+            the page is told (ADR 0005). */
+            grant_gestures(&app.state::<AppState>(), &paths);
             let _ = app.emit("uleditor://open-paths", paths);
         }
         if let Some(window) = app.get_webview_window("main") {
@@ -1288,6 +1401,21 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.emit("ul://close-requested", ());
                 }
+            }
+        })
+        /* A drop onto the window is a gesture the operating system drew: the
+        paths are granted here, in Rust, and the page is told to open them
+        only then (ADR 0005) — it no longer adopts what it is handed by the
+        drop itself, which code in the webview could fake. */
+        .on_webview_event(|webview, event| {
+            if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                use tauri::Emitter;
+                grant_gestures(&webview.state::<AppState>(), paths);
+                let list: Vec<String> = paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect();
+                let _ = webview.app_handle().emit("uleditor://open-paths", list);
             }
         })
         .on_page_load(|webview, payload| {
@@ -1327,10 +1455,23 @@ pub fn run() {
             {
                 workspace.protect(own);
             }
+            /* What the person consented to before, kept beside the answers and
+            shut to the page with them. A folder that cannot be made keeps the
+            consents for this session only. */
+            let consents = answers
+                .clone()
+                .filter(|dir| private_folder(dir).is_ok())
+                .map(|dir| Consents::load(dir.join("consents.json")))
+                .unwrap_or_else(Consents::in_memory);
             app.manage(AppState {
                 workspace: Mutex::new(workspace),
+                consents: Mutex::new(consents),
             });
-            app.manage(LaunchPaths(Mutex::new(paths_from(std::env::args()))));
+            /* The files the program was started with are a gesture too: granted
+            now, and opened when the page asks for them. */
+            let launched = paths_from(std::env::args());
+            grant_gestures(&app.state::<AppState>(), &launched);
+            app.manage(LaunchPaths(Mutex::new(launched)));
 
             /* Old reports go now rather than inside the hook. A directory sweep
             on a process that is already dying is the one piece of this that
@@ -1408,7 +1549,6 @@ pub fn run() {
             pick_files,
             pick_save_target,
             adopt_paths,
-            grant_file,
             forget_root,
             roots,
             read_directory,
@@ -1476,6 +1616,7 @@ pub fn run() {
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect();
                 if !paths.is_empty() {
+                    grant_gestures(&_app.state::<AppState>(), &paths);
                     let _ = _app.emit("uleditor://open-paths", paths);
                     /* And the window comes up with it. This path had none of
                     that at all: a file opened from Finder while the program was
@@ -1517,7 +1658,9 @@ fn stays_in_app(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
     /* `tauri://localhost` — the address macOS and Linux open the application
     at — has no path at all, not `/`: `tauri` is not a scheme the URL
     standard gives a path to. Refusing it left those builds an empty window. */
-    own_origin(url, dev) && matches!(url.path(), "" | "/" | "/index.html")
+    /* And with no query: the page is never reached with one, and a query is
+    what an injected navigation would carry its payload in (ADR 0005). */
+    own_origin(url, dev) && matches!(url.path(), "" | "/" | "/index.html") && url.query().is_none()
 }
 
 /// Whether a URL is on the application's own origin.

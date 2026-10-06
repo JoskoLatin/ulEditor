@@ -16,8 +16,10 @@
  * - **A folder taken off the tree stayed in the sandbox** until the program
  *   was closed: searched, listed, open to read and write. It now leaves — and
  *   a document still open from it can still be saved.
- * - **F12 adopted the definition's whole folder.** It now lets in that file
- *   and nothing beside it, and the folder does not join the tree.
+ * - **The page could let things in.** Since ADR 0005 it only claims what the
+ *   core offered or remembered: a file it names is not let in by asking, and
+ *   the command that let one in is gone. What F12 offers — the file, to be
+ *   read, and nothing beside it — is checked in verify-desktop-lsp.
  *
  * Windows only, like the other desktop checks.
  *
@@ -29,7 +31,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop } from './desktop-session.mjs';
+import { startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -139,9 +141,9 @@ try {
 
   /* ── a folder off the tree ──────────────────────────────────────── */
 
-  /* Opened the way a folder handed to the program from outside is, so it is
-     in the tree with its remove button, not only in the sandbox. */
-  await invoke('plugin:event|emit', { event: 'uleditor://open-paths', payload: [project] });
+  /* Handed to the program from outside, as the system does, so it is in the
+     tree with its remove button, not only in the sandbox. */
+  await openFromOutside(page, [project]);
   await page.waitForSelector('button[title^="Remove from the list"]', { timeout: 15000 });
   await page.keyboard.press('Control+P');
   await page.waitForSelector('.palette-input input', { timeout: 10000 });
@@ -181,20 +183,19 @@ try {
   }
   check('a document still open from it is still saved', saved.includes('Nakon uklanjanja'), JSON.stringify(saved));
 
-  /* ── one file, not its folder ───────────────────────────────────── */
+  /* ── the page claims, it does not grant ─────────────────────────── */
 
-  const granted = await invoke('grant_file', { path: join(elsewhere, 'definition.rs') });
-  check('a definition is let in', granted?.name === 'definition.rs');
+  const definition = join(elsewhere, 'definition.rs');
+  const claimed = await invoke('adopt_paths', { paths: [definition, elsewhere] });
   check(
-    'the file beside it is not',
-    await refused('read_file', { path: join(elsewhere, 'beside.rs') }),
+    'a file or folder nobody offered is not let in by asking for it',
+    Array.isArray(claimed) && claimed.length === 0,
+    JSON.stringify(claimed),
   );
+  check('and cannot be read', await refused('read_file', { path: definition }));
+  check('the command that let a file in is gone', await refused('grant_file', { path: definition }));
   const after = await invoke('roots', {});
   check('and its folder is not a root', !after.some((r) => r.name === 'elsewhere'));
-  check(
-    'a folder is not a file to grant',
-    await refused('grant_file', { path: elsewhere }),
-  );
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message : String(err));
   await session?.page

@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { alreadyRunning, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { alreadyRunning, startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EXE = join(ROOT, 'target', 'debug', 'uleditor-desktop.exe');
@@ -73,7 +73,7 @@ try {
   check('attached to the running desktop application', true);
   check('a first start offers nothing to restore', (await restoreButton(page).count()) === 0);
 
-  await page.evaluate((dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }), workspace);
+  await openFromOutside(page, [workspace]);
   await page.evaluate(
     ([dir, file]) => {
       const key = 'uleditor.settings';

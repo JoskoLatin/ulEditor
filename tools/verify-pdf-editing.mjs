@@ -23,7 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { makePdf } from './fixtures.mjs';
-import { killTree } from './desktop-session.mjs';
+import { killTree, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 9334;
@@ -112,10 +112,7 @@ try {
     await page.waitForTimeout(200);
   }
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
 
   await open('form.pdf');
   check('the PDF is open from the workspace', true);

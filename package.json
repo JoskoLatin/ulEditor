@@ -90,6 +90,7 @@
     "verify:desktop-close": "node tools/verify-desktop-close.mjs",
     "verify:desktop-pdf-notes": "node tools/verify-desktop-pdf-notes.mjs",
     "verify:desktop-links": "node tools/verify-desktop-links.mjs",
+    "verify:desktop-consent": "node tools/verify-desktop-consent.mjs",
     "verify:npm-licenses": "node tools/verify-npm-licenses.mjs",
     "verify:office-paste": "node tools/verify-office-paste.mjs",
     "android:build": "powershell -ExecutionPolicy Bypass -File tools/android-dev.ps1 -Build",

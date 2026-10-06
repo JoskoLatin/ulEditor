@@ -132,6 +132,45 @@ export function killTree(child) {
   }
 }
 
+/**
+ * Hands paths to the running application the way the system does: a second
+ * copy started with them, which the single-instance plugin turns into a
+ * gesture the core grants (ADR 0005) — a folder opened, a file alone — and the
+ * page then opens. Returns once the first of them is let in.
+ *
+ * The checks used to call `adopt_paths` from the page for this, which is the
+ * very thing ADR 0005 took away from the page: the page claims, it does not
+ * grant, and a check that grants through the page tests a hole.
+ */
+export async function openFromOutside(page, paths) {
+  const exe = resolve(
+    ROOT,
+    'target',
+    'debug',
+    process.platform === 'win32' ? 'uleditor-desktop.exe' : 'uleditor-desktop',
+  );
+  /* The second copy hands over its arguments and exits at once. Bounded all
+     the same: with no first copy to hand over to, it would be the program
+     itself, and would never end. */
+  const handed = spawnSync(exe, paths, { stdio: 'ignore', timeout: 30000, killSignal: 'SIGKILL' });
+  if (handed.error) throw new Error(`could not hand ${paths[0]} over: ${handed.error.message}`);
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const inside = await page.evaluate(
+      (path) =>
+        window.__TAURI_INTERNALS__.invoke('stat', { path }).then(
+          () => true,
+          () => false,
+        ),
+      paths[0],
+    );
+    if (inside) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`the application never let ${paths[0]} in`);
+}
+
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});

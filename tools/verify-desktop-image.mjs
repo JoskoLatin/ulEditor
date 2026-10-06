@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isLocal, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { isLocal, startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -74,10 +74,7 @@ try {
   const file = join(workspace, 'slika.png');
   await writeFile(file, Buffer.from(bytes));
 
-  await page.evaluate(
-    (dir) => window.__TAURI_INTERNALS__.invoke('adopt_paths', { paths: [dir] }),
-    workspace,
-  );
+  await openFromOutside(page, [workspace]);
 
   const open = async (name) => {
     await page.keyboard.press('Control+P');

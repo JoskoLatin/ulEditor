@@ -121,10 +121,11 @@ export function App({ shell }: { shell: Shell }) {
         const payload = event.payload;
         if (payload.type === 'over') setDropActive(true);
         else if (payload.type === 'leave') setDropActive(false);
-        else if (payload.type === 'drop') {
-          setDropActive(false);
-          void adoptDropped(shell, { paths: payload.paths });
-        }
+        /* The drop itself is opened by the core: it grants the paths and
+           tells the page through `uleditor://open-paths` (see launch.ts), so
+           what code in the webview hands over as a drop opens nothing
+           (ADR 0005). */
+        else if (payload.type === 'drop') setDropActive(false);
       });
       // The component could have unmounted while the subscription was in flight.
       if (cancelled) stop();
