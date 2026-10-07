@@ -53,6 +53,8 @@ pub enum ConvertError {
     Timeout(u64),
     #[error("LibreOffice produced no file, and said: {0}")]
     Refused(String),
+    #[error("this file is not one of the drawing formats LibreOffice is used for here")]
+    UnsupportedContent,
     #[error("file system error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -75,6 +77,53 @@ pub struct Backend {
 
 /// The formats this is for. Everything else in the program has its own reader.
 pub const FORMATS: [&str; 4] = ["cdr", "eps", "ps", "ai"];
+
+/// Whether `head` is the start of one of the four formats this converts.
+///
+/// LibreOffice decides what a document is by its content, not its name. A file
+/// named `drawing.cdr` whose bytes are HTML is imported as a web page — and a
+/// web page fetches every linked image as it loads, from a process with no
+/// content-security policy over it, carrying whatever the author put in the URL
+/// to wherever it points (measured through `convert-to pdf`, card 505). So a
+/// document the program is handed could reach the network with no gesture and
+/// no way for the sandbox to stop it.
+///
+/// The four formats this is for begin with bytes nothing else does, so the file
+/// is checked against them before LibreOffice is ever told about it. Everything
+/// else is refused — the cost is a genuine but unusual file turned away with a
+/// clear message, against the whole class of documents that reach out.
+pub fn content_is_supported(head: &[u8]) -> bool {
+    // PostScript — `.eps`, `.ps`, and an `.ai` saved without PDF compatibility.
+    // The `%!` must be the very first bytes: the EPSF spec requires it, and
+    // anything allowed before it is room for another kind of document to hide.
+    if head.starts_with(b"%!") {
+        return true;
+    }
+    // A modern `.ai` is a PDF.
+    if head.starts_with(b"%PDF-") {
+        return true;
+    }
+    // An `.eps` carrying a binary preview: the DOS EPS header.
+    if head.starts_with(&[0xC5, 0xD0, 0xD3, 0xC6]) {
+        return true;
+    }
+    // CorelDRAW is a RIFF container whose form type begins "CDR" (a drawing) or
+    // "CDT" (a template), in either case.
+    if head.starts_with(b"RIFF") && head.len() >= 11 {
+        let form = &head[8..11];
+        return form.eq_ignore_ascii_case(b"cdr") || form.eq_ignore_ascii_case(b"cdt");
+    }
+    false
+}
+
+/// The first bytes of a file, for `content_is_supported`.
+fn head_of(source: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(source)?;
+    let mut head = [0u8; 16];
+    let read = file.read(&mut head)?;
+    Ok(head[..read].to_vec())
+}
 
 /// Where LibreOffice puts itself, per platform.
 ///
@@ -412,6 +461,13 @@ pub fn to_pdf(
         return Err(ConvertError::NoSource(
             source.to_string_lossy().into_owned(),
         ));
+    }
+    // Checked before LibreOffice is told anything: a file whose bytes are not
+    // one of the four formats — HTML wearing a `.cdr` name, say — would be
+    // imported for what it really is, and a web page reaches the network as it
+    // loads (card 505). The name is not trusted; the content is.
+    if !content_is_supported(&head_of(source)?) {
+        return Err(ConvertError::UnsupportedContent);
     }
     std::fs::create_dir_all(outdir)?;
 
@@ -869,6 +925,69 @@ showpage
         this failing whenever somebody has LibreOffice open. */
         assert!(profile.exists());
         assert!(!out.join("profile").exists());
+    }
+
+    /* A document wearing one of the four names, whose bytes are HTML with a
+     * linked image, is refused before LibreOffice is started — so the fetch
+     * that import would make (measured, card 505) never happens. No office
+     * suite is needed for this one: the refusal is before LibreOffice. */
+    #[test]
+    fn html_wearing_a_drawing_name_is_refused_before_libreoffice() {
+        let backend = Backend {
+            path: "soffice".into(),
+            formats: FORMATS.iter().map(|f| (*f).to_string()).collect(),
+        };
+        let dir = std::env::temp_dir().join(format!("ul-convert-sniff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let source = dir.join("drawing.cdr");
+        std::fs::write(
+            &source,
+            b"<!DOCTYPE html><html><body><img src=\"http://127.0.0.1:1/x?data=secret\"></body></html>",
+        )
+        .unwrap();
+
+        let result = to_pdf(
+            &backend,
+            &source,
+            &dir.join("out"),
+            &dir.join("profile"),
+            Duration::from_secs(5),
+        );
+        assert!(
+            matches!(result, Err(ConvertError::UnsupportedContent)),
+            "{result:?}"
+        );
+        // LibreOffice was never told about it, so there is nowhere a PDF could be.
+        assert!(!dir.join("out").join("drawing.pdf").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_four_formats_own_first_bytes_are_accepted() {
+        // The real start of each of the four, which must be let through.
+        assert!(content_is_supported(b"%!PS-Adobe-3.0 EPSF-3.0\n"));
+        assert!(content_is_supported(b"%!PS-Adobe-2.0\n")); // a .ps
+        assert!(content_is_supported(b"%PDF-1.5\n")); // a modern .ai
+        assert!(content_is_supported(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0])); // EPS with a preview
+        assert!(content_is_supported(b"RIFFxxxxCDRA")); // CorelDRAW
+        assert!(content_is_supported(b"RIFFxxxxcdrA")); // and in lower case
+        assert!(content_is_supported(b"RIFFxxxxCDTA")); // a template
+
+        // What a document would be wearing one of those four names: each is
+        // sniffed by LibreOffice for what it is, and each reaches out.
+        assert!(!content_is_supported(
+            b"<!DOCTYPE html><img src=http://e/x>"
+        ));
+        assert!(!content_is_supported(b"<html>"));
+        assert!(!content_is_supported(b"<?xml version=\"1.0\"?><svg")); // SVG, XML
+        assert!(!content_is_supported(b"PK\x03\x04")); // a .odt/.docx ZIP
+        assert!(!content_is_supported(b"{\\rtf1")); // RTF
+        assert!(!content_is_supported(&[0xD0, 0xCF, 0x11, 0xE0])); // an old .doc
+        assert!(!content_is_supported(b"RIFFxxxxWEBP")); // a RIFF that is not CorelDRAW
+        assert!(!content_is_supported(b" %!PS")); // not PostScript if anything is before %!
+        assert!(!content_is_supported(b""));
     }
 
     #[test]
