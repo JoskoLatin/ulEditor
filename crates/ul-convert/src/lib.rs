@@ -94,9 +94,13 @@ pub const FORMATS: [&str; 4] = ["cdr", "eps", "ps", "ai"];
 /// clear message, against the whole class of documents that reach out.
 pub fn content_is_supported(head: &[u8]) -> bool {
     // PostScript — `.eps`, `.ps`, and an `.ai` saved without PDF compatibility.
-    // The `%!` must be the very first bytes: the EPSF spec requires it, and
-    // anything allowed before it is room for another kind of document to hide.
-    if head.starts_with(b"%!") {
+    // `%!PS`, not bare `%!`: that is the key LibreOffice routes to its
+    // PostScript filter on, so accepting exactly it is accepting what it will
+    // actually treat as PostScript, and nothing that might fall through to the
+    // web-document filter instead. It must be the very first bytes — the EPSF
+    // spec requires it, and anything allowed before is room for another kind of
+    // document to hide.
+    if head.starts_with(b"%!PS") {
         return true;
     }
     // A modern `.ai` is a PDF.
@@ -455,6 +459,7 @@ pub fn to_pdf(
     source: &Path,
     outdir: &Path,
     profile: &Path,
+    workdir: &Path,
     timeout: Duration,
 ) -> Result<PathBuf, ConvertError> {
     if !source.is_file() {
@@ -462,20 +467,36 @@ pub fn to_pdf(
             source.to_string_lossy().into_owned(),
         ));
     }
-    // Checked before LibreOffice is told anything: a file whose bytes are not
-    // one of the four formats — HTML wearing a `.cdr` name, say — would be
-    // imported for what it really is, and a web page reaches the network as it
-    // loads (card 505). The name is not trusted; the content is.
-    if !content_is_supported(&head_of(source)?) {
+    let name = source
+        .file_name()
+        .ok_or_else(|| ConvertError::NoSource(source.to_string_lossy().into_owned()))?;
+
+    /* A private copy, in a directory the page cannot write, is what is checked
+    and what is converted — the same bytes for both. Reading the source to
+    classify it and then letting LibreOffice open it again by name would be two
+    opens of a path the page controls: it could pass the check with `%!PS…` and
+    swap in HTML before LibreOffice looked, and the web import that reaches the
+    network (card 505) would run on bytes that were never checked. Copied once
+    here, there is nothing left for the page to swap. */
+    std::fs::create_dir_all(workdir)?;
+    let staged = workdir.join(name);
+    let _ = std::fs::remove_file(&staged);
+    std::fs::copy(source, &staged)?;
+
+    // The content, not the name: a file whose bytes are not one of the four
+    // formats — HTML wearing a `.cdr` name, say — would be imported for what it
+    // really is, and a web page reaches the network as it loads (card 505).
+    if !content_is_supported(&head_of(&staged)?) {
+        let _ = std::fs::remove_file(&staged);
         return Err(ConvertError::UnsupportedContent);
     }
     std::fs::create_dir_all(outdir)?;
 
-    let expected = outdir.join(output_name(source));
+    let expected = outdir.join(output_name(&staged));
     // A stale file from a previous run would be mistaken for this run's answer.
     let _ = std::fs::remove_file(&expected);
 
-    let child = soffice_command(backend, source, outdir, profile)
+    let child = soffice_command(backend, &staged, outdir, profile)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -855,6 +876,7 @@ mod tests {
             Path::new("/definitely/not/a/drawing.cdr"),
             Path::new("/tmp/ul-convert-test"),
             Path::new("/tmp/ul-convert-test-profile"),
+            Path::new("/tmp/ul-convert-test-in"),
             Duration::from_secs(1),
         )
         .unwrap_err();
@@ -905,7 +927,16 @@ showpage
 
         let out = dir.join("out");
         let profile = dir.join("profile");
-        let pdf = to_pdf(&backend, &source, &out, &profile, Duration::from_secs(180)).unwrap();
+        let workdir = dir.join("in");
+        let pdf = to_pdf(
+            &backend,
+            &source,
+            &out,
+            &profile,
+            &workdir,
+            Duration::from_secs(180),
+        )
+        .unwrap();
 
         assert_eq!(pdf.file_name().unwrap(), "proba.pdf");
         let bytes = std::fs::read(&pdf).unwrap();
@@ -953,6 +984,7 @@ showpage
             &source,
             &dir.join("out"),
             &dir.join("profile"),
+            &dir.join("in"),
             Duration::from_secs(5),
         );
         assert!(
@@ -969,6 +1001,7 @@ showpage
         // The real start of each of the four, which must be let through.
         assert!(content_is_supported(b"%!PS-Adobe-3.0 EPSF-3.0\n"));
         assert!(content_is_supported(b"%!PS-Adobe-2.0\n")); // a .ps
+        assert!(content_is_supported(b"%!PS\n")); // the shortest PostScript key
         assert!(content_is_supported(b"%PDF-1.5\n")); // a modern .ai
         assert!(content_is_supported(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0])); // EPS with a preview
         assert!(content_is_supported(b"RIFFxxxxCDRA")); // CorelDRAW
@@ -986,7 +1019,9 @@ showpage
         assert!(!content_is_supported(b"{\\rtf1")); // RTF
         assert!(!content_is_supported(&[0xD0, 0xCF, 0x11, 0xE0])); // an old .doc
         assert!(!content_is_supported(b"RIFFxxxxWEBP")); // a RIFF that is not CorelDRAW
-        assert!(!content_is_supported(b" %!PS")); // not PostScript if anything is before %!
+        assert!(!content_is_supported(b" %!PS")); // not PostScript if anything is before it
+        assert!(!content_is_supported(b"%!\n<html>")); // bare %! then HTML is not the PS key
+        assert!(!content_is_supported(b"%! some other thing")); // bare %! is not %!PS
         assert!(!content_is_supported(b""));
     }
 

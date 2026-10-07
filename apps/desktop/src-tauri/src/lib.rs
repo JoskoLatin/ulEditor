@@ -835,6 +835,18 @@ async fn convert_to_pdf(
     private_folder(&profiles).map_err(ConvertError::from)?;
     let profile = profiles.join(digest_of(&path));
 
+    /* Where the file to convert is staged, private like the profile: the page
+    never reaches it, so it cannot swap the bytes between the check and the
+    open (ul_convert::to_pdf). Apart from both the profile and the cache the
+    PDF is read from. */
+    let staging = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| ConvertError::Start(err.to_string()))?
+        .join("convert-input");
+    private_folder(&staging).map_err(ConvertError::from)?;
+    let workdir = staging.join(digest_of(&path));
+
     /* Two minutes. LibreOffice takes a few seconds for a drawing and can take
     twenty on a cold start, since the first run of a fresh profile builds it;
     a minute would time out on exactly the machine where it was slowest. */
@@ -843,6 +855,7 @@ async fn convert_to_pdf(
         &source,
         &outdir,
         &profile,
+        &workdir,
         std::time::Duration::from_secs(120),
     )?;
     let output = output.to_string_lossy().into_owned();
