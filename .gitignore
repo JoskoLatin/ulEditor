@@ -45,3 +45,6 @@ keystore.properties
 CLAUDE.md
 CLAUDE.local.md
 AGENTS.md
+
+# Veza na vdWiki ploču (token i certifikat po stroju) — scripts/spoji-projekt.sh
+.vdwiki/

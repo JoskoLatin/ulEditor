@@ -1,3 +1,15 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "workbench.colorCustomizations": {
+        "titleBar.activeBackground": "#1565C0",
+        "titleBar.activeForeground": "#FFFFFF",
+        "titleBar.inactiveBackground": "#1565C099",
+        "titleBar.inactiveForeground": "#FFFFFF99",
+        "commandCenter.border": "#FFFFFF55",
+        "statusBar.background": "#1565C0",
+        "statusBar.foreground": "#FFFFFF",
+        "statusBarItem.hoverBackground": "#4484CD",
+        "statusBarItem.remoteBackground": "#4484CD",
+        "statusBarItem.remoteForeground": "#FFFFFF"
+    }
 }
