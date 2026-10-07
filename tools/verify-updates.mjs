@@ -226,9 +226,13 @@ check(
   'and none of them holds a signing key',
   writers.every((name) => !/secrets\.(TAURI_SIGNING|ANDROID_KEY)/.test(job(name))),
 );
+/* Any `cache:` key at all, not only pnpm's: setup-java v6 turns a JDK cache on
+   with `cache:` or `cache-jdk:`, and the Android signer would then run a
+   keytool restored from what a CI run on main wrote (found by the independent
+   review of the setup-java 6 pin). */
 check(
   'nothing restored from a cache goes into a release',
-  !/uses: (Swatinem\/rust-cache|actions\/cache)|^\s*cache:\s*pnpm/m.test(release),
+  !/uses: (Swatinem\/rust-cache|actions\/cache)|^\s*cache(-[a-z]+)?:/m.test(release),
   'a cache is written by other runs',
 );
 check(
