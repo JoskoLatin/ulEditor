@@ -143,12 +143,15 @@ try {
   const action = toast.locator('button', { hasText: 'Open for editing' });
   check('saving it says it is read-only, and offers "Open for editing…"', (await action.count()) === 1);
   await action.first().click();
-  const cancelled = answerFileDialog(false, 20);
+  const enterAlone = answerFileDialog(true, 20);
   check(
     'the system draws its own file dialog, titled with the document',
-    cancelled === 'pressed: Open for editing: crtez.pdf',
-    cancelled,
+    enterAlone.startsWith('pressed: Open for editing: crtez.pdf'),
+    enterAlone,
   );
+  check('with no file chosen in it beforehand', /name box:\s*$/.test(enterAlone), enterAlone);
+  const stillOpen = answerFileDialog(false, 5);
+  check('so Enter alone grants nothing: the dialog is still there', stillOpen.startsWith('pressed'), stillOpen);
   await page.waitForTimeout(1500);
   check(
     'Cancel grants nothing: still read-only',
@@ -159,6 +162,21 @@ try {
     await refused('write_file', { path: pdfPath, contents: Array.from(original) }),
   );
 
+  /* Asked again the moment it was cancelled — what script would do to wear
+     the person down — it is refused without a dialog. */
+  const again = await page.evaluate(
+    (path) =>
+      window.__TAURI_INTERNALS__.invoke('open_for_editing', { path, uiLanguage: 'en' }).then(
+        () => 'asked',
+        (err) => String(err),
+      ),
+    pdfPath,
+  );
+  check('asked again at once, it is refused', /does not ask for a while/.test(again), again);
+  check('without a dialog', answerFileDialog(false, 2) === 'no dialog');
+  console.log('  (waiting out the half minute after a Cancel …)');
+  await page.waitForTimeout(31000);
+
   /* ── Open grants it ──────────────────────────────────────────────── */
 
   await page.keyboard.press('Control+Shift+P');
@@ -166,8 +184,8 @@ try {
   const listed = await page.locator('.palette-item', { hasText: 'Open for editing' }).count();
   check('the command is in the palette for a read-only document', listed > 0);
   await page.keyboard.press('Enter');
-  const opened = answerFileDialog(true, 20);
-  check('Open in the dialog', opened.startsWith('pressed'), opened);
+  const opened = answerFileDialog(true, 20, 'crtez.pdf');
+  check('the file picked in the dialog, and Open', opened.startsWith('pressed'), opened);
   check(
     'the tab can be saved now',
     await until(async () => (await page.locator('.status-item', { hasText: 'read-only' }).count()) === 0, 10000),

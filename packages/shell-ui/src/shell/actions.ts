@@ -199,7 +199,10 @@ export async function openForEditing(shell: Shell, id: string): Promise<void> {
     await openUri(shell, picked.uri);
     return;
   }
-  if (picked.readonly) return;
+  if (picked.readonly) {
+    shell.notify.show('warning', t('{name} is still read-only: the file itself is marked so.', { name: tab.name }));
+    return;
+  }
   useWorkspace.getState().patchTab(id, { readonly: false });
   shell.notify.show('info', t('{name} can be saved now.', { name: tab.name }));
 }

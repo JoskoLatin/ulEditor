@@ -571,6 +571,7 @@
   "Only the desktop app converts {name}, through LibreOffice.": "Samo desktop aplikacija pretvara {name}, preko LibreOfficea.",
   "Open for editing…": "Otvori za uređivanje…",
   "{name} can be saved now.": "{name} se sada može spremiti.",
+  "{name} is still read-only: the file itself is marked so.": "{name} je i dalje samo za čitanje: tako je označena sama datoteka.",
   "The preview stored in the file — not the drawing itself": "Pregled spremljen u datoteci — ne sam crtež",
   "Stored preview, {width} × {height}": "Spremljeni pregled, {width} × {height}",
   "This is a program, and this build does not run PostScript.": "Ovo je program, a ova verzija ne izvršava PostScript.",

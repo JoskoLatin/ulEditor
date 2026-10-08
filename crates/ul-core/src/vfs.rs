@@ -479,6 +479,14 @@ impl Workspace {
     /// to write — the projects a language server may run in, first of all. A
     /// page that opened its user's home folder could otherwise trust a project
     /// for them by writing a file.
+    /// Whether `path` lies in a folder nothing is let into (`protect`) —
+    /// asked before a gesture is granted or remembered, so that a consent to
+    /// one is never kept, though it would let nothing in.
+    pub fn is_protected(&self, path: impl AsRef<Path>) -> bool {
+        let real = canonical_prefix(&normalize(path.as_ref()));
+        self.protected.iter().any(|dir| real.starts_with(dir))
+    }
+
     pub fn protect(&mut self, dir: impl AsRef<Path>) {
         let dir = canonical_prefix(&normalize(dir.as_ref()));
         if !self.protected.contains(&dir) {

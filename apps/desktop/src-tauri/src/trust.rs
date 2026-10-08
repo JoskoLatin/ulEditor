@@ -327,6 +327,22 @@ fn site_end(site: &str) -> String {
     format!("…{end}")
 }
 
+/// Why "Open for editing…" draws no dialog: one was cancelled a moment ago,
+/// or three were this session (`Links`, kept apart for this question).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn editing_paused(interface: Option<&str>) -> String {
+    if interface == Some("hr") {
+        "Nakon odustajanja „Otvori za uređivanje…” neko vrijeme ne pita, a nakon tri \
+         odustajanja više ne do ponovnog pokretanja programa. Datoteku možeš otvoriti \
+         s „Otvori datoteke”."
+            .into()
+    } else {
+        "After a Cancel, \"Open for editing…\" does not ask for a while — and after three, \
+         not until the program is started again. The file can be opened with \"Open files\"."
+            .into()
+    }
+}
+
 /// What the page is told when it may not ask about a link for now.
 #[cfg_attr(mobile, allow(dead_code))]
 pub(crate) fn links_paused(interface: Option<&str>) -> String {

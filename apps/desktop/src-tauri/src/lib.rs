@@ -34,6 +34,11 @@ struct AppState {
     /// The nos to links this session, and when the program's own last opened.
     #[cfg_attr(mobile, allow(dead_code))]
     links: Mutex<trust::Links>,
+    /// Cancels of "Open for editing…", paced as a link's no is: script in
+    /// the page could otherwise ask again the moment one is cancelled, for
+    /// ever, until Open is pressed to make it stop.
+    #[cfg_attr(mobile, allow(dead_code))]
+    editing: Mutex<trust::Links>,
 }
 
 /// Held while the core asks the person anything in a dialog of its own —
@@ -105,6 +110,12 @@ fn grant_gesture(
     consents: &mut Consents,
     path: &std::path::Path,
 ) -> Result<(), VfsError> {
+    /* A folder of the program's own lets nothing in whatever is granted, so
+    nothing is granted or remembered for it: a consent kept to it would only
+    wait for the day the folder stopped being protected. */
+    if workspace.is_protected(path) {
+        return Ok(());
+    }
     if path.is_dir() {
         let root = workspace.add_root(path)?;
         let _ = consents.remember(Consent::folder(root, Access::ReadWrite));
@@ -183,6 +194,11 @@ async fn pick_directory(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<Stat>, VfsError> {
+    /* One of the core's dialogs at a time (`Questions`). */
+    let questions = app.state::<Questions>();
+    let Ok(_asking) = questions.0.try_lock() else {
+        return Ok(None);
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |picked| {
         let _ = tx.send(picked);
@@ -218,6 +234,10 @@ async fn pick_files(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<Stat>, VfsError> {
+    let questions = app.state::<Questions>();
+    let Ok(_asking) = questions.0.try_lock() else {
+        return Ok(Vec::new());
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_files(move |picked| {
         let _ = tx.send(picked);
@@ -246,14 +266,18 @@ async fn pick_files(
 /// that can be saved, without its folder coming with it.
 ///
 /// The page names the document; Rust draws the system's own file dialog in
-/// the document's folder with the document chosen, and grants what the person
-/// picks there, to be read and written — the gesture "Open files" is, and no
-/// more. Script in the page can bring the dialog up, as it can "Open files",
-/// but it cannot answer it. The name has to be one the page may read already,
-/// so the dialog never opens on a folder the page could not see into; a
-/// document that can be written already is answered without asking. One
-/// question on the screen at a time, shared with the core's others: asked
-/// for while one is open, it is not shown and nothing is granted.
+/// the document's folder, and grants what the person picks there, to be read
+/// and written — the gesture "Open files" is, and no more. **Nothing is
+/// chosen in it beforehand**: with the name filled in, Enter alone was Open,
+/// and script in the page sees every key — it could bring the dialog up in
+/// the middle of a word and have the next Enter grant a file of its choosing
+/// (the independent review of card 501). The person clicks the file. The
+/// name has to be one the page may read already, so the dialog never opens
+/// on a folder the page could not see into, nor on one of the program's own;
+/// a document that can be written already is answered without asking. A
+/// Cancel is paced as a link's no is — nothing asked for half a minute, and
+/// after three not again this session — and one question is on the screen
+/// at a time, shared with the core's others.
 #[cfg(desktop)]
 #[tauri::command]
 async fn open_for_editing(
@@ -262,21 +286,33 @@ async fn open_for_editing(
     path: String,
     ui_language: Option<String>,
 ) -> Result<Option<Stat>, VfsError> {
-    let document = with_workspace(&state, |workspace| workspace.stat(&path))?;
+    let (document, protected) = with_workspace(&state, |workspace| {
+        let document = workspace.stat(&path)?;
+        let protected = workspace.is_protected(&document.uri);
+        Ok((document, protected))
+    })?;
     if !document.readonly {
         return Ok(Some(document));
+    }
+    if protected {
+        return Err(VfsError::ReadOnly(document.uri));
     }
     let questions = app.state::<Questions>();
     let Ok(_asking) = questions.0.try_lock() else {
         return Ok(None);
     };
+    let editing = || state.editing.lock().expect("the editing lock is poisoned");
+    if !editing().may_ask(std::time::Instant::now()) {
+        return Err(VfsError::Unsupported(trust::editing_paused(
+            ui_language.as_deref(),
+        )));
+    }
 
     let shown = std::path::PathBuf::from(&document.uri);
     let mut dialog = app
         .dialog()
         .file()
-        .set_title(trust::editing_title(ui_language.as_deref(), &document.name))
-        .set_file_name(&document.name);
+        .set_title(trust::editing_title(ui_language.as_deref(), &document.name));
     if let Some(folder) = shown.parent() {
         dialog = dialog.set_directory(folder);
     }
@@ -288,6 +324,7 @@ async fn open_for_editing(
         let _ = tx.send(picked);
     });
     let Some(picked) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        editing().declined(std::time::Instant::now());
         return Ok(None);
     };
 
@@ -321,10 +358,14 @@ async fn pick_save_target(
     state: State<'_, AppState>,
     suggested_name: String,
 ) -> Result<Option<String>, VfsError> {
+    let questions = app.state::<Questions>();
+    let Ok(_asking) = questions.0.try_lock() else {
+        return Ok(None);
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_file_name(&suggested_name)
+        .set_file_name(offered_name(&suggested_name))
         .save_file(move |picked| {
             let _ = tx.send(picked);
         });
@@ -342,6 +383,26 @@ async fn pick_save_target(
     })?;
 
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// The name a "Save as" dialog offers: the last part of what the page
+/// suggested and nothing else. A whole path in the name box outranks the
+/// folder the dialog opened in (measured by the review of card 501): script
+/// in the page could suggest the Startup folder, and one Enter would grant it
+/// a file there. A name with anything a file name cannot hold is not offered.
+fn offered_name(suggested: &str) -> String {
+    let last = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
+    let fits = !last.is_empty()
+        && last != "."
+        && last != ".."
+        && !last
+            .chars()
+            .any(|c| c.is_control() || "<>:\"|?*".contains(c));
+    if fits {
+        last.to_string()
+    } else {
+        "untitled".to_string()
+    }
 }
 
 /// Opens a web link in the system browser, and says whether it did.
@@ -2004,6 +2065,7 @@ pub fn run() {
                 consents: Mutex::new(consents),
                 library_declined: std::sync::atomic::AtomicBool::new(false),
                 links: Mutex::new(trust::Links::default()),
+                editing: Mutex::new(trust::Links::default()),
             });
             app.manage(Questions(tokio::sync::Mutex::new(())));
             /* The files the program was started with are a gesture too: granted
@@ -2297,6 +2359,46 @@ mod tests {
             !said.as_str().unwrap().starts_with(CHANGED_OUTSIDE),
             "{said}"
         );
+    }
+
+    /// "Save as" offers the page's suggestion as a name only: never a path,
+    /// a stream, a device or a parent.
+    #[test]
+    fn a_save_target_is_offered_a_name_and_never_a_path() {
+        use super::offered_name;
+        assert_eq!(offered_name("Izvještaj.pdf"), "Izvještaj.pdf");
+        assert_eq!(
+            offered_name(
+                r"C:\Users\x\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\x.bat"
+            ),
+            "x.bat"
+        );
+        assert_eq!(offered_name("../../x.bat"), "x.bat");
+        assert_eq!(offered_name("notes.txt:stream"), "untitled");
+        assert_eq!(offered_name("C:x.bat"), "untitled");
+        assert_eq!(offered_name(".."), "untitled");
+        assert_eq!(offered_name("a\u{0}b"), "untitled");
+        assert_eq!(offered_name(""), "untitled");
+    }
+
+    /// A gesture in one of the program's own folders grants nothing and
+    /// remembers nothing.
+    #[test]
+    fn a_gesture_in_a_protected_folder_grants_and_remembers_nothing() {
+        let base =
+            std::env::temp_dir().join(format!("ul-protected-gesture-{}", std::process::id()));
+        let own = base.join("own");
+        std::fs::create_dir_all(&own).unwrap();
+        let file = own.join("consents.json");
+        std::fs::write(&file, "{}").unwrap();
+        let mut workspace = ul_core::Workspace::new();
+        workspace.protect(&own);
+        let mut consents = ul_core::Consents::in_memory();
+        super::grant_gesture(&mut workspace, &mut consents, &file).unwrap();
+        super::grant_gesture(&mut workspace, &mut consents, &own).unwrap();
+        assert!(consents.remembered().is_empty());
+        assert!(workspace.read(&file).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The token in front of the bytes: eight, little-endian. The same vector

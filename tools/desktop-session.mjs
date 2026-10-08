@@ -267,13 +267,13 @@ $said`;
 }
 
 /**
- * Answers the system's file dialog the program drew — Open, with the file it
- * chose, or Cancel — and returns its title, or why it could not. The same
- * `#32770` window as a task dialog, but its buttons are the classic IDOK (1)
- * and IDCANCEL (2), pressed with `WM_COMMAND`. Given a moment once found, so
- * that the name the program put in it is there before Open reads it.
+ * Answers the system's file dialog the program drew — Open or Cancel — and
+ * returns its title and what its name box held, or why it could not. The
+ * same `#32770` window as a task dialog, but its buttons are the classic IDOK
+ * (1) and IDCANCEL (2), pressed with `WM_COMMAND`. `name`, when given, is put
+ * in the name box first, as a person clicking that file would.
  */
-export function answerFileDialog(open, seconds = 30) {
+export function answerFileDialog(open, seconds = 30, name = null) {
   const script = `
 Add-Type @'
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -285,6 +285,25 @@ public static class UlFileDialog {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, Each f, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, StringBuilder l);
+  public static IntPtr NameBox(IntPtr dialog) {
+    IntPtr found = IntPtr.Zero;
+    EnumChildWindows(dialog, (h, l) => {
+      var name = new StringBuilder(64); GetClassName(h, name, 64);
+      if (name.ToString() == "Edit" && IsWindowVisible(h)) { found = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+  public static string NameIn(IntPtr dialog) {
+    var box = NameBox(dialog); if (box == IntPtr.Zero) return "";
+    var text = new StringBuilder(1024); SendMessage(box, 0x000D, (IntPtr)1024, text); return text.ToString();
+  }
+  public static void Type(IntPtr dialog, string value) {
+    var box = NameBox(dialog); if (box != IntPtr.Zero) SendMessage(box, 0x000C, IntPtr.Zero, value);
+  }
   public static IntPtr Find(uint pid, out string title) {
     IntPtr dialog = IntPtr.Zero; string found = "";
     EnumWindows((h, l) => {
@@ -307,8 +326,10 @@ for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
   $dialog = [UlFileDialog]::Find([uint32]$app, [ref]$title)
   if ($dialog -ne [IntPtr]::Zero) {
     Start-Sleep -Milliseconds 800
+    $held = [UlFileDialog]::NameIn($dialog)
+    ${name === null ? '' : `[UlFileDialog]::Type($dialog, '${String(name).replace(/'/g, "''")}')`}
     [UlFileDialog]::Press($dialog, ${open ? 1 : 2})
-    $said = 'pressed: ' + $title
+    $said = 'pressed: ' + $title + ' | name box: ' + $held
     break
   }
   $said = 'no dialog'
