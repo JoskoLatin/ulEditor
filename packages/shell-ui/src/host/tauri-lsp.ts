@@ -43,8 +43,14 @@ type Message =
   | { kind: 'stopped'; language: string; detail: string };
 
 export class TauriLanguageServers implements LanguageService {
-  /** `tell`: where the core's sentence goes when it held a question back. */
-  constructor(private readonly tell?: (message: string) => void) {}
+  /** Where the core's sentence goes when it held a question back. Not a
+      parameter property: Node strips the types of this file for the checks,
+      and cannot strip one. */
+  readonly #tell: ((message: string) => void) | undefined;
+
+  constructor(tell?: (message: string) => void) {
+    this.#tell = tell;
+  }
 
   #emitter = new Emitter<DiagnosticsPublished>();
   #listening = false;
@@ -69,7 +75,7 @@ export class TauriLanguageServers implements LanguageService {
         const now = Date.now();
         if (now - this.#heldSaid > 30_000) {
           this.#heldSaid = now;
-          this.tell?.(err.slice(QUESTION_HELD.length));
+          this.#tell?.(err.slice(QUESTION_HELD.length));
         }
         return false;
       }
