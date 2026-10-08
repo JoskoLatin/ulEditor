@@ -170,9 +170,19 @@ try {
     const drawn = answerTrust(NOT_NOW, 3);
     check(
       'another project asked about at once after a "Not now" is not asked',
-      quiet === 'false' && drawn === 'no dialog',
-      `${quiet}; ${drawn}`,
+      quiet.startsWith('ul:question-held:') && drawn === 'no dialog',
+      `${quiet.slice(0, 60)}; ${drawn}`,
     );
+    /* Opened the way a person opens it, the editor marks nothing — and the
+       person is told why, rather than left guessing. */
+    await openMain(another);
+    const told = await page
+      .locator('.toast', { hasText: 'did not ask whether to run this project' })
+      .first()
+      .waitFor({ timeout: 10000 })
+      .then(() => true, () => false);
+    check('and the person is told the question was held back', told);
+    await page.keyboard.press('Control+W');
     /* Long enough for rust-analyzer to have said something, had it started:
        the trusted project below is marked well within this on a warm cache. */
     await new Promise((r) => setTimeout(r, 20000));

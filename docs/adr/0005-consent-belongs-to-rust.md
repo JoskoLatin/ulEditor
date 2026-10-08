@@ -209,6 +209,32 @@ did.
   volume. On Unix the PATH stays, and a distribution's Ghostscript can run
   PostScript the page wrote (card 512). Linked bitmaps in a real `.cdr` were
   not measured: there is no such file to measure with.
+## Questions paced (2026-10-08, cards 501 and 488)
+
+Script in the page can bring up any of the core's questions as often as it
+likes, and a question asked again the moment it is answered "no" ends with
+the yes pressed to make it stop. So each is paced, by what a refusal costs:
+
+- **A link** (since ff65cb4): nothing for half a minute after a no, nothing
+  after three this session.
+- **"Open for editing…"** (41c6413): the same. Nothing is chosen in its
+  dialog beforehand — with the name filled in, Enter alone was Open, and the
+  page sees every key.
+- **"Run this project's code?"** (46418d0): the same, whatever the project
+  — a page that can write a `Cargo.toml` into every folder it holds would
+  otherwise make each one a new question. The person is told when the
+  question was held back, and that a restart asks again. "Forget trusted
+  projects" forgets the yeses only; a "Not now" lasts the session.
+- **"Save as" and "Open folder"** (46418d0): half a minute after a Cancel,
+  with no limit per session — people cancel those and try again all day.
+  "Save as" is offered the page's suggestion as a plain name only, never a
+  path or a character that does not read as what it is.
+
+Every file dialog shares the one-question lock with the core's other
+questions. A gesture in one of the program's own folders — now including
+the folder it runs from on Windows, where a DLL written would load next
+start — grants and remembers nothing.
+
 - **The independent review (PROLAZI)** added what is left: a proxy the
   system names would get the names the rules hold back (closed with
   `--no-proxy-server`), a crash of the renderer can send a dump to Microsoft

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "The restart after an update, which only a desktop build does \u2014 a phone updates through its store. The updater itself has no permission here: the page reaches it only through the core's `check_update` and `install_update`, since the plugin's own `check` takes a proxy from whoever calls it. This is a file of its own rather than two more lines in `default`: the Android build compiles neither plugin, and Tauri's build script resolves every permission identifier against the plugins that were actually compiled. A permission naming one that was not is not ignored, it is an error \u2014 which is how the Android job went red on a change that had nothing to do with Android. `platforms` is what keeps this file out of that build.",
+  "description": "Desktop-only permissions for the main window: none now. The updater has no permission here: the page reaches it only through the core's `check_update` and `install_update`, since the plugin's own `check` takes a proxy from whoever calls it. Nor has the restart: `install_update` restarts the program itself, since a page that could restart it could start every question paced for the session afresh (the review of 46418d0). The file is kept, desktop-only, so that a permission one of those plugins needs goes here and not into `default`: the Android build compiles neither plugin, and Tauri's build script resolves every permission identifier against the plugins actually compiled — one naming a plugin that was not is an error, which is how the Android job once went red on a change that had nothing to do with Android.",
   "windows": [
     "main"
   ],
@@ -10,7 +10,5 @@
     "macOS",
     "windows"
   ],
-  "permissions": [
-    "process:allow-restart"
-  ]
+  "permissions": []
 }

@@ -211,13 +211,9 @@ async function install(shell: Shell, update: Available): Promise<void> {
 
     progress.dispose();
 
-    /* Windows hands over to the installer, which closes the program itself; on
-       macOS and Linux the new files are already in place and only a restart is
-       missing. Asking for one either way is harmless, and being wrong about
-       which platform does what would leave somebody looking at a version that
-       has already been replaced underneath them. */
-    const { relaunch } = await native.process();
-    await relaunch();
+    /* The core restarts the program once the update is in place: the page
+       has no permission to, since a page that could restart it could start
+       every question paced for the session afresh. */
   } catch (err) {
     progress.dispose();
     shell.notify.show(

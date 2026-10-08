@@ -133,7 +133,7 @@ export function createShell(): Shell {
        the bytes stay out of the webview, and as WebAssembly in a browser. */
     images: desktop ? new TauriImages() : new WasmImages(fs),
     /* A language server is a process; a browser starts none, and says so. */
-    language: desktop ? new TauriLanguageServers() : new NoLanguageServers(),
+    language: desktop ? new TauriLanguageServers((message) => notify.show('info', message)) : new NoLanguageServers(),
     registry: new EditorRegistry(),
     platform: desktop ? 'desktop' : 'web',
     canPersist: desktop || hasFileSystemAccess(),

@@ -342,6 +342,23 @@ fn site_end(site: &str) -> String {
     format!("…{end}")
 }
 
+/// Why a language server did not start without a question: one was answered
+/// "Not now" a moment ago, or three were this session (`LspState::asking`).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn question_held(interface: Option<&str>) -> String {
+    if interface == Some("hr") {
+        "ulEditor nije pitao smije li pokrenuti kod ovog projekta: na to je pitanje \
+         upravo odgovoreno „Ne sada”, ili triput ove sesije. Otvori datoteku ponovno \
+         za pola minute, ili restartaj ulEditor."
+            .into()
+    } else {
+        "ulEditor did not ask whether to run this project's code: that question was just \
+         answered \"Not now\", or three times this session. Open the file again in half a \
+         minute, or restart ulEditor."
+            .into()
+    }
+}
+
 /// A file dialog the page may bring up again only a while after the person
 /// cancelled one — "Save as", "Open folder" (the review of 0676285). No
 /// limit on how many: a person cancels those and tries again all day, and a

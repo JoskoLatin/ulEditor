@@ -34,12 +34,18 @@ import { getLocale } from '@uleditor/i18n';
 
 import { invoke } from './tauri-fs.js';
 
+/** What a trust question held back begins with (`QUESTION_HELD` in lib.rs). */
+const QUESTION_HELD = 'ul:question-held:';
+
 /** The shape the Rust side emits. */
 type Message =
   | ({ kind: 'diagnostics' } & DiagnosticsPublished)
   | { kind: 'stopped'; language: string; detail: string };
 
 export class TauriLanguageServers implements LanguageService {
+  /** `tell`: where the core's sentence goes when it held a question back. */
+  constructor(private readonly tell?: (message: string) => void) {}
+
   #emitter = new Emitter<DiagnosticsPublished>();
   #listening = false;
 
@@ -54,8 +60,24 @@ export class TauriLanguageServers implements LanguageService {
     /* The interface language goes along for the one question Rust may ask
        first — whether this project is trusted to run its code (trust.rs). It
        picks which wording, never what the wording says. */
-    return invoke<boolean>('lsp_open', { path: uri, language, text, uiLanguage: getLocale() });
+    try {
+      return await invoke<boolean>('lsp_open', { path: uri, language, text, uiLanguage: getLocale() });
+    } catch (err) {
+      /* The question held back after a "Not now" (ADR 0005): said once in a
+         while, not once for every file a restored session opens. */
+      if (typeof err === 'string' && err.startsWith(QUESTION_HELD)) {
+        const now = Date.now();
+        if (now - this.#heldSaid > 30_000) {
+          this.#heldSaid = now;
+          this.tell?.(err.slice(QUESTION_HELD.length));
+        }
+        return false;
+      }
+      throw err;
+    }
   }
+
+  #heldSaid = 0;
 
   async change(uri: Uri, language: string, version: number, text: string): Promise<void> {
     await invoke('lsp_change', { path: uri, language, version, text });

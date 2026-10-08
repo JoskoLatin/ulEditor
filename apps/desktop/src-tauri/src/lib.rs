@@ -426,14 +426,48 @@ async fn pick_save_target(
 /// space, and the punctuation names are made of — no right-to-left override
 /// to show `ugovor\u{202E}fdp.exe` as "ugovorexe.pdf", no invisible mark,
 /// nothing Windows would quietly drop (a trailing dot or space) or take for a
-/// device (`CON`, `NUL.txt`), and not too long to be read whole. Anything
-/// else is offered as "untitled", and the person names it.
+/// device (`CON`, `NUL.txt`), no run of spaces or letter drawn as nothing
+/// to push an extension out of sight, no `%` for the dialog to expand into a
+/// path, and not too long to be read whole. Anything else is offered as
+/// "untitled", and the person names it.
 fn offered_name(suggested: &str) -> String {
     const LONGEST: usize = 120;
-    const DEVICES: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    const DEVICES: [&str; 30] = [
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "CONIN$",
+        "CONOUT$",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "COM\u{B9}",
+        "COM\u{B2}",
+        "COM\u{B3}",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+        "LPT\u{B9}",
+        "LPT\u{B2}",
+        "LPT\u{B3}",
     ];
+    /* Letters drawn as nothing — the Hangul fillers — which would let a name
+    show as `invoice.pdf` and end in `.exe` out of sight; the same list
+    `trust::shown` keeps out of the core's questions. */
+    const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
     let last = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
     let stem = last.split('.').next().unwrap_or_default().trim_end();
     let fits = !last.is_empty()
@@ -441,9 +475,11 @@ fn offered_name(suggested: &str) -> String {
         && !last.ends_with(['.', ' '])
         && !last.starts_with(' ')
         && last.chars().any(char::is_alphanumeric)
-        && last
-            .chars()
-            .all(|c| c.is_alphanumeric() || " -_.,()[]{}'!@#$+=~;&%".contains(c))
+        && !last.contains("  ")
+        && last.chars().all(|c| {
+            (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
+                || " -_.,()[]{}'!@#$+=~;&".contains(c)
+        })
         && !DEVICES
             .iter()
             .any(|device| stem.eq_ignore_ascii_case(device));
@@ -611,6 +647,7 @@ enum Downloading {
 #[cfg(desktop)]
 #[tauri::command]
 async fn install_update(
+    app: tauri::AppHandle,
     updates: State<'_, Updates>,
     on_event: tauri::ipc::Channel<Downloading>,
 ) -> Result<(), String> {
@@ -635,7 +672,12 @@ async fn install_update(
             },
         )
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    /* The restart is the core's, and only here: a page that could restart
+    the program could start every question paced "for the session" afresh
+    (the review of 46418d0). On Windows the installer has closed the program
+    already; elsewhere the new files are in place and only this is missing. */
+    app.restart()
 }
 
 /// A phone updates through its store.
@@ -1322,13 +1364,17 @@ fn lsp_languages() -> Vec<String> {
 /// Whether a language server may start in `project`: asked of the person the
 /// first time, in a dialog the system draws, and remembered (`trust.rs`).
 /// `interface` picks the language the question is in, and nothing else.
+/// What a held-back trust question begins with when it reaches the page,
+/// which shows the rest: a code, as `CHANGED_OUTSIDE` is.
+const QUESTION_HELD: &str = "ul:question-held:";
+
 async fn may_start(
     app: &tauri::AppHandle,
     lsp: &LspState,
     language: &str,
     project: &std::path::Path,
     interface: Option<&str>,
-) -> bool {
+) -> Result<bool, String> {
     use tauri_plugin_dialog::MessageDialogKind;
 
     let verdict = |lsp: &LspState| {
@@ -1339,8 +1385,8 @@ async fn may_start(
     };
     /* Answered already: no waiting behind a question about another project. */
     match verdict(lsp) {
-        trust::Verdict::Trusted => return true,
-        trust::Verdict::Declined => return false,
+        trust::Verdict::Trusted => return Ok(true),
+        trust::Verdict::Declined => return Ok(false),
         trust::Verdict::Ask => {}
     }
     /* One question at a time, and asked again once it is this one's turn: the
@@ -1348,16 +1394,20 @@ async fn may_start(
     let questions = app.state::<Questions>();
     let _asking = questions.0.lock().await;
     match verdict(lsp) {
-        trust::Verdict::Trusted => return true,
-        trust::Verdict::Declined => return false,
+        trust::Verdict::Trusted => return Ok(true),
+        trust::Verdict::Declined => return Ok(false),
         trust::Verdict::Ask => {}
     }
 
     /* After a "Not now", no question for a while, and after three none this
-    session: not asked, the project's code does not run. */
+    session: not asked, the project's code does not run — and the person is
+    told so, rather than left with an editor that marks nothing. */
     let asking = || lsp.asking.lock().expect("the asking lock is poisoned");
     if !asking().may_ask(std::time::Instant::now()) {
-        return false;
+        return Err(format!(
+            "{QUESTION_HELD}{}",
+            trust::question_held(interface)
+        ));
     }
 
     let asked = trust::question(interface, language, project);
@@ -1368,12 +1418,12 @@ async fn may_start(
         /* Kept for the session even when it cannot be written down. */
         trust::Answer::Trust => {
             let _ = trust.trust(project);
-            true
+            Ok(true)
         }
         trust::Answer::NotNow => {
             trust.decline(project);
             asking().declined(std::time::Instant::now());
-            false
+            Ok(false)
         }
     }
 }
@@ -1416,7 +1466,10 @@ async fn lsp_open(
     /* Before the server, not inside it: starting is what runs the project's
     code, so the question comes first — every time a document opens,
     including the ones a restored session opens by itself. */
-    if !may_start(&app, &lsp, &language, &project, ui_language.as_deref()).await {
+    if !may_start(&app, &lsp, &language, &project, ui_language.as_deref())
+        .await
+        .map_err(|held| LspCommandError::Vfs(VfsError::Unsupported(held)))?
+    {
         return Ok(false);
     }
 
@@ -2480,6 +2533,18 @@ mod tests {
         assert_eq!(offered_name("COM1"), "untitled");
         assert_eq!(offered_name("..."), "untitled");
         assert_eq!(offered_name(&"a".repeat(121)), "untitled");
+        assert_eq!(
+            offered_name("invoice.pdf\u{3164}\u{3164}\u{3164}.exe"),
+            "untitled"
+        );
+        assert_eq!(
+            offered_name(&format!("invoice.pdf{}.exe", " ".repeat(60))),
+            "untitled"
+        );
+        assert_eq!(offered_name("a\u{115F}b"), "untitled");
+        assert_eq!(offered_name("%APPDATA%.bat"), "untitled");
+        assert_eq!(offered_name("CONIN$"), "untitled");
+        assert_eq!(offered_name("COM\u{B9}.txt"), "untitled");
         assert_eq!(offered_name("Plan - stranice.pdf"), "Plan - stranice.pdf");
         assert_eq!(offered_name("console.log.txt"), "console.log.txt");
     }

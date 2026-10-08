@@ -115,10 +115,14 @@ check(
   !permissions.some((name) => name.startsWith('updater:')),
   permissions.join(', '),
 );
+/* Nor may it restart the program: a page that could would start every
+   question paced "for the session" afresh (the review of 46418d0). The core
+   restarts it itself, once an update is in place — an update installed but
+   not running is an update nobody sees. */
 check(
-  'and may restart itself afterwards',
-  permissions.includes('process:allow-restart'),
-  'an update installed but not running is an update nobody sees',
+  'the page may not restart the program',
+  !permissions.some((name) => name.startsWith('process:')),
+  permissions.join(', '),
 );
 
 /*
@@ -145,6 +149,11 @@ check(
 /* ── the Rust side ───────────────────────────────────────────────────── */
 
 const lib = read('apps/desktop/src-tauri/src/lib.rs');
+const install = lib.slice(lib.indexOf('async fn install_update('), lib.indexOf('/// A phone updates through its store.'));
+check(
+  'the core restarts it after an installed update',
+  install.includes('.map_err(|err| err.to_string())?;') && install.includes('app.restart()'),
+);
 check(
   'the plugin is registered',
   lib.includes('tauri_plugin_updater::Builder::new()') && lib.includes('tauri_plugin_process::init()'),
@@ -408,7 +417,7 @@ check(
 check(
   "and the core's two commands take nothing from the page but a progress channel",
   /async fn check_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,?\s*\)/.test(lib) &&
-    /async fn install_update\(\s*updates: State<'_, Updates>,\s*on_event: tauri::ipc::Channel<Downloading>,?\s*\)/.test(
+    /async fn install_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,\s*on_event: tauri::ipc::Channel<Downloading>,?\s*\)/.test(
       lib,
     ),
 );

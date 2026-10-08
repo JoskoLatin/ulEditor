@@ -75,7 +75,10 @@ by that token and by nothing else.
     the file's: an export written over a document somebody swapped while it was
     open in a tab must not take the planted security (card 485's K2). The
     reading is only lent its protection; it is not found for the save, not
-    asked about, and not moved.
+    asked about, and not moved. *Re-checked:* nothing is lent if any reading
+    of that place owns the file there — its own security, tightened since
+    perhaps, is the one to keep — and otherwise it is the newest reading's
+    (46418d0).
 - Gone: `record_key`, the lookup by place, the record written under two names.
 - An unknown reading, or one used under another name, is `VfsError::NotRead`:
   a failed save, never `Changed`. It is a fault of the page, and the person is
