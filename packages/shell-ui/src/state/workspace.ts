@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import type { DocumentHandle, EditorInstance, FormatId, Uri } from '@uleditor/plugin-sdk';
 import { isTauri } from '../host/tauri-fs.js';
+import type { DocumentScope } from '../host/document-scope.js';
 
 export interface TreeNode {
   uri: Uri;
@@ -351,6 +352,15 @@ export const tabInstances = {
   set: (tabId: string, instance: EditorInstance) => instances.set(tabId, instance),
   get: (tabId: string) => instances.get(tabId),
   delete: (tabId: string) => instances.delete(tabId),
+};
+
+/** Each tab's own view of the host, with its readings (ADR 0006). */
+const scopes = new Map<string, DocumentScope>();
+
+export const tabScopes = {
+  set: (tabId: string, scope: DocumentScope) => scopes.set(tabId, scope),
+  get: (tabId: string) => scopes.get(tabId),
+  delete: (tabId: string) => scopes.delete(tabId),
 };
 
 export function activeTabId(): string | null {

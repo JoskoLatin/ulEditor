@@ -21,10 +21,12 @@ import { isHandheld, type Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
 import { isNarrow } from './narrow.js';
 import { forget, rememberFile, rememberFolder } from './recent.js';
+import { documentScope } from '../host/document-scope.js';
 import {
   activeTabId,
   tabDocuments,
   tabInstances,
+  tabScopes,
   useWorkspace,
   type TabState,
   type TreeNode,
@@ -81,7 +83,11 @@ export async function openDocument(shell: Shell, doc: DocumentHandle): Promise<v
   if (!provider) return;
 
   try {
-    const instance = await provider.createInstance(shell, doc);
+    /* The editor gets the tab's own view of the host, which reads and saves
+       its document as a reading the core compares every save with (ADR 0006). */
+    const scope = documentScope(shell, doc);
+    tabScopes.set(id, scope);
+    const instance = await provider.createInstance(scope.host, scope.doc);
     tabInstances.set(id, instance);
 
     instance.onDirtyChange((dirty) => useWorkspace.getState().patchTab(id, { dirty }));
@@ -537,6 +543,8 @@ export async function closeTab(shell: Shell, id: string): Promise<void> {
   tabInstances.get(id)?.unmount();
   tabInstances.delete(id);
   tabDocuments.delete(id);
+  void tabScopes.get(id)?.release().catch(() => {});
+  tabScopes.delete(id);
   useWorkspace.getState().closeTab(id);
 }
 

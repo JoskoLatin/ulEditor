@@ -15,8 +15,8 @@ use tauri_plugin_dialog::DialogExt;
 
 use ul_convert::{Backend, ConvertError};
 use ul_core::{
-    Access, Consent, Consents, Detection, DirEntry, Kind, LibraryScan, SearchOutcome, SearchQuery,
-    Stat, VfsError, Workspace,
+    Access, Consent, Consents, Detection, DirEntry, Kind, LibraryScan, Reading, SearchOutcome,
+    SearchQuery, Stat, VfsError, Workspace,
 };
 use ul_image::{ImageError, Info as ImageInfo, Ops as ImageOps, Written};
 use ul_lsp::{Event as LspEvent, LspError, Servers};
@@ -730,23 +730,59 @@ fn read_file(state: State<'_, AppState>, path: String) -> Result<Response, VfsEr
 /// A document read to be edited: remembered as it was, so that its save can
 /// tell whether somebody else changed it meanwhile (`Workspace::save`).
 #[tauri::command]
-fn read_document(state: State<'_, AppState>, path: String) -> Result<Response, VfsError> {
-    let bytes = with_workspace(&state, |workspace| workspace.read_document(&path))?;
-    Ok(Response::new(bytes))
+fn read_document(
+    state: State<'_, AppState>,
+    path: String,
+    reading: Option<Reading>,
+) -> Result<Response, VfsError> {
+    let (token, bytes) =
+        with_workspace(&state, |workspace| workspace.read_document(&path, reading))?;
+    Ok(Response::new(framed(token, bytes)))
+}
+
+/// A reading's token in front of the document's bytes: the first eight, as a
+/// little-endian number (ADR 0006). A response carries a body and nothing
+/// else, and a second command for the token would make a reading named and
+/// not yet read a state every path had to refuse. Written here only, and read
+/// in `tauri-fs.ts` only.
+fn framed(token: Reading, bytes: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + bytes.len());
+    out.extend_from_slice(&token.to_le_bytes());
+    out.extend(bytes);
+    out
+}
+
+/// A tab's readings, forgotten as it closes (ADR 0006).
+#[tauri::command]
+fn forget_readings(state: State<'_, AppState>, readings: Vec<Reading>) -> Result<(), VfsError> {
+    with_workspace(&state, |workspace| {
+        workspace.forget_readings(&readings);
+        Ok(())
+    })
 }
 
 /// A save. Refused with `VfsError::Changed` when the file is not what it was
 /// when it was read to be edited, until the page passes `overwrite` — which
-/// it does only after the person said so, for that one save.
+/// it does only after the person said so, for that one save. Compared with
+/// the reading it names, if any; with `begin`, a file nobody read becomes a
+/// reading, and its token is what comes back (ADR 0006).
 #[tauri::command]
 fn write_file(
     state: State<'_, AppState>,
     path: String,
     contents: Vec<u8>,
     overwrite: Option<bool>,
-) -> Result<(), VfsError> {
+    reading: Option<Reading>,
+    begin: Option<bool>,
+) -> Result<Option<Reading>, VfsError> {
     with_workspace(&state, |workspace| {
-        workspace.save(&path, &contents, overwrite.unwrap_or(false))
+        workspace.save(
+            &path,
+            &contents,
+            overwrite.unwrap_or(false),
+            reading,
+            begin.unwrap_or(false),
+        )
     })
 }
 
@@ -776,13 +812,41 @@ impl serde::Serialize for ImageCommandError {
     }
 }
 
+/// What a command about an image says, and the reading it was (ADR 0006).
+#[derive(serde::Serialize)]
+struct WithReading<T: serde::Serialize> {
+    #[serde(flatten)]
+    value: T,
+    reading: Option<Reading>,
+}
+
 /// What the image is — the size a person sees, the format, and whether this is
 /// one of the formats that can be written back at all.
+///
+/// `as_document`: the image editor's reading of its document, so remembered
+/// like one, and its token returned (ADR 0006). Asked about any other way, a
+/// plain read, which remembers nothing.
 #[tauri::command]
-fn image_info(state: State<'_, AppState>, path: String) -> Result<ImageInfo, ImageCommandError> {
-    /* The image editor's reading of its document, so remembered like one. */
-    let bytes = with_workspace(&state, |workspace| workspace.read_document(&path))?;
-    Ok(ul_image::info(&bytes)?)
+fn image_info(
+    state: State<'_, AppState>,
+    path: String,
+    reading: Option<Reading>,
+    as_document: Option<bool>,
+) -> Result<WithReading<ImageInfo>, ImageCommandError> {
+    let (token, bytes) = if as_document.unwrap_or(false) {
+        let (token, bytes) =
+            with_workspace(&state, |workspace| workspace.read_document(&path, reading))?;
+        (Some(token), bytes)
+    } else {
+        (
+            None,
+            with_workspace(&state, |workspace| workspace.read(&path))?,
+        )
+    };
+    Ok(WithReading {
+        value: ul_image::info(&bytes)?,
+        reading: token,
+    })
 }
 
 /// The picture as a PNG, for a format the webview cannot draw — a TIFF. Read
@@ -812,19 +876,31 @@ async fn image_preview(
 /// holds — the new size, the format, and whether the encoding itself lost
 /// anything, which the editor says before it says "saved".
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn image_write(
     state: State<'_, AppState>,
     source: String,
     target: String,
     ops: ImageOps,
     overwrite: Option<bool>,
-) -> Result<Written, ImageCommandError> {
+    reading: Option<Reading>,
+    begin: Option<bool>,
+) -> Result<WithReading<Written>, ImageCommandError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&source))?;
     let (out, written) = ul_image::apply(&bytes, &ops)?;
-    with_workspace(&state, |workspace| {
-        workspace.save(&target, &out, overwrite.unwrap_or(false))
+    let reading = with_workspace(&state, |workspace| {
+        workspace.save(
+            &target,
+            &out,
+            overwrite.unwrap_or(false),
+            reading,
+            begin.unwrap_or(false),
+        )
     })?;
-    Ok(written)
+    Ok(WithReading {
+        value: written,
+        reading,
+    })
 }
 
 /* ── conversions ─────────────────────────────────────────────────────── */
@@ -1875,6 +1951,13 @@ pub fn run() {
             // A page that is loading asks nothing until it says it will.
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<CloseGuard>().set(false);
+                /* Nor holds a reading: the page kept its tokens in memory, and
+                the one loading has none (ADR 0006). */
+                if let Some(state) = webview.try_state::<AppState>() {
+                    if let Ok(mut workspace) = state.workspace.lock() {
+                        workspace.forget_all_readings();
+                    }
+                }
             }
         })
         .setup(|app| {
@@ -2015,6 +2098,7 @@ pub fn run() {
             detect_format,
             read_file,
             read_document,
+            forget_readings,
             write_file,
             image_info,
             image_preview,
@@ -2192,6 +2276,37 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(said, format!(r"{CHANGED_OUTSIDE}C:\a\b.png"));
+    }
+
+    /// A save naming a reading nobody made is a failure, not the question a
+    /// changed file is: reaching the page as the code, it would offer
+    /// "Overwrite" (ADR 0006).
+    #[test]
+    fn a_document_not_read_here_is_a_failure_not_a_question() {
+        use ul_core::vfs::{VfsError, CHANGED_OUTSIDE};
+        let said = serde_json::to_value(VfsError::NotRead(r"C:\a\b.md".into())).unwrap();
+        assert!(
+            !said.as_str().unwrap().starts_with(CHANGED_OUTSIDE),
+            "{said}"
+        );
+        let said = serde_json::to_value(super::ImageCommandError::Vfs(VfsError::NotRead(
+            r"C:\a\b.png".into(),
+        )))
+        .unwrap();
+        assert!(
+            !said.as_str().unwrap().starts_with(CHANGED_OUTSIDE),
+            "{said}"
+        );
+    }
+
+    /// The token in front of the bytes: eight, little-endian. The same vector
+    /// is read back in tools/verify-readings.mjs.
+    #[test]
+    fn a_reading_crosses_in_front_of_its_bytes() {
+        assert_eq!(
+            super::framed(0x0102_0304_0506, b"doc".to_vec()),
+            [0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00, 0x00, b'd', b'o', b'c']
+        );
     }
 
     fn url(text: &str) -> tauri::Url {

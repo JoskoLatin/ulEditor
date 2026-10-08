@@ -70,6 +70,10 @@ jobs:
       # own saveTab, with an editor that counts what is done to it.
       - run: pnpm verify:save
 
+      # And which reading each save carries: a tab's own, never lent to
+      # another tab or the scratch panel, and gone when it closes (ADR 0006).
+      - run: pnpm verify:readings
+
       # The tree's ordering is a pure function over nodes, and the cases worth
       # pinning are ones a screenshot would never show — a Croatian name in the
       # right place, slika2 before slika10, an entry with no date going last.

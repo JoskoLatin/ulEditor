@@ -39,6 +39,11 @@ pub enum VfsError {
     /// definition a language server pointed at (ADR 0005).
     #[error("{0} is open read-only")]
     ReadOnly(String),
+    /// A save or a read naming a reading this program never made, or one of
+    /// another document (ADR 0006). A fault of the page, never a question:
+    /// nobody is asked to write over anything.
+    #[error("{0} was not read here")]
+    NotRead(String),
     #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
@@ -151,15 +156,32 @@ pub struct Workspace {
     /// protected folder — the crash reports it wrote. Only `show_own_file`
     /// adds to it, which Rust alone calls; no grant, offer or claim does.
     own: Vec<PathBuf>,
-    /// Each document as it was when it was read to be edited, or last saved,
-    /// by `record_key`.
-    seen: std::collections::HashMap<String, Opened>,
+    /// Each reading of a document, as it was when it was read to be edited
+    /// or last saved, by the token it was given (ADR 0006).
+    seen: std::collections::HashMap<Reading, Opened>,
+    /// The token the next reading gets.
+    next_reading: Reading,
 }
 
-/// A document as it was read to be edited: where it was, which file it was,
-/// and how it was protected.
+/// One tab's reading of one document, named by a token Rust makes (ADR
+/// 0006): a save names the reading it continues, and is compared with that
+/// and with nothing else — not with another tab's reading of the same file,
+/// not with what another write left there. A counter, never reused while the
+/// program runs, and kept below 2^53 so that it crosses to the page as a
+/// number. It names a reading; it grants nothing.
+pub type Reading = u64;
+
+/// How many readings are kept at once. A read past them is refused; none is
+/// ever let go to make room, so a save never fails for want of its reading.
+pub const MOST_READINGS: usize = 1024;
+
+/// A document as it was read to be edited: under which name, where it was,
+/// which file it was, and how it was protected.
 #[derive(Debug, Clone)]
 struct Opened {
+    /// The name it was read under, as the page gave it: a reading continues
+    /// only under the name it was made under.
+    name: PathBuf,
     /// Where it was read from, any link to it followed: where its next
     /// version goes.
     at: PathBuf,
@@ -176,8 +198,9 @@ struct Opened {
 
 impl Opened {
     /// What a document read from `file` is remembered as.
-    fn of(at: PathBuf, print: Fingerprint, protection: Protection) -> Self {
+    fn of(name: PathBuf, at: PathBuf, print: Fingerprint, protection: Protection) -> Self {
         Self {
+            name,
             at,
             print: Some(print.clone()),
             protection,
@@ -193,21 +216,14 @@ impl Opened {
     }
 }
 
-/// What a document's record is kept under: the path as the page gave it,
-/// with nothing on disk asked. Kept under the path the file system resolved
-/// it to, the record was lost to a replacement that resolved differently —
-/// `NOTES.md` put in place of `notes.md`, which NTFS spells as it is on disk,
-/// or a link in its place — and the save went ahead as on a file nobody had
-/// read, with the replacement's security.
-///
-/// Letters are not folded, though NTFS and APFS fold them: a folder can be
-/// told not to (WSL's, or any with `fsutil file setCaseSensitiveInfo`), and
-/// there `notes.md` and `NOTES.md` are two documents whose records folding
-/// made one — a yes to the one's question then wrote it over the other. A tab
-/// asks for its document by the same path each time; one named in other
-/// letters is a document nobody read under that name.
-fn record_key(path: &Path) -> String {
-    display(&normalize(path))
+/// The name a reading is made under: the path as the page gave it, with
+/// nothing on disk asked — not as the file system resolves it, which a
+/// replacement under other letters or a link in its place would change.
+/// Letters are not folded: in a folder told to tell them apart (WSL's, or
+/// `fsutil file setCaseSensitiveInfo`), `notes.md` and `NOTES.md` are two
+/// documents.
+fn reading_name(path: &Path) -> PathBuf {
+    normalize(path)
 }
 
 /// How a document was protected when it was opened — what its next version
@@ -801,10 +817,25 @@ impl Workspace {
     /// somebody else changed it in the meantime (`save`). Every other read
     /// (search, a preview) uses `read`, which remembers nothing: reading a
     /// file is not agreeing to whatever is in it now.
-    pub fn read_document(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
+    ///
+    /// Without a `reading` it is a new one, and its token comes back with the
+    /// bytes. With one, it is that reading read again — under the name it was
+    /// made under, or not at all (`VfsError::NotRead`).
+    pub fn read_document(
+        &mut self,
+        path: impl AsRef<Path>,
+        reading: Option<Reading>,
+    ) -> Result<(Reading, Vec<u8>), VfsError> {
         use std::io::Read;
 
-        let key = record_key(path.as_ref());
+        let name = reading_name(path.as_ref());
+        let before = match reading {
+            Some(token) => Some(self.reading_of(token, &name)?),
+            None => {
+                self.room_for_a_reading(&name)?;
+                None
+            }
+        };
         let resolved = self.resolve(path)?;
         let mut file = open_regular(&resolved)?;
         let print = Fingerprint::of(&file)?;
@@ -818,7 +849,7 @@ impl Workspace {
         stricter is kept (`keep_the_stricter_of`). An editor reads its document again after
         every save, and a file put in its place in that moment would
         otherwise hand its security to every save after. */
-        let opened = match self.seen.remove(&key) {
+        let opened = match before {
             Some(mut before) if !before.is_owner(&print) => {
                 before.protection.keep_the_stricter_of(&protection);
                 Opened {
@@ -827,10 +858,51 @@ impl Workspace {
                     ..before
                 }
             }
-            _ => Opened::of(resolved, print, protection),
+            _ => Opened::of(name, resolved, print, protection),
         };
-        self.seen.insert(key, opened);
-        Ok(bytes)
+        let token = reading.unwrap_or_else(|| self.take_a_token());
+        self.seen.insert(token, opened);
+        Ok((token, bytes))
+    }
+
+    /// The reading a token names, if it is one this program made and of the
+    /// document named.
+    fn reading_of(&self, token: Reading, name: &Path) -> Result<Opened, VfsError> {
+        match self.seen.get(&token) {
+            Some(opened) if opened.name == name => Ok(opened.clone()),
+            _ => Err(VfsError::NotRead(display(name))),
+        }
+    }
+
+    /// Whether another reading may be kept: refused past `MOST_READINGS`,
+    /// and none let go to make room.
+    fn room_for_a_reading(&self, name: &Path) -> Result<(), VfsError> {
+        if self.seen.len() >= MOST_READINGS || self.next_reading >= 1 << 53 {
+            return Err(VfsError::Unsupported(format!(
+                "{} cannot be opened for editing: too many documents are open",
+                display(name)
+            )));
+        }
+        Ok(())
+    }
+
+    fn take_a_token(&mut self) -> Reading {
+        self.next_reading += 1;
+        self.next_reading
+    }
+
+    /// Forgets readings — a tab's, when it closes. A token forgotten is one
+    /// nobody made: a save naming it is refused.
+    pub fn forget_readings(&mut self, readings: &[Reading]) {
+        for token in readings {
+            self.seen.remove(token);
+        }
+    }
+
+    /// Forgets every reading — when the page loads, since it keeps its tokens
+    /// in memory only and has none left.
+    pub fn forget_all_readings(&mut self) {
+        self.seen.clear();
     }
 
     /// Writes a document, unless somebody else changed it since it was read
@@ -845,38 +917,35 @@ impl Workspace {
     /// document was. A file only written in place is the same file, and its
     /// security is carried over as on any save. A file nobody read here is
     /// written as `write` writes it.
+    ///
+    /// The document is the one `reading` names (ADR 0006), and no other: a
+    /// save with a reading is compared with that reading, under the name it
+    /// was made under or not at all (`VfsError::NotRead`), and the reading
+    /// then describes what this save wrote. A save without one is of a file
+    /// nobody read here — save-as, an export — and finds and moves nobody's
+    /// reading, whatever the path: an export written over a document open in
+    /// a tab leaves that tab's reading as it was, and the tab's next save is
+    /// asked about it. With `begin`, what was written becomes a reading, and
+    /// its token is returned.
     pub fn save(
         &mut self,
         path: impl AsRef<Path>,
         data: &[u8],
         overwrite: bool,
-    ) -> Result<(), VfsError> {
-        let key = record_key(path.as_ref());
-        let resolved = self.resolve_for_write(path)?;
-        /* Not read under this spelling: the same place read under another —
-        the same file in other letters, by its short name, through a link to
-        it — is that document, not one nobody read, which would be saved over
-        without a question. Where two spellings of it were read, the first of
-        them by name. The record of this save is then kept under that other
-        spelling too: left as it was, it described the file before this save,
-        and the next save under that spelling was asked about a change that was
-        its own. Taken away instead — as it was for a while — it left that
-        spelling with no record at all, and a save under it after the folder
-        was swapped for a junction went through the junction without a question
-        (measured by the review). A record is never taken away. */
-        let mut moved_from = None;
-        let opened = match self.seen.get(&key) {
-            Some(opened) => Some(opened.clone()),
-            None => self
-                .seen
-                .iter()
-                .filter(|(_, opened)| opened.at == resolved)
-                .min_by(|a, b| a.0.cmp(b.0))
-                .map(|(other, opened)| {
-                    moved_from = Some(other.clone());
-                    opened.clone()
-                }),
+        reading: Option<Reading>,
+        begin: bool,
+    ) -> Result<Option<Reading>, VfsError> {
+        let name = reading_name(path.as_ref());
+        let opened = match reading {
+            Some(token) => Some(self.reading_of(token, &name)?),
+            None => {
+                if begin {
+                    self.room_for_a_reading(&name)?;
+                }
+                None
+            }
         };
+        let resolved = self.resolve_for_write(path)?;
         /* Whether the file there now is provably the document as it was
         opened — the one case its own security may be taken from it. Every
         other case of a document opened here gives the new version the
@@ -944,17 +1013,20 @@ impl Workspace {
         or cannot be looked at, is never taken for it; the protection kept is
         what this save gave, read from the new version before it was let go. */
         let now = Fingerprint::at(&target).filter(|now| now.same_id(&written.print));
+        let token = match reading {
+            Some(token) => token,
+            None if begin => self.take_a_token(),
+            None => return Ok(None),
+        };
         let record = Opened {
+            name,
             at: target,
             print: now.clone(),
             protection: written.protection,
             owner: now,
         };
-        if let Some(other) = moved_from {
-            self.seen.insert(other, record.clone());
-        }
-        self.seen.insert(key, record);
-        Ok(())
+        self.seen.insert(token, record);
+        Ok(Some(token))
     }
 
     /// Where a document read from `at` is written when its name no longer
@@ -2464,6 +2536,211 @@ pub(crate) fn stat_from(path: &Path, meta: &fs::Metadata) -> Stat {
 mod tests {
     use super::*;
 
+    /// A tab, as the shell keeps one (ADR 0006): one reading for each path
+    /// as it names it, sent with every read and save of that path; a write
+    /// of a path it never read goes without one and begins a reading. Most
+    /// of the checks below are of one tab, and read as they did before
+    /// readings existed; the ones about readings themselves use the
+    /// workspace's own calls.
+    struct Tab {
+        workspace: Workspace,
+        readings: std::collections::HashMap<String, Reading>,
+    }
+
+    impl Tab {
+        fn new() -> Self {
+            Self {
+                workspace: Workspace::new(),
+                readings: Default::default(),
+            }
+        }
+
+        fn read_document(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>, VfsError> {
+            let key = display(path.as_ref());
+            let reading = self.readings.get(&key).copied();
+            let (token, bytes) = self.workspace.read_document(path, reading)?;
+            self.readings.insert(key, token);
+            Ok(bytes)
+        }
+
+        fn save(
+            &mut self,
+            path: impl AsRef<Path>,
+            data: &[u8],
+            overwrite: bool,
+        ) -> Result<(), VfsError> {
+            let key = display(path.as_ref());
+            let reading = self.readings.get(&key).copied();
+            if let Some(token) =
+                self.workspace
+                    .save(path, data, overwrite, reading, reading.is_none())?
+            {
+                self.readings.insert(key, token);
+            }
+            Ok(())
+        }
+    }
+
+    impl std::ops::Deref for Tab {
+        type Target = Workspace;
+        fn deref(&self) -> &Workspace {
+            &self.workspace
+        }
+    }
+
+    impl std::ops::DerefMut for Tab {
+        fn deref_mut(&mut self) -> &mut Workspace {
+            &mut self.workspace
+        }
+    }
+
+    /// Two tabs of one document: each save is compared with its own
+    /// reading, so the second, which read what the first then replaced, is
+    /// asked about it rather than writing over it in silence.
+    #[test]
+    fn a_save_is_compared_with_its_own_reading() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("two-readings")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let (first, _) = workspace.read_document(&file, None).unwrap();
+        let (second, _) = workspace.read_document(&file, None).unwrap();
+        assert_ne!(first, second);
+
+        workspace
+            .save(&file, b"from the first tab", false, Some(first), false)
+            .unwrap();
+        let refused = workspace.save(&file, b"from the second tab", false, Some(second), false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "from the first tab");
+    }
+
+    /// A write that names no reading — an export, the scratch panel, a
+    /// converted workbook — over a document open in a tab moves nobody's
+    /// reading: the tab's next save is asked about what it wrote.
+    #[test]
+    fn a_write_nobody_read_moves_no_reading() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("export-over")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let (tab, _) = workspace.read_document(&file, None).unwrap();
+
+        workspace
+            .save(&file, b"an export, and longer", false, None, true)
+            .unwrap();
+        let refused = workspace.save(&file, b"mine, edited", false, Some(tab), false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "an export, and longer");
+    }
+
+    /// A reading continues only under the name it was made under: sent with
+    /// another, even one that is the same file, it is refused — overwrite or
+    /// not, and nothing is written.
+    #[test]
+    fn a_save_under_another_name_than_its_reading_is_refused() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("other-name")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let (tab, _) = workspace.read_document(&file, None).unwrap();
+
+        for overwrite in [false, true] {
+            let refused = workspace.save(root.join("NOTES.md"), b"x", overwrite, Some(tab), false);
+            assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        }
+        let refused = workspace.read_document(root.join("NOTES.md"), Some(tab));
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+    }
+
+    /// A token nobody made is refused, for a save and for a read, and nothing
+    /// is written — a fault of the page, never taken for a file nobody read.
+    #[test]
+    fn an_unknown_reading_is_refused_and_nothing_is_written() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("unknown-reading")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+
+        let refused = workspace.save(&file, b"x", true, Some(999), false);
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        let refused = workspace.read_document(&file, Some(999));
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "mine");
+    }
+
+    /// A file written by name — save-as, a converted workbook — becomes a
+    /// reading when asked to, and its next save is compared with it.
+    #[test]
+    fn a_write_that_begins_a_reading_is_compared_on_the_next_save() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("begins")).unwrap();
+        let file = root.join("copy.md");
+        let token = workspace
+            .save(&file, b"mine", false, None, true)
+            .unwrap()
+            .expect("a reading begun");
+        assert_eq!(
+            workspace.save(&file, b"x", false, None, false).unwrap(),
+            None
+        );
+
+        fs::write(&file, "theirs, and longer").unwrap();
+        let refused = workspace.save(&file, b"mine, again", false, Some(token), false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+    }
+
+    /// A reading forgotten — its tab closed, or every one when the page
+    /// loads — is one nobody made.
+    #[test]
+    fn a_forgotten_reading_is_unknown() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("forgotten")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let (one, _) = workspace.read_document(&file, None).unwrap();
+        let (two, _) = workspace.read_document(&file, None).unwrap();
+
+        workspace.forget_readings(&[one]);
+        let refused = workspace.save(&file, b"x", false, Some(one), false);
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        workspace
+            .save(&file, b"y", false, Some(two), false)
+            .unwrap();
+
+        workspace.forget_all_readings();
+        let refused = workspace.save(&file, b"z", false, Some(two), false);
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        assert!(workspace.seen.is_empty());
+    }
+
+    /// Past the most readings kept, another is refused — a read, and a write
+    /// that would begin one — and none is let go to make room: the first
+    /// still saves.
+    #[test]
+    fn readings_past_the_most_are_refused_and_none_is_let_go() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("most-readings")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        let (first, _) = workspace.read_document(&file, None).unwrap();
+        for _ in 1..MOST_READINGS {
+            workspace.read_document(&file, None).unwrap();
+        }
+        assert!(workspace.read_document(&file, None).is_err());
+        assert!(workspace
+            .save(root.join("new.md"), b"x", false, None, true)
+            .is_err());
+        assert!(
+            !root.join("new.md").exists(),
+            "written before it was refused"
+        );
+        workspace
+            .save(&file, b"saved", false, Some(first), false)
+            .unwrap();
+    }
+
     #[test]
     fn normalize_resolves_parent_segments() {
         assert_eq!(normalize(Path::new("a/b/../c")), PathBuf::from("a/c"));
@@ -2494,7 +2771,7 @@ mod tests {
 
     #[test]
     fn escape_attempt_is_rejected() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let dir = std::env::temp_dir();
         workspace.add_root(&dir).expect("temp has to exist");
 
@@ -2512,7 +2789,7 @@ mod tests {
     /// the write was refused as leaving the folder it was going into.
     #[test]
     fn a_file_that_does_not_exist_yet_resolves_inside_a_root() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let dir = std::env::temp_dir();
         workspace.add_root(&dir).expect("temp has to exist");
 
@@ -2525,7 +2802,7 @@ mod tests {
     /// the roots is still refused, however far up its first real ancestor is.
     #[test]
     fn a_file_that_does_not_exist_yet_is_still_kept_inside() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let dir = std::env::temp_dir();
         workspace.add_root(&dir).expect("temp has to exist");
 
@@ -2542,7 +2819,7 @@ mod tests {
 
     #[test]
     fn root_itself_resolves() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let dir = std::env::temp_dir();
         let root = workspace.add_root(&dir).expect("temp has to exist");
         assert!(workspace.resolve(&root).is_ok());
@@ -2564,7 +2841,7 @@ mod tests {
     /// Whatever already has the temporary name is left as it was.
     #[test]
     fn a_save_leaves_a_temporary_name_somebody_took_alone() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("taken")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "before").unwrap();
@@ -2581,7 +2858,7 @@ mod tests {
     /// "access denied" rather than "already exists", and was the end of the save.
     #[test]
     fn a_save_goes_round_a_folder_under_its_temporary_name() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("folder")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "before").unwrap();
@@ -2603,7 +2880,7 @@ mod tests {
         let inside = base.join("ws");
         fs::create_dir_all(&inside).unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&inside).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "before").unwrap();
@@ -2632,7 +2909,7 @@ mod tests {
         let inside = base.join("ws");
         fs::create_dir_all(&inside).unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&inside).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "before").unwrap();
@@ -2656,7 +2933,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_save_keeps_the_mark_of_a_file_from_the_internet() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("zone")).unwrap();
         let file = root.join("downloaded.docx");
         fs::write(&file, "before").unwrap();
@@ -2681,7 +2958,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_document_read_and_saved_twice_keeps_its_mark() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("zone-read")).unwrap();
         let file = root.join("downloaded.docx");
         fs::write(&file, "before").unwrap();
@@ -2703,7 +2980,7 @@ mod tests {
     fn a_save_keeps_who_may_read_the_document() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("mode")).unwrap();
         let file = root.join("private.md");
         fs::write(&file, "before").unwrap();
@@ -2722,7 +2999,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_save_keeps_who_may_read_the_document_on_windows() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("acl")).unwrap();
         let file = root.join("closed.md");
         fs::write(&file, "before").unwrap();
@@ -2748,7 +3025,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn an_outsized_mark_becomes_the_plain_internet_one() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("big-mark")).unwrap();
         let file = root.join("downloaded.docx");
         fs::write(&file, "before").unwrap();
@@ -2766,7 +3043,7 @@ mod tests {
     /// is refused and nothing is written, until the person says to.
     #[test]
     fn a_document_changed_since_it_was_read_is_not_saved_over_without_a_yes() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("changed")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -2788,7 +3065,7 @@ mod tests {
     /// is gives it away.
     #[test]
     fn a_document_replaced_since_it_was_read_is_refused_too() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("replaced")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -2808,7 +3085,7 @@ mod tests {
     #[test]
     fn a_document_whose_folder_was_swapped_for_a_link_is_not_written_through_it() {
         let mut links = crate::testing::Links::default();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("folder-swapped")).unwrap();
         let sub = root.join("sub");
         fs::create_dir(&sub).unwrap();
@@ -2836,7 +3113,7 @@ mod tests {
     /// A file nobody read here, a new one included, is saved as it always was.
     #[test]
     fn a_file_not_read_here_is_saved_as_before() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("unread")).unwrap();
         fs::write(root.join("old.md"), "x").unwrap();
         workspace.save(root.join("old.md"), b"y", false).unwrap();
@@ -2851,7 +3128,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn overwriting_a_replaced_document_does_not_take_its_security() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("planted-acl")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -2910,8 +3187,8 @@ mod tests {
     /// A document closed to its owner alone, read to be edited — what both
     /// tests below start from.
     #[cfg(windows)]
-    fn closed_document(tag: &str) -> (Workspace, PathBuf, String) {
-        let mut workspace = Workspace::new();
+    fn closed_document(tag: &str) -> (Tab, PathBuf, String) {
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch(tag)).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -2989,7 +3266,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn two_documents_named_apart_only_by_their_letters_are_two() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("letters-apart")).unwrap();
         let folder = root.join("sensitive");
         fs::create_dir(&folder).unwrap();
@@ -3088,51 +3365,16 @@ mod tests {
         assert!(hidden, "no longer hidden");
     }
 
-    /// The document read under one spelling and saved under another — the
-    /// same file, to NTFS — is the document read, and a change somebody else
-    /// made is asked about rather than saved over.
-    #[cfg(windows)]
-    #[test]
-    fn a_document_saved_under_another_spelling_is_still_the_document_read() {
-        let mut workspace = Workspace::new();
-        let root = workspace.add_root(scratch("spelling")).unwrap();
-        let file = root.join("notes.md");
-        fs::write(&file, "mine").unwrap();
-        workspace.read_document(&file).unwrap();
-        fs::write(&file, "theirs, and longer").unwrap();
-
-        let refused = workspace.save(root.join("NOTES.md"), b"mine, edited", false);
-        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
-        assert_eq!(fs::read_to_string(&file).unwrap(), "theirs, and longer");
-    }
-
-    /// Saved under another spelling, then under the first again: the second
-    /// save is not asked about the first one's change, which was its own.
-    #[cfg(windows)]
-    #[test]
-    fn a_save_under_another_spelling_is_not_taken_for_a_change_later() {
-        let mut workspace = Workspace::new();
-        let root = workspace.add_root(scratch("spelling-back")).unwrap();
-        let file = root.join("notes.md");
-        fs::write(&file, "mine").unwrap();
-        workspace.read_document(&file).unwrap();
-
-        workspace
-            .save(root.join("NOTES.md"), b"mine, edited", false)
-            .unwrap();
-        workspace.save(&file, b"mine, again", false).unwrap();
-        assert_eq!(fs::read_to_string(&file).unwrap(), "mine, again");
-    }
-
-    /// Saved once under another spelling, and then its folder swapped for a
-    /// junction to a folder holding a file of its name: the first spelling
-    /// still has its record, the save under it is asked about, and nothing is
-    /// written through the junction.
+    /// Saved once under another spelling — a write nobody read under that
+    /// name, which moves no reading — and then its folder swapped for a
+    /// junction to a folder holding a file of its name: the reading under
+    /// the first spelling is asked about, and nothing is written through the
+    /// junction.
     #[cfg(windows)]
     #[test]
     fn a_spelling_saved_under_once_keeps_its_record() {
         let mut links = crate::testing::Links::default();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("spelling-junction")).unwrap();
         let sub = root.join("sub");
         fs::create_dir(&sub).unwrap();
@@ -3217,7 +3459,7 @@ mod tests {
     fn the_documents_own_security_changed_while_open_is_kept() {
         use std::os::windows::fs::{FileTimesExt, MetadataExt};
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("own-change")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -3323,7 +3565,7 @@ mod tests {
     fn a_replacement_read_again_does_not_hand_on_its_mode_and_the_documents_own_does() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("read-again-mode")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -3353,7 +3595,7 @@ mod tests {
     fn a_more_closed_replacement_read_again_stays_closed() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("closed-again")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "shared").unwrap();
@@ -3376,7 +3618,7 @@ mod tests {
     fn an_unreadable_replacement_and_a_deleted_document_keep_the_documents_mode() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("unreadable-mode")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -3407,7 +3649,7 @@ mod tests {
     fn a_document_replaced_by_a_link_is_asked_about_and_not_written_through() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("link-in-place")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -3438,7 +3680,7 @@ mod tests {
     fn overwriting_a_replaced_document_does_not_take_its_mode() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("planted-mode")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "mine").unwrap();
@@ -3465,7 +3707,7 @@ mod tests {
         fs::write(own.join("trusted-projects.json"), "{}").unwrap();
         fs::write(base.join("other.txt"), "x").unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         workspace.protect(&own);
         let root = workspace.add_root(&base).unwrap();
         let answers = root.join("org.uleditor.app").join("trusted-projects.json");
@@ -3521,7 +3763,7 @@ mod tests {
         links.folder(&inside.join("broken"), &gone);
         fs::remove_dir(&gone).unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&inside).unwrap();
         let listed = workspace.read_dir(&root).unwrap();
 
@@ -3547,7 +3789,7 @@ mod tests {
         #[cfg(unix)]
         links.file(&inside.join("file-there"), &outside.join("secret.txt"));
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&inside).unwrap();
         let listed = workspace.read_dir(&root).unwrap();
 
@@ -3561,7 +3803,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_fifo_is_refused_rather_than_waited_on() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("fifo")).unwrap();
         let fifo = root.join("pipe.txt");
         let made = std::process::Command::new("mkfifo")
@@ -3590,7 +3832,7 @@ mod tests {
         let base = scratch("read-only");
         let file = base.join("ugovor.md");
         fs::write(&file, "theirs").unwrap();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         workspace.grant_file(&file, Access::Read).unwrap();
 
         assert_eq!(workspace.read_document(&file).unwrap(), b"theirs");
@@ -3622,7 +3864,7 @@ mod tests {
         fs::create_dir_all(&own).unwrap();
         fs::write(own.join("report.txt"), "boom").unwrap();
         fs::write(own.join("consents.json"), "{}").unwrap();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         workspace.protect(&own);
         workspace.add_root(&base).unwrap();
 
@@ -3648,7 +3890,7 @@ mod tests {
     fn a_folder_let_in_to_be_read_lists_read_only_and_writes_nothing() {
         let base = scratch("read-only-folder");
         fs::write(base.join("a.md"), "a").unwrap();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         workspace.grant_folder(&base, Access::Read).unwrap();
 
         let listed = workspace.read_dir(&base).unwrap();
@@ -3665,7 +3907,7 @@ mod tests {
     #[test]
     fn a_file_chosen_to_save_into_is_let_in_alone() {
         let base = scratch("future");
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let target = workspace.grant_future_file(base.join("izvoz.pdf")).unwrap();
 
         workspace.write(&target, b"%PDF").unwrap();
@@ -3684,7 +3926,7 @@ mod tests {
         fs::write(root.join("open.md"), "o").unwrap();
         fs::write(root.join("closed.md"), "c").unwrap();
         fs::write(base.join("outside.md"), "x").unwrap();
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&root).unwrap();
 
         workspace.forget_root(&root, &[root.join("open.md"), base.join("outside.md")]);
@@ -3702,7 +3944,7 @@ mod tests {
         fs::write(base.join("definition.rs"), "fn here() {}").unwrap();
         fs::write(base.join("beside.rs"), "fn not_asked_for() {}").unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let granted = workspace
             .grant_file(base.join("definition.rs"), Access::ReadWrite)
             .unwrap();
@@ -3724,7 +3966,7 @@ mod tests {
         let base = scratch("forget");
         fs::write(base.join("note.txt"), "here").unwrap();
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(&base).unwrap();
         assert!(workspace.read(root.join("note.txt")).is_ok());
 
@@ -3738,7 +3980,7 @@ mod tests {
     /// save — and nothing that only looks like it.
     #[test]
     fn a_save_takes_away_what_an_interrupted_one_left() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("leftovers")).unwrap();
         let file = root.join("notes.md");
         fs::write(&file, "before").unwrap();
@@ -3774,7 +4016,7 @@ mod tests {
         fs::write(base.join("outside.rs"), "fn secret() {}").unwrap();
         links.file(&base.join("pointer.rs"), &base.join("outside.rs"));
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         assert!(matches!(
             workspace.grant_file(base.join("pointer.rs"), Access::ReadWrite),
             Err(VfsError::NotAFile(_))
@@ -3826,7 +4068,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_save_keeps_an_entry_the_document_has_of_its_own() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("acl-own")).unwrap();
         let file = root.join("shared.md");
         fs::write(&file, "before").unwrap();
@@ -3849,7 +4091,7 @@ mod tests {
     fn a_save_keeps_when_the_document_was_made() {
         use std::os::windows::fs::FileTimesExt;
 
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("made")).unwrap();
         let file = root.join("old.md");
         fs::write(&file, "before").unwrap();
@@ -3949,7 +4191,7 @@ mod tests {
     /// Read asks the opened thing what it is: a folder is not a file to read.
     #[test]
     fn a_folder_is_not_read_as_a_file() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("folder-read")).unwrap();
         fs::create_dir_all(root.join("inner")).unwrap();
 
@@ -4000,7 +4242,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_save_keeps_the_quarantine_mark_on_macos() {
-        let mut workspace = Workspace::new();
+        let mut workspace = Tab::new();
         let root = workspace.add_root(scratch("quarantine")).unwrap();
         let file = root.join("downloaded.docx");
         fs::write(&file, "before").unwrap();

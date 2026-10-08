@@ -18,4 +18,4 @@ pub use consent::{Access, Consent, Consents, Kind};
 pub use library::{default_roots, LibraryEntry, LibraryScan};
 pub use search::{DocumentCandidate, SearchHit, SearchOutcome, SearchQuery};
 pub use ul_formats::{detect, detect_by_name, Detection, FormatId, PROBE_LEN};
-pub use vfs::{DirEntry, Stat, VfsError, Workspace};
+pub use vfs::{DirEntry, Reading, Stat, VfsError, Workspace};

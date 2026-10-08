@@ -53,6 +53,16 @@ export async function writeInvoke<T>(uri: Uri, command: string, args: Record<str
   }
 }
 
+/**
+ * The reading in front of a document's bytes: the first eight, a
+ * little-endian number (`framed` in lib.rs, the one other place that knows).
+ */
+export function unframe(all: Uint8Array): { reading: number; bytes: Uint8Array } {
+  if (all.length < 8) throw new Error('A document came back without its reading.');
+  const reading = Number(new DataView(all.buffer, all.byteOffset, 8).getBigUint64(0, true));
+  return { reading, bytes: all.subarray(8) };
+}
+
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
@@ -109,9 +119,40 @@ export class TauriFileSystem implements VirtualFileSystem {
     return buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
   }
 
-  async #readDocument(uri: Uri): Promise<Uint8Array> {
-    const buffer = await invoke<ArrayBuffer | number[]>('read_document', { path: uri });
-    return buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
+  /**
+   * A document read to be edited, and the reading Rust made of it (ADR
+   * 0006): new without `reading`, that one read again with it. For a tab's
+   * scope (`document-scope.ts`) and nothing else.
+   */
+  async readDocument(uri: Uri, reading?: number): Promise<{ reading: number; bytes: Uint8Array }> {
+    const buffer = await invoke<ArrayBuffer | number[]>('read_document', { path: uri, reading: reading ?? null });
+    return unframe(buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer));
+  }
+
+  /**
+   * A save compared with the reading it continues, if any; with `begin`, a
+   * file nobody read becomes one. Returns the reading, or `null` when none
+   * was named or begun (ADR 0006).
+   */
+  async writeDocument(
+    uri: Uri,
+    data: Uint8Array,
+    opts: WriteOptions | undefined,
+    reading: number | undefined,
+    begin: boolean,
+  ): Promise<number | null> {
+    return writeInvoke<number | null>(uri, 'write_file', {
+      path: uri,
+      contents: Array.from(data),
+      overwrite: opts?.overwriteChanged === true,
+      reading: reading ?? null,
+      begin,
+    });
+  }
+
+  /** A tab's readings, forgotten as it closes. */
+  async forgetReadings(readings: number[]): Promise<void> {
+    if (readings.length > 0) await invoke('forget_readings', { readings });
   }
 
   async readText(uri: Uri, encoding = 'utf-8'): Promise<string> {
@@ -136,9 +177,9 @@ export class TauriFileSystem implements VirtualFileSystem {
       stat,
       detection,
       async bytes() {
-        /* Read as a document: Rust remembers it as it is now, so a save can
-           tell whether somebody changed it while it was open (ADR 0004). */
-        cached ??= await fs.#readDocument(stat.uri);
+        /* A plain read. A tab reads its document through its own scope,
+           which Rust remembers as a reading (ADR 0006); nothing else does. */
+        cached ??= await fs.readBytes(stat.uri);
         return cached;
       },
       async text(encoding = 'utf-8') {

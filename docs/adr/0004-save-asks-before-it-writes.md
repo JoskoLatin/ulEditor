@@ -161,3 +161,9 @@ before on WSL's 9P can be asked about once, its "birth" being a time 9P makes
 up. Keeping the record by a token `read_document` hands the page, rather than by
 the path, would end the question of spellings altogether; it changes the
 contract between page and host and has a card of its own (495).
+
+**Settled by ADR 0006 (2026-10-08):** a record is now a reading, found by the
+token Rust gave it and by nothing else, so the spellings, the lookup by place
+and the record under two names are gone — and a write that names no reading
+(an export, the scratch panel) no longer moves a tab's record, so that tab's
+next save is asked about it.

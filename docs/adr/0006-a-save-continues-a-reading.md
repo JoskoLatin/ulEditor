@@ -1,8 +1,10 @@
 # ADR 0006 — A save is compared with the reading it continues, found by a token, not by a path
 
-**Status:** proposed. Čovik asked on 2026-10-08 for all open work to go
-ahead without waiting, so it is built on the recommended answer to the
-question at the end; his answer can still reverse it.
+**Status:** proposed, and built (card 495). Čovik asked on 2026-10-08 for
+all open work to go ahead without waiting, so it is built on the recommended
+answer to the question at the end; his answer can still reverse it. As
+built, `image_info` makes a reading only when the tab's scope asks
+(`asDocument`), so a look at a picture from anywhere else holds none.
 **Date:** 2026-10-08
 **Context:** card 495, proposal 3 of the independent re-review of card 485
 (ADR 0004). Decided by the architect on Opus. A prerequisite for `content://`

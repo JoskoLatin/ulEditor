@@ -24,16 +24,49 @@ export class TauriImages implements ImageService {
   }
 
   async info(source: Uri): Promise<ImageInfo> {
-    return invoke<ImageInfo>('image_info', { path: source });
+    const { reading: _, ...info } = await invoke<ImageInfo & { reading: number | null }>('image_info', {
+      path: source,
+    });
+    return info;
   }
 
   async write(source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions): Promise<ImageWritten> {
-    return writeInvoke<ImageWritten>(target, 'image_write', {
-      source,
-      target,
-      ops,
-      overwrite: options?.overwriteChanged === true,
+    const { written } = await this.writeDocument(source, target, ops, options, undefined, false);
+    return written;
+  }
+
+  /** The image editor's reading of its document (ADR 0006): for a tab's scope. */
+  async infoDocument(source: Uri, reading?: number): Promise<{ info: ImageInfo; reading: number }> {
+    const { reading: made, ...info } = await invoke<ImageInfo & { reading: number }>('image_info', {
+      path: source,
+      reading: reading ?? null,
+      asDocument: true,
     });
+    return { info, reading: made };
+  }
+
+  /** A write compared with the reading it continues, or beginning one. */
+  async writeDocument(
+    source: Uri,
+    target: Uri,
+    ops: ImageOps,
+    options: WriteOptions | undefined,
+    reading: number | undefined,
+    begin: boolean,
+  ): Promise<{ written: ImageWritten; reading: number | null }> {
+    const { reading: made, ...written } = await writeInvoke<ImageWritten & { reading: number | null }>(
+      target,
+      'image_write',
+      {
+        source,
+        target,
+        ops,
+        overwrite: options?.overwriteChanged === true,
+        reading: reading ?? null,
+        begin,
+      },
+    );
+    return { written, reading: made };
   }
 
   async preview(source: Uri): Promise<Uint8Array> {
