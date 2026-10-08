@@ -2,17 +2,17 @@
  * Driving **the real desktop application** from the checks.
  *
  * Some behaviour exists only in the Tauri environment and cannot be checked in a
- * browser: the commands in Rust, and the CSP that applies to the application
- * rather than to the Vite dev server. A check in a browser would be testing the
+ * browser: the commands in Rust, and the CSP the program serves its page with. A check in a browser would be testing the
  * glue instead of the work.
  *
  * WebView2 opens a CDP endpoint on request, so Playwright attaches to the same
- * binary the user runs.
+ * binary the user runs. Note that `tauri dev` sends no CSP at all — a check
+ * about the CSP builds with `buildDesktop` and starts with `built: true`.
  */
 
 import { chromium } from 'playwright';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
  * Brings the application up and returns the attached page.
  *
- * @param {{ port?: number, timeoutMs?: number, profile?: string }} [opts]
+ * `browserArgs` go to WebView2 after the debugging port — the egress check
+ * passes `--log-net-log` this way, to read what the network service did.
+ *
+ * @param {{ port?: number, timeoutMs?: number, profile?: string, browserArgs?: string[], identifier?: string, built?: boolean }} [opts]
  */
 /**
  * Whether an ulEditor is already running, and would swallow the one we start.
@@ -52,34 +55,78 @@ export const ALREADY_RUNNING =
   'ulEditor is already open, and a second copy hands over to the first and exits — ' +
   'close it and run this again';
 
+/** The debug build both ways of starting produce. */
+const EXE = resolve(ROOT, 'target', 'debug', process.platform === 'win32' ? 'uleditor-desktop.exe' : 'uleditor-desktop');
+
+function childEnv(port, profile, opts) {
+  return {
+    ...process.env,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: [`--remote-debugging-port=${port}`, ...(opts.browserArgs ?? [])].join(' '),
+    /* A scratch profile. Settings live in the WebView2 localStorage, and
+       without this the checks run in the person's own — every fixture they
+       open lands in the real recent list and the real session. A check that
+       restarts the program passes the one it got back, to start again in it. */
+    WEBVIEW2_USER_DATA_FOLDER: profile,
+    /* And the Rust side's own answers — which projects a language server may
+       run in (trust.rs) — go into the same scratch profile, not the person's. */
+    UL_DATA_DIR: profile,
+  };
+}
+
+/**
+ * Builds the program as it is installed — the page inside the binary, served
+ * by the program with its CSP — but as a debug build, so the checks' scratch
+ * profile (`UL_DATA_DIR`) still applies. For `startDesktop({ built: true })`.
+ * Under an identifier of its own, for the reason `startDesktop` gives.
+ */
+export async function buildDesktop(identifier) {
+  const config = join(await mkdtemp(join(tmpdir(), 'ul-build-')), 'tauri.check.json');
+  await writeFile(config, JSON.stringify({ identifier }));
+  const built = spawnSync(
+    'pnpm',
+    ['--filter', '@uleditor/desktop', 'tauri', 'build', '--debug', '--no-bundle', '--config', config],
+    { cwd: ROOT, shell: true, stdio: process.env.UL_DESKTOP_LOG ? 'inherit' : 'ignore' },
+  );
+  if (built.status !== 0) throw new Error(`the build failed (exit ${built.status}); UL_DESKTOP_LOG=1 shows why`);
+}
+
 export async function startDesktop(opts = {}) {
   const port = opts.port ?? 9333;
   const timeoutMs = opts.timeoutMs ?? 240000;
 
-  if (alreadyRunning()) throw new Error(ALREADY_RUNNING);
+  /* Under an identifier of its own a check shares nothing with an ulEditor
+     the person has open: the single-instance plugin names its mutex after the
+     identifier, so neither hands its arguments to the other, and the
+     program's data folders are apart as well. Without one, the person's copy
+     would swallow this one. */
+  if (!opts.identifier && alreadyRunning()) throw new Error(ALREADY_RUNNING);
 
-  let profile;
-  const app = spawn('pnpm', ['--filter', '@uleditor/desktop', 'dev'], {
-    cwd: ROOT,
-    shell: true,
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
-      /* A scratch profile. Settings live in the WebView2 localStorage, and
-         without this the checks run in the person's own — every fixture they
-         open lands in the real recent list and the real session. A check that
-         restarts the program passes the one it got back, to start again in it. */
-      WEBVIEW2_USER_DATA_FOLDER: (profile = opts.profile ?? (await mkdtemp(join(tmpdir(), 'ul-profile-')))),
-      /* And the Rust side's own answers — which projects a language server may
-         run in (trust.rs) — go into the same scratch profile, not the person's. */
-      UL_DATA_DIR: profile,
-    },
-    /* Silent, unless somebody is trying to find out why a check fails.
-       `UL_DESKTOP_LOG=1` lets the application's own output through, which is
-       the only way to read `UL_LSP_TRACE` — a check that swallows the program's
-       stderr is a check that can only be debugged by guessing. */
-    stdio: process.env.UL_DESKTOP_LOG ? 'inherit' : 'ignore',
-  });
+  const profile = opts.profile ?? (await mkdtemp(join(tmpdir(), 'ul-profile-')));
+  /* Silent, unless somebody is trying to find out why a check fails.
+     `UL_DESKTOP_LOG=1` lets the application's own output through, which is
+     the only way to read `UL_LSP_TRACE` — a check that swallows the program's
+     stderr is a check that can only be debugged by guessing. */
+  const stdio = process.env.UL_DESKTOP_LOG ? 'inherit' : 'ignore';
+  const env = childEnv(port, profile, opts);
+
+  /* `built` runs the binary `buildDesktop` made, which serves the page itself
+     the way an installed copy does — and only that way does the CSP apply.
+     Under `tauri dev` the page comes from Vite and no CSP is sent at all
+     (measured 2026-10-08: an image, a fetch and a WebSocket to any host all
+     reached the resolver), so a check about what the page can reach must not
+     run there. */
+  let app;
+  if (opts.built) {
+    app = spawn(EXE, [], { cwd: ROOT, env, stdio });
+  } else {
+    const args = ['--filter', '@uleditor/desktop', 'dev'];
+    if (opts.identifier) {
+      const config = join(profile, 'tauri.check.json');
+      await writeFile(config, JSON.stringify({ identifier: opts.identifier }));
+      args.push('--config', config);
+    }
+    app = spawn('pnpm', args, { cwd: ROOT, shell: true, env, stdio });
+  }
 
   const until = Date.now() + timeoutMs;
   let lastError;
@@ -143,12 +190,7 @@ export function killTree(child) {
  * grant, and a check that grants through the page tests a hole.
  */
 export async function openFromOutside(page, paths) {
-  const exe = resolve(
-    ROOT,
-    'target',
-    'debug',
-    process.platform === 'win32' ? 'uleditor-desktop.exe' : 'uleditor-desktop',
-  );
+  const exe = EXE;
   /* The second copy hands over its arguments and exits at once. Bounded all
      the same: with no first copy to hand over to, it would be the program
      itself, and would never end. */
