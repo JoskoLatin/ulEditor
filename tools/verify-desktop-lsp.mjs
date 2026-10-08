@@ -117,7 +117,8 @@ async function until(condition, timeout = 180000) {
 let session;
 
 try {
-  session = await startDesktop({ port: 9341 });
+  /* Under an identifier of its own: an ulEditor the person has open stays. */
+  session = await startDesktop({ port: 9341, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   check('attached to the desktop application', true);
 
@@ -127,6 +128,7 @@ try {
      the other is where everything below happens. */
   const untrusted = await crate(BROKEN);
   const workspace = await crate(BROKEN);
+  const another = await crate(BROKEN);
 
   const served = await page.evaluate(
     () => window.__TAURI_INTERNALS__.invoke('lsp_languages'),
@@ -147,10 +149,30 @@ try {
     await page.waitForSelector('.cm-content', { timeout: 30000 });
   };
 
+  let noAt = 0;
   if (served.includes('rust')) {
     await openMain(untrusted);
     const asked = answerTrust(NOT_NOW);
     check('a project nobody has trusted asks before its server starts', asked.startsWith('pressed'), asked);
+    noAt = Date.now();
+
+    /* Script in the page could make every folder it holds a project and ask
+       about each in turn after a "Not now": the question waits half a
+       minute after one, whatever the project (the review of 0676285). */
+    await openFromOutside(page, [another]);
+    const quiet = await page.evaluate(
+      ([path]) =>
+        window.__TAURI_INTERNALS__
+          .invoke('lsp_open', { path, language: 'rust', text: 'fn main() {}', uiLanguage: 'en' })
+          .then((started) => String(started), (err) => String(err)),
+      [join(another, 'src', 'main.rs')],
+    );
+    const drawn = answerTrust(NOT_NOW, 3);
+    check(
+      'another project asked about at once after a "Not now" is not asked',
+      quiet === 'false' && drawn === 'no dialog',
+      `${quiet}; ${drawn}`,
+    );
     /* Long enough for rust-analyzer to have said something, had it started:
        the trusted project below is marked well within this on a warm cache. */
     await new Promise((r) => setTimeout(r, 20000));
@@ -161,6 +183,11 @@ try {
     await page.waitForSelector('.cm-content', { state: 'detached', timeout: 10000 });
   }
 
+  if (served.includes('rust')) {
+    /* And asked again once the half minute is over. */
+    const left = 31000 - (Date.now() - noAt);
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
+  }
   await openMain(workspace);
   check('the file is open in the code editor', true);
   if (served.includes('rust')) {

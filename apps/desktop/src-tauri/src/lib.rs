@@ -39,6 +39,10 @@ struct AppState {
     /// ever, until Open is pressed to make it stop.
     #[cfg_attr(mobile, allow(dead_code))]
     editing: Mutex<trust::Links>,
+    /// Cancels of "Save as" and "Open folder", which may not be drawn again
+    /// for a moment (`trust::Quiet`).
+    #[cfg_attr(mobile, allow(dead_code))]
+    dialogs: Mutex<trust::Quiet>,
 }
 
 /// Held while the core asks the person anything in a dialog of its own —
@@ -62,6 +66,10 @@ struct LspState {
     /// asked under `Questions`, so that a restored session opening several
     /// files of one project asks once.
     trust: Mutex<trust::ProjectTrust>,
+    /// "Not now" answers, paced as a link's no is — whatever project the
+    /// page asks about next: a page that can write a `Cargo.toml` into every
+    /// folder it holds could otherwise make each one a new question.
+    asking: Mutex<trust::Links>,
 }
 
 /// Files the program was asked to open when it started.
@@ -193,18 +201,28 @@ fn walking_copy(state: &State<'_, AppState>) -> Workspace {
 async fn pick_directory(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    ui_language: Option<String>,
 ) -> Result<Option<Stat>, VfsError> {
-    /* One of the core's dialogs at a time (`Questions`). */
+    /* One of the core's dialogs at a time (`Questions`), and not again the
+    moment one was cancelled: Enter in an empty folder dialog opens the
+    folder it shows (`trust::Quiet`). */
     let questions = app.state::<Questions>();
     let Ok(_asking) = questions.0.try_lock() else {
         return Ok(None);
     };
+    let dialogs = || state.dialogs.lock().expect("the dialog lock is poisoned");
+    if !dialogs().may_ask(std::time::Instant::now()) {
+        return Err(VfsError::Unsupported(trust::dialog_paused(
+            ui_language.as_deref(),
+        )));
+    }
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |picked| {
         let _ = tx.send(picked);
     });
 
     let Some(path) = rx.await.ok().flatten() else {
+        dialogs().declined(std::time::Instant::now());
         return Ok(None);
     };
     let Ok(path) = path.into_path() else {
@@ -357,11 +375,18 @@ async fn pick_save_target(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     suggested_name: String,
+    ui_language: Option<String>,
 ) -> Result<Option<String>, VfsError> {
     let questions = app.state::<Questions>();
     let Ok(_asking) = questions.0.try_lock() else {
         return Ok(None);
     };
+    let dialogs = || state.dialogs.lock().expect("the dialog lock is poisoned");
+    if !dialogs().may_ask(std::time::Instant::now()) {
+        return Err(VfsError::Unsupported(trust::dialog_paused(
+            ui_language.as_deref(),
+        )));
+    }
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -371,6 +396,7 @@ async fn pick_save_target(
         });
 
     let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        dialogs().declined(std::time::Instant::now());
         return Ok(None);
     };
 
@@ -395,14 +421,32 @@ async fn pick_save_target(
 /// folder the dialog opened in (measured by the review of card 501): script
 /// in the page could suggest the Startup folder, and one Enter would grant it
 /// a file there. A name with anything a file name cannot hold is not offered.
+///
+/// And only what reads as what it is: letters and digits of any script, the
+/// space, and the punctuation names are made of — no right-to-left override
+/// to show `ugovor\u{202E}fdp.exe` as "ugovorexe.pdf", no invisible mark,
+/// nothing Windows would quietly drop (a trailing dot or space) or take for a
+/// device (`CON`, `NUL.txt`), and not too long to be read whole. Anything
+/// else is offered as "untitled", and the person names it.
 fn offered_name(suggested: &str) -> String {
+    const LONGEST: usize = 120;
+    const DEVICES: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
     let last = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
+    let stem = last.split('.').next().unwrap_or_default().trim_end();
     let fits = !last.is_empty()
-        && last != "."
-        && last != ".."
-        && !last
+        && last.chars().count() <= LONGEST
+        && !last.ends_with(['.', ' '])
+        && !last.starts_with(' ')
+        && last.chars().any(char::is_alphanumeric)
+        && last
             .chars()
-            .any(|c| c.is_control() || "<>:\"|?*".contains(c));
+            .all(|c| c.is_alphanumeric() || " -_.,()[]{}'!@#$+=~;&%".contains(c))
+        && !DEVICES
+            .iter()
+            .any(|device| stem.eq_ignore_ascii_case(device));
     if fits {
         last.to_string()
     } else {
@@ -818,20 +862,29 @@ fn framed(token: Reading, bytes: Vec<u8>) -> Vec<u8> {
     out
 }
 
-/// Every project's answer to "Run this project's code?" forgotten, and the
-/// language servers stopped: each is asked about again before it starts
-/// (card 488). It only takes away.
+/// Every yes to "Run this project's code?" forgotten, and the language
+/// servers stopped: each project trusted before is asked about again before
+/// it starts (card 488). A "Not now" stays (`ProjectTrust::forget_all`).
+/// The servers go first, so a list that cannot be written leaves none of
+/// them running on a yes about to come back after a restart; and off the
+/// thread the window draws on, since a server takes a moment to stop.
 #[tauri::command]
-fn forget_trusted_projects(lsp: State<'_, LspState>) -> Result<(), VfsError> {
-    lsp.trust
-        .lock()
-        .expect("the trust lock is poisoned")
-        .forget_all()?;
-    lsp.servers
-        .lock()
-        .expect("the server lock is poisoned")
-        .stop_all();
-    Ok(())
+async fn forget_trusted_projects(app: tauri::AppHandle) -> Result<(), VfsError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let lsp = app.state::<LspState>();
+        lsp.servers
+            .lock()
+            .expect("the server lock is poisoned")
+            .stop_all();
+        let forgotten = lsp
+            .trust
+            .lock()
+            .expect("the trust lock is poisoned")
+            .forget_all();
+        forgotten.map_err(VfsError::from)
+    })
+    .await
+    .map_err(|err| VfsError::Unsupported(err.to_string()))?
 }
 
 /// A tab's readings, forgotten as it closes (ADR 0006).
@@ -1300,6 +1353,13 @@ async fn may_start(
         trust::Verdict::Ask => {}
     }
 
+    /* After a "Not now", no question for a while, and after three none this
+    session: not asked, the project's code does not run. */
+    let asking = || lsp.asking.lock().expect("the asking lock is poisoned");
+    if !asking().may_ask(std::time::Instant::now()) {
+        return false;
+    }
+
     let asked = trust::question(interface, language, project);
     let answer = ask(app, &asked, MessageDialogKind::Warning).await;
 
@@ -1312,6 +1372,7 @@ async fn may_start(
         }
         trust::Answer::NotNow => {
             trust.decline(project);
+            asking().declined(std::time::Instant::now());
             false
         }
     }
@@ -2067,6 +2128,13 @@ pub fn run() {
                     .ok()
                     .map(|dir| dir.join("EBWebView")),
                 crash::folder().map(std::path::Path::to_path_buf),
+                /* The folder the program runs from: Windows looks there first
+                for a DLL the program loads, so a file written there could run
+                as the program next start (the review of 0676285). */
+                #[cfg(windows)]
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
             ]
             .into_iter()
             .flatten()
@@ -2087,6 +2155,7 @@ pub fn run() {
                 library_declined: std::sync::atomic::AtomicBool::new(false),
                 links: Mutex::new(trust::Links::default()),
                 editing: Mutex::new(trust::Links::default()),
+                dialogs: Mutex::new(trust::Quiet::default()),
             });
             app.manage(Questions(tokio::sync::Mutex::new(())));
             /* The files the program was started with are a gesture too: granted
@@ -2121,6 +2190,7 @@ pub fn run() {
                 servers: Mutex::new(Servers::new()),
                 sink,
                 trust: Mutex::new(trusted),
+                asking: Mutex::new(trust::Links::default()),
             });
 
             let handle = app.handle().clone();
@@ -2401,6 +2471,17 @@ mod tests {
         assert_eq!(offered_name(".."), "untitled");
         assert_eq!(offered_name("a\u{0}b"), "untitled");
         assert_eq!(offered_name(""), "untitled");
+        assert_eq!(offered_name("ugovor\u{202E}fdp.exe"), "untitled");
+        assert_eq!(offered_name("a\u{2066}b.bat"), "untitled");
+        assert_eq!(offered_name("x.bat."), "untitled");
+        assert_eq!(offered_name("x.bat "), "untitled");
+        assert_eq!(offered_name("CON"), "untitled");
+        assert_eq!(offered_name("nul.txt"), "untitled");
+        assert_eq!(offered_name("COM1"), "untitled");
+        assert_eq!(offered_name("..."), "untitled");
+        assert_eq!(offered_name(&"a".repeat(121)), "untitled");
+        assert_eq!(offered_name("Plan - stranice.pdf"), "Plan - stranice.pdf");
+        assert_eq!(offered_name("console.log.txt"), "console.log.txt");
     }
 
     /// A gesture in one of the program's own folders grants nothing and

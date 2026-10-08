@@ -96,14 +96,18 @@ impl ProjectTrust {
         self.declined.insert(project.to_path_buf());
     }
 
-    /// Forgets every answer, yes and no: each project is asked about again
+    /// Forgets every yes: each project trusted before is asked about again
     /// before a language server starts in it. The one way back from a yes
     /// that was given too easily — the list is in a folder the page cannot
-    /// write, and was otherwise to be edited by hand (card 488). It only
-    /// takes away, so the page may ask for it.
+    /// write, and was otherwise to be edited by hand (card 488).
+    ///
+    /// A "Not now" is **not** forgotten: it lasts the session as it always
+    /// did. Forgetting it too let script in the page ask about a project
+    /// again after every no, until "Trust and start" was pressed to make it
+    /// stop (the independent review of 0676285). Taking away only the yeses
+    /// only takes away, so the page may ask for it.
     pub(crate) fn forget_all(&mut self) -> std::io::Result<()> {
         self.kept.trusted.clear();
-        self.declined.clear();
         self.save()
     }
 
@@ -336,6 +340,42 @@ fn site_end(site: &str) -> String {
     }
     let end: String = site.chars().skip(count - END).collect();
     format!("…{end}")
+}
+
+/// A file dialog the page may bring up again only a while after the person
+/// cancelled one — "Save as", "Open folder" (the review of 0676285). No
+/// limit on how many: a person cancels those and tries again all day, and a
+/// session-long refusal would take them away; half a minute is enough that
+/// script cannot keep one on the screen until it is answered.
+#[derive(Default)]
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) struct Quiet {
+    last_no: Option<Instant>,
+}
+
+#[cfg_attr(mobile, allow(dead_code))]
+impl Quiet {
+    const AFTER_NO: Duration = Duration::from_secs(30);
+
+    pub(crate) fn may_ask(&self, now: Instant) -> bool {
+        self.last_no
+            .is_none_or(|at| now.saturating_duration_since(at) >= Self::AFTER_NO)
+    }
+
+    pub(crate) fn declined(&mut self, now: Instant) {
+        self.last_no = Some(now);
+    }
+}
+
+/// Why a file dialog the page asked for is not drawn: one was cancelled a
+/// moment ago (`Quiet`).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn dialog_paused(interface: Option<&str>) -> String {
+    if interface == Some("hr") {
+        "Dijalog je upravo zatvoren s Odustani — ponovno se otvara za pola minute.".into()
+    } else {
+        "The dialog was just cancelled — it opens again in half a minute.".into()
+    }
 }
 
 /// Why "Open for editing…" draws no dialog: one was cancelled a moment ago,
@@ -597,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn forgetting_every_answer_asks_again_now_and_after_a_restart() {
+    fn forgetting_every_yes_asks_again_now_and_after_a_restart() {
         let file = scratch("forget-all").join("trusted-projects.json");
         let project = Path::new(r"C:\dev\repo");
         let declined = Path::new(r"C:\dev\other");
@@ -606,8 +646,23 @@ mod tests {
         trust.decline(declined);
         trust.forget_all().unwrap();
         assert_eq!(trust.verdict(project), Verdict::Ask);
-        assert_eq!(trust.verdict(declined), Verdict::Ask);
+        /* A no stays: forgotten, it could be asked again at once. */
+        assert_eq!(trust.verdict(declined), Verdict::Declined);
         assert_eq!(ProjectTrust::load(file).verdict(project), Verdict::Ask);
+    }
+
+    #[test]
+    fn a_cancelled_dialog_is_quiet_for_half_a_minute_and_no_longer() {
+        let start = Instant::now();
+        let mut quiet = Quiet::default();
+        assert!(quiet.may_ask(start));
+        quiet.declined(start);
+        assert!(!quiet.may_ask(start + Duration::from_secs(29)));
+        assert!(quiet.may_ask(start + Duration::from_secs(30)));
+        for n in 0..10 {
+            quiet.declined(start + Duration::from_secs(60 * n));
+        }
+        assert!(quiet.may_ask(start + Duration::from_secs(60 * 9 + 30)));
     }
 
     #[test]

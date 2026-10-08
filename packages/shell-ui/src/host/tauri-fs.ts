@@ -259,12 +259,12 @@ export class TauriFileSystem implements VirtualFileSystem {
   }
 
   async pickDirectory(): Promise<DirectoryEntry | null> {
-    const raw = await invoke<RawStat | null>('pick_directory');
+    const raw = await invoke<RawStat | null>('pick_directory', { uiLanguage: getLocale() });
     return raw ? (toStat(raw) as DirectoryEntry) : null;
   }
 
   async pickSaveTarget(suggestedName: string): Promise<Uri | null> {
-    return invoke<string | null>('pick_save_target', { suggestedName });
+    return invoke<string | null>('pick_save_target', { suggestedName, uiLanguage: getLocale() });
   }
 
   async canWrite(uri: Uri): Promise<boolean> {

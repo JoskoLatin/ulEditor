@@ -974,16 +974,27 @@ impl Workspace {
             as a save of the tab's own would give (the review of card 495;
             ADR 0004, card 485's K2). */
             None => {
+                /* Lent only when no reading of this place owns the file there:
+                if one does, the file is the document as it was read, and its
+                own security — tightened since, perhaps — is the one to keep;
+                lending another reading's older one would loosen it (the
+                review of e7be2f3). And from the newest reading, so that which
+                one does not depend on a map's order. */
                 let now = Fingerprint::at(&resolved);
-                let replaced = self.seen.values().find(|reading| {
-                    reading.at == resolved && !now.as_ref().is_some_and(|now| reading.is_owner(now))
-                });
-                match replaced {
-                    Some(reading) => {
+                let here: Vec<(&Reading, &Opened)> = self
+                    .seen
+                    .iter()
+                    .filter(|(_, reading)| reading.at == resolved)
+                    .collect();
+                let owned = here
+                    .iter()
+                    .any(|(_, reading)| now.as_ref().is_some_and(|now| reading.is_owner(now)));
+                match here.iter().max_by_key(|(token, _)| **token) {
+                    Some((_, reading)) if !owned => {
                         lent = reading.protection.clone();
                         (resolved, Source::Given(&lent))
                     }
-                    None => (resolved, Source::Document),
+                    _ => (resolved, Source::Document),
                 }
             }
             /* The name no longer leads where the document was read from: its
@@ -3224,6 +3235,39 @@ mod tests {
         assert!(
             after[after.find("D:").unwrap()..].starts_with("D:P"),
             "{after}"
+        );
+    }
+
+    /// Two readings of a document; its security then tightened by its owner,
+    /// and saved from the first tab, which reads the file as its own. An
+    /// export after that keeps the tightened security: the second reading,
+    /// older, is not lent over a file the first one owns.
+    #[cfg(windows)]
+    #[test]
+    fn an_export_keeps_security_tightened_since_another_reading() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("export-tightened")).unwrap();
+        let file = root.join("notes.md");
+        fs::write(&file, "mine").unwrap();
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+        let (first, _) = workspace.read_document(&file, None).unwrap();
+        let (_second, _) = workspace.read_document(&file, None).unwrap();
+        icacls(&file, &["/remove", "*S-1-5-32-546"]);
+        assert!(
+            !sddl(&file).contains(";;;BG)"),
+            "the test could not tighten it"
+        );
+
+        workspace
+            .save(&file, b"mine, saved", false, Some(first), false)
+            .unwrap();
+        workspace
+            .save(&file, b"an export", false, None, false)
+            .unwrap();
+        let after = sddl(&file);
+        assert!(
+            !after.contains(";;;BG)"),
+            "the older security was lent: {after}"
         );
     }
 
