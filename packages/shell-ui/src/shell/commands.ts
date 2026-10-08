@@ -381,6 +381,21 @@ export function registerCommands(shell: Shell): () => void {
         shell.notify.show('info', t('The list of recent files is empty again.'));
       },
     }),
+    /* The way back from a "Trust and start" given too easily. */
+    shell.commands.register({
+      id: 'file.forgetTrustedProjects',
+      title: t('Forget trusted projects'),
+      category: t('File'),
+      when: () => Boolean(shell.fs.forgetTrustedProjects),
+      run: () => {
+        void shell.fs
+          .forgetTrustedProjects?.()
+          .then(() =>
+            shell.notify.show('info', t('Every project will be asked about again before its code runs.')),
+          )
+          .catch((err: unknown) => shell.notify.show('error', String(err)));
+      },
+    }),
 
     /* The way out that asks first — see `requestExit`. The button in the corner
        of the title bar goes through the same function. */

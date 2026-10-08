@@ -55,6 +55,8 @@ export type ShellFileSystem = VirtualFileSystem & {
   forgetRoot?(uri: Uri, keep?: Uri[], remember?: boolean): Promise<void>;
   /** Forgets every consent the desktop remembered — "Forget recently opened files". */
   forgetConsents?(): Promise<void>;
+  /** Forgets which projects a language server may run in (card 488). Desktop only. */
+  forgetTrustedProjects?(): Promise<void>;
   /**
    * "Open for editing…", for a document open only to be read: the person
    * picks it in the system's own dialog, and the core lets it be written.

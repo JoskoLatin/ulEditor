@@ -96,6 +96,17 @@ impl ProjectTrust {
         self.declined.insert(project.to_path_buf());
     }
 
+    /// Forgets every answer, yes and no: each project is asked about again
+    /// before a language server starts in it. The one way back from a yes
+    /// that was given too easily — the list is in a folder the page cannot
+    /// write, and was otherwise to be edited by hand (card 488). It only
+    /// takes away, so the page may ask for it.
+    pub(crate) fn forget_all(&mut self) -> std::io::Result<()> {
+        self.kept.trusted.clear();
+        self.declined.clear();
+        self.save()
+    }
+
     fn save(&self) -> std::io::Result<()> {
         let Some(file) = &self.file else {
             return Ok(());
@@ -583,6 +594,20 @@ mod tests {
         );
         assert_eq!(again.verdict(Path::new("/home/a/repo-evil")), Verdict::Ask);
         assert_eq!(again.verdict(Path::new("/home/a")), Verdict::Ask);
+    }
+
+    #[test]
+    fn forgetting_every_answer_asks_again_now_and_after_a_restart() {
+        let file = scratch("forget-all").join("trusted-projects.json");
+        let project = Path::new(r"C:\dev\repo");
+        let declined = Path::new(r"C:\dev\other");
+        let mut trust = ProjectTrust::load(file.clone());
+        trust.trust(project).unwrap();
+        trust.decline(declined);
+        trust.forget_all().unwrap();
+        assert_eq!(trust.verdict(project), Verdict::Ask);
+        assert_eq!(trust.verdict(declined), Verdict::Ask);
+        assert_eq!(ProjectTrust::load(file).verdict(project), Verdict::Ask);
     }
 
     #[test]

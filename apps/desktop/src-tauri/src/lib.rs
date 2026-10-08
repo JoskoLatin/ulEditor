@@ -377,6 +377,11 @@ async fn pick_save_target(
     /* That file, to be written, though it does not exist yet — and not the
     folder it goes into (ADR 0005). */
     with_consents(&state, |workspace, consents| {
+        /* Never a file in one of the program's own folders, as no gesture
+        is (`grant_gesture`): it would let nothing in, and would be kept. */
+        if workspace.is_protected(&path) {
+            return Err(VfsError::ReadOnly(path.to_string_lossy().into_owned()));
+        }
         let target = workspace.grant_future_file(&path)?;
         let _ = consents.remember(Consent::file(target, Access::ReadWrite));
         Ok(())
@@ -811,6 +816,22 @@ fn framed(token: Reading, bytes: Vec<u8>) -> Vec<u8> {
     out.extend_from_slice(&token.to_le_bytes());
     out.extend(bytes);
     out
+}
+
+/// Every project's answer to "Run this project's code?" forgotten, and the
+/// language servers stopped: each is asked about again before it starts
+/// (card 488). It only takes away.
+#[tauri::command]
+fn forget_trusted_projects(lsp: State<'_, LspState>) -> Result<(), VfsError> {
+    lsp.trust
+        .lock()
+        .expect("the trust lock is poisoned")
+        .forget_all()?;
+    lsp.servers
+        .lock()
+        .expect("the server lock is poisoned")
+        .stop_all();
+    Ok(())
 }
 
 /// A tab's readings, forgotten as it closes (ADR 0006).
@@ -2161,6 +2182,7 @@ pub fn run() {
             read_file,
             read_document,
             forget_readings,
+            forget_trusted_projects,
             write_file,
             image_info,
             image_preview,

@@ -150,6 +150,11 @@ export class TauriFileSystem implements VirtualFileSystem {
     });
   }
 
+  /** Every project's answer to "Run this project's code?", forgotten. */
+  async forgetTrustedProjects(): Promise<void> {
+    await invoke('forget_trusted_projects');
+  }
+
   /** A tab's readings, forgotten as it closes. */
   async forgetReadings(readings: number[]): Promise<void> {
     if (readings.length > 0) await invoke('forget_readings', { readings });
