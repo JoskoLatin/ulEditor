@@ -441,6 +441,18 @@ impl Question {
     }
 }
 
+/// The title of the dialog "Open for editing…" draws: the document's name,
+/// `shown`, since the page chose which document it is. Desktop only.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn editing_title(interface: Option<&str>, name: &str) -> String {
+    let name = shown(name);
+    if interface == Some("hr") {
+        format!("Otvori za uređivanje: {name}")
+    } else {
+        format!("Open for editing: {name}")
+    }
+}
+
 /// A path as a person writes it: without the `\\?\` Windows puts in front of
 /// a canonical one, and `shown`.
 fn readable(path: &Path) -> String {
@@ -515,6 +527,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The page chose the document, so its name cannot write part of the
+    /// dialog's title: a line break, a right-to-left override or a printf
+    /// format are written out, not obeyed.
+    #[test]
+    fn the_editing_title_shows_the_name_as_text() {
+        let title = editing_title(None, "ugovor\u{202E}fdp.exe\n%s%n.docx");
+        assert!(title.starts_with("Open for editing: ugovor"), "{title}");
+        assert!(
+            !title.contains('\u{202E}') && !title.contains('\n') && !title.contains('%'),
+            "{title}"
+        );
+        assert_eq!(
+            editing_title(Some("hr"), "plan.docx"),
+            "Otvori za uređivanje: plan.docx"
+        );
     }
 
     #[test]

@@ -11,8 +11,10 @@ import { LOCALES, t } from '@uleditor/i18n';
 import type { Shell, ThemePreference } from '../host/index.js';
 import { activeInstance, activeTabId, useWorkspace } from '../state/workspace.js';
 import {
+  canOpenForEditing,
   closeTab,
   openFiles,
+  openForEditing,
   openFolder,
   openThroughLibreOffice,
   openUri,
@@ -102,6 +104,16 @@ export function registerCommands(shell: Shell): () => void {
       keybinding: ['Ctrl', 'S'],
       when: () => activeTabId() !== null,
       run: () => saveActive(shell),
+    }),
+    shell.commands.register({
+      id: 'file.openForEditing',
+      title: t('Open for editing…'),
+      category: t('File'),
+      when: () => canOpenForEditing(shell, activeTabId()),
+      run: () => {
+        const id = activeTabId();
+        if (id) void openForEditing(shell, id);
+      },
     }),
     shell.commands.register({
       id: 'file.close',

@@ -159,6 +159,46 @@ export async function openFiles(shell: Shell): Promise<void> {
 }
 
 /**
+ * Whether a tab can be made one that saves: its editor edits, and only the
+ * document's own access is in the way — it came from the library on desktop,
+ * or from F12, or out of a conversion (ADR 0005).
+ */
+export function canOpenForEditing(shell: Shell, id: string | null): boolean {
+  if (!id || !shell.fs.openForEditing) return false;
+  const tab = useWorkspace.getState().tabs.find((t) => t.id === id);
+  const doc = tabDocuments.get(id);
+  if (!tab?.readonly || !doc?.stat.readonly) return false;
+  const provider = shell.registry.resolve(doc);
+  return !!provider && hasCapability(provider, 'edit');
+}
+
+/**
+ * "Open for editing…": the system's own file dialog, on the document, and the
+ * core grants what is picked there — the page only asks (ADR 0005). Picked as
+ * it is, the tab saves from now on, with whatever was typed into it kept;
+ * another file picked instead is opened beside it, as "Open files" would.
+ */
+export async function openForEditing(shell: Shell, id: string): Promise<void> {
+  const tab = useWorkspace.getState().tabs.find((t) => t.id === id);
+  if (!tab || !shell.fs.openForEditing || !canOpenForEditing(shell, id)) return;
+  let picked: Awaited<ReturnType<NonNullable<typeof shell.fs.openForEditing>>>;
+  try {
+    picked = await shell.fs.openForEditing(tab.uri);
+  } catch (err) {
+    shell.notify.show('error', err instanceof Error ? err.message : String(err));
+    return;
+  }
+  if (!picked) return;
+  if (picked.uri !== tab.uri) {
+    await openUri(shell, picked.uri);
+    return;
+  }
+  if (picked.readonly) return;
+  useWorkspace.getState().patchTab(id, { readonly: false });
+  shell.notify.show('info', t('{name} can be saved now.', { name: tab.name }));
+}
+
+/**
  * A drawing nothing here reads, shown as the PDF LibreOffice makes of it.
  *
  * `.cdr` is CorelDRAW's own format and libcdr is the only thing that reads it;
@@ -541,7 +581,13 @@ export async function saveTab(shell: Shell, id: string): Promise<boolean> {
   if (!tab || !instance) return false;
 
   if (tab.readonly) {
-    shell.notify.show('warning', t('{name} is open read-only.', { name: tab.name }));
+    shell.notify.show(
+      'warning',
+      t('{name} is open read-only.', { name: tab.name }),
+      canOpenForEditing(shell, id)
+        ? [{ label: t('Open for editing…'), run: () => void openForEditing(shell, id) }]
+        : [],
+    );
     return false;
   }
 

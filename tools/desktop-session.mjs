@@ -266,6 +266,61 @@ $said`;
   return (out.stdout ?? '').trim().split(/\r?\n/).pop() || (out.stderr ?? '').trim();
 }
 
+/**
+ * Answers the system's file dialog the program drew — Open, with the file it
+ * chose, or Cancel — and returns its title, or why it could not. The same
+ * `#32770` window as a task dialog, but its buttons are the classic IDOK (1)
+ * and IDCANCEL (2), pressed with `WM_COMMAND`. Given a moment once found, so
+ * that the name the program put in it is there before Open reads it.
+ */
+export function answerFileDialog(open, seconds = 30) {
+  const script = `
+Add-Type @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class UlFileDialog {
+  delegate bool Each(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Each f, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static IntPtr Find(uint pid, out string title) {
+    IntPtr dialog = IntPtr.Zero; string found = "";
+    EnumWindows((h, l) => {
+      uint owner; GetWindowThreadProcessId(h, out owner);
+      if (owner != pid || !IsWindowVisible(h)) return true;
+      var name = new StringBuilder(64); GetClassName(h, name, 64);
+      if (name.ToString() != "#32770") return true;
+      var text = new StringBuilder(512); GetWindowText(h, text, 512);
+      dialog = h; found = text.ToString(); return false;
+    }, IntPtr.Zero);
+    title = found; return dialog;
+  }
+  public static void Press(IntPtr dialog, int id) { PostMessage(dialog, 0x0111, (IntPtr)id, IntPtr.Zero); }
+}
+'@
+$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -like '*\\target\\debug\\*' } | Select-Object -First 1).ProcessId
+$said = 'no application'
+for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
+  $title = ''
+  $dialog = [UlFileDialog]::Find([uint32]$app, [ref]$title)
+  if ($dialog -ne [IntPtr]::Zero) {
+    Start-Sleep -Milliseconds 800
+    [UlFileDialog]::Press($dialog, ${open ? 1 : 2})
+    $said = 'pressed: ' + $title
+    break
+  }
+  $said = 'no dialog'
+  Start-Sleep -Milliseconds 250
+}
+$said`;
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+  });
+  return (out.stdout ?? '').trim().split(/\r?\n/).pop() || (out.stderr ?? '').trim();
+}
+
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});

@@ -11,6 +11,7 @@ import type {
   DirectoryEntry,
   DocumentHandle,
   EditorHost,
+  FileStat,
   Uri,
   VirtualFileSystem,
 } from '@uleditor/plugin-sdk';
@@ -54,6 +55,12 @@ export type ShellFileSystem = VirtualFileSystem & {
   forgetRoot?(uri: Uri, keep?: Uri[], remember?: boolean): Promise<void>;
   /** Forgets every consent the desktop remembered — "Forget recently opened files". */
   forgetConsents?(): Promise<void>;
+  /**
+   * "Open for editing…", for a document open only to be read: the person
+   * picks it in the system's own dialog, and the core lets it be written.
+   * Desktop only (ADR 0005).
+   */
+  openForEditing?(uri: Uri): Promise<FileStat | null>;
 };
 
 export type Platform = 'desktop' | 'web';

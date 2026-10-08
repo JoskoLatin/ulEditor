@@ -569,6 +569,8 @@
   "{name} is not drawn here": "{name} se ovdje ne prikazuje",
   "LibreOffice is not available here. The desktop app converts this format when LibreOffice is installed.": "LibreOffice ovdje nije dostupan. Desktop aplikacija pretvara ovaj format kad je LibreOffice instaliran.",
   "Only the desktop app converts {name}, through LibreOffice.": "Samo desktop aplikacija pretvara {name}, preko LibreOfficea.",
+  "Open for editing…": "Otvori za uređivanje…",
+  "{name} can be saved now.": "{name} se sada može spremiti.",
   "The preview stored in the file — not the drawing itself": "Pregled spremljen u datoteci — ne sam crtež",
   "Stored preview, {width} × {height}": "Spremljeni pregled, {width} × {height}",
   "This is a program, and this build does not run PostScript.": "Ovo je program, a ova verzija ne izvršava PostScript.",

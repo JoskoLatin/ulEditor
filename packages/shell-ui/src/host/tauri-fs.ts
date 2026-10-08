@@ -19,6 +19,8 @@ import {
   type WriteOptions,
 } from '@uleditor/plugin-sdk';
 
+import { getLocale } from '@uleditor/i18n';
+
 import { detectByName } from './detect.js';
 
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -198,6 +200,16 @@ export class TauriFileSystem implements VirtualFileSystem {
 
   async forgetConsents(): Promise<void> {
     await invoke('forget_consents');
+  }
+
+  /**
+   * "Open for editing…" (ADR 0005): Rust draws the system's file dialog on
+   * the document and grants what the person picks there. `null` when nothing
+   * was picked, or another of the core's questions was on the screen.
+   */
+  async openForEditing(uri: Uri): Promise<FileStat | null> {
+    const raw = await invoke<RawStat | null>('open_for_editing', { path: uri, uiLanguage: getLocale() });
+    return raw ? toStat(raw) : null;
   }
 
   async pickDirectory(): Promise<DirectoryEntry | null> {

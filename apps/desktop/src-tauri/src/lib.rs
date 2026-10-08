@@ -241,6 +241,71 @@ async fn pick_files(
     Ok(out)
 }
 
+/// "Open for editing…": how a document opened only to be read — from the
+/// library on desktop, F12's answer, a converted PDF (ADR 0005) — becomes one
+/// that can be saved, without its folder coming with it.
+///
+/// The page names the document; Rust draws the system's own file dialog in
+/// the document's folder with the document chosen, and grants what the person
+/// picks there, to be read and written — the gesture "Open files" is, and no
+/// more. Script in the page can bring the dialog up, as it can "Open files",
+/// but it cannot answer it. The name has to be one the page may read already,
+/// so the dialog never opens on a folder the page could not see into; a
+/// document that can be written already is answered without asking. One
+/// question on the screen at a time, shared with the core's others: asked
+/// for while one is open, it is not shown and nothing is granted.
+#[cfg(desktop)]
+#[tauri::command]
+async fn open_for_editing(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    ui_language: Option<String>,
+) -> Result<Option<Stat>, VfsError> {
+    let document = with_workspace(&state, |workspace| workspace.stat(&path))?;
+    if !document.readonly {
+        return Ok(Some(document));
+    }
+    let questions = app.state::<Questions>();
+    let Ok(_asking) = questions.0.try_lock() else {
+        return Ok(None);
+    };
+
+    let shown = std::path::PathBuf::from(&document.uri);
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title(trust::editing_title(ui_language.as_deref(), &document.name))
+        .set_file_name(&document.name);
+    if let Some(folder) = shown.parent() {
+        dialog = dialog.set_directory(folder);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    dialog.pick_file(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+
+    with_consents(&state, |workspace, consents| {
+        grant_gesture(workspace, consents, &picked)?;
+        workspace.stat(&picked).map(Some)
+    })
+}
+
+/// A phone has no such step: the library there is read and written already.
+#[cfg(mobile)]
+#[tauri::command]
+fn open_for_editing(_path: String) -> Result<Option<Stat>, VfsError> {
+    Err(VfsError::Unsupported(
+        "Opening for editing is not needed on mobile devices.".into(),
+    ))
+}
+
 /// Where a converted or exported file should go.
 ///
 /// The chosen file is **granted** before the path is handed back. Choosing a
@@ -1940,6 +2005,7 @@ pub fn run() {
             pick_directory,
             pick_files,
             pick_save_target,
+            open_for_editing,
             adopt_paths,
             forget_consents,
             forget_root,
