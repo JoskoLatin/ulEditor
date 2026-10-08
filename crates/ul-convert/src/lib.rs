@@ -242,8 +242,37 @@ pub fn backend() -> Option<Backend> {
 /// relative place: a PATH of absolute entries only, and on Windows no looking
 /// in the current folder (`NoDefaultCurrentDirectoryInExePath`). The same as a
 /// language server is started with — see `harden` in ul-lsp.
+///
+/// **And on Windows nothing the person put on the PATH at all.** LibreOffice's
+/// EPS import looks on the PATH for `pstoedit.exe`, ImageMagick's
+/// `convert.exe` and Ghostscript's `gswin64c.exe`, and hands each the file
+/// being converted — Ghostscript with `-dPARANOIDSAFER`, the other two with no
+/// such switch (measured 2026-10-08, card 505, with stand-ins that wrote down
+/// how they were called). A `.ps` is a program, and whichever of them is
+/// installed would run one the page wrote, with no gesture. Given the system's
+/// own folders only, LibreOffice finds none of them and converts as it does on
+/// a machine without them: a DOS EPS as the preview stored in it, plain
+/// PostScript as a placeholder. Started with no PATH at all it never finishes.
+///
+/// On Unix the PATH stays, absolute entries only: there Ghostscript comes from
+/// the distribution, with its updates, and what LibreOffice needs on the PATH
+/// to start was not measured.
 fn harden(command: &mut Command) {
+    #[cfg(windows)]
+    harden_with(command, Some(system_folders()));
+    #[cfg(not(windows))]
     harden_with(command, std::env::var_os("PATH"));
+}
+
+/// Windows' own folders, the PATH LibreOffice is given there.
+#[cfg(windows)]
+fn system_folders() -> std::ffi::OsString {
+    let root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(|root| root.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let system = root.join("System32");
+    std::env::join_paths([system.clone(), root, system.join("Wbem")]).unwrap_or_default()
 }
 
 /// The same, with the PATH it starts from given.
@@ -752,6 +781,42 @@ mod tests {
                 *key == "NoDefaultCurrentDirectoryInExePath" && *value == Some("1".as_ref())
             }));
         }
+    }
+
+    /// The PostScript helpers LibreOffice would hand a file to are looked for
+    /// on the PATH, so on Windows it gets the system's folders and nothing
+    /// else — not the folder Ghostscript, pstoedit or ImageMagick was put in.
+    /// Cargo puts its own folders on the PATH a test runs with, so a PATH
+    /// passed on from here would show up as one outside the system's.
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_libreoffice_is_given_the_system_folders_only() {
+        let backend = Backend {
+            path: "soffice".to_string(),
+            formats: Vec::new(),
+        };
+        let here = Path::new("x");
+        let command = soffice_command(&backend, here, here, here);
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .expect("a PATH is given");
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let entries: Vec<_> = std::env::split_paths(path).collect();
+        assert_eq!(
+            entries,
+            vec![
+                root.join("System32"),
+                root.clone(),
+                root.join("System32").join("Wbem")
+            ]
+        );
+        let ours = std::env::var_os("PATH").unwrap();
+        assert!(
+            std::env::split_paths(&ours).any(|entry| !entry.starts_with(&root)),
+            "the test's own PATH has a folder outside the system's, or it proves nothing"
+        );
     }
 
     #[test]
