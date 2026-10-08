@@ -65,10 +65,17 @@ by that token and by nothing else.
     was (`where_it_was`). The reading is updated and keeps its token.
   - **Without a reading**, it is a file nobody read here — save-as, an export —
     written as `write` writes it, with that file's own security, as today.
-    **No reading is looked up by name or by place, and none is moved.** With
-    `begin`, what was written becomes a new reading and is returned, so the next
-    save of the converted `.xlsx` or of an image saved in another format is
-    compared, as it is today.
+    **No reading is looked up for the save by name or by place, and none is
+    moved.** With `begin`, what was written becomes a new reading and is
+    returned, so the next save of the converted `.xlsx` or of an image saved
+    in another format is compared, as it is today.
+  - *Amended after the independent review:* where a tab has a reading of the
+    document at that very place and the file there is not provably the one it
+    read — replaced, or gone — the write takes that reading's protection, not
+    the file's: an export written over a document somebody swapped while it was
+    open in a tab must not take the planted security (card 485's K2). The
+    reading is only lent its protection; it is not found for the save, not
+    asked about, and not moved.
 - Gone: `record_key`, the lookup by place, the record written under two names.
 - An unknown reading, or one used under another name, is `VfsError::NotRead`:
   a failed save, never `Changed`. It is a fault of the page, and the person is
@@ -251,6 +258,7 @@ Before "done":
 
 - The four desktop checks pass, and each fails under its mutation.
 - The change touches nothing in `packages/plugin-sdk` or `packages/editor-*`.
-- `vfs.rs` finds a record only by its reading: `record_key` and
-  `opened.at == resolved` are gone.
+- `vfs.rs` finds a record for a save only by its reading: `record_key` is
+  gone, and `at == resolved` is left only where a write with no reading
+  borrows a protection (amended after the review).
 - A unit test opens and forgets readings, and none is left.

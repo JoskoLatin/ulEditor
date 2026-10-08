@@ -962,9 +962,30 @@ impl Workspace {
         one that is gone, which would otherwise come back with the folder's
         security, and one on a volume whose IDs do not tell files apart. */
         let own: Protection;
+        let lent: Protection;
         let mut held = None;
         let (target, source) = match &opened {
-            None => (resolved, Source::Document),
+            /* A file nobody read here — save-as, an export, the scratch panel.
+            Its reading, if a tab has one of the document at this very place,
+            is neither found for this save nor moved by it (ADR 0006). But if
+            the file there is not provably the one that tab read — replaced,
+            or gone — whatever was put there does not hand its security to
+            what is written over it: the reading's protection is lent instead,
+            as a save of the tab's own would give (the review of card 495;
+            ADR 0004, card 485's K2). */
+            None => {
+                let now = Fingerprint::at(&resolved);
+                let replaced = self.seen.values().find(|reading| {
+                    reading.at == resolved && !now.as_ref().is_some_and(|now| reading.is_owner(now))
+                });
+                match replaced {
+                    Some(reading) => {
+                        lent = reading.protection.clone();
+                        (resolved, Source::Given(&lent))
+                    }
+                    None => (resolved, Source::Document),
+                }
+            }
             /* The name no longer leads where the document was read from: its
             letters, or a link, changed under it. Asked about; written over,
             the new version goes where the document was — whatever has its
@@ -3173,6 +3194,36 @@ mod tests {
         assert!(
             !dacl.contains("(A;ID;"),
             "the folder's entries came in: {after}"
+        );
+    }
+
+    /// An export written over a document a tab has open, after somebody put
+    /// a file of their own security in its place: no reading is named, so
+    /// nothing is asked and the tab's reading is not moved — but the new
+    /// version has the document's protection, not the planted file's.
+    #[cfg(windows)]
+    #[test]
+    fn an_export_over_a_replaced_document_does_not_take_its_security() {
+        let (mut tab, file, _) = closed_document("export-planted");
+        fs::remove_file(&file).unwrap();
+        fs::write(&file, "planted").unwrap();
+        icacls(&file, &["/grant", "*S-1-5-32-546:(R)"]);
+        assert!(
+            sddl(&file).contains(";;;BG)"),
+            "the test could not plant it"
+        );
+
+        let written = tab.workspace.save(&file, b"an export", false, None, false);
+        assert!(matches!(written, Ok(None)), "{written:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "an export");
+        let after = sddl(&file);
+        assert!(
+            !after.contains(";;;BG)"),
+            "the planted security was carried over: {after}"
+        );
+        assert!(
+            after[after.find("D:").unwrap()..].starts_with("D:P"),
+            "{after}"
         );
     }
 

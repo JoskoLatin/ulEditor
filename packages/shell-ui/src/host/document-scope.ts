@@ -76,10 +76,10 @@ function imagesHaveReadings(images: unknown): images is ReadingImages {
 }
 
 /** Every other member of `target`, as it is: methods bound to it. */
-function through<T extends object>(target: T, own: Partial<Record<keyof T, unknown>>): T {
+function through<T extends object>(target: T, own: Record<PropertyKey, unknown>): T {
   return new Proxy(target, {
     get(object, key) {
-      if (Object.prototype.hasOwnProperty.call(own, key)) return own[key as keyof T];
+      if (Object.prototype.hasOwnProperty.call(own, key)) return own[key];
       const value = Reflect.get(object, key, object);
       return typeof value === 'function' ? value.bind(object) : value;
     },
@@ -96,19 +96,26 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
      not resolved: another spelling is another document to the core. */
   const readings = new Map<Uri, number>();
 
-  let cached: Uint8Array | null = null;
+  /* One read however many ask at once: two before the first answer would
+     make two readings, and the second would never be forgotten. */
+  let reading: Promise<Uint8Array> | null = null;
   const scopedDoc: DocumentHandle = {
     uri: doc.uri,
     name: doc.name,
     stat: doc.stat,
     detection: doc.detection,
-    async bytes() {
-      if (!cached) {
-        const read = await fs.readDocument(doc.uri, readings.get(doc.uri));
-        readings.set(doc.uri, read.reading);
-        cached = read.bytes;
-      }
-      return cached;
+    bytes() {
+      reading ??= fs.readDocument(doc.uri, readings.get(doc.uri)).then(
+        (read) => {
+          readings.set(doc.uri, read.reading);
+          return read.bytes;
+        },
+        (err: unknown) => {
+          reading = null;
+          throw err;
+        },
+      );
+      return reading;
     },
     async text(encoding = 'utf-8') {
       return new TextDecoder(encoding).decode(await this.bytes());
@@ -118,12 +125,23 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
     },
   };
 
+  /* The tab's own document is never written as a file nobody read: an
+     editor that wrote it before reading it through `doc` would otherwise
+     save with no question and the security of whatever is there. */
+  const unread = (uri: Uri) => new Error(`${doc.name} was not read here, so it is not saved over.`);
+
   const writeBytes = async (uri: Uri, data: Uint8Array, opts?: WriteOptions): Promise<void> => {
-    const reading = readings.get(uri);
-    const made = await fs.writeDocument(uri, data, opts, reading, reading === undefined);
+    const known = readings.get(uri);
+    if (uri === doc.uri && known === undefined) throw unread(uri);
+    const made = await fs.writeDocument(uri, data, opts, known, known === undefined);
     if (made !== null) readings.set(uri, made);
   };
+  /* What the scope does with readings is its own: the editor is not handed
+     the calls that name them. */
   const scopedFs = through(fs as unknown as VirtualFileSystem, {
+    readDocument: undefined,
+    writeDocument: undefined,
+    forgetReadings: undefined,
     writeBytes,
     writeText: (uri: Uri, data: string, opts?: WriteOptions) =>
       writeBytes(uri, new TextEncoder().encode(data), opts),
@@ -132,6 +150,8 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
   const images = host.images;
   const scopedImages = imagesHaveReadings(images)
     ? through(images, {
+        infoDocument: undefined,
+        writeDocument: undefined,
         info: async (source: Uri) => {
           /* The tab's own document, or a file it wrote: read as a reading.
              Anything else is only looked at. */
@@ -142,6 +162,7 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
         },
         write: async (source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions) => {
           const reading = readings.get(target);
+          if (target === doc.uri && reading === undefined) throw unread(target);
           const { written, reading: made } = await images.writeDocument(
             source,
             target,

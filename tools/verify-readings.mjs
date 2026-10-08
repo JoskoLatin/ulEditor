@@ -169,6 +169,34 @@ check(
   JSON.stringify(forgot),
 );
 
+/* ── what the review of card 495 added ─────────────────────────────── */
+
+const unreadTab = documentScope(host, doc('C:/d/unread.md'));
+const writesBefore = core.calls.filter((c) => c.op === 'write').length;
+const refusedUnread = await unreadTab.host.fs
+  .writeText('C:/d/unread.md', 'never read')
+  .then(() => false, () => true);
+check(
+  'a tab writing its own document before reading it is refused, and nothing is sent',
+  refusedUnread && core.calls.filter((c) => c.op === 'write').length === writesBefore,
+);
+
+const twice = documentScope(host, doc('C:/d/twice.md'));
+const readsBefore = core.calls.filter((c) => c.op === 'read').length;
+await Promise.all([twice.doc.bytes(), twice.doc.text(), twice.doc.bytes()]);
+check(
+  'asked for at once, the document is read once — one reading, not three',
+  core.calls.filter((c) => c.op === 'read').length === readsBefore + 1,
+);
+
+check(
+  'the editor is not handed the calls that name readings',
+  twice.host.fs.readDocument === undefined &&
+    twice.host.fs.writeDocument === undefined &&
+    twice.host.fs.forgetReadings === undefined &&
+    twice.host.images.infoDocument === undefined,
+);
+
 /* ── the web ───────────────────────────────────────────────────────── */
 
 const web = { fs: { readBytes: async () => new Uint8Array() }, images: {} };
