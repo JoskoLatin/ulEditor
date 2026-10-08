@@ -508,10 +508,15 @@ fn dos_eps_tiff(bytes: &[u8]) -> Option<Result<&[u8], ImageError>> {
 /// 2026-10-08 (ADR 0007), which `image` and `tiff` both refuse.
 ///
 /// `None` when the TIFF is not that kind, so the decoder gets it as before.
-/// Everything is read from the file, so everything is checked: the picture's
-/// size against the same limits as a decode, every strip against the end of
-/// the file, the colour map's length, and no sum that could overflow. Nothing
-/// indexes unchecked, for the reason `dos_eps_tiff` gives.
+/// Everything is read from the file, so everything is checked: every strip
+/// against the end of the file and all of them against the size, before a byte
+/// is allocated; the pixels against the file itself — uncompressed, they have
+/// to be in it, so a picture is at most four times the file, and strips that
+/// all point at the same few bytes cannot make it more; the one buffer there
+/// is, the picture, against the same budget as a decode; the colour map's
+/// length; and no sum that could overflow. Nothing indexes unchecked, for the
+/// reason `dos_eps_tiff` gives. A new reader of untrusted bytes, and every
+/// TIFF a preview is asked for passes through it (ADR 0007).
 fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
     let little = match bytes.get(..4)? {
         b"II*\0" => true,
@@ -570,7 +575,7 @@ fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
     };
     let entry_of = |tag: u16| {
         (0..count)
-            .map(|i| ifd + 2 + i * 12)
+            .filter_map(|i| ifd.checked_add(2)?.checked_add(i.checked_mul(12)?))
             .find(|&at| u16_at(at) == Some(tag))
     };
     let one = |tag: u16, absent: u32| match entry_of(tag) {
@@ -621,10 +626,16 @@ fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
         // An alpha sample only when the file says the second one is one.
         let alpha = samples == 2 && matches!(one(338, 0), Some(1 | 2));
 
-        let needed = (pixels as usize)
-            .checked_mul(samples)
+        let needed = usize::try_from(pixels)
+            .ok()
+            .and_then(|pixels| pixels.checked_mul(samples))
             .ok_or_else(|| damaged("too large to hold"))?;
-        let mut data = Vec::with_capacity(needed);
+        if needed > bytes.len() {
+            return Err(damaged("with fewer pixels than its size"));
+        }
+        /* Every strip found and counted before anything is made of them. */
+        let mut strips = Vec::with_capacity(offsets.len());
+        let mut found = 0usize;
         for (&offset, &length) in offsets.iter().zip(&lengths) {
             let start = offset as usize;
             let end = start
@@ -633,13 +644,13 @@ fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
             let strip = bytes
                 .get(start..end)
                 .ok_or_else(|| damaged("whose strip runs past the end of the file"))?;
-            let room = needed - data.len();
-            data.extend_from_slice(&strip[..strip.len().min(room)]);
-            if data.len() == needed {
+            strips.push(strip);
+            found = found.saturating_add(strip.len());
+            if found >= needed {
                 break;
             }
         }
-        if data.len() < needed {
+        if found < needed {
             return Err(damaged("with fewer pixels than its size"));
         }
 
@@ -648,21 +659,26 @@ fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
         (0x3333); rounding gives both back. Windows' own decoder truncates the
         first to 50: against it, all thirteen real previews agree to within
         that one step. */
+        /* In 64 bits: a colour map written as LONG may hold more than sixteen. */
         let colour = |channel: usize, index: u8| {
-            ((map[channel * 256 + usize::from(index)] * 255 + 32_767) / 65_535) as u8
+            let value = u64::from(map[channel * 256 + usize::from(index)]);
+            ((value * 255 + 32_767) / 65_535).min(255) as u8
         };
-        let rgba: Vec<u8> = data
-            .chunks_exact(samples)
-            .flat_map(|pixel| {
-                let index = pixel[0];
-                [
-                    colour(0, index),
-                    colour(1, index),
-                    colour(2, index),
-                    if alpha { pixel[1] } else { 255 },
-                ]
-            })
-            .collect();
+        /* Straight from the strips into the picture: the one buffer. */
+        let mut stream = strips
+            .iter()
+            .flat_map(|strip| strip.iter().copied())
+            .take(needed);
+        let mut rgba = Vec::with_capacity(needed / samples * 4);
+        while let Some(index) = stream.next() {
+            let second = if samples == 2 { stream.next() } else { None };
+            rgba.extend_from_slice(&[
+                colour(0, index),
+                colour(1, index),
+                colour(2, index),
+                if alpha { second.unwrap_or(255) } else { 255 },
+            ]);
+        }
         image::RgbaImage::from_raw(width, height, rgba)
             .map(DynamicImage::ImageRgba8)
             .ok_or_else(|| damaged("whose pixels do not fill it"))
@@ -1041,6 +1057,53 @@ mod tests {
             assert_eq!(shown.get_pixel(0, 1), &image::Rgba([30, 60, 90, 255]));
             assert_eq!(shown.get_pixel(2, 2), &image::Rgba([0, 0, 0, 255]));
         }
+    }
+
+    /// Strips that all point at the same few bytes cannot make a picture
+    /// larger than the file: uncompressed, its pixels have to be in it, and a
+    /// file that claims more is refused before anything is allocated for it.
+    #[test]
+    fn a_palette_tiff_cannot_make_more_pixels_than_the_file_holds() {
+        // 64×64 in 64 strips of one row; then 4096 strips, every one the first
+        // row again, under a height of 4096: the strips add up to the picture,
+        // the file is an eighth of it.
+        let mut tiff = palette_tiff_bytes(64, 64, 1, 64);
+        let offsets = u32::from_le_bytes(tiff[78..82].try_into().unwrap()) as usize;
+        let first = u32::from_le_bytes(tiff[offsets..offsets + 4].try_into().unwrap());
+        let list = |tiff: &mut Vec<u8>, value: u32| {
+            let at = tiff.len() as u32;
+            for _ in 0..4096 {
+                tiff.extend_from_slice(&value.to_le_bytes());
+            }
+            at
+        };
+        let offsets_at = list(&mut tiff, first);
+        let lengths_at = list(&mut tiff, 64);
+        // StripOffsets is the sixth entry, StripByteCounts the eighth.
+        tiff[74..78].copy_from_slice(&4096u32.to_le_bytes());
+        tiff[78..82].copy_from_slice(&offsets_at.to_le_bytes());
+        tiff[98..102].copy_from_slice(&4096u32.to_le_bytes());
+        tiff[102..106].copy_from_slice(&lengths_at.to_le_bytes());
+        tiff[30..32].copy_from_slice(&4096u16.to_le_bytes());
+        assert!(tiff.len() < 64 * 4096);
+        let said = preview(&tiff).unwrap_err().to_string();
+        assert!(said.contains("fewer pixels"), "{said}");
+    }
+
+    /// A colour map written as LONG, with values past sixteen bits, is read
+    /// without an overflow — a panic in a debug build, an abort in a worker.
+    #[test]
+    fn a_long_colour_map_does_not_overflow() {
+        let mut tiff = palette_tiff_bytes(3, 3, 1, 1);
+        let at = tiff.len() as u32;
+        tiff.extend(std::iter::repeat_n(0xFF, 768 * 4));
+        // The colour map is the tenth entry: its type at 120, value at 126.
+        tiff[120..122].copy_from_slice(&4u16.to_le_bytes());
+        tiff[126..130].copy_from_slice(&at.to_le_bytes());
+        let shown = image::load_from_memory(&preview(&tiff).unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(shown.get_pixel(1, 1), &image::Rgba([255, 255, 255, 255]));
     }
 
     /// Ten of the twelve real previews give one depth for both samples.

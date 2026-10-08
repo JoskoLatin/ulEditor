@@ -67,8 +67,15 @@ PostScript on the server.
 - **The stored preview is shown without LibreOffice, everywhere.**
   `ul_image::preview` learns the DOS EPS container: magic `C5 D0 D3 C6`, the
   TIFF section's offset at bytes 20–23 and its length at 24–27,
-  little-endian. It cuts the TIFF out with checked bounds and previews it
-  under the limits it already has. The desktop's `image_preview`
+  little-endian. It cuts the TIFF out with checked bounds and previews it.
+  *As built:* twelve of the thirteen real previews are palette TIFFs, which
+  neither `image` nor `tiff` decodes, so `ul_image` gained a reader of its
+  own for exactly that kind (`palette_tiff`) — a new parser of untrusted
+  bytes, and every TIFF a preview is asked for passes through it, not only an
+  EPS's. Its budget: every strip is found and counted before anything is
+  allocated, the uncompressed pixels must lie inside the file (so a picture is
+  at most four times the file), and the one buffer, the picture, is held to
+  the 512 MiB a decode is. The desktop's `image_preview`
   ([lib.rs](../../apps/desktop/src-tauri/src/lib.rs)) and the web's
   worker ([wasm-images.ts](../../packages/shell-ui/src/host/wasm-images.ts))
   hand `preview` whatever bytes they read and do not look at the extension,
@@ -156,7 +163,7 @@ PostScript on the server.
 | (d) gVisor (`runsc` 0.0~20240729.0-4+b7 is in Debian 13) or a microVM (`/dev/kvm` is there; Firecracker and Kata are not packaged) | a box whose kernel is in user space or a VM: an escape needs a second bug | as below | a runtime in `/etc/docker/daemon.json` on a host shared by every stack; a 2024 gVisor snapshot as the boundary; LibreOffice under it unmeasured | the path when the service takes other people's files (trigger 1), not now |
 | (e) In the browser, as WebAssembly | a worker's sandbox | nothing | no WASM build of LibreOffice, libcdr or Ghostscript is in `Cargo.lock` or `pnpm-lock.yaml`; Ghostscript is AGPL-3.0, kept out of `deny.toml` on purpose; porting libcdr and librevenge is a project | no |
 | (f) Convert on the desktop and carry the PDF | nothing new | nothing | a manual step per file; no "save a copy" exists for a converted tab | superseded: that PDF is the stored preview or the placeholder, which (g) shows directly |
-| (g) Show the stored preview and the DSC header, without LibreOffice | ul-image's decoders under their limits, as for any TIFF opened today | nothing | some fifty lines of Rust, a text view, one review | taken |
+| (g) Show the stored preview and the DSC header, without LibreOffice | ul-image's decoders under their limits, and a new reader for palette TIFFs under the same budget | nothing | the container, a palette-TIFF reader of about 150 lines, a text view, one review | taken |
 | A Unix socket instead of a network (`network_mode: none`) | as below | as below | Docker says tmpfs mounts cannot be shared between containers; a tmpfs-type named volume is unverified; a bind mount would sit on the server's root file system | not chosen: the internal network reaches the same one container, and its probes exist |
 
 ## What changes for the person
