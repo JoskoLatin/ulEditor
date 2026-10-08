@@ -239,19 +239,25 @@ pub fn backend() -> Option<Backend> {
 }
 
 /// LibreOffice started so that nothing it starts in turn is looked for in a
-/// relative place: a PATH of absolute entries only, and on Windows no looking
-/// in the current folder (`NoDefaultCurrentDirectoryInExePath`). The same as a
-/// language server is started with — see `harden` in ul-lsp.
+/// relative place: a PATH of absolute entries only, and on Windows
+/// `NoDefaultCurrentDirectoryInExePath`. The same as a language server is
+/// started with — see `harden` in ul-lsp. That variable does not reach
+/// LibreOffice's own search for helpers (`SearchPathW`, which still looks in
+/// the current folder first, measured by the review of card 505); what keeps
+/// a planted helper out of it is that `soffice.bin` runs in LibreOffice's own
+/// program folder, whatever folder it was started from (measured too).
 ///
 /// **And on Windows nothing the person put on the PATH at all.** LibreOffice's
 /// EPS import looks on the PATH for `pstoedit.exe`, ImageMagick's
-/// `convert.exe` and Ghostscript's `gswin64c.exe`, and hands each the file
-/// being converted — Ghostscript with `-dPARANOIDSAFER`, the other two with no
-/// such switch (measured 2026-10-08, card 505, with stand-ins that wrote down
-/// how they were called). A `.ps` is a program, and whichever of them is
-/// installed would run one the page wrote, with no gesture. Given the system's
-/// own folders only, LibreOffice finds none of them and converts as it does on
-/// a machine without them: a DOS EPS as the preview stored in it, plain
+/// `convert.exe` and Ghostscript's `gswin64c.exe` or `gswin32c.exe`, and
+/// hands each the file being converted — Ghostscript with `-dPARANOIDSAFER`,
+/// the other two with no such switch (measured 2026-10-08, card 505, with
+/// stand-ins that wrote down how they were called). A `.ps` is a program, and
+/// whichever of them is installed would run one the page wrote, with no
+/// gesture. Given the system's own folders only, LibreOffice finds none of
+/// them — only System32's own `convert.exe`, the FAT-to-NTFS converter, which
+/// fails on arguments that name no volume — and converts as it does on a
+/// machine without them: a DOS EPS as the preview stored in it, plain
 /// PostScript as a placeholder. Started with no PATH at all it never finishes.
 ///
 /// On Unix the PATH stays, absolute entries only: there Ghostscript comes from

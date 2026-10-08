@@ -201,9 +201,16 @@ did.
 - **LibreOffice.** It fetched a linked image from HTML wearing a drawing's
   name: 0d32887 hands it only the four formats' first bytes, of a private
   copy (33cbdc1). And its EPS import runs whichever of `pstoedit.exe`,
-  ImageMagick's `convert.exe` and Ghostscript's `gswin64c.exe` is on the
-  PATH, handing each the file — only Ghostscript with `-dPARANOIDSAFER`. On
-  Windows it is now given the system's folders only, and runs none of them.
-  On Unix the PATH stays, and a distribution's Ghostscript can run
-  PostScript the page wrote. Linked bitmaps in a real `.cdr` were not
-  measured: there is no such file to measure with.
+  ImageMagick's `convert.exe` and Ghostscript's `gswin64c.exe` or
+  `gswin32c.exe` is on the PATH, handing each the file — only Ghostscript
+  with `-dPARANOIDSAFER`. On Windows it is now given the system's folders
+  only, and runs none of those three — System32's own `convert.exe`, the
+  FAT-to-NTFS converter, is still found, and fails on arguments that name no
+  volume. On Unix the PATH stays, and a distribution's Ghostscript can run
+  PostScript the page wrote (card 512). Linked bitmaps in a real `.cdr` were
+  not measured: there is no such file to measure with.
+- **The independent review (PROLAZI)** added what is left: a proxy the
+  system names would get the names the rules hold back (closed with
+  `--no-proxy-server`), a crash of the renderer can send a dump to Microsoft
+  through Windows' own reporting, and `localhost` stays reachable on an
+  installed copy — a connection to a local port, which leaves no machine.

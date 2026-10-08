@@ -160,6 +160,7 @@ try {
     'the browser runs with the resolver rules',
     /--host-resolver-rules="MAP \* ~NOTFOUND/.test(browser),
   );
+  check('and with no proxy to hand names to', /--no-proxy-server/.test(browser));
   check(
     'and with WebRTC kept off UDP',
     /--webrtc-ip-handling-policy=disable_non_proxied_udp/.test(browser),
@@ -167,7 +168,9 @@ try {
 
   /* An address in a URL is written in brackets when it is IPv6, and in a
      description without. */
-  const addresses = ['127.0.0.1', '[::1]', ...(lan ? [lan] : [])];
+  /* And loopback in another spelling, kept to catch the rules narrowed from
+     `*` to the obvious forms. */
+  const addresses = ['127.0.0.1', '[::1]', '[::ffff:127.0.0.1]', ...(lan ? [lan] : [])];
   const said = await page.evaluate(
     async ({ n, P, addresses }) => {
       const out = {};
@@ -299,12 +302,15 @@ try {
 }
 check('the NetLog holds the run', events.length > 100, `${events.length} events`);
 
-/* A name left the machine if a DNS transaction carried it. A request the
-   rules answered locally is logged too, with no transaction behind it. */
+/* A name is a leak if any resolver event carries it — a DNS transaction of
+   Chromium's own, or the system's resolver it falls back to when it cannot
+   read the DNS settings (a VPN's rules, say), which runs no transaction at
+   all. Under the rules a made-up name reaches no resolver event: measured,
+   it is in none (the review of card 505). */
 const queried = new Set();
 let controlQueried = false;
 for (const event of events) {
-  if (types[event.type] !== 'DNS_TRANSACTION') continue;
+  if (!/^(HOST_RESOLVER|DNS_)/.test(types[event.type] ?? '')) continue;
   const params = JSON.stringify(event.params ?? {});
   for (const [way, name] of Object.entries(NAMES)) if (params.includes(name)) queried.add(way);
   if (params.includes('fonts.gstatic.com')) controlQueried = true;
