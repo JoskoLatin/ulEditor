@@ -17,7 +17,7 @@ import {
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 
-import type { Shell } from '../host/index.js';
+import { isHandheld, type Shell } from '../host/index.js';
 import { detectByName } from '../host/detect.js';
 import { isNarrow } from './narrow.js';
 import { forget, rememberFile, rememberFolder } from './recent.js';
@@ -173,6 +173,13 @@ export async function openFiles(shell: Shell): Promise<void> {
  */
 export async function openThroughLibreOffice(shell: Shell, uri: Uri): Promise<void> {
   const name = uri.split(/[\\/]/).pop() ?? uri;
+
+  /* LibreOffice runs only beside the desktop app. A browser or a phone has
+     nowhere to install it, so it is not offered there (ADR 0007). */
+  if (shell.platform === 'web' || isHandheld()) {
+    shell.notify.show('warning', t('Only the desktop app converts {name}, through LibreOffice.', { name }));
+    return;
+  }
 
   if (!shell.convert.toPdfFile || !(await shell.convert.available())) {
     shell.notify.show(

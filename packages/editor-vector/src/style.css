@@ -157,6 +157,47 @@
   margin: 0;
 }
 
+/* The preview a DOS EPS carries, and what it is. */
+.ul-vec-preview {
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.ul-vec-preview img {
+  max-width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
+
+.ul-vec-preview figcaption {
+  font-size: var(--fs-sm);
+}
+
+/* What a PostScript file says about itself. */
+.ul-vec-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  text-align: left;
+  font-size: var(--fs-sm);
+}
+
+.ul-vec-facts dt {
+  color: var(--ink-soft);
+}
+
+.ul-vec-facts dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 /* The note that says why nothing is drawn, under the explanation. */
 .ul-vec-note {
   margin: 8px 0 0;

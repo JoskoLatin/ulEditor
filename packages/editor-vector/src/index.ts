@@ -34,6 +34,11 @@
  * hold drawing models nobody has reimplemented — and it is asked for by name:
  * where it is not installed, the page says which formats that costs and offers
  * a link, rather than opening blank or promising a phase.
+ *
+ * Without LibreOffice — in a browser, on a phone — a PostScript file still
+ * shows what it says about itself, and a DOS EPS the preview it carries
+ * (`eps.ts`, ADR 0007): the same picture and the same facts LibreOffice's
+ * conversion would give, labelled for what they are.
  */
 
 import {
@@ -50,6 +55,8 @@ import {
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
 import { gunzipSync } from 'fflate';
+
+import { dscFields, isDosEps, isPostscript } from './eps.js';
 
 const ZOOM_STEPS = [0.1, 0.25, 0.5, 0.67, 1, 1.5, 2, 3, 4, 8, 16, 32];
 const MARGIN = 48;
@@ -205,10 +212,87 @@ class VectorViewer implements EditorInstance {
     body.textContent = t(
       NEEDS_CONVERSION[extension] ?? 'No viewer is registered for this vector format yet.',
     );
-    box.append(title, body);
+    box.append(title);
+    if (isPostscript(this.bytes)) box.append(this.#facts());
+    box.append(body);
 
     if (NEEDS_CONVERSION[extension]) this.#offerConversion(box);
+    if (isDosEps(this.bytes)) void this.#showStoredPreview(box, title);
     return box;
+  }
+
+  /**
+   * What the PostScript says about itself in its comments — read, never run.
+   * As text, so that nothing in a stranger's file is ever markup here.
+   */
+  #facts(): HTMLElement {
+    const fields = dscFields(this.bytes);
+    const list = document.createElement('dl');
+    list.className = 'ul-vec-facts';
+    const rows: [string, string | undefined][] = [
+      [t('Title'), fields.title],
+      [t('Made with'), fields.creator],
+      [t('Created'), fields.creationDate],
+      [t('Bounds'), fields.boundingBox],
+      [t('Size'), humanBytes(this.doc.stat.size)],
+    ];
+    for (const [label, value] of rows) {
+      if (value === undefined) continue;
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const detail = document.createElement('dd');
+      detail.textContent = value;
+      list.append(term, detail);
+    }
+    const note = document.createElement('p');
+    note.className = 'ul-vec-note';
+    note.textContent = t('This is a program, and this build does not run PostScript.');
+    const facts = document.createElement('div');
+    facts.append(list, note);
+    return facts;
+  }
+
+  /**
+   * The picture a DOS EPS carries beside its PostScript, decoded by the core
+   * under the same limits as any picture (ul-image), and labelled for what it
+   * is: a thumbnail its author saved, not the drawing. Placed under the
+   * title; where it cannot be had, the explanation stands alone.
+   */
+  async #showStoredPreview(box: HTMLElement, title: HTMLElement): Promise<void> {
+    const images = this.host.images;
+    if (!images.available() || !images.preview) return;
+    let png: Uint8Array;
+    try {
+      png = await images.preview(this.doc.uri);
+    } catch {
+      return;
+    }
+    if (!box.isConnected || !this.#root) return;
+
+    // A copy into a fresh buffer — Blob does not accept a view onto shared memory.
+    const url = URL.createObjectURL(new Blob([new Uint8Array(png).buffer as ArrayBuffer], { type: 'image/png' }));
+    this.#objectUrl = url;
+    const figure = document.createElement('figure');
+    figure.className = 'ul-vec-preview';
+    const img = document.createElement('img');
+    img.alt = this.doc.name;
+    const caption = document.createElement('figcaption');
+    caption.textContent = t('The preview stored in the file — not the drawing itself');
+    figure.append(img, caption);
+    title.after(figure);
+
+    const loaded = await new Promise<boolean>((resolve) => {
+      img.addEventListener('load', () => resolve(true), { once: true });
+      img.addEventListener('error', () => resolve(false), { once: true });
+      img.src = url;
+    });
+    if (!loaded) {
+      figure.remove();
+      return;
+    }
+    this.#statusEmitter.fire(
+      t('Stored preview, {width} × {height}', { width: img.naturalWidth, height: img.naturalHeight }),
+    );
   }
 
   /**
@@ -229,7 +313,9 @@ class VectorViewer implements EditorInstance {
         if (!available) {
           const missing = document.createElement('p');
           missing.className = 'ul-vec-note';
-          missing.textContent = t('LibreOffice is not installed, so nothing here can read this format.');
+          missing.textContent = t(
+            'LibreOffice is not available here. The desktop app converts this format when LibreOffice is installed.',
+          );
           box.appendChild(missing);
           return;
         }

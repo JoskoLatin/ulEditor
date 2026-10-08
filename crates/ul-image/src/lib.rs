@@ -448,15 +448,244 @@ pub fn info(bytes: &[u8]) -> Result<Info, ImageError> {
     })
 }
 
+/// The first four bytes of a DOS EPS file: PostScript with a picture of
+/// itself beside it, the way Illustrator and CorelDRAW save an EPS for
+/// programs that cannot run PostScript.
+const DOS_EPS: [u8; 4] = [0xC5, 0xD0, 0xD3, 0xC6];
+
+/// The TIFF preview stored in a DOS EPS file, cut out of it — or `None` when
+/// the bytes are not a DOS EPS at all.
+///
+/// The header is thirty bytes: the magic, then three sections as an offset
+/// and a length, little-endian — the PostScript (4, 8), a Windows metafile
+/// (12, 16) and a TIFF (20, 24). Every one of those numbers comes from the
+/// file, so each is checked before it is used: a section that runs past the
+/// end, or whose end does not fit in a number, is refused rather than read.
+/// In a browser this runs in WebAssembly, where a panic is an abort and the
+/// worker is gone (ADR 0002), so nothing here indexes or adds unchecked.
+/// Only a TIFF is shown: a metafile preview is refused by name (ADR 0007).
+fn dos_eps_tiff(bytes: &[u8]) -> Option<Result<&[u8], ImageError>> {
+    if bytes.get(..4)? != DOS_EPS {
+        return None;
+    }
+    let word = |at: usize| {
+        bytes
+            .get(at..at + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
+    let cut_short = || ImageError::Decode("an EPS whose header is cut short".to_string());
+    Some((|| {
+        let start = word(20).ok_or_else(cut_short)?;
+        let length = word(24).ok_or_else(cut_short)?;
+        if length == 0 {
+            let metafile = word(16).ok_or_else(cut_short)?;
+            return Err(ImageError::UnsupportedFormat(
+                if metafile > 0 {
+                    "an EPS whose stored preview is a Windows metafile"
+                } else {
+                    "an EPS with no stored preview"
+                }
+                .to_string(),
+            ));
+        }
+        let past =
+            || ImageError::Decode("an EPS whose preview runs past the end of the file".to_string());
+        let end = start.checked_add(length).ok_or_else(past)?;
+        let tiff = bytes.get(start..end).ok_or_else(past)?;
+        if guess(tiff) != Some(ImageFormat::Tiff) {
+            return Err(ImageError::UnsupportedFormat(
+                "an EPS whose stored preview is not a TIFF".to_string(),
+            ));
+        }
+        Ok(tiff)
+    })())
+}
+
+/// A TIFF of the kind the decoder cannot read and an EPS preview usually is:
+/// eight-bit indices into a colour map, with or without an alpha sample beside
+/// each, uncompressed, in strips. Photoshop and Illustrator store their EPS
+/// previews this way — twelve of the thirteen real DOS EPS files measured on
+/// 2026-10-08 (ADR 0007), which `image` and `tiff` both refuse.
+///
+/// `None` when the TIFF is not that kind, so the decoder gets it as before.
+/// Everything is read from the file, so everything is checked: the picture's
+/// size against the same limits as a decode, every strip against the end of
+/// the file, the colour map's length, and no sum that could overflow. Nothing
+/// indexes unchecked, for the reason `dos_eps_tiff` gives.
+fn palette_tiff(bytes: &[u8]) -> Option<Result<DynamicImage, ImageError>> {
+    let little = match bytes.get(..4)? {
+        b"II*\0" => true,
+        b"MM\0*" => false,
+        _ => return None,
+    };
+    let u16_at = |at: usize| {
+        let b = bytes.get(at..at.checked_add(2)?)?;
+        Some(if little {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        })
+    };
+    let u32_at = |at: usize| {
+        let b = bytes.get(at..at.checked_add(4)?)?;
+        let b = [b[0], b[1], b[2], b[3]];
+        Some(if little {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
+    };
+    let ifd = u32_at(4)? as usize;
+    let count = usize::from(u16_at(ifd)?);
+
+    /* Every value of a SHORT or LONG entry, at most `most` of them: in the
+    entry when they fit in its four bytes, at the offset it names when not. */
+    let values = |entry: usize, most: usize| -> Option<Vec<u32>> {
+        let kind = u16_at(entry.checked_add(2)?)?;
+        let n = u32_at(entry.checked_add(4)?)? as usize;
+        let size = match kind {
+            3 => 2,
+            4 => 4,
+            _ => return None,
+        };
+        if n == 0 || n > most {
+            return None;
+        }
+        let inline = n.checked_mul(size)? <= 4;
+        let first = if inline {
+            entry.checked_add(8)?
+        } else {
+            u32_at(entry.checked_add(8)?)? as usize
+        };
+        (0..n)
+            .map(|i| {
+                let at = first.checked_add(i.checked_mul(size)?)?;
+                if size == 2 {
+                    u16_at(at).map(u32::from)
+                } else {
+                    u32_at(at)
+                }
+            })
+            .collect()
+    };
+    let entry_of = |tag: u16| {
+        (0..count)
+            .map(|i| ifd + 2 + i * 12)
+            .find(|&at| u16_at(at) == Some(tag))
+    };
+    let one = |tag: u16, absent: u32| match entry_of(tag) {
+        None => Some(absent),
+        Some(at) => values(at, 1).map(|v| v[0]),
+    };
+
+    // Only the one kind; anything else is the decoder's to read or refuse.
+    if one(262, u32::MAX)? != 3 || one(259, 1)? != 1 || one(284, 1)? != 1 {
+        return None;
+    }
+    let samples = one(277, 1)? as usize;
+    if !(1..=2).contains(&samples) {
+        return None;
+    }
+    /* One depth for each sample, or one for all of them — which is how ten
+    of those twelve previews write it. */
+    let depths = values(entry_of(258)?, 2)?;
+    if !(depths.len() == samples || depths.len() == 1) || depths.iter().any(|&bits| bits != 8) {
+        return None;
+    }
+
+    Some((|| {
+        let damaged = |what: &str| ImageError::Decode(format!("a palette TIFF {what}"));
+        let width = one(256, 0).ok_or_else(|| damaged("with no width"))?;
+        let height = one(257, 0).ok_or_else(|| damaged("with no height"))?;
+        if width == 0 || height == 0 {
+            return Err(damaged("with no picture in it"));
+        }
+        if width > LONGEST_SIDE || height > LONGEST_SIDE {
+            return Err(ImageError::TooLarge(format!("{width}×{height}")));
+        }
+        let pixels = u64::from(width) * u64::from(height);
+        fits(&format!("{width}×{height}"), pixels * 4)?;
+
+        let map = entry_of(320)
+            .and_then(|at| values(at, 768))
+            .filter(|map| map.len() == 768)
+            .ok_or_else(|| damaged("whose colour map is not 256 colours"))?;
+        let strips = height as usize;
+        let offsets = entry_of(273)
+            .and_then(|at| values(at, strips))
+            .ok_or_else(|| damaged("whose strips cannot be found"))?;
+        let lengths = entry_of(279)
+            .and_then(|at| values(at, strips))
+            .filter(|lengths| lengths.len() == offsets.len())
+            .ok_or_else(|| damaged("whose strips cannot be found"))?;
+        // An alpha sample only when the file says the second one is one.
+        let alpha = samples == 2 && matches!(one(338, 0), Some(1 | 2));
+
+        let needed = (pixels as usize)
+            .checked_mul(samples)
+            .ok_or_else(|| damaged("too large to hold"))?;
+        let mut data = Vec::with_capacity(needed);
+        for (&offset, &length) in offsets.iter().zip(&lengths) {
+            let start = offset as usize;
+            let end = start
+                .checked_add(length as usize)
+                .ok_or_else(|| damaged("whose strip runs past the end of the file"))?;
+            let strip = bytes
+                .get(start..end)
+                .ok_or_else(|| damaged("whose strip runs past the end of the file"))?;
+            let room = needed - data.len();
+            data.extend_from_slice(&strip[..strip.len().min(room)]);
+            if data.len() == needed {
+                break;
+            }
+        }
+        if data.len() < needed {
+            return Err(damaged("with fewer pixels than its size"));
+        }
+
+        /* Sixteen bits a channel, rounded to eight. Some writers put an
+        eight-bit colour in the high byte (0x3300 for 51), others repeat it
+        (0x3333); rounding gives both back. Windows' own decoder truncates the
+        first to 50: against it, all thirteen real previews agree to within
+        that one step. */
+        let colour = |channel: usize, index: u8| {
+            ((map[channel * 256 + usize::from(index)] * 255 + 32_767) / 65_535) as u8
+        };
+        let rgba: Vec<u8> = data
+            .chunks_exact(samples)
+            .flat_map(|pixel| {
+                let index = pixel[0];
+                [
+                    colour(0, index),
+                    colour(1, index),
+                    colour(2, index),
+                    if alpha { pixel[1] } else { 255 },
+                ]
+            })
+            .collect();
+        image::RgbaImage::from_raw(width, height, rgba)
+            .map(DynamicImage::ImageRgba8)
+            .ok_or_else(|| damaged("whose pixels do not fill it"))
+    })())
+}
+
 /// The picture as a PNG, stood upright, for a viewer that cannot draw its
-/// own format — a TIFF in a webview, which has no decoder for one.
+/// own format — a TIFF in a webview, which has no decoder for one, or the
+/// TIFF a DOS EPS carries as its preview.
 ///
 /// Decoded under the same limits as an edit, so a file that claims too much
 /// is refused before its pixels are read. Written at the PNG encoder's fast
 /// setting: it is shown and thrown away. A picture in floating point, which
 /// PNG cannot hold, is shown in eight bits a channel.
 pub fn preview(bytes: &[u8]) -> Result<Vec<u8>, ImageError> {
-    let (image, _) = decode(bytes)?;
+    let bytes = match dos_eps_tiff(bytes) {
+        Some(tiff) => tiff?,
+        None => bytes,
+    };
+    let image = match palette_tiff(bytes) {
+        Some(image) => image?,
+        None => decode(bytes)?.0,
+    };
     let image = match image {
         DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => {
             DynamicImage::ImageRgba8(image.to_rgba8())
@@ -708,6 +937,262 @@ mod tests {
             .write_to(&mut out, ImageFormat::Png)
             .unwrap();
         out.into_inner()
+    }
+
+    /// A palette TIFF as Photoshop stores an EPS preview: little-endian,
+    /// uncompressed, eight-bit indices, one or two samples a pixel, the rows
+    /// split over `strips` strips. Four colours: index i is (i*10, i*20, i*30).
+    fn palette_tiff_bytes(width: u16, height: u16, samples: u16, strips: u16) -> Vec<u8> {
+        let mut pixels = Vec::new();
+        for i in 0..(u32::from(width) * u32::from(height)) {
+            pixels.push((i % 4) as u8);
+            if samples == 2 {
+                pixels.push(if i == 0 { 0 } else { 255 });
+            }
+        }
+        let mut map = vec![0u16; 768];
+        for i in 0..4u16 {
+            map[usize::from(i)] = (i * 10) << 8;
+            map[256 + usize::from(i)] = (i * 20) << 8;
+            map[512 + usize::from(i)] = (i * 30) << 8;
+        }
+        let row = usize::from(width) * usize::from(samples);
+        let rows_per = usize::from(height).div_ceil(usize::from(strips));
+        let chunks: Vec<&[u8]> = pixels.chunks(row * rows_per).collect();
+
+        let entries: u16 = if samples == 2 { 11 } else { 10 };
+        let ifd_len = 2 + 12 * u32::from(entries) + 4;
+        let mut tail = Vec::new();
+        let place = |bytes: &[u8], tail: &mut Vec<u8>| {
+            let at = 8 + ifd_len + tail.len() as u32;
+            tail.extend_from_slice(bytes);
+            at
+        };
+        let map_at = place(
+            &map.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>(),
+            &mut tail,
+        );
+        let mut offsets = Vec::new();
+        for chunk in &chunks {
+            offsets.push(place(chunk, &mut tail));
+        }
+        let lengths: Vec<u32> = chunks.iter().map(|c| c.len() as u32).collect();
+        let list = |values: &[u32], tail: &mut Vec<u8>| -> u32 {
+            if values.len() == 1 {
+                values[0]
+            } else {
+                place(
+                    &values
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                    tail,
+                )
+            }
+        };
+        let offsets_value = list(&offsets, &mut tail);
+        let lengths_value = list(&lengths, &mut tail);
+
+        let mut out = b"II*\0".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&entries.to_le_bytes());
+        let mut entry = |tag: u16, kind: u16, n: u32, value: u32| {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&n.to_le_bytes());
+            out.extend_from_slice(&value.to_le_bytes());
+        };
+        let bits = if samples == 2 { 8 | (8 << 16) } else { 8 };
+        entry(256, 3, 1, u32::from(width));
+        entry(257, 3, 1, u32::from(height));
+        entry(258, 3, u32::from(samples), bits);
+        entry(259, 3, 1, 1);
+        entry(262, 3, 1, 3);
+        entry(273, 4, offsets.len() as u32, offsets_value);
+        entry(277, 3, 1, u32::from(samples));
+        entry(279, 4, lengths.len() as u32, lengths_value);
+        entry(284, 3, 1, 1);
+        entry(320, 3, 768, map_at);
+        if samples == 2 {
+            entry(338, 3, 1, 1);
+        }
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&tail);
+        out
+    }
+
+    /// A palette TIFF the decoder refuses is shown, its colours looked up in
+    /// its own map — with the alpha beside each index, and across strips.
+    #[test]
+    fn a_palette_tiff_is_previewed_through_its_colour_map() {
+        for (samples, strips) in [(1, 1), (1, 3), (2, 1), (2, 2)] {
+            let tiff = palette_tiff_bytes(3, 3, samples, strips);
+            assert!(
+                image::load_from_memory(&tiff).is_err(),
+                "the decoder reads it now: this reader can go"
+            );
+            let png = preview(&tiff).unwrap();
+            let shown = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(shown.dimensions(), (3, 3));
+            let first_alpha = if samples == 2 { 0 } else { 255 };
+            assert_eq!(shown.get_pixel(0, 0), &image::Rgba([0, 0, 0, first_alpha]));
+            assert_eq!(shown.get_pixel(1, 0), &image::Rgba([10, 20, 30, 255]));
+            assert_eq!(shown.get_pixel(2, 0), &image::Rgba([20, 40, 60, 255]));
+            assert_eq!(shown.get_pixel(0, 1), &image::Rgba([30, 60, 90, 255]));
+            assert_eq!(shown.get_pixel(2, 2), &image::Rgba([0, 0, 0, 255]));
+        }
+    }
+
+    /// Ten of the twelve real previews give one depth for both samples.
+    #[test]
+    fn a_palette_tiff_with_one_depth_for_two_samples_is_shown() {
+        let mut tiff = palette_tiff_bytes(3, 3, 2, 1);
+        // BitsPerSample is the third entry: its count at 38.
+        tiff[38..42].copy_from_slice(&1u32.to_le_bytes());
+        let shown = image::load_from_memory(&preview(&tiff).unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(shown.get_pixel(1, 0), &image::Rgba([10, 20, 30, 255]));
+    }
+
+    /// The same inside a DOS EPS, which is where it is met.
+    #[test]
+    fn a_dos_eps_with_a_palette_preview_is_shown() {
+        let tiff = palette_tiff_bytes(3, 3, 2, 1);
+        assert_eq!(
+            preview(&dos_eps(&tiff, 0)).unwrap(),
+            preview(&tiff).unwrap()
+        );
+    }
+
+    /// Every truncation of a palette TIFF is an error, none a panic, and a
+    /// size past the limits is refused before anything is allocated for it.
+    #[test]
+    fn a_damaged_palette_tiff_is_refused() {
+        let tiff = palette_tiff_bytes(3, 3, 2, 2);
+        for length in 0..tiff.len() {
+            assert!(preview(&tiff[..length]).is_err(), "cut at {length}");
+        }
+        // Strips that are all there but hold fewer pixels than the size says:
+        // one strip, its length (the eighth entry, LONG, value at 102) one short.
+        let mut short = palette_tiff_bytes(3, 3, 1, 1);
+        short[102..106].copy_from_slice(&8u32.to_le_bytes());
+        let said = preview(&short).unwrap_err().to_string();
+        assert!(said.contains("fewer pixels"), "{said}");
+
+        // A strip that claims more than the file holds is refused, even when
+        // what is there would fill the picture: the file lies, and is not read
+        // up to the lie. Two strips; their lengths are a list the eighth entry
+        // points to.
+        let mut lying = palette_tiff_bytes(3, 3, 1, 2);
+        let list = u32::from_le_bytes(lying[102..106].try_into().unwrap()) as usize;
+        lying[list + 4..list + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+        let said = preview(&lying).unwrap_err().to_string();
+        assert!(said.contains("runs past the end"), "{said}");
+
+        // Width and height are the first two entries, SHORT, their values
+        // inline at 18 and 30.
+        let mut huge = tiff.clone();
+        huge[18..20].copy_from_slice(&65_535u16.to_le_bytes());
+        huge[30..32].copy_from_slice(&65_535u16.to_le_bytes());
+        assert!(matches!(preview(&huge), Err(ImageError::TooLarge(_))));
+    }
+
+    /// A DOS EPS: the thirty-byte header, the PostScript, then `preview` as
+    /// the TIFF section, with the metafile section's length given.
+    fn dos_eps(preview: &[u8], metafile: u32) -> Vec<u8> {
+        let postscript = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 4 2\nshowpage\n";
+        let ps_at = 30u32;
+        let tiff_at = ps_at + postscript.len() as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(&DOS_EPS);
+        for word in [
+            ps_at,
+            postscript.len() as u32,
+            0,
+            metafile,
+            if preview.is_empty() { 0 } else { tiff_at },
+            preview.len() as u32,
+        ] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        out.extend_from_slice(&[0xFF, 0xFF]);
+        out.extend_from_slice(postscript);
+        out.extend_from_slice(preview);
+        out
+    }
+
+    fn corner_tiff() -> Vec<u8> {
+        let mut tiff = Cursor::new(Vec::new());
+        image::load_from_memory(&corner_png())
+            .unwrap()
+            .write_to(&mut tiff, ImageFormat::Tiff)
+            .unwrap();
+        tiff.into_inner()
+    }
+
+    /// The preview a DOS EPS carries is shown, and it is the same picture the
+    /// TIFF alone gives — byte for byte the same PNG.
+    #[test]
+    fn a_dos_eps_shows_the_tiff_it_carries() {
+        let tiff = corner_tiff();
+        let eps = dos_eps(&tiff, 0);
+        assert_eq!(preview(&eps).unwrap(), preview(&tiff).unwrap());
+    }
+
+    /// Offsets and lengths are the file's word, so each lie is refused, and
+    /// none panics: a section past the end, one whose end does not fit, one
+    /// that starts inside the header or on the PostScript, which is no TIFF.
+    #[test]
+    fn a_dos_eps_that_lies_about_its_sections_is_refused() {
+        let tiff = corner_tiff();
+        let honest = dos_eps(&tiff, 0);
+        let with = |at: usize, word: u32| {
+            let mut eps = honest.clone();
+            eps[at..at + 4].copy_from_slice(&word.to_le_bytes());
+            eps
+        };
+        for (what, eps) in [
+            ("starts at the end", with(20, honest.len() as u32)),
+            ("one byte too long", with(24, tiff.len() as u32 + 1)),
+            ("starts past everything", with(20, u32::MAX)),
+            ("ends past everything", with(24, u32::MAX)),
+            ("inside the header", with(20, 4)),
+            ("the PostScript", with(20, 30)),
+        ] {
+            assert!(preview(&eps).is_err(), "{what}");
+        }
+        let mut both = with(20, u32::MAX);
+        both[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(preview(&both).is_err());
+    }
+
+    /// Only a TIFF is a DOS EPS preview: another picture in its place is
+    /// refused, not decoded as whatever it is.
+    #[test]
+    fn a_dos_eps_whose_preview_is_not_a_tiff_is_refused() {
+        let said = preview(&dos_eps(&corner_png(), 0)).unwrap_err().to_string();
+        assert!(said.contains("not a TIFF"), "{said}");
+    }
+
+    /// A DOS EPS with no TIFF says which preview it has, if any.
+    #[test]
+    fn a_dos_eps_without_a_tiff_says_so() {
+        let metafile = preview(&dos_eps(&[], 512)).unwrap_err().to_string();
+        assert!(metafile.contains("Windows metafile"), "{metafile}");
+        let none = preview(&dos_eps(&[], 0)).unwrap_err().to_string();
+        assert!(none.contains("no stored preview"), "{none}");
+    }
+
+    /// Every truncation of a good DOS EPS is an error and none a panic — the
+    /// header cut anywhere, the TIFF cut anywhere.
+    #[test]
+    fn every_truncation_of_a_dos_eps_is_refused() {
+        let eps = dos_eps(&corner_tiff(), 0);
+        for length in 0..eps.len() {
+            assert!(preview(&eps[..length]).is_err(), "cut at {length}");
+        }
+        assert!(preview(&eps).is_ok());
     }
 
     /// A TIFF, which a webview cannot draw, is shown as a PNG of the same

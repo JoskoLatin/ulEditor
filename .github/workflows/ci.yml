@@ -148,6 +148,11 @@ jobs:
       # past without any of them reaching the page.
       - run: pnpm verify:rtf
 
+      # What an EPS says about itself, read without running it: a DOS EPS
+      # header's numbers and a PostScript file's comments are somebody else's,
+      # and each lie is fed to it (ADR 0007).
+      - run: pnpm verify:eps
+
       # The OCR worker, wasm core and language models are copied out of
       # node_modules and are not in the repository, so a plain `vite build`
       # leaves them out. Tesseract then reaches for a CDN, which the desktop CSP
@@ -219,6 +224,10 @@ jobs:
           # and the bytes agree, and a photograph is written off the main
           # thread: the page never stops for most of the save.
           node tools/verify-web-image.mjs --url http://localhost:5273
+          # An EPS where no LibreOffice can run: the preview it carries, decoded
+          # by the same WebAssembly, labelled for what it is, and no advice to
+          # install anything (ADR 0007).
+          node tools/verify-web-eps.mjs --url http://localhost:5273
           # The reading room, against the built page — by hand until now.
           node tools/verify-reading.mjs --url http://localhost:5273
           # Pasting from Word and Excel into the office editors. Not on macOS:
