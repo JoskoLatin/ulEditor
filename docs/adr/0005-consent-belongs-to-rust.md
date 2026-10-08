@@ -176,7 +176,34 @@ had read, past the CSP. The page now has no updater permission at all; it
 asks through two commands of the core, `check_update` and `install_update`,
 which take nothing from it but the channel progress is reported on.
 
-Not measured, and on the board: whether WebView2 lets the page reach the
-network past the CSP through WebRTC (a STUN server's name) or DNS prefetch,
-and whether LibreOffice fetches linked images while converting a document
-the page wrote.
+## Measured after (2026-10-08, card 505)
+
+Left open above: whether the page reaches the network past the CSP, and
+whether LibreOffice fetches while converting a document the page wrote. Both
+did.
+
+- **WebView2, past the CSP.** In the program as it ships (under `tauri dev`
+  no CSP is sent at all), script in the page could make the resolver look up
+  any name — `dns-prefetch`, `preconnect`, both in a `srcdoc` frame too, an
+  iframe or a form the CSP refuses (Chromium connects before it checks), a
+  STUN or TURN server's name — open TCP to any address the same ways, and
+  hold a WebRTC connection to any address in both directions, writing the
+  other side's description itself. WebView2 154 does not know
+  `webrtc 'block'`. Two switches in `additionalBrowserArgs` close all of it:
+  `--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE
+  fonts.googleapis.com, EXCLUDE fonts.gstatic.com"` and
+  `--webrtc-ip-handling-policy=disable_non_proxied_udp`; each was shown
+  necessary by taking it away. `tools/verify-desktop-egress.mjs` builds the
+  program and checks every way above, IPv4, IPv6 and by name, with a
+  positive control for names and one for addresses. **Windows only**: the
+  switches are WebView2's. WKWebView (macOS), WebKitGTK (Linux) and Android's
+  WebView were not measured.
+- **LibreOffice.** It fetched a linked image from HTML wearing a drawing's
+  name: 0d32887 hands it only the four formats' first bytes, of a private
+  copy (33cbdc1). And its EPS import runs whichever of `pstoedit.exe`,
+  ImageMagick's `convert.exe` and Ghostscript's `gswin64c.exe` is on the
+  PATH, handing each the file — only Ghostscript with `-dPARANOIDSAFER`. On
+  Windows it is now given the system's folders only, and runs none of them.
+  On Unix the PATH stays, and a distribution's Ghostscript can run
+  PostScript the page wrote. Linked bitmaps in a real `.cdr` were not
+  measured: there is no such file to measure with.
