@@ -251,7 +251,10 @@ jobs:
           name: build-desktop-${{ matrix.slug }}
           path: dist/
           if-no-files-found: error
-          retention-days: 1
+          # A week, not a day: the signers wait for a person to approve them
+          # in the `release` environment, and on 2026-10-09 an approval given
+          # two and a half days after the build found every build gone.
+          retention-days: 7
 
   desktop-sign:
     name: Sign the desktop updates
@@ -321,7 +324,10 @@ jobs:
           name: desktop-signed
           path: dist/
           if-no-files-found: error
-          retention-days: 1
+          # A week, not a day: the signers wait for a person to approve them
+          # in the `release` environment, and on 2026-10-09 an approval given
+          # two and a half days after the build found every build gone.
+          retention-days: 7
           # A signing job run again replaces what it made the first time.
           overwrite: true
 
@@ -445,7 +451,10 @@ jobs:
           name: build-android
           path: dist-android/
           if-no-files-found: error
-          retention-days: 1
+          # A week, not a day: the signers wait for a person to approve them
+          # in the `release` environment, and on 2026-10-09 an approval given
+          # two and a half days after the build found every build gone.
+          retention-days: 7
 
   android-sign:
     name: Sign Android
@@ -554,7 +563,10 @@ jobs:
           name: android-signed
           path: signed/
           if-no-files-found: error
-          retention-days: 1
+          # A week, not a day: the signers wait for a person to approve them
+          # in the `release` environment, and on 2026-10-09 an approval given
+          # two and a half days after the build found every build gone.
+          retention-days: 7
           overwrite: true
 
   android-publish:
