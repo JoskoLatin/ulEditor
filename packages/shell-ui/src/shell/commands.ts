@@ -593,9 +593,15 @@ function handleKey(shell: Shell, event: KeyboardEvent): void {
   const store = useWorkspace.getState();
   const key = event.key.toLowerCase();
 
-  const target = event.target as HTMLElement | null;
+  /* Not every target is an element: a keydown dispatched on `window` or on
+  `document` (a script's, an assistive tool's) has none, and `closest` on it was
+  a TypeError that a crash report then recorded. An SVG icon is an element and
+  not an `HTMLElement`, which is why this asks for the wider of the two. */
+  const target = event.target instanceof Element ? event.target : null;
   const inTextField =
-    target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+    target?.tagName === 'INPUT' ||
+    target?.tagName === 'TEXTAREA' ||
+    (target instanceof HTMLElement && target.isContentEditable);
 
   /*
    * A menu has the keyboard while it is open, and this handler captures — it

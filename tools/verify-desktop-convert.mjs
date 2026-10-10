@@ -65,7 +65,7 @@ async function until(condition, timeout = 180000) {
 let session;
 
 try {
-  session = await startDesktop({ port: 9340 });
+  session = await startDesktop({ port: 9340, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   check('attached to the desktop application', true);
 

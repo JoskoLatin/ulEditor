@@ -64,7 +64,7 @@ await writeFile(join(elsewhere, 'beside.rs'), 'fn not_asked_for() {}\n');
 
 let session;
 try {
-  session = await startDesktop({ port: 9349 });
+  session = await startDesktop({ port: 9349, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   const invoke = (cmd, args) =>
     page.evaluate(([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a), [cmd, args]);

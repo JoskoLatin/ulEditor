@@ -58,13 +58,37 @@ const KEEP: usize = 20;
 static FOLDER: OnceLock<PathBuf> = OnceLock::new();
 
 /// Where Tauri would put a log directory, worked out without Tauri.
+///
+/// **A debug build started with `UL_DATA_DIR` writes into that profile**, the
+/// same way and for the same reason `trust.rs`'s answers do (`lib.rs`, in
+/// `setup`): the desktop checks start the program on a scratch profile, and a
+/// report written from one of them — a page error a check provoked or merely
+/// tripped over — landed in the person's own `%LOCALAPPDATA%\org.uleditor.app\logs`,
+/// where the ulEditor they have installed announced it as "stopped unexpectedly
+/// last time". A release build never reads the variable: the folder of reports
+/// is not something the environment can move.
 fn resolve_folder() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
+    folder_in(
+        std::env::var_os("UL_DATA_DIR").map(PathBuf::from),
+        cfg!(debug_assertions),
+        local_data_dir(),
+    )
+}
+
+fn local_data_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else {
         std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-    }?;
-    Some(base.join(IDENTIFIER).join("logs"))
+    }
+}
+
+/// The decision itself, apart from the environment so a test can make it.
+fn folder_in(scratch: Option<PathBuf>, debug: bool, local: Option<PathBuf>) -> Option<PathBuf> {
+    match scratch {
+        Some(profile) if debug => Some(profile.join("logs")),
+        _ => Some(local?.join(IDENTIFIER).join("logs")),
+    }
 }
 
 /// The folder reports live in, whether or not it exists yet.
@@ -265,6 +289,31 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("a scratch folder");
         dir
+    }
+
+    #[test]
+    fn a_debug_build_on_a_scratch_profile_keeps_its_reports_in_it() {
+        let real = Some(PathBuf::from("real-local-app-data"));
+        let profile = Some(PathBuf::from("a-check-profile"));
+
+        assert_eq!(
+            folder_in(profile.clone(), true, real.clone()),
+            Some(PathBuf::from("a-check-profile").join("logs")),
+            "a check's report goes into the check's profile",
+        );
+        assert_eq!(
+            folder_in(None, true, real.clone()),
+            Some(PathBuf::from("real-local-app-data").join(IDENTIFIER).join("logs")),
+            "with no profile the real folder is where it has always been",
+        );
+        /* The folder of reports is not the environment's to move: a release
+        build ignores the variable, so it cannot be pointed at a place the
+        person did not put it. */
+        assert_eq!(
+            folder_in(profile, false, real),
+            Some(PathBuf::from("real-local-app-data").join(IDENTIFIER).join("logs")),
+            "a release build does not read the variable",
+        );
     }
 
     #[test]

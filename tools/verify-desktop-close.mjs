@@ -103,7 +103,7 @@ let session;
 
 /* ── a changed document ─────────────────────────────────────────────── */
 try {
-  session = await startDesktop({ port: 9341 });
+  session = await startDesktop({ port: 9341, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   const pid = appPid();
   check('attached to the desktop application', pid !== null, `pid ${pid}`);
@@ -143,7 +143,7 @@ try {
 /* ── nothing changed, after a reload ────────────────────────────────── */
 session = undefined;
 try {
-  session = await startDesktop({ port: 9342 });
+  session = await startDesktop({ port: 9342, identifier: 'org.uleditor.app.check' });
   let { page } = session;
   const pid = appPid();
   check('started again', pid !== null, `pid ${pid}`);
@@ -168,7 +168,7 @@ try {
    on the Rust side, so without this the close would go through unasked. */
 session = undefined;
 try {
-  session = await startDesktop({ port: 9344 });
+  session = await startDesktop({ port: 9344, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   const pid = appPid();
   await page.reload();

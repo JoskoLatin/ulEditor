@@ -57,7 +57,7 @@ const attach = (page) => ({
 
 let session;
 try {
-  session = await startDesktop({ port: 9351 });
+  session = await startDesktop({ port: 9351, identifier: 'org.uleditor.app.check' });
   const { page, profile } = session;
   let { invoke, refused } = attach(page);
   check('attached to the desktop application', true);
@@ -155,7 +155,7 @@ try {
   /* ── remembered across a restart ─────────────────────────────────── */
 
   await stopDesktop(session);
-  session = await startDesktop({ port: 9351, profile });
+  session = await startDesktop({ port: 9351, profile, identifier: 'org.uleditor.app.check' });
   ({ invoke, refused } = attach(session.page));
   const again = await invoke('adopt_paths', { paths: [project, never] });
   check(

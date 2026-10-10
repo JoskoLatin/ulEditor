@@ -39,7 +39,7 @@ function check(name, passed, detail = '') {
 let session;
 
 try {
-  session = await startDesktop({ port: 9339 });
+  session = await startDesktop({ port: 9339, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   check('attached to the desktop application', true);
 

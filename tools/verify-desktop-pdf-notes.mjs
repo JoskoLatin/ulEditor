@@ -167,7 +167,7 @@ await writeFile(inserted, makePdf('Inserted'));
 
 let session;
 try {
-  session = await startDesktop({ port: 9343 });
+  session = await startDesktop({ port: 9343, identifier: 'org.uleditor.app.check' });
   const { page } = session;
   check('attached to the desktop application', true);
 
