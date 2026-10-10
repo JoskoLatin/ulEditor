@@ -42,6 +42,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -123,9 +124,16 @@ pub fn formats() -> &'static [&'static str] {
 /// PostScript.
 const DOS_EPS: [u8; 4] = [0xC5, 0xD0, 0xD3, 0xC6];
 
-/// Whether `head` starts PostScript, plain or in a DOS EPS — what LibreOffice
-/// hands to its EPS import. `%!PS`, not only LibreOffice's own `%!PS-Adobe`
-/// with `EPS`: that is what `content_is_supported` lets through.
+/// Whether `head` starts PostScript, plain or in a DOS EPS — `.eps`, `.ps`, and
+/// an `.ai` saved without PDF compatibility; what LibreOffice hands to its EPS
+/// import.
+///
+/// `%!PS`, not bare `%!`: that is the key LibreOffice routes to its PostScript
+/// filter on, so accepting exactly it is accepting what it will actually treat
+/// as PostScript, and nothing that might fall through to the web-document
+/// filter instead. It must be the very first bytes — the EPSF spec requires
+/// it, and anything allowed before is room for another kind of document to
+/// hide.
 pub fn is_postscript(head: &[u8]) -> bool {
     head.starts_with(b"%!PS") || head.starts_with(&DOS_EPS)
 }
@@ -144,32 +152,98 @@ pub fn is_postscript(head: &[u8]) -> bool {
 /// is checked against them before LibreOffice is ever told about it. Everything
 /// else is refused — the cost is a genuine but unusual file turned away with a
 /// clear message, against the whole class of documents that reach out.
+///
+/// A PDF is not one of them. A modern `.ai` is a PDF and opens in the PDF
+/// viewer, so nothing sends one here, and LibreOffice's PDF import would only
+/// be one more parser over bytes a page wrote (the review of 0f215cf).
 pub fn content_is_supported(head: &[u8]) -> bool {
-    // PostScript — `.eps`, `.ps`, and an `.ai` saved without PDF compatibility.
-    // `%!PS`, not bare `%!`: that is the key LibreOffice routes to its
-    // PostScript filter on, so accepting exactly it is accepting what it will
-    // actually treat as PostScript, and nothing that might fall through to the
-    // web-document filter instead. It must be the very first bytes — the EPSF
-    // spec requires it, and anything allowed before is room for another kind of
-    // document to hide.
-    if head.starts_with(b"%!PS") {
-        return true;
+    is_postscript(head) || is_coreldraw(head)
+}
+
+/// CorelDRAW: a RIFF container whose form type begins "CDR" (a drawing) or
+/// "CDT" (a template), in either case.
+fn is_coreldraw(head: &[u8]) -> bool {
+    head.starts_with(b"RIFF")
+        && head.len() >= 11
+        && (head[8..11].eq_ignore_ascii_case(b"cdr") || head[8..11].eq_ignore_ascii_case(b"cdt"))
+}
+
+/// Whether LibreOffice may be given a file that begins with `head`, here: a
+/// CorelDRAW drawing everywhere, PostScript on Windows only, nothing else.
+///
+/// What may go is listed, not what may not, so that a format added to
+/// `content_is_supported` reaches LibreOffice only where this says so.
+fn admit(head: &[u8]) -> Result<(), ConvertError> {
+    if is_coreldraw(head) {
+        return Ok(());
     }
-    // A modern `.ai` is a PDF.
-    if head.starts_with(b"%PDF-") {
-        return true;
+    if is_postscript(head) {
+        return if POSTSCRIPT_IS_CONVERTED {
+            Ok(())
+        } else {
+            Err(ConvertError::PostscriptNotRun)
+        };
     }
-    // An `.eps` carrying a binary preview: the DOS EPS header.
-    if head.starts_with(&DOS_EPS) {
-        return true;
+    Err(ConvertError::UnsupportedContent)
+}
+
+/// A directory of this conversion's own, made new under `workdir` and removed,
+/// with what is in it, when the conversion is over.
+///
+/// The caller's `workdir` is one per document, and the page can ask for the
+/// same document to be converted as often as it likes, at once, with no
+/// gesture. Sharing one copy, a second conversion could write the page's next
+/// bytes over it after the first had checked it and before the LibreOffice the
+/// first started had opened it — bytes no check had passed (the review of
+/// 0f215cf). `create_dir` fails on a directory that is already there, so no
+/// two conversions are ever handed the same one.
+struct Staging(PathBuf);
+
+impl Staging {
+    /// First clearing away what conversions over `stale` ago left: on Windows
+    /// the LibreOffice a finished conversion started can still be closing its
+    /// copy when the conversion ends, so the copy cannot go then (once in two
+    /// runs, measured 2026-10-10). A conversion lasts at most its timeout, so one older than
+    /// that is over.
+    fn new(workdir: &Path, stale: Duration) -> std::io::Result<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::fs::create_dir_all(workdir)?;
+        for entry in std::fs::read_dir(workdir)?.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            let over = meta
+                .modified()
+                .ok()
+                .and_then(|at| at.elapsed().ok())
+                .is_some_and(|age| age >= stale);
+            if over {
+                // A file is a copy from before each conversion had a directory.
+                let _ = if meta.is_dir() {
+                    std::fs::remove_dir_all(entry.path())
+                } else {
+                    std::fs::remove_file(entry.path())
+                };
+            }
+        }
+        loop {
+            let next = NEXT.fetch_add(1, Ordering::Relaxed);
+            let dir = workdir.join(format!("{}-{next}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(Self(dir)),
+                // Left behind by an earlier run that had the same process id.
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err),
+            }
+        }
     }
-    // CorelDRAW is a RIFF container whose form type begins "CDR" (a drawing) or
-    // "CDT" (a template), in either case.
-    if head.starts_with(b"RIFF") && head.len() >= 11 {
-        let form = &head[8..11];
-        return form.eq_ignore_ascii_case(b"cdr") || form.eq_ignore_ascii_case(b"cdt");
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        /* On Windows a LibreOffice still closing the copy can keep it from
+        going; what stays is in a folder the page never reaches, and the next
+        conversion of the document clears it (`new`). */
+        let _ = std::fs::remove_dir_all(&self.0);
     }
-    false
 }
 
 /// The first bytes of a file, for `content_is_supported`.
@@ -564,26 +638,18 @@ pub fn to_pdf(
     opens of a path the page controls: it could pass the check with `%!PS…` and
     swap in HTML before LibreOffice looked, and the web import that reaches the
     network (card 505) would run on bytes that were never checked. Copied once
-    here, there is nothing left for the page to swap. */
-    std::fs::create_dir_all(workdir)?;
-    let staged = workdir.join(name);
-    let _ = std::fs::remove_file(&staged);
+    here, into a directory of this conversion's own (`Staging`), there is
+    nothing left for the page to swap. */
+    let staging = Staging::new(workdir, timeout + Duration::from_secs(60))?;
+    let staged = staging.0.join(name);
     std::fs::copy(source, &staged)?;
 
     // The content, not the name: a file whose bytes are not one of the four
     // formats — HTML wearing a `.cdr` name, say — would be imported for what it
     // really is, and a web page reaches the network as it loads (card 505).
-    let head = head_of(&staged)?;
-    if !content_is_supported(&head) {
-        let _ = std::fs::remove_file(&staged);
-        return Err(ConvertError::UnsupportedContent);
-    }
-    // And by content again, whatever the name: PostScript only where what
-    // LibreOffice would hand it to is kept out of its reach (card 512).
-    if is_postscript(&head) && !POSTSCRIPT_IS_CONVERTED {
-        let _ = std::fs::remove_file(&staged);
-        return Err(ConvertError::PostscriptNotRun);
-    }
+    // And PostScript only where what LibreOffice would hand it to is kept out
+    // of its reach (card 512).
+    admit(&head_of(&staged)?)?;
     std::fs::create_dir_all(outdir)?;
 
     let expected = outdir.join(output_name(&staged));
@@ -1132,7 +1198,6 @@ showpage
         assert!(content_is_supported(b"%!PS-Adobe-3.0 EPSF-3.0\n"));
         assert!(content_is_supported(b"%!PS-Adobe-2.0\n")); // a .ps
         assert!(content_is_supported(b"%!PS\n")); // the shortest PostScript key
-        assert!(content_is_supported(b"%PDF-1.5\n")); // a modern .ai
         assert!(content_is_supported(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0])); // EPS with a preview
         assert!(content_is_supported(b"RIFFxxxxCDRA")); // CorelDRAW
         assert!(content_is_supported(b"RIFFxxxxcdrA")); // and in lower case
@@ -1152,6 +1217,8 @@ showpage
         assert!(!content_is_supported(b" %!PS")); // not PostScript if anything is before it
         assert!(!content_is_supported(b"%!\n<html>")); // bare %! then HTML is not the PS key
         assert!(!content_is_supported(b"%! some other thing")); // bare %! is not %!PS
+        assert!(!content_is_supported(b"%!ps-adobe-3.0\n")); // LibreOffice would take it; not here
+        assert!(!content_is_supported(b"%PDF-1.5\n")); // a modern .ai: the PDF viewer's
         assert!(!content_is_supported(b""));
     }
 
@@ -1216,11 +1283,11 @@ showpage
             &dir.join("in"),
             Duration::from_secs(5),
         );
-        // Whatever happened, the private copy is not left behind.
-        assert!(
-            !dir.join("in").join(name).exists() || matches!(result, Err(ConvertError::Start(_))),
-            "{name}: the staged copy was left after {result:?}"
-        );
+        // Whatever happened, no private copy is left behind.
+        let left: Vec<_> = std::fs::read_dir(dir.join("in"))
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default();
+        assert!(left.is_empty(), "{name}: {left:?} left after {result:?}");
         let _ = std::fs::remove_dir_all(&dir);
         result
     }
@@ -1271,6 +1338,67 @@ showpage
 
     /// On Windows LibreOffice is given no PATH its helpers are on (`harden`),
     /// measured in card 505, so PostScript still goes to it.
+    /// Nothing sends a PDF here, so LibreOffice's PDF import is not one more
+    /// parser a page can feed, on any platform (the review of 0f215cf).
+    #[test]
+    fn a_pdf_is_never_given_to_libreoffice() {
+        let result = converting("drawing.ai", b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+        assert!(
+            matches!(result, Err(ConvertError::UnsupportedContent)),
+            "{result:?}"
+        );
+    }
+
+    /// The page can ask for one document to be converted many times at once:
+    /// each conversion copies it into a directory no other one is handed, so
+    /// none can write over a copy another has checked, and each takes its
+    /// directory with it when it is over.
+    #[test]
+    fn each_conversion_has_a_copy_of_its_own() {
+        let workdir = std::env::temp_dir().join(format!("ul-convert-apart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workdir);
+
+        let hour = Duration::from_secs(3600);
+        let first = Staging::new(&workdir, hour).unwrap();
+        let second = Staging::new(&workdir, hour).unwrap();
+        assert_ne!(first.0, second.0);
+        assert!(first.0.starts_with(&workdir) && second.0.starts_with(&workdir));
+        std::fs::write(first.0.join("drawing.cdr"), b"RIFF").unwrap();
+        assert!(!second.0.join("drawing.cdr").exists());
+
+        let gone = first.0.clone();
+        drop(first);
+        assert!(!gone.exists(), "a finished conversion's copy stayed");
+        assert!(second.0.is_dir(), "another conversion's copy went with it");
+        drop(second);
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    /// What a conversion could not take with it — on Windows a LibreOffice
+    /// still closing the copy — the next one clears, once it is older than a
+    /// conversion can last; a copy of the layout before is cleared the same.
+    #[test]
+    fn what_earlier_conversions_left_is_cleared_once_they_are_over() {
+        let workdir = std::env::temp_dir().join(format!("ul-convert-left-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workdir);
+        std::fs::create_dir_all(workdir.join("1-0")).unwrap();
+        std::fs::write(workdir.join("1-0").join("drawing.eps"), b"%!PS").unwrap();
+        std::fs::write(workdir.join("drawing.eps"), b"%!PS").unwrap();
+
+        // Younger than a conversion can last: it may still be running.
+        drop(Staging::new(&workdir, Duration::from_secs(3600)).unwrap());
+        assert!(workdir.join("1-0").join("drawing.eps").exists());
+        assert!(workdir.join("drawing.eps").exists());
+
+        // Older: over, and cleared, while the new conversion has its own.
+        let current = Staging::new(&workdir, Duration::ZERO).unwrap();
+        assert!(!workdir.join("1-0").exists());
+        assert!(!workdir.join("drawing.eps").exists());
+        assert!(current.0.is_dir());
+        drop(current);
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
     #[cfg(windows)]
     #[test]
     fn on_windows_postscript_still_reaches_libreoffice() {

@@ -227,6 +227,19 @@ did.
   files would have been drawn and are not; the 13 DOS EPS show the preview
   they carry, as before. **Not measured:** a LibreOffice on Linux or macOS at
   all — the refusal is before it starts, so nothing about it is relied on.
+  The independent review of that change (PROLAZI) found two more, closed
+  with it: the copy the check reads was one per document, so conversions of
+  one document asked for at once — free to the page, with no gesture — could
+  write unchecked bytes over a copy another had checked before its
+  LibreOffice opened it; each conversion now copies into a directory of its
+  own, gone when it is over. And `%PDF-` was let through though nothing sends
+  a PDF there — a modern `.ai` opens in the PDF viewer — so LibreOffice's PDF
+  import was one more parser a page could feed; what may reach LibreOffice is
+  now listed (`admit`): CorelDRAW everywhere, PostScript on Windows only.
+  libcdr hands LibreOffice an embedded picture as a BMP or an SVG it writes
+  itself, never as EPS (read in its source, not measured). A server build
+  that wants PostScript drawn (ADR 0007) needs a switch of its own, refusing
+  by default and out of the page's reach.
 ## Questions paced (2026-10-08, cards 501 and 488)
 
 Script in the page can bring up any of the core's questions as often as it

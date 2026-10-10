@@ -1155,8 +1155,9 @@ async fn convert_to_pdf(
 
     /* Where the file to convert is staged, private like the profile: the page
     never reaches it, so it cannot swap the bytes between the check and the
-    open (ul_convert::to_pdf). Apart from both the profile and the cache the
-    PDF is read from. */
+    open (ul_convert::to_pdf), and each conversion copies into a directory of
+    its own under it, so two asked for at once cannot either. Apart from both
+    the profile and the cache the PDF is read from. */
     let staging = app
         .path()
         .app_data_dir()
