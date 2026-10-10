@@ -160,14 +160,21 @@ try {
        about each in turn after a "Not now": the question waits half a
        minute after one, whatever the project (the review of 0676285). */
     await openFromOutside(page, [another]);
-    const quiet = await page.evaluate(
+    /* The call is made first and the dialog looked for after, not the other
+       way round: a program that does ask answers this call only when the
+       dialog is answered, so waiting for the call before looking would hang
+       the check instead of failing it (measured, with the pause removed). */
+    const asking = page.evaluate(
       ([path]) =>
         window.__TAURI_INTERNALS__
           .invoke('lsp_open', { path, language: 'rust', text: 'fn main() {}', uiLanguage: 'en' })
           .then((started) => String(started), (err) => String(err)),
       [join(another, 'src', 'main.rs')],
     );
+    // Let the call leave the page before this process blocks on the dialog.
+    await new Promise((r) => setTimeout(r, 300));
     const drawn = answerTrust(NOT_NOW, 3);
+    const quiet = await asking;
     check(
       'another project asked about at once after a "Not now" is not asked',
       quiet.startsWith('ul:question-held:') && drawn === 'no dialog',
