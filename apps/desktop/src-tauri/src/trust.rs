@@ -591,13 +591,24 @@ fn shown_parts(text: &str) -> (String, usize) {
     (shown, 0)
 }
 
+/// Letters that are drawn as nothing, which would let a name show as
+/// `invoice.pdf` and end in `.exe` out of sight: the Hangul fillers, and the
+/// Egyptian hieroglyph blanks (the review of 396a4f9). Kept out of the core's
+/// questions here and out of the names "Save as" offers (`offered_name`).
+pub(crate) const BLANK_LETTERS: [char; 6] = [
+    '\u{115F}',
+    '\u{1160}',
+    '\u{3164}',
+    '\u{FFA0}',
+    '\u{13441}',
+    '\u{13442}',
+];
+
 /// Not `%`: GTK takes the dialog's text as a printf format (rfd passes it to
 /// `gtk_message_dialog_format_secondary_text` as the format itself), so a
 /// folder called `%s%n` would read and write memory before a button was
 /// drawn. Not `&` either, which some toolkits read as a mnemonic.
 fn shown_as_it_is(c: char) -> bool {
-    /* Letters that are drawn as nothing: the Hangul fillers. */
-    const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
     (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
         || " -_.,()[]{}'!@#$+=~;:/\\^`?\"".contains(c)
 }
@@ -932,6 +943,12 @@ mod tests {
             asked
                 .body
                 .contains("/tmp/a\\u{3164}b \\u{0020}\\u{0020}c\n"),
+            "{}",
+            asked.body
+        );
+        let asked = question(Some("en"), "rust", Path::new("/tmp/a\u{13441}b\u{13442}c"));
+        assert!(
+            asked.body.contains("/tmp/a\\u{13441}b\\u{13442}c\n"),
             "{}",
             asked.body
         );

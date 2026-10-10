@@ -426,19 +426,28 @@ async fn pick_save_target(
 /// space, and the punctuation names are made of — no right-to-left override
 /// to show `ugovor\u{202E}fdp.exe` as "ugovorexe.pdf", no invisible mark,
 /// nothing Windows would quietly drop (a trailing dot or space) or take for a
-/// device (`CON`, `NUL.txt`), no run of spaces or letter drawn as nothing
-/// to push an extension out of sight, no `%` for the dialog to expand into a
-/// path, and not too long to be read whole. Anything else is offered as
-/// "untitled", and the person names it.
+/// device (`CON`, `NUL.txt`, also in full-width letters), no run of spaces,
+/// no more than a few in all, and no letter drawn as nothing to push an
+/// extension out of sight, no `%` for the dialog to expand into a path, and
+/// not too long to be read whole. Anything else is offered as "untitled", and
+/// the person names it.
 fn offered_name(suggested: &str) -> String {
     const LONGEST: usize = 120;
-    const DEVICES: [&str; 30] = [
+    /* A space with a combining mark after it is not two spaces, and fifty of
+    them pushed `.exe` along a dotted line (the review of 396a4f9); a real
+    name has a handful. */
+    const MOST_SPACES: usize = 8;
+    /* `CLOCK$`, `COM0` and `LPT0` are not devices on Windows 11 any more, and
+    are kept out all the same. */
+    const DEVICES: [&str; 33] = [
         "CON",
         "PRN",
         "AUX",
         "NUL",
         "CONIN$",
         "CONOUT$",
+        "CLOCK$",
+        "COM0",
         "COM1",
         "COM2",
         "COM3",
@@ -463,21 +472,31 @@ fn offered_name(suggested: &str) -> String {
         "LPT\u{B9}",
         "LPT\u{B2}",
         "LPT\u{B3}",
+        "LPT0",
     ];
-    /* Letters drawn as nothing — the Hangul fillers — which would let a name
-    show as `invoice.pdf` and end in `.exe` out of sight; the same list
-    `trust::shown` keeps out of the core's questions. */
-    const BLANK_LETTERS: [char; 4] = ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
     let last = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
-    let stem = last.split('.').next().unwrap_or_default().trim_end();
+    /* Compared as the ASCII full-width letters look like: `ＣＯＮ` is read as
+    what it shows. */
+    let stem: String = last
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .chars()
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .collect();
     let fits = !last.is_empty()
         && last.chars().count() <= LONGEST
         && !last.ends_with(['.', ' '])
         && !last.starts_with(' ')
         && last.chars().any(char::is_alphanumeric)
         && !last.contains("  ")
+        && last.chars().filter(|c| *c == ' ').count() <= MOST_SPACES
         && last.chars().all(|c| {
-            (c.is_alphanumeric() && !BLANK_LETTERS.contains(&c))
+            (c.is_alphanumeric() && !trust::BLANK_LETTERS.contains(&c))
                 || " -_.,()[]{}'!@#$+=~;&".contains(c)
         })
         && !DEVICES
@@ -2552,6 +2571,28 @@ mod tests {
         assert_eq!(offered_name("%APPDATA%.bat"), "untitled");
         assert_eq!(offered_name("CONIN$"), "untitled");
         assert_eq!(offered_name("COM\u{B9}.txt"), "untitled");
+        // The review of 396a4f9: a space and a combining mark, fifty times.
+        assert_eq!(
+            offered_name(&format!("invoice.pdf{}.exe", " \u{345}".repeat(50))),
+            "untitled"
+        );
+        assert_eq!(offered_name("a b c d e f g h i j.txt"), "untitled");
+        assert_eq!(
+            offered_name("Plan za 2026 godinu - verzija 2 final.pdf"),
+            "Plan za 2026 godinu - verzija 2 final.pdf"
+        );
+        // Letters to Rust, drawn as nothing.
+        assert!('\u{13441}'.is_alphanumeric() && '\u{13442}'.is_alphanumeric());
+        assert_eq!(
+            offered_name("invoice.pdf\u{13441}\u{13441}.exe"),
+            "untitled"
+        );
+        assert_eq!(offered_name("a\u{13442}b"), "untitled");
+        assert_eq!(offered_name("CLOCK$"), "untitled");
+        assert_eq!(offered_name("COM0.txt"), "untitled");
+        assert_eq!(offered_name("lpt0"), "untitled");
+        assert_eq!(offered_name("\u{FF23}\u{FF2F}\u{FF2E}.txt"), "untitled"); // ＣＯＮ
+        assert_eq!(offered_name("\u{FF2E}ul.txt"), "untitled"); // Ｎul
         assert_eq!(offered_name("Plan - stranice.pdf"), "Plan - stranice.pdf");
         assert_eq!(offered_name("console.log.txt"), "console.log.txt");
     }
