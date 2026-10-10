@@ -25,7 +25,7 @@
  *   node tools/verify-updates.mjs
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -106,6 +106,17 @@ check(
 
 const capability = JSON.parse(read('apps/desktop/src-tauri/capabilities/desktop.json'));
 const permissions = capability.permissions ?? [];
+/* Every capability there is — a new file, or one inline in tauri.conf.json —
+   so that neither permission can come back somewhere this does not look. */
+const capabilityDir = join(ROOT, 'apps/desktop/src-tauri/capabilities');
+const everyPermission = readdirSync(capabilityDir)
+  .filter((name) => name.endsWith('.json'))
+  .flatMap((name) =>
+    (JSON.parse(read(`apps/desktop/src-tauri/capabilities/${name}`)).permissions ?? []).map((permission) =>
+      typeof permission === 'string' ? permission : permission.identifier,
+    ),
+  );
+const inline = JSON.parse(read('apps/desktop/src-tauri/tauri.conf.json')).app?.security?.capabilities ?? [];
 /* The plugin's own `check` takes a proxy from whoever calls it, and a proxy
    named by script in the page carries what it read out of the program from
    Rust, where the CSP does not reach. The page asks through the core's own two
@@ -140,10 +151,10 @@ check(
   (capability.platforms ?? []).join(', '),
 );
 check(
-  'while the default capability stays free of it',
-  !JSON.parse(read('apps/desktop/src-tauri/capabilities/default.json')).permissions.some((name) =>
-    name.startsWith('updater:') || name.startsWith('process:'),
-  ),
+  'while no capability anywhere grants the updater or a restart',
+  !everyPermission.some((name) => name.startsWith('updater:') || name.startsWith('process:')) &&
+    !JSON.stringify(inline).match(/"(updater|process):/),
+  everyPermission.join(', '),
 );
 
 /* ── the Rust side ───────────────────────────────────────────────────── */
@@ -154,9 +165,15 @@ check(
   'the core restarts it after an installed update',
   install.includes('.map_err(|err| err.to_string())?;') && install.includes('app.restart()'),
 );
+check('the plugin is registered', lib.includes('tauri_plugin_updater::Builder::new()'));
+/* The process plugin is what a page would restart the program through. It
+   is not compiled in at all, so a permission naming it fails the build. */
 check(
-  'the plugin is registered',
-  lib.includes('tauri_plugin_updater::Builder::new()') && lib.includes('tauri_plugin_process::init()'),
+  'and the process plugin is not, in the core or the page',
+  !lib.includes('tauri_plugin_process') &&
+    !read('apps/desktop/src-tauri/Cargo.toml').includes('tauri-plugin-process') &&
+    !read('packages/shell-ui/package.json').includes('@tauri-apps/plugin-process') &&
+    !read('packages/shell-ui/src/host/native.ts').includes('plugin-process'),
 );
 check(
   'and only where a program updates itself',

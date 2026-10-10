@@ -18,5 +18,4 @@ export const native = {
   event: () => import('@tauri-apps/api/event'),
   window: () => import('@tauri-apps/api/window'),
   webview: () => import('@tauri-apps/api/webview'),
-  process: () => import('@tauri-apps/plugin-process'),
 };
