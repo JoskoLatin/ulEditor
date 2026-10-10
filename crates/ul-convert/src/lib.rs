@@ -709,7 +709,7 @@ pub fn to_pdf(
 /// would carry a read-only source's flag onto a copy that then could not be
 /// cleared away.
 fn copy_at_most(source: &Path, to: &Path, most: u64) -> Result<(), ConvertError> {
-    let mut from = std::fs::File::open(source)?.take(most + 1);
+    let mut from = open_regular(source)?.take(most + 1);
     let mut into = std::fs::File::create_new(to)?;
     let copied = std::io::copy(&mut from, &mut into)?;
     if copied > most {
@@ -718,6 +718,59 @@ fn copy_at_most(source: &Path, to: &Path, most: u64) -> Result<(), ConvertError>
         return Err(ConvertError::TooLarge(most / (1024 * 1024)));
     }
     Ok(())
+}
+
+/// `O_NONBLOCK` where LibreOffice is converted with: Linux on the
+/// architectures it is built for, and macOS — the same table as
+/// `ul_core::vfs`'s, which this crate does not depend on.
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "x86"
+    )
+))]
+const O_NONBLOCK: Option<i32> = Some(0o4000);
+#[cfg(target_vendor = "apple")]
+const O_NONBLOCK: Option<i32> = Some(0x4);
+#[cfg(all(
+    unix,
+    not(any(
+        target_vendor = "apple",
+        all(
+            target_os = "linux",
+            any(
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "arm",
+                target_arch = "x86"
+            )
+        )
+    ))
+))]
+const O_NONBLOCK: Option<i32> = None;
+
+/// `source` opened to be copied — and only if it is a file. `to_pdf` asked
+/// its name first, and a FIFO put there since would hold the open for ever,
+/// and with it the one conversion allowed at a time (the review of efb974a).
+/// So it is opened without waiting, and the open file is asked what it is.
+fn open_regular(source: &Path) -> Result<std::fs::File, ConvertError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if let Some(flag) = O_NONBLOCK {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(flag);
+    }
+    let file = options.open(source)?;
+    if !file.metadata()?.is_file() {
+        return Err(ConvertError::NoSource(
+            source.to_string_lossy().into_owned(),
+        ));
+    }
+    Ok(file)
 }
 
 /// How much of what LibreOffice says is kept for the message: a reason is in
@@ -1554,6 +1607,28 @@ showpage
         copy_at_most(&source, &dir.join("at.cdr"), 2048).unwrap();
         assert_eq!(std::fs::read(dir.join("at.cdr")).unwrap().len(), 2048);
         const { assert!(MOST_BYTES >= 15 * 1024 * 1024) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A FIFO in a file's place is refused, not waited on for ever.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_a_files_place_is_refused_at_once() {
+        let dir = std::env::temp_dir().join(format!("ul-convert-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("drawing.cdr");
+        let made = Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|status| status.success()) {
+            eprintln!("no mkfifo here; nothing to check");
+            return;
+        }
+        let refused = copy_at_most(&fifo, &dir.join("copy.cdr"), 1024);
+        assert!(
+            matches!(refused, Err(ConvertError::NoSource(_))),
+            "{refused:?}"
+        );
+        assert!(!dir.join("copy.cdr").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

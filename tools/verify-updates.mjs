@@ -472,14 +472,30 @@ check(
 const code = install.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 const asks = code.indexOf('ask(&app, &asked');
 const locked = code.indexOf('questions.0.try_lock()');
+const declined = code.indexOf('asking().declined(');
+const marked = code.indexOf('installing.store(true');
+const released = code.indexOf('drop(asking_now)');
 check(
   'and the core asks the person before an install, one question at a time, paced',
   code.includes('trust::update_question(') &&
     code.includes('may_ask(') &&
-    code.includes('asking().declined(') &&
+    declined >= 0 &&
     locked >= 0 &&
     asks > locked &&
     asks < code.indexOf('download_and_install('),
+);
+/* The lock goes only once the no is written down and the yes marked, and a
+   yes turns a second call away until a download fails (the reviews of
+   c144c3c and 6bed629). */
+check(
+  'and lets the question go only once its answer is written down',
+  released > declined && released > marked && marked > asks,
+);
+check(
+  'and asks nothing while one is downloading, until it fails',
+  code.includes('installing.load(') &&
+    code.indexOf('installing.load(') < asks &&
+    code.includes('installing.store(false'),
 );
 
 /* Where the signatures are read from.

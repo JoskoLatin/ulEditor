@@ -2766,6 +2766,25 @@ mod tests {
         assert!(super::framed(|_| Err(super::VfsError::NotRead("x".into()))).is_err());
     }
 
+    /// The two commands go through the helpers the test below proves, and
+    /// take the servers' lock nowhere else: a direct lock in `lsp_open` would
+    /// pass that test and open the window again (the review of 68739f8).
+    #[test]
+    fn the_commands_take_the_servers_lock_only_through_the_helpers() {
+        let source = include_str!("lib.rs").replace("\r\n", "\n");
+        let body = |name: &str| {
+            let start = source.find(name).unwrap();
+            let end = start + source[start..].find("\n}\n").unwrap();
+            source[start..end].to_string()
+        };
+        let open = body("async fn lsp_open(");
+        assert!(open.contains("start_if_trusted(&lsp.servers, &lsp.trust"));
+        assert!(!open.contains("servers.lock()"));
+        let forget = body("async fn forget_trusted_projects(");
+        assert!(forget.contains("forget_and_stop(&lsp.servers, &lsp.trust"));
+        assert!(!forget.contains(".lock()"));
+    }
+
     /// "Forget trusted projects" against a document opening at that moment:
     /// a yes looked up before the forgetting starts nothing after it, and a
     /// server started before it is stopped (the review of 0676285).
