@@ -39,11 +39,12 @@
 //! keep them out, and `to_pdf` refuses PostScript before LibreOffice is started
 //! (`POSTSCRIPT_IS_CONVERTED`).
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -134,30 +135,8 @@ const DOS_EPS: [u8; 4] = [0xC5, 0xD0, 0xD3, 0xC6];
 /// filter instead. It must be the very first bytes — the EPSF spec requires
 /// it, and anything allowed before is room for another kind of document to
 /// hide.
-pub fn is_postscript(head: &[u8]) -> bool {
+fn is_postscript(head: &[u8]) -> bool {
     head.starts_with(b"%!PS") || head.starts_with(&DOS_EPS)
-}
-
-/// Whether `head` is the start of one of the four formats this converts.
-///
-/// LibreOffice decides what a document is by its content, not its name. A file
-/// named `drawing.cdr` whose bytes are HTML is imported as a web page — and a
-/// web page fetches every linked image as it loads, from a process with no
-/// content-security policy over it, carrying whatever the author put in the URL
-/// to wherever it points (measured through `convert-to pdf`, card 505). So a
-/// document the program is handed could reach the network with no gesture and
-/// no way for the sandbox to stop it.
-///
-/// The four formats this is for begin with bytes nothing else does, so the file
-/// is checked against them before LibreOffice is ever told about it. Everything
-/// else is refused — the cost is a genuine but unusual file turned away with a
-/// clear message, against the whole class of documents that reach out.
-///
-/// A PDF is not one of them. A modern `.ai` is a PDF and opens in the PDF
-/// viewer, so nothing sends one here, and LibreOffice's PDF import would only
-/// be one more parser over bytes a page wrote (the review of 0f215cf).
-pub fn content_is_supported(head: &[u8]) -> bool {
-    is_postscript(head) || is_coreldraw(head)
 }
 
 /// CorelDRAW: a RIFF container whose form type begins "CDR" (a drawing) or
@@ -171,8 +150,25 @@ fn is_coreldraw(head: &[u8]) -> bool {
 /// Whether LibreOffice may be given a file that begins with `head`, here: a
 /// CorelDRAW drawing everywhere, PostScript on Windows only, nothing else.
 ///
-/// What may go is listed, not what may not, so that a format added to
-/// `content_is_supported` reaches LibreOffice only where this says so.
+/// LibreOffice decides what a document is by its content, not its name. A file
+/// named `drawing.cdr` whose bytes are HTML is imported as a web page — and a
+/// web page fetches every linked image as it loads, from a process with no
+/// content-security policy over it, carrying whatever the author put in the URL
+/// to wherever it points (measured through `convert-to pdf`, card 505). So a
+/// document the program is handed could reach the network with no gesture and
+/// no way for the sandbox to stop it.
+///
+/// The formats this is for begin with bytes nothing else does, so the file is
+/// checked against them before LibreOffice is ever told about it. Everything
+/// else is refused — the cost is a genuine but unusual file turned away with a
+/// clear message, against the whole class of documents that reach out. What
+/// may go is listed, not what may not, and this is the only answer there is:
+/// a second, wider one is a check somebody will one day take for this one (the
+/// review of 8784711).
+///
+/// A PDF is not one of them. A modern `.ai` is a PDF and opens in the PDF
+/// viewer, so nothing sends one here, and LibreOffice's PDF import would only
+/// be one more parser over bytes a page wrote (the review of 0f215cf).
 fn admit(head: &[u8]) -> Result<(), ConvertError> {
     if is_coreldraw(head) {
         return Ok(());
@@ -199,36 +195,48 @@ fn admit(head: &[u8]) -> Result<(), ConvertError> {
 /// two conversions are ever handed the same one.
 struct Staging(PathBuf);
 
+/// The directories conversions in this process are using now, which no
+/// clearing touches.
+fn running() -> std::sync::MutexGuard<'static, HashSet<PathBuf>> {
+    static RUNNING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    RUNNING
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 impl Staging {
-    /// First clearing away what conversions over `stale` ago left: on Windows
-    /// the LibreOffice a finished conversion started can still be closing its
-    /// copy when the conversion ends, so the copy cannot go then (once in two
-    /// runs, measured 2026-10-10). A conversion lasts at most its timeout, so one older than
-    /// that is over.
-    fn new(workdir: &Path, stale: Duration) -> std::io::Result<Self> {
+    /// First clearing away whatever earlier conversions left and no running
+    /// one is using: on Windows the LibreOffice a finished conversion started
+    /// can still be closing its copy when the conversion ends, so the copy
+    /// cannot go then (once in two runs, measured 2026-10-10). Which ones are
+    /// running is known, not guessed from their age — a copy can take longer
+    /// than any allowance, and a clock can jump (the review of 8784711).
+    fn new(workdir: &Path) -> std::io::Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
+        /* Held until the new directory is listed, so that no other conversion
+        clears it between its making and its listing. */
+        let mut running = running();
         std::fs::create_dir_all(workdir)?;
         for entry in std::fs::read_dir(workdir)?.flatten() {
-            let Ok(meta) = entry.metadata() else { continue };
-            let over = meta
-                .modified()
-                .ok()
-                .and_then(|at| at.elapsed().ok())
-                .is_some_and(|age| age >= stale);
-            if over {
-                // A file is a copy from before each conversion had a directory.
-                let _ = if meta.is_dir() {
-                    std::fs::remove_dir_all(entry.path())
-                } else {
-                    std::fs::remove_file(entry.path())
-                };
+            let path = entry.path();
+            if running.contains(&path) {
+                continue;
             }
+            // A file is a copy from before each conversion had a directory.
+            let _ = match entry.metadata() {
+                Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&path),
+                _ => std::fs::remove_file(&path),
+            };
         }
         loop {
             let next = NEXT.fetch_add(1, Ordering::Relaxed);
             let dir = workdir.join(format!("{}-{next}", std::process::id()));
             match std::fs::create_dir(&dir) {
-                Ok(()) => return Ok(Self(dir)),
+                Ok(()) => {
+                    running.insert(dir.clone());
+                    return Ok(Self(dir));
+                }
                 // Left behind by an earlier run that had the same process id.
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(err) => return Err(err),
@@ -241,12 +249,14 @@ impl Drop for Staging {
     fn drop(&mut self) {
         /* On Windows a LibreOffice still closing the copy can keep it from
         going; what stays is in a folder the page never reaches, and the next
-        conversion of the document clears it (`new`). */
+        conversion of the document clears it (`new`). Gone first and only then
+        no longer running, so that nothing clears it under this. */
         let _ = std::fs::remove_dir_all(&self.0);
+        running().remove(&self.0);
     }
 }
 
-/// The first bytes of a file, for `content_is_supported`.
+/// The first bytes of a file, for `admit`.
 fn head_of(source: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let mut file = std::fs::File::open(source)?;
@@ -640,7 +650,7 @@ pub fn to_pdf(
     network (card 505) would run on bytes that were never checked. Copied once
     here, into a directory of this conversion's own (`Staging`), there is
     nothing left for the page to swap. */
-    let staging = Staging::new(workdir, timeout + Duration::from_secs(60))?;
+    let staging = Staging::new(workdir)?;
     let staged = staging.0.join(name);
     std::fs::copy(source, &staged)?;
 
@@ -1194,6 +1204,9 @@ showpage
 
     #[test]
     fn only_the_four_formats_own_first_bytes_are_accepted() {
+        // Which of them goes on to LibreOffice where is `admit`'s, and is
+        // checked through `to_pdf` below.
+        let content_is_supported = |head: &[u8]| is_postscript(head) || is_coreldraw(head);
         // The real start of each of the four, which must be let through.
         assert!(content_is_supported(b"%!PS-Adobe-3.0 EPSF-3.0\n"));
         assert!(content_is_supported(b"%!PS-Adobe-2.0\n")); // a .ps
@@ -1358,9 +1371,8 @@ showpage
         let workdir = std::env::temp_dir().join(format!("ul-convert-apart-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&workdir);
 
-        let hour = Duration::from_secs(3600);
-        let first = Staging::new(&workdir, hour).unwrap();
-        let second = Staging::new(&workdir, hour).unwrap();
+        let first = Staging::new(&workdir).unwrap();
+        let second = Staging::new(&workdir).unwrap();
         assert_ne!(first.0, second.0);
         assert!(first.0.starts_with(&workdir) && second.0.starts_with(&workdir));
         std::fs::write(first.0.join("drawing.cdr"), b"RIFF").unwrap();
@@ -1375,28 +1387,54 @@ showpage
     }
 
     /// What a conversion could not take with it — on Windows a LibreOffice
-    /// still closing the copy — the next one clears, once it is older than a
-    /// conversion can last; a copy of the layout before is cleared the same.
+    /// still closing the copy — the next conversion of the document clears; a
+    /// copy of the layout before is cleared the same. One still running is
+    /// left alone, however long its copy has taken.
     #[test]
-    fn what_earlier_conversions_left_is_cleared_once_they_are_over() {
-        let workdir = std::env::temp_dir().join(format!("ul-convert-left-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&workdir);
+    fn a_conversion_clears_what_earlier_ones_left_and_not_a_running_one() {
+        let dir = std::env::temp_dir().join(format!("ul-convert-left-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let workdir = dir.join("in");
         std::fs::create_dir_all(workdir.join("1-0")).unwrap();
-        std::fs::write(workdir.join("1-0").join("drawing.eps"), b"%!PS").unwrap();
-        std::fs::write(workdir.join("drawing.eps"), b"%!PS").unwrap();
+        std::fs::write(workdir.join("1-0").join("drawing.cdr"), b"RIFF").unwrap();
+        std::fs::write(workdir.join("drawing.cdr"), b"RIFF").unwrap();
 
-        // Younger than a conversion can last: it may still be running.
-        drop(Staging::new(&workdir, Duration::from_secs(3600)).unwrap());
-        assert!(workdir.join("1-0").join("drawing.eps").exists());
-        assert!(workdir.join("drawing.eps").exists());
+        let running = Staging::new(&workdir).unwrap();
+        assert!(!workdir.join("1-0").exists(), "an earlier directory stayed");
+        assert!(
+            !workdir.join("drawing.cdr").exists(),
+            "an earlier copy stayed"
+        );
+        std::fs::write(running.0.join("drawing.cdr"), b"RIFF").unwrap();
 
-        // Older: over, and cleared, while the new conversion has its own.
-        let current = Staging::new(&workdir, Duration::ZERO).unwrap();
-        assert!(!workdir.join("1-0").exists());
-        assert!(!workdir.join("drawing.eps").exists());
-        assert!(current.0.is_dir());
-        drop(current);
-        let _ = std::fs::remove_dir_all(&workdir);
+        // A second conversion of the same document, while the first runs.
+        let source = dir.join("drawing.cdr");
+        std::fs::write(&source, b"RIFF\x10\0\0\0CDRXvrsn").unwrap();
+        let backend = Backend {
+            path: dir
+                .join("no-libreoffice-here")
+                .to_string_lossy()
+                .into_owned(),
+            formats: Vec::new(),
+        };
+        let second = to_pdf(
+            &backend,
+            &source,
+            &dir.join("out"),
+            &dir.join("profile"),
+            &workdir,
+            Duration::from_secs(5),
+        );
+        assert!(matches!(second, Err(ConvertError::Start(_))), "{second:?}");
+        assert!(
+            running.0.join("drawing.cdr").exists(),
+            "a running conversion's copy was cleared"
+        );
+
+        let gone = running.0.clone();
+        drop(running);
+        assert!(!gone.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]
