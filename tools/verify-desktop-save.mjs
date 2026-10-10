@@ -6,9 +6,11 @@
  * the tab's scope carries; the editors know nothing of it. So this drives
  * the real editors and the real core:
  *
- * - a Markdown, a TypeScript and a PNG document, each opened, edited, and
- *   replaced on disk by another file renamed over it: Ctrl+S asks, and
- *   Cancel leaves the replacement as it is — the scope carried the reading;
+ * - a Markdown, a TypeScript and a PNG document, and a Word, an Excel, an
+ *   OpenDocument sheet and a PDF one, each opened, edited, and replaced on
+ *   disk by another file renamed over it: Ctrl+S asks, and Cancel leaves the
+ *   replacement as it is — the scope carried the reading, whichever editor
+ *   held the document;
  * - a document open and unchanged, its path written without a reading, as
  *   the scratch panel or an export writes it: the tab's next save asks —
  *   the write moved nobody's reading;
@@ -29,6 +31,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
+import { makeDocx, makeOds, makePdf, makeXlsx } from './fixtures.mjs';
 import { buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -84,8 +87,16 @@ const files = {
   'notes.md': '# Bilješke\n\nPrvi redak.\n',
   'code.ts': 'export const answer = 42;\n',
   'slika.png': png(8, 4, [255, 0, 0]),
+  'izvjestaj.docx': makeDocx(),
+  'tablica.xlsx': makeXlsx(),
+  'proracun.ods': makeOds(),
+  'crtez.pdf': makePdf('Original'),
   'untouched.md': 'Nobody edits this.\n',
 };
+
+/** The same file with one byte more: a different file under the same name. The
+ *  program compares what it read with what is there; it does not parse it. */
+const another = (bytes) => Buffer.concat([Buffer.from(bytes), Buffer.from([0])]);
 for (const [name, content] of Object.entries(files)) await writeFile(join(workspace, name), content);
 
 let session;
@@ -109,6 +120,20 @@ try {
     await until(async () => (await page.locator('.tab', { hasText: name }).count()) > 0);
   };
   const asked = () => page.locator('.toast', { hasText: 'was changed outside ulEditor' });
+  /* Ctrl+S, and until the question about a replaced file stands. A PDF with a
+     note asks about notes first; that one is answered, the one this check is
+     about is not. */
+  const ask = async () => {
+    await page.keyboard.press('Control+s');
+    const notes = page.locator('.toast .toast-btn', { hasText: 'Save anyway' });
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if ((await asked().count()) > 0) return true;
+      if ((await notes.count()) > 0) await notes.first().click();
+      await page.waitForTimeout(200);
+    }
+    return false;
+  };
   const replace = async (name, content) => {
     const aside = join(workspace, `${name}.replacement`);
     await writeFile(aside, content);
@@ -141,14 +166,59 @@ try {
       },
       replacement: png(8, 4, [0, 0, 255]),
     },
+    {
+      /* A double-click opens a run of text for typing; clicking away ends it. */
+      name: 'izvjestaj.docx',
+      edit: async () => {
+        await page.locator('.ul-office-run:visible').first().dblclick();
+        await page.keyboard.press('Control+A');
+        await page.keyboard.type('Izmijenjeno u ulEditoru');
+        await page.locator('.ul-office-notes strong:visible').first().click();
+      },
+      replacement: another(files['izvjestaj.docx']),
+    },
+    {
+      /* A cell opens on a double-click and ends at Enter. */
+      name: 'tablica.xlsx',
+      edit: async () => {
+        await page.locator('.ul-sheet td[data-ref]:visible').filter({ hasText: /\S/ }).first().dblclick();
+        await page.keyboard.type('Izmijenjeno');
+        await page.keyboard.press('Enter');
+      },
+      replacement: another(files['tablica.xlsx']),
+    },
+    {
+      name: 'proracun.ods',
+      edit: async () => {
+        await page.locator('.ul-sheet td[data-ref]:visible').filter({ hasText: /\S/ }).first().dblclick();
+        await page.keyboard.type('Izmijenjeno');
+        await page.keyboard.press('Enter');
+      },
+      replacement: another(files['proracun.ods']),
+    },
+    {
+      /* A note is the smallest edit a PDF takes. Its save asks about notes
+         first (ADR 0004), and that is answered before the question this
+         check is about — see `ask`. */
+      name: 'crtez.pdf',
+      edit: async () => {
+        await page.waitForSelector('.ul-pdf-page:visible[data-rendered="true"]', { timeout: 30000 });
+        await page.waitForTimeout(1000);
+        await page.locator('.ul-pdf-tool[title^="Note"]:visible').first().click();
+        await page.locator('.ul-pdf-page:visible').first().click({ position: { x: 60, y: 60 } });
+        await page.waitForSelector('.ul-pdf-note-popup textarea', { timeout: 10000 });
+        await page.locator('.ul-pdf-note-popup textarea').fill('Bilješka');
+        await page.locator('.ul-pdf-note-popup button', { hasText: 'Save' }).click();
+      },
+      replacement: makePdf('Replacement'),
+    },
   ];
   for (const editor of editors) {
     await open(editor.name);
     await page.waitForTimeout(1500);
     await editor.edit();
     await replace(editor.name, editor.replacement);
-    await page.keyboard.press('Control+s');
-    const question = await until(async () => (await asked().count()) > 0, 10000);
+    const question = await ask();
     check(`${editor.name}: a save over a file replaced since it was read asks first`, question);
     if (question) await asked().first().locator('button', { hasText: 'Cancel' }).click();
     const disk = await readFile(join(workspace, editor.name));
