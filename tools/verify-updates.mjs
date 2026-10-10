@@ -106,17 +106,38 @@ check(
 
 const capability = JSON.parse(read('apps/desktop/src-tauri/capabilities/desktop.json'));
 const permissions = capability.permissions ?? [];
-/* Every capability there is — a new file, or one inline in tauri.conf.json —
-   so that neither permission can come back somewhere this does not look. */
-const capabilityDir = join(ROOT, 'apps/desktop/src-tauri/capabilities');
-const everyPermission = readdirSync(capabilityDir)
-  .filter((name) => name.endsWith('.json'))
-  .flatMap((name) =>
-    (JSON.parse(read(`apps/desktop/src-tauri/capabilities/${name}`)).permissions ?? []).map((permission) =>
-      typeof permission === 'string' ? permission : permission.identifier,
-    ),
+/* Every capability there is, found as Tauri finds them — every file under
+   capabilities/, at any depth, and inline in every tauri*.conf.json — and in
+   each shape a file may have: one capability, a list of them, or
+   `{ "capabilities": [...] }`. So that neither permission can come back
+   somewhere this does not look (the review of c144c3c). A file of a kind it
+   cannot read — Tauri also reads JSON5 and TOML — is a failure of its own. */
+const TAURI_DIR = join(ROOT, 'apps/desktop/src-tauri');
+const under = (dir) =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory() ? under(join(dir, entry.name)) : [join(dir, entry.name)],
   );
-const inline = JSON.parse(read('apps/desktop/src-tauri/tauri.conf.json')).app?.security?.capabilities ?? [];
+const capabilityFiles = under(join(TAURI_DIR, 'capabilities'));
+const configFiles = readdirSync(TAURI_DIR)
+  .filter((name) => /^tauri\b.*\.conf\.(json|json5|toml)$/i.test(name) || /^Tauri.*\.toml$/.test(name))
+  .map((name) => join(TAURI_DIR, name));
+const unreadable = [...capabilityFiles, ...configFiles].filter((path) => !path.endsWith('.json'));
+const capabilitiesIn = (value) =>
+  Array.isArray(value) ? value : Array.isArray(value?.capabilities) ? value.capabilities : [value];
+const permissionsOf = (capability) =>
+  typeof capability === 'string'
+    ? []
+    : (capability?.permissions ?? []).map((permission) =>
+        typeof permission === 'string' ? permission : permission?.identifier,
+      );
+const everyPermission = [
+  ...capabilityFiles
+    .filter((path) => path.endsWith('.json'))
+    .flatMap((path) => capabilitiesIn(JSON.parse(readFileSync(path, 'utf8')))),
+  ...configFiles
+    .filter((path) => path.endsWith('.json'))
+    .flatMap((path) => JSON.parse(readFileSync(path, 'utf8')).app?.security?.capabilities ?? []),
+].flatMap(permissionsOf);
 /* The plugin's own `check` takes a proxy from whoever calls it, and a proxy
    named by script in the page carries what it read out of the program from
    Rust, where the CSP does not reach. The page asks through the core's own two
@@ -151,9 +172,13 @@ check(
   (capability.platforms ?? []).join(', '),
 );
 check(
+  'every capability file is one this check can read',
+  unreadable.length === 0,
+  unreadable.map((path) => path.slice(ROOT.length + 1)).join(', '),
+);
+check(
   'while no capability anywhere grants the updater or a restart',
-  !everyPermission.some((name) => name.startsWith('updater:') || name.startsWith('process:')) &&
-    !JSON.stringify(inline).match(/"(updater|process):/),
+  !everyPermission.some((name) => /^(updater|process):/.test(name ?? '')),
   everyPermission.join(', '),
 );
 
@@ -163,7 +188,7 @@ const lib = read('apps/desktop/src-tauri/src/lib.rs');
 const install = lib.slice(lib.indexOf('async fn install_update('), lib.indexOf('/// A phone updates through its store.'));
 check(
   'the core restarts it after an installed update',
-  install.includes('.map_err(|err| err.to_string())?;') && install.includes('app.restart()'),
+  /download_and_install\([\s\S]*?\.await\s*\.map_err\([\s\S]*?\)\?;[\s\S]*app\.restart\(\)/.test(install),
 );
 check('the plugin is registered', lib.includes('tauri_plugin_updater::Builder::new()'));
 /* The process plugin is what a page would restart the program through. It
@@ -442,14 +467,19 @@ check(
 );
 /* Card 515: script in the page could ask for an install with no click, and
    an install closes the program under the person. */
-const asks = install.indexOf('ask(&app, &asked');
+/* Read without its comments, which can name what the code no longer does
+   (the review of c144c3c). */
+const code = install.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+const asks = code.indexOf('ask(&app, &asked');
+const locked = code.indexOf('questions.0.try_lock()');
 check(
-  'and the core asks the person before an install, paced',
-  install.includes('trust::update_question(') &&
-    install.includes('may_ask(') &&
-    install.includes('declined(') &&
-    asks >= 0 &&
-    asks < install.indexOf('download_and_install('),
+  'and the core asks the person before an install, one question at a time, paced',
+  code.includes('trust::update_question(') &&
+    code.includes('may_ask(') &&
+    code.includes('asking().declined(') &&
+    locked >= 0 &&
+    asks > locked &&
+    asks < code.indexOf('download_and_install('),
 );
 
 /* Where the signatures are read from.

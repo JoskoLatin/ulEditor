@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the main window. File system access does NOT go through the fs plugin but through our own commands in ul-core, which enforce a sandbox rooted at the workspace. The window permissions are the ones the frame in the interface needs: the window has no system title bar, so minimising, maximising, closing and dragging are ours to do. The updater and the restart that follows it are in `desktop.json`, because those plugins do not exist in the Android build and a permission naming a plugin that was never compiled fails the build script rather than being ignored.",
+  "description": "Default permissions for the main window. File system access does NOT go through the fs plugin but through our own commands in ul-core, which enforce a sandbox rooted at the workspace. The window permissions are the ones the frame in the interface needs: the window has no system title bar, so minimising, maximising, closing and dragging are ours to do. Nothing here reaches the updater or a restart: the page asks the core's `check_update` and `install_update`, the core asks the person before an install and restarts the program itself, and no capability grants either (`tools/verify-updates.mjs`). A permission a desktop-only plugin needs goes in `desktop.json`, since the Android build does not compile those plugins and a permission naming one fails the build script rather than being ignored.",
   "windows": ["main"],
   "permissions": [
     "core:default",

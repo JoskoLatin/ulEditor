@@ -435,17 +435,24 @@ async fn pick_save_target(
 /// space, and the punctuation names are made of — no right-to-left override
 /// to show `ugovor\u{202E}fdp.exe` as "ugovorexe.pdf", no invisible mark,
 /// nothing Windows would quietly drop (a trailing dot or space) or take for a
-/// device (`CON`, `NUL.txt`, also in full-width letters), no run of spaces,
-/// no more than a few in all, and no letter drawn as nothing to push an
-/// extension out of sight, no `%` for the dialog to expand into a path, and
-/// not too long to be read whole. Anything else is offered as "untitled", and
-/// the person names it.
+/// device (`CON`, `NUL.txt`, also in full-width letters), nothing to push an
+/// extension out of sight — no run of spaces, no more than a few spaces or
+/// marks in all (dots, dashes, underscores, the Arabic tatweel), no letter
+/// drawn as nothing — no `%` for the dialog to expand into a path, and not too
+/// long to be read whole. Anything else is offered as "untitled", and the
+/// person names it.
 fn offered_name(suggested: &str) -> String {
     const LONGEST: usize = 120;
     /* A space with a combining mark after it is not two spaces, and fifty of
     them pushed `.exe` along a dotted line (the review of 396a4f9); a real
     name has a handful. */
     const MOST_SPACES: usize = 8;
+    /* And what is drawn as a line or a row of dots — `_`, `.`, `-`, the
+    tatweel that stretches Arabic — pushes it just as far, alone or taking
+    turns (`._._._`): no more than this of everything but letters and digits
+    (the review of c144c3c). A real name has a handful. */
+    const MOST_MARKS: usize = 16;
+    const TATWEEL: char = '\u{0640}';
     /* `CLOCK$`, `COM0` and `LPT0` are not devices on Windows 11 any more, and
     are kept out all the same. */
     const DEVICES: [&str; 33] = [
@@ -504,6 +511,11 @@ fn offered_name(suggested: &str) -> String {
         && last.chars().any(char::is_alphanumeric)
         && !last.contains("  ")
         && last.chars().filter(|c| *c == ' ').count() <= MOST_SPACES
+        && last
+            .chars()
+            .filter(|c| !c.is_alphanumeric() || *c == TATWEEL)
+            .count()
+            <= MOST_MARKS
         && last.chars().all(|c| {
             (c.is_alphanumeric() && !trust::BLANK_LETTERS.contains(&c))
                 || " -_.,()[]{}'!@#$+=~;&".contains(c)
@@ -615,6 +627,9 @@ fn open_external(_url: String) -> Result<bool, VfsError> {
 struct Updates {
     found: Mutex<Option<tauri_plugin_updater::Update>>,
     asking: Mutex<trust::Links>,
+    /// Set by a yes, until the download fails: asked again while it runs,
+    /// the page gets no second question over it (the review of c144c3c).
+    installing: std::sync::atomic::AtomicBool,
 }
 
 /// What the page is told about an update: which version, over which.
@@ -700,10 +715,15 @@ async fn install_update(
         .clone()
         .ok_or_else(|| "No update was found to install.".to_string())?;
 
+    use std::sync::atomic::Ordering;
+
     let questions = app.state::<Questions>();
     let Ok(asking_now) = questions.0.try_lock() else {
         return Ok(false);
     };
+    if updates.installing.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
     let asking = || updates.asking.lock().expect("the asking lock is poisoned");
     if !asking().may_ask(std::time::Instant::now()) {
         return Err(trust::update_paused(ui_language.as_deref()));
@@ -714,12 +734,15 @@ async fn install_update(
         &update.current_version,
     );
     let answer = ask(&app, &asked, tauri_plugin_dialog::MessageDialogKind::Info).await;
-    // Not held through the download: other questions may come up meanwhile.
-    drop(asking_now);
     if answer != trust::Answer::Trust {
         asking().declined(std::time::Instant::now());
         return Ok(false);
     }
+    updates.installing.store(true, Ordering::SeqCst);
+    /* Held until the no is written down or the yes marked, so that no second
+    question comes up in between (the review of c144c3c); not through the
+    download, so that other questions may come up meanwhile. */
+    drop(asking_now);
 
     let mut started = false;
     update
@@ -736,7 +759,11 @@ async fn install_update(
             },
         )
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            // Failed: the person may try again.
+            updates.installing.store(false, Ordering::SeqCst);
+            err.to_string()
+        })?;
     /* The restart is the core's, and only here: a page that could restart
     the program could start every question paced "for the session" afresh
     (the review of 46418d0). On Windows the installer has closed the program
@@ -2685,6 +2712,16 @@ mod tests {
         assert_eq!(offered_name("lpt0"), "untitled");
         assert_eq!(offered_name("\u{FF23}\u{FF2F}\u{FF2E}.txt"), "untitled"); // ＣＯＮ
         assert_eq!(offered_name("\u{FF2E}ul.txt"), "untitled"); // Ｎul
+                                                                // The review of c144c3c: what is drawn, pushing `.exe` along all the same.
+        for padding in ["_", ".", "-", "\u{0640}", "._", ".\u{345}"] {
+            let name = format!("invoice.pdf{}.exe", padding.repeat(100 / padding.len()));
+            let name: String = name.chars().take(115).chain(".exe".chars()).collect();
+            assert_eq!(offered_name(&name), "untitled", "{padding:?}");
+        }
+        assert_eq!(
+            offered_name("2026-10-11 ulEditor - dnevnik (kopija) [v2].pdf"),
+            "2026-10-11 ulEditor - dnevnik (kopija) [v2].pdf"
+        );
         assert_eq!(offered_name("Plan - stranice.pdf"), "Plan - stranice.pdf");
         assert_eq!(offered_name("console.log.txt"), "console.log.txt");
     }

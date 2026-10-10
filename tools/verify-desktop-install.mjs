@@ -11,8 +11,11 @@
  *
  * - "Not now": nothing past the manifest, and the page is told no;
  * - asked again at once: no dialog drawn, and the reason;
+ * - under another of the core's questions, a link's: none drawn over it;
  * - half a minute later, the yes: the installer is fetched, and turned away,
- *   since its signature is not one — and the program is still running.
+ *   since its signature is not one — and the program is still running; asked
+ *   again while it downloads, no second question; once it has failed, the
+ *   question again.
  *
  * Built as it ships, under an identifier of its own, so that an ulEditor the
  * person has open is left alone. Takes about a minute after the build, half of
@@ -65,8 +68,10 @@ const server = createServer((request, response) => {
     return;
   }
   if (request.url === '/installer.exe') {
+    /* Slow, so that the download is still running when the page asks again. */
     response.writeHead(200, { 'content-type': 'application/octet-stream' });
-    response.end(Buffer.alloc(4096, 0x5a));
+    response.write(Buffer.alloc(2048, 0x5a));
+    setTimeout(() => response.end(Buffer.alloc(2048, 0x5a)), 4000);
     return;
   }
   response.writeHead(404);
@@ -119,6 +124,27 @@ try {
   const found = await invoke('check_update', {});
   check('the build finds what the manifest offers', found.ok?.version === '9.9.9', JSON.stringify(found));
 
+  /* ── one question at a time ──────────────────────────────────────────── */
+  /* While another of the core's questions is on the screen — a link's — an
+     install asked for draws none over it (the review of c144c3c): two
+     stacked, each with its yes in the middle, and the yes of one could be
+     pressed for the other. Raced against a wait, so that one drawn after all
+     fails this rather than holds it. */
+  const linking = invoke('open_external', { url: 'https://example.com/ul-check', uiLanguage: 'en' });
+  await sleep(1500);
+  const during = install();
+  const settled = await Promise.race([during, sleep(3000).then(() => 'still waiting')]);
+  check(
+    'an install asked for under another question draws none over it',
+    settled?.ok === false,
+    JSON.stringify(settled),
+  );
+  const closed = pressDialog(NOT_NOW, 10);
+  check('and the question under it was the link’s', /^pressed: Open a link to example\.com\?$/.test(closed), closed);
+  if (settled === 'still waiting') pressDialog(NOT_NOW, 5);
+  await Promise.all([linking, during]);
+  check('and nothing was fetched for it', !installerFetched(), fetched.join(' '));
+
   /* ── "Not now" ───────────────────────────────────────────────────────── */
   const declined = install();
   await sleep(500); // pressDialog blocks: let the call go out first
@@ -149,6 +175,18 @@ try {
   await sleep(500);
   const askedAgain = pressDialog(YES, 60);
   check('half a minute later it asks again', /^pressed: Install ulEditor 9\.9\.9\?$/.test(askedAgain), askedAgain);
+
+  /* Asked again while it downloads: no second question over it (the review
+     of c144c3c). */
+  await sleep(1000);
+  const meanwhile = install();
+  const whileDownloading = await Promise.race([meanwhile, sleep(2000).then(() => 'still waiting')]);
+  if (whileDownloading === 'still waiting') pressDialog(NOT_NOW, 5);
+  check(
+    'asked again while it downloads: no second question',
+    whileDownloading?.ok === false,
+    JSON.stringify(whileDownloading),
+  );
   const yes = await accepted;
   check('the yes fetches the installer', installerFetched(), fetched.join(' '));
   check(
@@ -160,6 +198,13 @@ try {
     'and the program is still running',
     (await page.evaluate(() => document.readyState).catch(() => 'gone')) === 'complete',
   );
+
+  /* A download that failed may be tried again: asked about once more. */
+  const retry = install();
+  await sleep(500);
+  const askedRetry = pressDialog(NOT_NOW, 10);
+  check('a failed download may be tried again', /^pressed: Install ulEditor 9\.9\.9\?$/.test(askedRetry), askedRetry);
+  await retry;
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-install.png') });
 } catch (err) {

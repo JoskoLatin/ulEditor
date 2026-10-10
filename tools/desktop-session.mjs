@@ -25,6 +25,32 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
    its own, and a check pressed a button in that one's dialog. */
 const OWN_BUILDS = `${join(ROOT, 'target', 'debug')}\\`.replaceAll("'", "''");
 
+/** The process `startDesktop` started last — the program itself when built,
+    `pnpm tauri dev` otherwise — until `stopDesktop`. */
+let started = null;
+
+/**
+ * PowerShell setting `$app` to the program a dialog is answered in: one the
+ * session started, found among what that process started; without a session,
+ * one built in this checkout. By the path alone, a person's own `tauri dev`
+ * of this same checkout would do as well, and a check could press a yes in
+ * that one's question (the review of c144c3c).
+ */
+function appLookup() {
+  if (!started) {
+    return `$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase') } | Select-Object -First 1).ProcessId`;
+  }
+  return `$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name)
+$ours = @{ [uint32]${started} = $true }
+do {
+  $more = $false
+  foreach ($p in $all) {
+    if ($ours.ContainsKey([uint32]$p.ParentProcessId) -and -not $ours.ContainsKey([uint32]$p.ProcessId)) { $ours[[uint32]$p.ProcessId] = $true; $more = $true }
+  }
+} while ($more)
+$app = ($all | Where-Object { $_.Name -eq 'uleditor-desktop.exe' -and $ours.ContainsKey([uint32]$_.ProcessId) } | Select-Object -First 1).ProcessId`;
+}
+
 /**
  * Brings the application up and returns the attached page.
  *
@@ -135,6 +161,7 @@ export async function startDesktop(opts = {}) {
     }
     app = spawn('pnpm', args, { cwd: ROOT, shell: true, env, stdio });
   }
+  started = app.pid;
 
   const until = Date.now() + timeoutMs;
   let lastError;
@@ -260,7 +287,7 @@ public static class UlTrust {
   }
 }
 '@
-$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase') } | Select-Object -First 1).ProcessId
+${appLookup()}
 $said = 'no application'
 for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
   $said = [UlTrust]::Press([uint32]$app, ${button})
@@ -327,7 +354,7 @@ public static class UlFileDialog {
   public static void Press(IntPtr dialog, int id) { PostMessage(dialog, 0x0111, (IntPtr)id, IntPtr.Zero); }
 }
 '@
-$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase') } | Select-Object -First 1).ProcessId
+${appLookup()}
 $said = 'no application'
 for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
   $title = ''
@@ -353,6 +380,7 @@ $said`;
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});
+  if (session?.app?.pid === started) started = null;
   killTree(session?.app);
   await new Promise((r) => setTimeout(r, 1500));
 }
