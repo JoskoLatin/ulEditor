@@ -21,7 +21,7 @@
  * should at least admit it in the menu where it can be switched off.
  */
 
-import { t } from '@uleditor/i18n';
+import { getLocale, t } from '@uleditor/i18n';
 
 import type { Shell } from '../host/index.js';
 import { native } from '../host/native.js';
@@ -36,7 +36,8 @@ const LAST_CHECK = 'updates.lastCheck';
 interface Available {
   version: string;
   currentVersion: string;
-  downloadAndInstall(onEvent?: (event: { event: string; data?: unknown }) => void): Promise<void>;
+  /** False when the person said no in the core's own question, or none could be asked. */
+  downloadAndInstall(onEvent?: (event: { event: string; data?: unknown }) => void): Promise<boolean>;
 }
 
 /**
@@ -122,7 +123,9 @@ export async function checkForUpdates(shell: Shell, options: { silent?: boolean 
       downloadAndInstall: (onEvent) => {
         const progress = new Channel<{ event: string; data?: unknown }>();
         if (onEvent) progress.onmessage = onEvent;
-        return invoke<void>('install_update', { onEvent: progress });
+        /* The core asks the person first, in a dialog the system draws; the
+           interface language picks which wording, never what it says. */
+        return invoke<boolean>('install_update', { onEvent: progress, uiLanguage: getLocale() });
       },
     };
     shell.settings.set(LAST_CHECK, Date.now());
@@ -183,8 +186,15 @@ function offer(shell: Shell, update: Available): void {
 
 async function install(shell: Shell, update: Available): Promise<void> {
   /* One notice for the whole download, replaced rather than added to: a toast
-     per percent would bury everything else on the screen. */
-  let progress = shell.notify.show('info', t('Downloading {version}…', { version: update.version }));
+     per percent would bury everything else on the screen. Shown when the
+     download starts, not before: first the core asks, and a "Downloading…"
+     behind its question would answer it for the person. */
+  let progress: { dispose(): void } | null = null;
+  const showing = (text: string): void => {
+    progress?.dispose();
+    progress = shell.notify.show('info', text);
+  };
+  const done = (): void => progress?.dispose();
   let total = 0;
   let taken = 0;
 
@@ -193,6 +203,7 @@ async function install(shell: Shell, update: Available): Promise<void> {
       if (event.event === 'Started') {
         const data = event.data as { contentLength?: number } | undefined;
         total = data?.contentLength ?? 0;
+        showing(t('Downloading {version}…', { version: update.version }));
         return;
       }
       if (event.event !== 'Progress') return;
@@ -202,20 +213,17 @@ async function install(shell: Shell, update: Available): Promise<void> {
       if (total <= 0) return;
 
       const percent = Math.min(100, Math.round((taken / total) * 100));
-      progress.dispose();
-      progress = shell.notify.show(
-        'info',
-        t('Downloading {version}… {percent}%', { version: update.version, percent }),
-      );
+      showing(t('Downloading {version}… {percent}%', { version: update.version, percent }));
     });
 
-    progress.dispose();
-
-    /* The core restarts the program once the update is in place: the page
-       has no permission to, since a page that could restart it could start
-       every question paced for the session afresh. */
+    done();
+    /* False is a no in the core's question: the person's own answer, which
+       needs no word from here. Otherwise the core restarts the program once
+       the update is in place: the page has no permission to, since a page that
+       could restart it could start every question paced for the session
+       afresh. */
   } catch (err) {
-    progress.dispose();
+    done();
     shell.notify.show(
       'error',
       t('The update could not be installed: {reason}', {

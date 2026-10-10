@@ -342,6 +342,57 @@ fn site_end(site: &str) -> String {
     format!("…{end}")
 }
 
+/// The question asked before an update is downloaded and installed, in the
+/// same three buttons as `question`, the middle one the yes. The page can ask
+/// for the install with no click at all; it cannot answer this (the final
+/// review of 396a4f9). The versions come from the update's manifest, so they
+/// are written as `shown` writes any name.
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn update_question(interface: Option<&str>, version: &str, current: &str) -> Question {
+    let version = shown(version);
+    let current = shown(current);
+    if interface == Some("hr") {
+        Question {
+            title: format!("Instalirati ulEditor {version}?"),
+            body: format!(
+                "ulEditor {current} preuzet će verziju {version}, provjeriti da su je \
+                 potpisali njegovi autori, instalirati je i ponovno se pokrenuti.\n\n\
+                 Prvo spremi što radiš: program se zatvara da bi se instalirao."
+            ),
+            not_now: "Ne sada".into(),
+            trust: "Instaliraj i ponovno pokreni".into(),
+            cancel: "Odustani".into(),
+        }
+    } else {
+        Question {
+            title: format!("Install ulEditor {version}?"),
+            body: format!(
+                "ulEditor {current} will download version {version}, check that its \
+                 authors signed it, install it and start again.\n\n\
+                 Save your work first: the program closes to install it."
+            ),
+            not_now: "Not now".into(),
+            trust: "Install and restart".into(),
+            cancel: "Cancel".into(),
+        }
+    }
+}
+
+/// Why no question came up before an install: one was answered "Not now" a
+/// moment ago, or three were this session (`Updates::asking`).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn update_paused(interface: Option<&str>) -> String {
+    if interface == Some("hr") {
+        "ulEditor je upravo pitao za ovo ažuriranje: ponovno pita za pola minute, a nakon \
+         tri „Ne sada” tek kad se ponovno pokrene."
+            .into()
+    } else {
+        "ulEditor asked about this update a moment ago: it asks again in half a minute, \
+         and after three \"Not now\" only once it is started again."
+            .into()
+    }
+}
+
 /// Why a language server did not start without a question: one was answered
 /// "Not now" a moment ago, or three were this session (`LspState::asking`).
 #[cfg_attr(mobile, allow(dead_code))]
@@ -980,5 +1031,43 @@ mod tests {
         assert_eq!(asked.trust, "Vjerujem, pokreni");
         let asked = question(Some("fr"), "python", Path::new("/home/a/repo"));
         assert!(asked.body.starts_with("To check Python code"));
+    }
+
+    /// The question before an install names both versions and says the
+    /// program closes; the yes is the middle button, as in every question
+    /// here. The versions are the manifest's, so they are written out where
+    /// they are not plain.
+    #[test]
+    fn an_install_is_asked_about_in_plain_words() {
+        let asked = update_question(Some("en"), "0.6.5", "0.6.4");
+        assert_eq!(asked.title, "Install ulEditor 0.6.5?");
+        assert!(asked
+            .body
+            .starts_with("ulEditor 0.6.4 will download version 0.6.5"));
+        assert!(asked.body.contains("the program closes"));
+        assert_eq!(
+            (
+                asked.not_now.as_str(),
+                asked.trust.as_str(),
+                asked.cancel.as_str()
+            ),
+            ("Not now", "Install and restart", "Cancel")
+        );
+        let asked = update_question(Some("hr"), "0.6.5", "0.6.4");
+        assert_eq!(asked.title, "Instalirati ulEditor 0.6.5?");
+        assert_eq!(asked.trust, "Instaliraj i ponovno pokreni");
+
+        let asked = update_question(Some("en"), "9.9.9\u{202E}6.0.0", "0.6.4\n\nOK");
+        assert!(
+            asked.title.contains("9.9.9\\u{202E}6.0.0"),
+            "{}",
+            asked.title
+        );
+        assert!(
+            asked.body.contains("ulEditor 0.6.4\\u{000A}\\u{000A}OK"),
+            "{}",
+            asked.body
+        );
+        assert!(update_paused(Some("hr")).contains("pola minute"));
     }
 }

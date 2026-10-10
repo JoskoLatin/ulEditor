@@ -599,10 +599,14 @@ fn open_external(_url: String) -> Result<bool, VfsError> {
 
 /* ── updates ─────────────────────────────────────────────────────────── */
 
-/// The update `check_update` found, kept here until the person takes it.
+/// The update `check_update` found, kept here until the person takes it, and
+/// how often the page may bring up the question before it is installed.
 #[cfg(desktop)]
 #[derive(Default)]
-struct Updates(Mutex<Option<tauri_plugin_updater::Update>>);
+struct Updates {
+    found: Mutex<Option<tauri_plugin_updater::Update>>,
+    asking: Mutex<trust::Links>,
+}
 
 /// What the page is told about an update: which version, over which.
 #[cfg(desktop)]
@@ -641,7 +645,7 @@ async fn check_update(
         version: update.version.clone(),
         current_version: update.current_version.clone(),
     });
-    *updates.0.lock().expect("the update lock is poisoned") = found;
+    *updates.found.lock().expect("the update lock is poisoned") = found;
     Ok(available)
 }
 
@@ -661,21 +665,53 @@ enum Downloading {
     Finished,
 }
 
-/// Downloads and installs the update `check_update` found. Nothing of it runs
-/// unless it verifies against the public key compiled into the program.
+/// Downloads and installs the update `check_update` found, once the person has
+/// said yes in a dialog the system draws, and says whether it did. Nothing of
+/// it runs unless it verifies against the public key compiled into the
+/// program.
+///
+/// The page offers the update and asks for it to be installed when "Install
+/// and restart" is clicked — but script in the page could ask with no click at
+/// all, and the program would close and start again under the person, whatever
+/// they had not saved (the final review of 396a4f9). So the core asks first, in
+/// the three buttons of the trust question, paced as a link is: half a minute
+/// after a no, and not again this session after three.
 #[cfg(desktop)]
 #[tauri::command]
 async fn install_update(
     app: tauri::AppHandle,
     updates: State<'_, Updates>,
     on_event: tauri::ipc::Channel<Downloading>,
-) -> Result<(), String> {
+    ui_language: Option<String>,
+) -> Result<bool, String> {
     let update = updates
-        .0
+        .found
         .lock()
         .expect("the update lock is poisoned")
         .clone()
         .ok_or_else(|| "No update was found to install.".to_string())?;
+
+    let questions = app.state::<Questions>();
+    let Ok(asking_now) = questions.0.try_lock() else {
+        return Ok(false);
+    };
+    let asking = || updates.asking.lock().expect("the asking lock is poisoned");
+    if !asking().may_ask(std::time::Instant::now()) {
+        return Err(trust::update_paused(ui_language.as_deref()));
+    }
+    let asked = trust::update_question(
+        ui_language.as_deref(),
+        &update.version,
+        &update.current_version,
+    );
+    let answer = ask(&app, &asked, tauri_plugin_dialog::MessageDialogKind::Info).await;
+    // Not held through the download: other questions may come up meanwhile.
+    drop(asking_now);
+    if answer != trust::Answer::Trust {
+        asking().declined(std::time::Instant::now());
+        return Ok(false);
+    }
+
     let mut started = false;
     update
         .download_and_install(
@@ -708,7 +744,7 @@ fn check_update() -> Result<Option<()>, String> {
 
 #[cfg(mobile)]
 #[tauri::command]
-fn install_update() -> Result<(), String> {
+fn install_update() -> Result<bool, String> {
     Err("This build updates where it was installed from.".into())
 }
 

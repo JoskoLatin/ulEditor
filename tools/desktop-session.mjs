@@ -19,6 +19,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+/* Where this checkout builds the program, as PowerShell reads a path: a
+   dialog is answered only in a copy built here. Any `target\debug` would do
+   as well until a second checkout — a worktree, another session — runs one of
+   its own, and a check pressed a button in that one's dialog. */
+const OWN_BUILDS = `${join(ROOT, 'target', 'debug')}\\`.replaceAll("'", "''");
+
 /**
  * Brings the application up and returns the attached page.
  *
@@ -79,9 +85,11 @@ function childEnv(port, profile, opts) {
  * profile (`UL_DATA_DIR`) still applies. For `startDesktop({ built: true })`.
  * Under an identifier of its own, for the reason `startDesktop` gives.
  */
-export async function buildDesktop(identifier) {
+export async function buildDesktop(identifier, more = {}) {
   const config = join(await mkdtemp(join(tmpdir(), 'ul-build-')), 'tauri.check.json');
-  await writeFile(config, JSON.stringify({ identifier }));
+  /* `more` is merged over tauri.conf.json as the identifier is — an updater
+     endpoint a check serves itself, say. */
+  await writeFile(config, JSON.stringify({ ...more, identifier }));
   const built = spawnSync(
     'pnpm',
     ['--filter', '@uleditor/desktop', 'tauri', 'build', '--debug', '--no-bundle', '--config', config],
@@ -252,7 +260,7 @@ public static class UlTrust {
   }
 }
 '@
-$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -like '*\\target\\debug\\*' } | Select-Object -First 1).ProcessId
+$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase') } | Select-Object -First 1).ProcessId
 $said = 'no application'
 for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
   $said = [UlTrust]::Press([uint32]$app, ${button})
@@ -319,7 +327,7 @@ public static class UlFileDialog {
   public static void Press(IntPtr dialog, int id) { PostMessage(dialog, 0x0111, (IntPtr)id, IntPtr.Zero); }
 }
 '@
-$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -like '*\\target\\debug\\*' } | Select-Object -First 1).ProcessId
+$app = (Get-CimInstance Win32_Process -Filter "Name='uleditor-desktop.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase') } | Select-Object -First 1).ProcessId
 $said = 'no application'
 for ($i = 0; $app -and $i -lt ${seconds * 4}; $i++) {
   $title = ''

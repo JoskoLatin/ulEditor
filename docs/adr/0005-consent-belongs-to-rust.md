@@ -260,6 +260,13 @@ the yes pressed to make it stop. So each is paced, by what a refusal costs:
   with no limit per session — people cancel those and try again all day.
   "Save as" is offered the page's suggestion as a plain name only, never a
   path or a character that does not read as what it is.
+- **Installing an update** (card 515, 2026-10-11): the page asks for the
+  install when "Install and restart" is clicked, but script in it could ask
+  with no click, and an install closes the program under the person. The
+  core now asks first, in the trust question's three buttons, paced as a
+  link is; nothing is downloaded before the yes
+  (`tools/verify-desktop-install.mjs`, which serves the manifest itself).
+  The page has no process plugin left to restart the program through.
 
 Every file dialog shares the one-question lock with the core's other
 questions. A gesture in one of the program's own folders — now including

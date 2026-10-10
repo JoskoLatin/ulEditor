@@ -431,12 +431,25 @@ check(
     updates.includes("'install_update'") &&
     !read('packages/shell-ui/src/host/native.ts').includes('plugin-updater'),
 );
+/* The interface language picks which wording the core's question is in, never
+   what it says — as for the trust question (trust.rs). */
 check(
-  "and the core's two commands take nothing from the page but a progress channel",
+  "and the core's two commands take nothing from the page but a progress channel and the interface language",
   /async fn check_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,?\s*\)/.test(lib) &&
-    /async fn install_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,\s*on_event: tauri::ipc::Channel<Downloading>,?\s*\)/.test(
+    /async fn install_update\(\s*app: tauri::AppHandle,\s*updates: State<'_, Updates>,\s*on_event: tauri::ipc::Channel<Downloading>,\s*ui_language: Option<String>,?\s*\)/.test(
       lib,
     ),
+);
+/* Card 515: script in the page could ask for an install with no click, and
+   an install closes the program under the person. */
+const asks = install.indexOf('ask(&app, &asked');
+check(
+  'and the core asks the person before an install, paced',
+  install.includes('trust::update_question(') &&
+    install.includes('may_ask(') &&
+    install.includes('declined(') &&
+    asks >= 0 &&
+    asks < install.indexOf('download_and_install('),
 );
 
 /* Where the signatures are read from.

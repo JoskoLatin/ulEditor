@@ -88,6 +88,7 @@
     "verify:desktop-diagram": "node tools/verify-desktop-diagram.mjs",
     "verify:desktop-image": "node tools/verify-desktop-image.mjs",
     "verify:desktop-updates": "node tools/verify-desktop-updates.mjs",
+    "verify:desktop-install": "node tools/verify-desktop-install.mjs",
     "verify:desktop-convert": "node tools/verify-desktop-convert.mjs",
     "verify:desktop-lsp": "node tools/verify-desktop-lsp.mjs",
     "verify:desktop-close": "node tools/verify-desktop-close.mjs",
