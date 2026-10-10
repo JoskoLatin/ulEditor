@@ -109,6 +109,29 @@ try {
 
     await page.locator('.ul-vec-convert').first().click();
 
+    /* While that one runs, a second is turned away rather than queued (card
+       515): the page can ask for any number, with no gesture, and each would
+       copy the file and start a LibreOffice. Asked once the first is under
+       way — its notice is up just before the core is asked. */
+    const underWay = await until(
+      async () => (await page.locator('.toast', { hasText: 'Converting crtez.eps' }).count()) > 0,
+      20000,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    const second = await page.evaluate(
+      (path) =>
+        window.__TAURI_INTERNALS__.invoke('convert_to_pdf', { path }).then(
+          () => 'converted',
+          (err) => String(err),
+        ),
+      join(workspace, 'crtez.eps'),
+    );
+    check(
+      'a second conversion asked for meanwhile is turned away',
+      underWay && /another file is being converted/.test(second),
+      second,
+    );
+
     /* Two minutes: the first run of a fresh profile builds it, and this is the
        one place in the program where something genuinely takes that long. */
     const opened = await until(

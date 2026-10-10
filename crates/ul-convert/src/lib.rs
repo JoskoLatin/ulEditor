@@ -68,6 +68,10 @@ pub enum ConvertError {
         "PostScript is not converted on this system: LibreOffice would hand it to Ghostscript, which runs it as the program it is"
     )]
     PostscriptNotRun,
+    #[error("this file is larger than the {0} MiB LibreOffice is given here")]
+    TooLarge(u64),
+    #[error("another file is being converted — try again when it is done")]
+    Busy,
     #[error("file system error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -120,6 +124,13 @@ pub fn formats() -> &'static [&'static str] {
         &["cdr"]
     }
 }
+
+/// The largest file handed to LibreOffice: a drawing's size, not a disk's.
+/// Copied before it is checked (`to_pdf`), a file the page asks for can be
+/// any size, and as many times as it likes (the review of 8784711); the
+/// largest drawing among Čovik's files is under 15 MB, and a picture is held
+/// to the same in ul-image.
+pub const MOST_BYTES: u64 = 512 * 1024 * 1024;
 
 /// The DOS EPS header: an `.eps` carrying a binary preview beside its
 /// PostScript.
@@ -669,7 +680,7 @@ pub fn to_pdf(
     nothing left for the page to swap. */
     let staging = Staging::new(workdir)?;
     let staged = staging.0.join(name);
-    std::fs::copy(source, &staged)?;
+    copy_at_most(source, &staged, MOST_BYTES)?;
 
     // The content, not the name: a file whose bytes are not one of the four
     // formats — HTML wearing a `.cdr` name, say — would be imported for what it
@@ -690,6 +701,23 @@ pub fn to_pdf(
         .spawn()
         .map_err(|err| ConvertError::Start(err.to_string()))?;
     watch(child, &expected, timeout)
+}
+
+/// `source` copied to `to`, a new file, so long as it is no larger than
+/// `most`: the copy stops one byte past it and is refused, so a file of any
+/// size costs at most that much room. A new file rather than `fs::copy`, which
+/// would carry a read-only source's flag onto a copy that then could not be
+/// cleared away.
+fn copy_at_most(source: &Path, to: &Path, most: u64) -> Result<(), ConvertError> {
+    let mut from = std::fs::File::open(source)?.take(most + 1);
+    let mut into = std::fs::File::create_new(to)?;
+    let copied = std::io::copy(&mut from, &mut into)?;
+    if copied > most {
+        drop(into);
+        let _ = std::fs::remove_file(to);
+        return Err(ConvertError::TooLarge(most / (1024 * 1024)));
+    }
+    Ok(())
 }
 
 /// How much of what LibreOffice says is kept for the message: a reason is in
@@ -1506,6 +1534,29 @@ showpage
 
     /// On Windows LibreOffice is given no PATH its helpers are on (`harden`),
     /// measured in card 505, so PostScript still goes to it.
+    /// A file the page asks for can be any size: no more than `most` is
+    /// copied, and a larger one is refused with nothing left behind.
+    #[test]
+    fn a_file_too_large_is_refused_before_it_is_all_copied() {
+        let dir = std::env::temp_dir().join(format!("ul-convert-large-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("drawing.cdr");
+        std::fs::write(&source, vec![b'x'; 2048]).unwrap();
+
+        let refused = copy_at_most(&source, &dir.join("over.cdr"), 2047);
+        assert!(
+            matches!(refused, Err(ConvertError::TooLarge(_))),
+            "{refused:?}"
+        );
+        assert!(!dir.join("over.cdr").exists());
+
+        copy_at_most(&source, &dir.join("at.cdr"), 2048).unwrap();
+        assert_eq!(std::fs::read(dir.join("at.cdr")).unwrap().len(), 2048);
+        const { assert!(MOST_BYTES >= 15 * 1024 * 1024) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Nothing sends a PDF here, so LibreOffice's PDF import is not one more
     /// parser a page can feed, on any platform (the review of 0f215cf).
     #[test]

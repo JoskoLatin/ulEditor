@@ -14,6 +14,8 @@
  *   node tools/verify-eps.mjs
  */
 
+import { readFileSync } from 'node:fs';
+
 import './ts-resolve.mjs';
 
 const { isDosEps, postscriptOf, isPostscript, dscFields } = await import(
@@ -114,8 +116,20 @@ const host = (available, formats) => ({
   ...(formats ? { formats: async () => formats } : {}),
   convert: async () => new Uint8Array(),
 });
-const everywhere = ['cdr', 'eps', 'ps', 'ai']; // what ul-convert lists on Windows
-const outsideWindows = ['cdr']; // and elsewhere
+/* What ul-convert lists on Windows and elsewhere, read out of its source, so
+   that the two cannot part without this seeing it. */
+const convertSource = readFileSync(new URL('../crates/ul-convert/src/lib.rs', import.meta.url), 'utf8');
+const listed = (pattern) => {
+  const found = convertSource.match(pattern);
+  return found ? [...found[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]) : [];
+};
+const everywhere = listed(/pub const FORMATS: \[&str; \d+\] = \[([^\]]*)\]/);
+const outsideWindows = listed(/pub fn formats\(\)[\s\S]*?\} else \{\s*&\[([^\]]*)\]/);
+check(
+  "the lists are ul-convert's own",
+  everywhere.length === 4 && outsideWindows.length === 1,
+  `${everywhere.join(' ')} | ${outsideWindows.join(' ')}`,
+);
 
 check('no LibreOffice: it says so', (await conversionOffer(host(false, everywhere), 'eps')) === 'missing');
 for (const extension of ['eps', 'ps', 'ai', 'cdr']) {

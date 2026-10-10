@@ -52,6 +52,15 @@ struct AppState {
 /// of the other (found by the independent review of N6).
 struct Questions(tokio::sync::Mutex<()>);
 
+/// Held while a document is converted. The page can ask for as many
+/// conversions as it likes, with no gesture, and each copies the file and
+/// starts a LibreOffice — on one profile when it is one document, where the
+/// second hands its job to the first and is dropped (the review of 8784711).
+/// So a second is turned away while one runs, rather than queued: a queue
+/// would hold a thread of the core's for each.
+#[derive(Default)]
+struct Converting(tokio::sync::Mutex<()>);
+
 /// The language servers, and the way their news reaches the window.
 ///
 /// One registry for the whole application: a server exists per language per
@@ -1218,8 +1227,12 @@ fn convert_backend() -> Option<Backend> {
 async fn convert_to_pdf(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    converting: State<'_, Converting>,
     path: String,
 ) -> Result<String, ConvertCommandError> {
+    let Ok(_converting) = converting.0.try_lock() else {
+        return Err(ConvertError::Busy.into());
+    };
     let source = with_workspace(&state, |workspace| workspace.resolve(&path))?;
     let backend = ul_convert::backend().ok_or(ConvertError::NotInstalled)?;
 
@@ -2315,6 +2328,7 @@ pub fn run() {
                 dialogs: Mutex::new(trust::Quiet::default()),
             });
             app.manage(Questions(tokio::sync::Mutex::new(())));
+            app.manage(Converting::default());
             /* The files the program was started with are a gesture too: granted
             now, and opened when the page asks for them. */
             let launched = paths_from(std::env::args());
