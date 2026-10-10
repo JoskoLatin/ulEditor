@@ -195,6 +195,23 @@ fn admit(head: &[u8]) -> Result<(), ConvertError> {
 /// two conversions are ever handed the same one.
 struct Staging(PathBuf);
 
+/// What this run of the program names its directories after: the process id
+/// and when the run first converted, so that no name is made again in a later
+/// run. With the process id alone, a run that died mid-conversion — `panic =
+/// "abort"`, so no `Drop` — could leave a LibreOffice behind that had not yet
+/// opened its copy, and a later run given the same id would clear that copy
+/// and make the same name again, with new bytes in it (the review of 7e695ea).
+fn run() -> &'static str {
+    static RUN: OnceLock<String> = OnceLock::new();
+    RUN.get_or_init(|| {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{}-{since:x}", std::process::id())
+    })
+}
+
 /// The directories conversions in this process are using now, which no
 /// clearing touches.
 fn running() -> std::sync::MutexGuard<'static, HashSet<PathBuf>> {
@@ -231,13 +248,13 @@ impl Staging {
         }
         loop {
             let next = NEXT.fetch_add(1, Ordering::Relaxed);
-            let dir = workdir.join(format!("{}-{next}", std::process::id()));
+            let dir = workdir.join(format!("{}-{next}", run()));
             match std::fs::create_dir(&dir) {
                 Ok(()) => {
                     running.insert(dir.clone());
                     return Ok(Self(dir));
                 }
-                // Left behind by an earlier run that had the same process id.
+                // Made since the clearing, by nobody this lock holds back.
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(err) => return Err(err),
             }
@@ -1375,6 +1392,23 @@ showpage
         let second = Staging::new(&workdir).unwrap();
         assert_ne!(first.0, second.0);
         assert!(first.0.starts_with(&workdir) && second.0.starts_with(&workdir));
+        /* Named after this run, not the process id alone, which a later run
+        can be given again. */
+        for staging in [&first, &second] {
+            let name = staging
+                .0
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let (run, next) = name.rsplit_once('-').unwrap();
+            assert_eq!(run, super::run(), "{name}");
+            assert!(
+                run.len() > std::process::id().to_string().len() + 1,
+                "{name}"
+            );
+            assert!(next.parse::<u64>().is_ok(), "{name}");
+        }
         std::fs::write(first.0.join("drawing.cdr"), b"RIFF").unwrap();
         assert!(!second.0.join("drawing.cdr").exists());
 
