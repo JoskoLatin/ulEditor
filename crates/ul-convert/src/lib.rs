@@ -1107,46 +1107,129 @@ mod tests {
     }
 
     /**
-     * The whole pipeline against the real thing.
+     * A PDF that shows a picture — which is not the same as a PDF.
      *
-     * `#[ignore]` rather than a self-skip: a test that passes on a machine
-     * without LibreOffice is a test that lies, and this repository has already
-     * been bitten once by a check whose only failure mode was a pass. CI has no
-     * office suite, so this is run by hand — `cargo test -p ul-convert --
-     * --ignored` — on a machine that has one.
+     * `%PDF` and a size are all the live test used to ask, and neither can fail:
+     * with no PostScript interpreter on the machine LibreOffice answers a
+     * PostScript file with its *placeholder* — a frame carrying the file's title
+     * and creator, 6–15 KB — which starts with `%PDF` and clears any size bar
+     * that a real page of a drawing would. A test that passes on the placeholder
+     * says nothing about whether anything was drawn.
      *
-     * The fixture is EPS written out here rather than a file in the repository:
-     * PostScript is text, so there is nothing binary to commit, and LibreOffice
-     * takes it through libcdr's sibling path — the same `draw_pdf_Export` filter
-     * a `.cdr` goes through.
+     * What the two differ in: the page LibreOffice makes from a DOS EPS carries
+     * the stored preview as an image object, whose dictionary is written in the
+     * clear; the placeholder is a frame and some text, with no image in it.
      */
+    fn pdf_shows_a_picture(pdf: &[u8]) -> bool {
+        contains(pdf, b"/Subtype/Image") || contains(pdf, b"/Subtype /Image")
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
     #[test]
-    #[ignore = "needs LibreOffice installed; run with: cargo test -p ul-convert -- --ignored"]
-    fn a_real_libreoffice_turns_postscript_into_a_pdf() {
+    fn a_pdf_with_an_image_object_shows_a_picture_and_a_frame_of_text_does_not() {
+        let spaced = b"%PDF-1.7\n5 0 obj\n<< /Type /XObject /Subtype /Image /Width 8 >>\nstream\n";
+        let packed = b"%PDF-1.7\n5 0 obj\n<</Type/XObject/Subtype/Image/Width 8>>\nstream\n";
+        let frame = b"%PDF-1.7\n5 0 obj\n<< /Type /Page /Subtype /Form >>\nstream\n";
+        assert!(pdf_shows_a_picture(spaced));
+        assert!(pdf_shows_a_picture(packed));
+        assert!(!pdf_shows_a_picture(frame));
+        assert!(!pdf_shows_a_picture(b""));
+    }
+
+    /// A small uncompressed RGB TIFF of one colour, made here so that nothing
+    /// binary is committed.
+    fn tiff_of(width: u16, height: u16, [r, g, b]: [u8; 3]) -> Vec<u8> {
+        const ENTRIES: u16 = 9;
+        const SHORT: u16 = 3;
+        const LONG: u16 = 4;
+        let pixels: Vec<u8> = (0..usize::from(width) * usize::from(height))
+            .flat_map(|_| [r, g, b])
+            .collect();
+        // The header, the directory and its next-image link, then three shorts.
+        let bits_at = 8 + 2 + u32::from(ENTRIES) * 12 + 4;
+        let data_at = bits_at + 6;
+
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II*\0");
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&ENTRIES.to_le_bytes());
+        let mut entry = |tag: u16, kind: u16, count: u32, value: u32| {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&kind.to_le_bytes());
+            tiff.extend_from_slice(&count.to_le_bytes());
+            tiff.extend_from_slice(&value.to_le_bytes());
+        };
+        entry(256, SHORT, 1, u32::from(width));
+        entry(257, SHORT, 1, u32::from(height));
+        entry(258, SHORT, 3, bits_at);
+        entry(259, SHORT, 1, 1); // no compression
+        entry(262, SHORT, 1, 2); // RGB
+        entry(273, LONG, 1, data_at);
+        entry(277, SHORT, 1, 3);
+        entry(278, SHORT, 1, u32::from(height));
+        entry(279, LONG, 1, pixels.len() as u32);
+        tiff.extend_from_slice(&0u32.to_le_bytes()); // no next image
+        for _ in 0..3 {
+            tiff.extend_from_slice(&8u16.to_le_bytes());
+        }
+        tiff.extend_from_slice(&pixels);
+        tiff
+    }
+
+    /// The PostScript a drawing program leaves in an EPS: no preview in it.
+    const PROGRAM: &[u8] = b"%!PS-Adobe-3.0 EPSF-3.0
+%%BoundingBox: 0 0 200 100
+%%Title: ul-convert probe
+%%Creator: the live test
+/Helvetica findfont 18 scalefont setfont
+20 50 moveto (Pozdrav iz EPS-a) show
+0 0 1 setrgbcolor 20 20 160 15 rectfill
+showpage
+%%EOF
+";
+
+    /// The same program in the DOS EPS container with a TIFF preview behind it:
+    /// the magic, the offset and length of the PostScript, of the (absent) WMF
+    /// and of the TIFF, then a checksum nobody checks.
+    fn dos_eps(program: &[u8], tiff: &[u8]) -> Vec<u8> {
+        let mut eps = vec![0xC5, 0xD0, 0xD3, 0xC6];
+        for field in [
+            30,
+            program.len() as u32,
+            0,
+            0,
+            30 + program.len() as u32,
+            tiff.len() as u32,
+        ] {
+            eps.extend_from_slice(&field.to_le_bytes());
+        }
+        eps.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        eps.extend_from_slice(program);
+        eps.extend_from_slice(tiff);
+        eps
+    }
+
+    /// Converts `bytes`, named `<name>.eps`, with the real LibreOffice in a
+    /// folder of its own and gives back the PDF.
+    fn convert_with_libreoffice(name: &str, bytes: &[u8]) -> Vec<u8> {
         let Some(backend) = backend() else {
             panic!(
                 "LibreOffice was not found — this test is only meaningful where it is installed"
             );
         };
 
-        let dir = std::env::temp_dir().join("ul-convert-live");
+        let dir =
+            std::env::temp_dir().join(format!("ul-convert-live-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let source = dir.join("proba.eps");
-        std::fs::write(
-            &source,
-            b"%!PS-Adobe-3.0 EPSF-3.0
-%%BoundingBox: 0 0 200 100
-              /Helvetica findfont 18 scalefont setfont
-              20 50 moveto (Pozdrav iz EPS-a) show
-              0 0 1 setrgbcolor 20 20 160 15 rectfill
-showpage
-%%EOF
-"
-            .as_ref(),
-        )
-        .unwrap();
+        let source = dir.join(format!("{name}.eps"));
+        std::fs::write(&source, bytes).unwrap();
 
         let out = dir.join("out");
         let profile = dir.join("profile");
@@ -1161,24 +1244,79 @@ showpage
         )
         .unwrap();
 
-        assert_eq!(pdf.file_name().unwrap(), "proba.pdf");
+        assert_eq!(
+            pdf.file_name().unwrap().to_string_lossy(),
+            format!("{name}.pdf")
+        );
         let bytes = std::fs::read(&pdf).unwrap();
         assert!(
             bytes.starts_with(b"%PDF"),
             "not a PDF: {:?}",
             &bytes[..8.min(bytes.len())]
         );
-        // A page of nothing is about a kilobyte; a drawing is not.
-        assert!(
-            bytes.len() > 3000,
-            "{} bytes — suspiciously empty",
-            bytes.len()
-        );
 
         /* And the profile really was its own, which is the argument that stops
         this failing whenever somebody has LibreOffice open. */
         assert!(profile.exists());
         assert!(!out.join("profile").exists());
+        println!("{name}: {} bytes, kept in {}", bytes.len(), dir.display());
+        bytes
+    }
+
+    /**
+     * The whole pipeline against the real thing — and what comes out is a page
+     * that **shows something**, not merely a file that is a PDF.
+     *
+     * `#[ignore]` rather than a self-skip: a test that passes on a machine
+     * without LibreOffice is a test that lies, and this repository has already
+     * been bitten once by a check whose only failure mode was a pass. CI has no
+     * office suite, so this is run by hand — `cargo test -p ul-convert --
+     * --ignored` — on a machine that has one.
+     *
+     * The fixture is a DOS EPS assembled here: PostScript is text and a TIFF
+     * can be written in forty lines, so nothing binary is committed. It is the
+     * form 13 of the 19 real files in ADR 0003 have, and the one LibreOffice
+     * turns into a page without any PostScript interpreter (ADR 0007).
+     */
+    #[test]
+    #[ignore = "needs LibreOffice installed; run with: cargo test -p ul-convert -- --ignored"]
+    fn a_real_libreoffice_shows_the_preview_stored_in_a_dos_eps() {
+        let eps = dos_eps(PROGRAM, &tiff_of(64, 32, [200, 30, 30]));
+        let pdf = convert_with_libreoffice("preview", &eps);
+
+        assert!(
+            pdf_shows_a_picture(&pdf),
+            "{} bytes and %PDF, but no picture in it — this is the placeholder",
+            pdf.len()
+        );
+        // Ours, not some other image the page happened to carry.
+        assert!(
+            contains(&pdf, b"/Width 64") && contains(&pdf, b"/Height 32"),
+            "a picture, but not the 64 x 32 one stored in the file"
+        );
+    }
+
+    /**
+     * The other half, kept so the first cannot be satisfied by accident: the
+     * same program *without* a preview comes back as the placeholder on a
+     * machine with no PostScript interpreter (ADR 0007, measured 2026-10-08),
+     * and the discriminator says so.
+     *
+     * This one is about the machine and not about the code: with Ghostscript
+     * installed LibreOffice runs the program and the assertion fails — which
+     * would be news worth having (ADR 0007, trigger 2; card 505), not a
+     * regression.
+     */
+    #[test]
+    #[ignore = "needs LibreOffice installed; run with: cargo test -p ul-convert -- --ignored"]
+    fn a_real_libreoffice_gives_a_postscript_without_a_preview_only_its_placeholder() {
+        let pdf = convert_with_libreoffice("program", PROGRAM);
+
+        assert!(
+            !pdf_shows_a_picture(&pdf),
+            "a PostScript program with no preview drew a picture — is Ghostscript installed? \
+             then the placeholder is no longer the whole story (ADR 0007)"
+        );
     }
 
     /* A document wearing one of the four names, whose bytes are HTML with a
