@@ -834,6 +834,21 @@ impl Workspace {
         path: impl AsRef<Path>,
         reading: Option<Reading>,
     ) -> Result<(Reading, Vec<u8>), VfsError> {
+        let mut bytes = Vec::new();
+        let token = self.read_document_into(path, reading, &mut bytes)?;
+        Ok((token, bytes))
+    }
+
+    /// `read_document`, with the document's bytes added to the end of `into`
+    /// rather than in a vector of their own: a caller that puts something in
+    /// front of them — the desktop, a reading's token — then holds the
+    /// document once, not once read and once copied behind it.
+    pub fn read_document_into(
+        &mut self,
+        path: impl AsRef<Path>,
+        reading: Option<Reading>,
+        into: &mut Vec<u8>,
+    ) -> Result<Reading, VfsError> {
         use std::io::Read;
 
         let name = reading_name(path.as_ref());
@@ -848,8 +863,7 @@ impl Workspace {
         let mut file = open_regular(&resolved)?;
         let print = Fingerprint::of(&file)?;
         let protection = Protection::of(&resolved, &file)?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.read_to_end(into)?;
         /* Read again — after a save, or to take in somebody else's change —
         it is what is in it now that is agreed to, not the security of
         whatever file is there: one that is not provably the file the
@@ -870,7 +884,7 @@ impl Workspace {
         };
         let token = reading.unwrap_or_else(|| self.take_a_token());
         self.seen.insert(token, opened);
-        Ok((token, bytes))
+        Ok(token)
     }
 
     /// The reading a token names, if it is one this program made and of the
@@ -979,22 +993,42 @@ impl Workspace {
                 own security — tightened since, perhaps — is the one to keep;
                 lending another reading's older one would loosen it (the
                 review of e7be2f3). And from the newest reading, so that which
-                one does not depend on a map's order. */
-                let now = Fingerprint::at(&resolved);
+                one does not depend on a map's order.
+
+                Asked of the file opened once, as a save of the tab's own is
+                (below): whether a reading owns it and the security it keeps
+                then are both its answers. Asked of the name twice, a file put
+                there between the two would have its security kept for one
+                that was owned (the review of 396a4f9). Held, on Windows, until
+                the new version takes its place; one that cannot be held is
+                asked by name, as before. */
                 let here: Vec<(&Reading, &Opened)> = self
                     .seen
                     .iter()
                     .filter(|(_, reading)| reading.at == resolved)
                     .collect();
-                let owned = here
-                    .iter()
-                    .any(|(_, reading)| now.as_ref().is_some_and(|now| reading.is_owner(now)));
-                match here.iter().max_by_key(|(token, _)| **token) {
-                    Some((_, reading)) if !owned => {
-                        lent = reading.protection.clone();
-                        (resolved, Source::Given(&lent))
+                if here.is_empty() {
+                    (resolved, Source::Document)
+                } else {
+                    held = open_held(&resolved).ok();
+                    let now = match &held {
+                        Some(file) => Fingerprint::of(file).ok(),
+                        None => Fingerprint::at(&resolved),
+                    };
+                    let owned = here
+                        .iter()
+                        .any(|(_, reading)| now.as_ref().is_some_and(|now| reading.is_owner(now)));
+                    match (here.iter().max_by_key(|(token, _)| **token), &held) {
+                        (Some((_, reading)), _) if !owned => {
+                            lent = reading.protection.clone();
+                            (resolved, Source::Given(&lent))
+                        }
+                        (_, Some(file)) => {
+                            own = Protection::of(&resolved, file)?;
+                            (resolved, Source::Given(&own))
+                        }
+                        _ => (resolved, Source::Document),
                     }
-                    _ => (resolved, Source::Document),
                 }
             }
             /* The name no longer leads where the document was read from: its

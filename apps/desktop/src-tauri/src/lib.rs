@@ -942,9 +942,10 @@ fn read_document(
     path: String,
     reading: Option<Reading>,
 ) -> Result<Response, VfsError> {
-    let (token, bytes) =
-        with_workspace(&state, |workspace| workspace.read_document(&path, reading))?;
-    Ok(Response::new(framed(token, bytes)))
+    let framed = with_workspace(&state, |workspace| {
+        framed(|into| workspace.read_document_into(&path, reading, into))
+    })?;
+    Ok(Response::new(framed))
 }
 
 /// A reading's token in front of the document's bytes: the first eight, as a
@@ -952,36 +953,73 @@ fn read_document(
 /// else, and a second command for the token would make a reading named and
 /// not yet read a state every path had to refuse. Written here only, and read
 /// in `tauri-fs.ts` only.
-fn framed(token: Reading, bytes: Vec<u8>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + bytes.len());
-    out.extend_from_slice(&token.to_le_bytes());
-    out.extend(bytes);
-    out
+///
+/// `read` reads the document in after eight bytes kept for the token, which
+/// is written over them once it is known: read and then copied behind it, the
+/// document was held twice for a moment (the review of 396a4f9).
+fn framed(
+    read: impl FnOnce(&mut Vec<u8>) -> Result<Reading, VfsError>,
+) -> Result<Vec<u8>, VfsError> {
+    let mut out = vec![0; 8];
+    let token = read(&mut out)?;
+    out[..8].copy_from_slice(&token.to_le_bytes());
+    Ok(out)
 }
 
 /// Every yes to "Run this project's code?" forgotten, and the language
 /// servers stopped: each project trusted before is asked about again before
 /// it starts (card 488). A "Not now" stays (`ProjectTrust::forget_all`).
-/// The servers go first, so a list that cannot be written leaves none of
-/// them running on a yes about to come back after a restart; and off the
-/// thread the window draws on, since a server takes a moment to stop.
+/// The servers stop even if the list cannot be written, so none is left
+/// running on a yes about to come back after a restart; and off the thread
+/// the window draws on, since a server takes a moment to stop.
 #[tauri::command]
 async fn forget_trusted_projects(app: tauri::AppHandle) -> Result<(), VfsError> {
     tauri::async_runtime::spawn_blocking(move || {
         let lsp = app.state::<LspState>();
-        lsp.servers
-            .lock()
-            .expect("the server lock is poisoned")
-            .stop_all();
-        let forgotten = lsp
-            .trust
-            .lock()
-            .expect("the trust lock is poisoned")
-            .forget_all();
-        forgotten.map_err(VfsError::from)
+        forget_and_stop(&lsp.servers, &lsp.trust, Servers::stop_all).map_err(VfsError::from)
     })
     .await
     .map_err(|err| VfsError::Unsupported(err.to_string()))?
+}
+
+/// Forgets every yes and stops every server under the servers' lock
+/// throughout — the lock `start_if_trusted` asks again under. A document
+/// opened as this runs, whose yes was looked up before it, waits for the lock
+/// and then finds the yes gone; one that started its server first has it
+/// stopped. Stopped and forgotten one after the other, a server could start
+/// in between on a yes that was about to go (the review of 0676285).
+fn forget_and_stop<S>(
+    servers: &Mutex<S>,
+    trust: &Mutex<trust::ProjectTrust>,
+    stop: impl FnOnce(&mut S),
+) -> std::io::Result<()> {
+    let mut servers = servers.lock().expect("the server lock is poisoned");
+    let forgotten = trust
+        .lock()
+        .expect("the trust lock is poisoned")
+        .forget_all();
+    stop(&mut servers);
+    forgotten
+}
+
+/// What `start` gives, so long as `project` is still trusted once the
+/// servers' lock is held — `may_start` looked before, and "Forget trusted
+/// projects" may have run since (`forget_and_stop`). `None` starts nothing.
+fn start_if_trusted<S, T>(
+    servers: &Mutex<S>,
+    trust: &Mutex<trust::ProjectTrust>,
+    project: &std::path::Path,
+    start: impl FnOnce(&mut S) -> T,
+) -> Option<T> {
+    let mut servers = servers.lock().expect("the server registry is poisoned");
+    let trusted = matches!(
+        trust
+            .lock()
+            .expect("the trust list is poisoned")
+            .verdict(project),
+        trust::Verdict::Trusted
+    );
+    trusted.then(|| start(&mut servers))
 }
 
 /// A tab's readings, forgotten as it closes (ADR 0006).
@@ -1529,18 +1567,23 @@ async fn lsp_open(
         return Ok(false);
     }
 
-    let mut servers = lsp.servers.lock().expect("the server registry is poisoned");
-    let server = servers.ensure(
-        &language,
-        &project,
-        &lsp.sink,
-        /* A minute for the handshake. rust-analyzer answers `initialize` at
-        once and does its indexing afterwards, so this is generous rather
-        than a limit anybody will meet. */
-        std::time::Duration::from_secs(60),
-    )?;
-    server.open(&file, &language, &text)?;
-    Ok(true)
+    let started = start_if_trusted(&lsp.servers, &lsp.trust, &project, |servers| {
+        let server = servers.ensure(
+            &language,
+            &project,
+            &lsp.sink,
+            /* A minute for the handshake. rust-analyzer answers `initialize`
+            at once and does its indexing afterwards, so this is generous
+            rather than a limit anybody will meet. */
+            std::time::Duration::from_secs(60),
+        )?;
+        server.open(&file, &language, &text)?;
+        Ok::<(), LspCommandError>(())
+    });
+    match started {
+        Some(result) => result.map(|()| true),
+        None => Ok(false),
+    }
 }
 
 #[tauri::command]
@@ -2656,10 +2699,48 @@ mod tests {
     /// is read back in tools/verify-readings.mjs.
     #[test]
     fn a_reading_crosses_in_front_of_its_bytes() {
+        let mut read_into = std::ptr::null();
+        let framed = super::framed(|into| {
+            into.extend_from_slice(b"doc");
+            read_into = into.as_ptr();
+            Ok(0x0102_0304_0506)
+        })
+        .unwrap();
         assert_eq!(
-            super::framed(0x0102_0304_0506, b"doc".to_vec()),
+            framed,
             [0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00, 0x00, b'd', b'o', b'c']
         );
+        // Read where it is sent from, not copied behind the token afterwards.
+        assert_eq!(framed.as_ptr(), read_into);
+        assert!(super::framed(|_| Err(super::VfsError::NotRead("x".into()))).is_err());
+    }
+
+    /// "Forget trusted projects" against a document opening at that moment:
+    /// a yes looked up before the forgetting starts nothing after it, and a
+    /// server started before it is stopped (the review of 0676285).
+    #[test]
+    fn a_yes_forgotten_starts_no_server_after_it() {
+        let project = std::path::Path::new("/projects/proba");
+        let trust = std::sync::Mutex::new(super::trust::ProjectTrust::default());
+        trust.lock().unwrap().trust(project).unwrap();
+        let servers = std::sync::Mutex::new(Vec::<&str>::new());
+
+        // Started on the yes, and then forgotten: stopped.
+        assert!(super::start_if_trusted(&servers, &trust, project, |s| s.push("first")).is_some());
+        super::forget_and_stop(&servers, &trust, |s| s.clear()).unwrap();
+        assert!(servers.lock().unwrap().is_empty());
+
+        // `may_start` saw the yes, then the forgetting ran, then the start:
+        // nothing.
+        trust.lock().unwrap().trust(project).unwrap();
+        let looked_up = matches!(
+            trust.lock().unwrap().verdict(project),
+            super::trust::Verdict::Trusted
+        );
+        super::forget_and_stop(&servers, &trust, |s| s.clear()).unwrap();
+        assert!(looked_up);
+        assert!(super::start_if_trusted(&servers, &trust, project, |s| s.push("second")).is_none());
+        assert!(servers.lock().unwrap().is_empty());
     }
 
     fn url(text: &str) -> tauri::Url {
