@@ -35,6 +35,10 @@
  * where it is not installed, the page says which formats that costs and offers
  * a link, rather than opening blank or promising a phase.
  *
+ * PostScript goes to it on Windows only: elsewhere LibreOffice would run it
+ * through Ghostscript, so the core refuses it and the page says why in place of
+ * the button (`conversion.ts`, card 512).
+ *
  * Without LibreOffice — in a browser, on a phone — a PostScript file still
  * shows what it says about itself, and a DOS EPS the preview it carries
  * (`eps.ts`, ADR 0007): the same picture and the same facts LibreOffice's
@@ -56,6 +60,7 @@ import {
 import { t } from '@uleditor/i18n';
 import { gunzipSync } from 'fflate';
 
+import { conversionOffer } from './conversion.js';
 import { dscFields, isDosEps, isPostscript } from './eps.js';
 
 const ZOOM_STEPS = [0.1, 0.25, 0.5, 0.67, 1, 1.5, 2, 3, 4, 8, 16, 32];
@@ -216,7 +221,7 @@ class VectorViewer implements EditorInstance {
     if (isPostscript(this.bytes)) box.append(this.#facts());
     box.append(body);
 
-    if (NEEDS_CONVERSION[extension]) this.#offerConversion(box);
+    if (NEEDS_CONVERSION[extension]) this.#offerConversion(box, extension);
     if (isDosEps(this.bytes)) void this.#showStoredPreview(box, title);
     return box;
   }
@@ -304,19 +309,23 @@ class VectorViewer implements EditorInstance {
    * suite installed. What appears instead is the sentence saying so, with a
    * link — which is the actual next step.
    */
-  #offerConversion(box: HTMLElement): void {
-    void this.host.convert
-      .available()
-      .then((available: boolean) => {
+  #offerConversion(box: HTMLElement, extension: string): void {
+    void conversionOffer(this.host.convert, extension)
+      .then((offer) => {
         if (!box.isConnected) return;
 
-        if (!available) {
-          const missing = document.createElement('p');
-          missing.className = 'ul-vec-note';
-          missing.textContent = t(
-            'LibreOffice is not available here. The desktop app converts this format when LibreOffice is installed.',
-          );
-          box.appendChild(missing);
+        if (offer !== 'offered') {
+          const note = document.createElement('p');
+          note.className = 'ul-vec-note';
+          note.textContent =
+            offer === 'missing'
+              ? t(
+                  'LibreOffice is not available here. The desktop app converts this format when LibreOffice is installed.',
+                )
+              : t(
+                  'LibreOffice is installed, but on this system it is not given PostScript: it would hand it to Ghostscript, which runs it as the program it is.',
+                );
+          box.appendChild(note);
           return;
         }
 

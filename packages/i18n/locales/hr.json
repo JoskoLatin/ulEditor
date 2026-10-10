@@ -568,6 +568,7 @@
   "Open through LibreOffice": "Otvori kroz LibreOffice",
   "{name} is not drawn here": "{name} se ovdje ne prikazuje",
   "LibreOffice is not available here. The desktop app converts this format when LibreOffice is installed.": "LibreOffice ovdje nije dostupan. Desktop aplikacija pretvara ovaj format kad je LibreOffice instaliran.",
+  "LibreOffice is installed, but on this system it is not given PostScript: it would hand it to Ghostscript, which runs it as the program it is.": "LibreOffice je instaliran, ali na ovom sustavu ne dobiva PostScript: predao bi ga Ghostscriptu, koji ga pokreće kao program kakav i jest.",
   "Only the desktop app converts {name}, through LibreOffice.": "Samo desktop aplikacija pretvara {name}, preko LibreOfficea.",
   "Open for editing…": "Otvori za uređivanje…",
   "{name} can be saved now.": "{name} se sada može spremiti.",

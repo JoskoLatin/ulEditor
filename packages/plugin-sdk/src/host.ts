@@ -90,6 +90,12 @@ export type ConvertFormat = 'pdf' | 'docx' | 'odt' | 'xlsx' | 'ods' | 'html' | '
 export interface ConversionService {
   /** Whether the conversion backend (LibreOffice) is available on this platform. */
   available(): Promise<boolean>;
+  /**
+   * The extensions converted on this platform, where the host can say; without
+   * it, every format the backend is for. PostScript is converted on Windows
+   * only (ul-convert, card 512).
+   */
+  formats?(): Promise<string[]>;
   convert(source: Uri, target: ConvertFormat): Promise<Uint8Array>;
 }
 

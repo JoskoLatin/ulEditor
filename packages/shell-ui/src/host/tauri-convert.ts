@@ -39,6 +39,11 @@ export class TauriConversion implements ConversionService {
     return this.#backend;
   }
 
+  /** What the core converts here: without PostScript outside Windows. */
+  async formats(): Promise<string[]> {
+    return (await this.backend())?.formats ?? [];
+  }
+
   /**
    * The converted file, as a path.
    *

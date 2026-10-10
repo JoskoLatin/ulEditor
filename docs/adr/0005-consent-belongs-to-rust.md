@@ -206,9 +206,27 @@ did.
   with `-dPARANOIDSAFER`. On Windows it is now given the system's folders
   only, and runs none of those three — System32's own `convert.exe`, the
   FAT-to-NTFS converter, is still found, and fails on arguments that name no
-  volume. On Unix the PATH stays, and a distribution's Ghostscript can run
-  PostScript the page wrote (card 512). Linked bitmaps in a real `.cdr` were
-  not measured: there is no such file to measure with.
+  volume. On Unix no PATH keeps them out — see the next point. Linked bitmaps
+  in a real `.cdr` were not measured: there is no such file to measure with.
+- **PostScript outside Windows (card 512, 2026-10-10).** The independent
+  review of 505 found Linux and macOS still open: LibreOffice runs
+  `pstoedit`, then `gs`, then `convert` over any PostScript with no preview of
+  its own (`vcl/source/filter/ieps/ieps.cxx`, read 2026-10-10), which is what a
+  page writes, and `convert_to_pdf` asks for no gesture. No PATH closes it
+  there: Ghostscript is in `/usr/bin` beside what LibreOffice's start script
+  needs, `convert` and `pstoedit` reach it by paths of their own, and a snap's
+  or flatpak's LibreOffice looks inside its sandbox. So outside Windows
+  `ul_convert::to_pdf` refuses PostScript — plain or DOS EPS, by content,
+  whatever the name — before LibreOffice is started, and the page says why in
+  place of the button. `.cdr` still converts there. Rejected: refusing only
+  when a helper is on the PATH (blind to a snap or flatpak, and to Ghostscript
+  reached through the other two), and a question the system draws before
+  converting (a yes does not make Ghostscript safe from a crafted file, and
+  nobody can judge a program by looking at it). What it costs, by ADR 0007's
+  count: on a Linux machine with Ghostscript, the 5 preview-less PostScript
+  files would have been drawn and are not; the 13 DOS EPS show the preview
+  they carry, as before. **Not measured:** a LibreOffice on Linux or macOS at
+  all — the refusal is before it starts, so nothing about it is relied on.
 ## Questions paced (2026-10-08, cards 501 and 488)
 
 Script in the page can bring up any of the core's questions as often as it

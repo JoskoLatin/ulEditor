@@ -19,6 +19,7 @@ import './ts-resolve.mjs';
 const { isDosEps, postscriptOf, isPostscript, dscFields } = await import(
   '../packages/editor-vector/src/eps.ts'
 );
+const { conversionOffer } = await import('../packages/editor-vector/src/conversion.ts');
 
 const checks = [];
 function check(name, passed, detail = '') {
@@ -102,6 +103,37 @@ const late = dscFields(ascii(`%!PS\n${'% padding\n'.repeat(500)}%%Title: (too fa
 check('only the first 4 KiB are read', late.title === undefined);
 
 check('a file with no comments has no fields', Object.keys(dscFields(ascii('%!PS\nshowpage\n'))).length === 0);
+
+/* ── what the page offers (card 512) ───────────────────────────────── */
+
+/* Outside Windows the core refuses PostScript before LibreOffice is started,
+   since LibreOffice would run it through Ghostscript: the page says so there
+   rather than offering a button that can only end in the refusal. */
+const host = (available, formats) => ({
+  available: async () => available,
+  ...(formats ? { formats: async () => formats } : {}),
+  convert: async () => new Uint8Array(),
+});
+const everywhere = ['cdr', 'eps', 'ps', 'ai']; // what ul-convert lists on Windows
+const outsideWindows = ['cdr']; // and elsewhere
+
+check('no LibreOffice: it says so', (await conversionOffer(host(false, everywhere), 'eps')) === 'missing');
+for (const extension of ['eps', 'ps', 'ai', 'cdr']) {
+  const offer = await conversionOffer(host(true, everywhere), extension);
+  check(`on Windows the button is offered for .${extension}`, offer === 'offered', offer);
+}
+for (const extension of ['eps', 'ps', 'ai']) {
+  const offer = await conversionOffer(host(true, outsideWindows), extension);
+  check(`outside Windows .${extension} gets the reason, not a button`, offer === 'refused', offer);
+}
+check(
+  'outside Windows a CorelDRAW drawing still gets the button',
+  (await conversionOffer(host(true, outsideWindows), 'cdr')) === 'offered',
+);
+check(
+  'a host that cannot say what it converts offers the button as before',
+  (await conversionOffer(host(true, undefined), 'eps')) === 'offered',
+);
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

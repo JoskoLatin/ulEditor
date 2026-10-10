@@ -25,7 +25,8 @@ string and all; a fresh profile, macros off and "update links = never" do not
 stop it. 0d32887 and 33cbdc1 close that on the desktop with a gate on the
 first bytes of a private copy. And LibreOffice hands PostScript to whichever
 of pstoedit, Ghostscript and ImageMagick it finds on the PATH (measured
-2026-10-08; the desktop now gives it the system's folders only).
+2026-10-08; the desktop now gives it the system's folders only on Windows,
+and elsewhere does not give it PostScript at all — card 512, ADR 0005).
 
 What had not been measured is what a conversion gives.
 

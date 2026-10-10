@@ -31,6 +31,13 @@
 //! 3. **The exit code is not the answer.** It is 0 for a file it could not
 //!    read, for a filter it does not have, and for the case in (1). The answer
 //!    is whether the output file appeared, so that is what is waited for.
+//!
+//! **PostScript reaches LibreOffice on Windows only.** Its EPS import runs
+//! Ghostscript, `pstoedit` or ImageMagick's `convert` over any PostScript that
+//! carries no preview of its own, which is exactly what a page can write, and
+//! on Windows they are kept out of its reach (`harden`). Elsewhere nothing can
+//! keep them out, and `to_pdf` refuses PostScript before LibreOffice is started
+//! (`POSTSCRIPT_IS_CONVERTED`).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -55,6 +62,10 @@ pub enum ConvertError {
     Refused(String),
     #[error("this file is not one of the drawing formats LibreOffice is used for here")]
     UnsupportedContent,
+    #[error(
+        "PostScript is not converted on this system: LibreOffice would hand it to Ghostscript, which runs it as the program it is"
+    )]
+    PostscriptNotRun,
     #[error("file system error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -77,6 +88,47 @@ pub struct Backend {
 
 /// The formats this is for. Everything else in the program has its own reader.
 pub const FORMATS: [&str; 4] = ["cdr", "eps", "ps", "ai"];
+
+/// Whether PostScript is handed to LibreOffice on this platform: on Windows
+/// only.
+///
+/// LibreOffice's EPS import draws a file with no preview of its own by running
+/// `pstoedit`, then `gs`, then `convert` over it, whichever the PATH has
+/// (`vcl/source/filter/ieps/ieps.cxx`), and a page can always write PostScript
+/// with none. On Windows
+/// `harden` gives LibreOffice a PATH none of them is on (measured, card 505).
+/// On Linux and macOS no PATH can do that: Ghostscript is in `/usr/bin` beside
+/// what LibreOffice's own start script needs, `convert` and `pstoedit` reach it
+/// by absolute paths of their own, and a snap's or a flatpak's LibreOffice
+/// looks in its sandbox, where no check from out here can see. Ghostscript's
+/// `-dPARANOIDSAFER` has been bypassed more than once (CVE-2023-36664,
+/// CVE-2024-29510). So there PostScript is refused before LibreOffice is
+/// started (card 512) — losing only what LibreOffice would draw without a
+/// helper: the preview the file carries, which the page shows itself, or a
+/// box.
+pub const POSTSCRIPT_IS_CONVERTED: bool = cfg!(windows);
+
+/// The formats converted on this platform, for the settings screen and a bug
+/// report: without PostScript only `.cdr` is left, since an `.ai` that reaches
+/// this is one saved as PostScript.
+pub fn formats() -> &'static [&'static str] {
+    if POSTSCRIPT_IS_CONVERTED {
+        &FORMATS
+    } else {
+        &["cdr"]
+    }
+}
+
+/// The DOS EPS header: an `.eps` carrying a binary preview beside its
+/// PostScript.
+const DOS_EPS: [u8; 4] = [0xC5, 0xD0, 0xD3, 0xC6];
+
+/// Whether `head` starts PostScript, plain or in a DOS EPS — what LibreOffice
+/// hands to its EPS import. `%!PS`, not only LibreOffice's own `%!PS-Adobe`
+/// with `EPS`: that is what `content_is_supported` lets through.
+pub fn is_postscript(head: &[u8]) -> bool {
+    head.starts_with(b"%!PS") || head.starts_with(&DOS_EPS)
+}
 
 /// Whether `head` is the start of one of the four formats this converts.
 ///
@@ -108,7 +160,7 @@ pub fn content_is_supported(head: &[u8]) -> bool {
         return true;
     }
     // An `.eps` carrying a binary preview: the DOS EPS header.
-    if head.starts_with(&[0xC5, 0xD0, 0xD3, 0xC6]) {
+    if head.starts_with(&DOS_EPS) {
         return true;
     }
     // CorelDRAW is a RIFF container whose form type begins "CDR" (a drawing) or
@@ -234,7 +286,7 @@ pub fn backend() -> Option<Backend> {
 
     find_in(&all, |path| path.is_file()).map(|path| Backend {
         path: path.to_string_lossy().into_owned(),
-        formats: FORMATS.iter().map(|f| (*f).to_string()).collect(),
+        formats: formats().iter().map(|f| (*f).to_string()).collect(),
     })
 }
 
@@ -260,9 +312,9 @@ pub fn backend() -> Option<Backend> {
 /// machine without them: a DOS EPS as the preview stored in it, plain
 /// PostScript as a placeholder. Started with no PATH at all it never finishes.
 ///
-/// On Unix the PATH stays, absolute entries only: there Ghostscript comes from
-/// the distribution, with its updates, and what LibreOffice needs on the PATH
-/// to start was not measured.
+/// On Unix the PATH stays, absolute entries only. No list of folders keeps
+/// Ghostscript out there — see `POSTSCRIPT_IS_CONVERTED` — so PostScript never
+/// reaches LibreOffice instead.
 fn harden(command: &mut Command) {
     #[cfg(windows)]
     harden_with(command, Some(system_folders()));
@@ -521,9 +573,16 @@ pub fn to_pdf(
     // The content, not the name: a file whose bytes are not one of the four
     // formats — HTML wearing a `.cdr` name, say — would be imported for what it
     // really is, and a web page reaches the network as it loads (card 505).
-    if !content_is_supported(&head_of(&staged)?) {
+    let head = head_of(&staged)?;
+    if !content_is_supported(&head) {
         let _ = std::fs::remove_file(&staged);
         return Err(ConvertError::UnsupportedContent);
+    }
+    // And by content again, whatever the name: PostScript only where what
+    // LibreOffice would hand it to is kept out of its reach (card 512).
+    if is_postscript(&head) && !POSTSCRIPT_IS_CONVERTED {
+        let _ = std::fs::remove_file(&staged);
+        return Err(ConvertError::PostscriptNotRun);
     }
     std::fs::create_dir_all(outdir)?;
 
@@ -1109,6 +1168,117 @@ showpage
             assert!(
                 !FORMATS.contains(&format),
                 "{format} has a reader of its own"
+            );
+        }
+    }
+
+    /* ── PostScript outside Windows (card 512) ──────────────────────────── */
+
+    /// The first bytes of a PostScript file: plain, an `.eps`, and a DOS EPS.
+    const POSTSCRIPT: [(&str, &[u8]); 3] = [
+        ("plain.ps", b"%!PS\n0 0 moveto\n"),
+        (
+            "drawing.eps",
+            b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\n",
+        ),
+        (
+            "preview.eps",
+            &[0xC5, 0xD0, 0xD3, 0xC6, 30, 0, 0, 0, 0, 0, 0, 0],
+        ),
+    ];
+
+    /// `to_pdf` of `bytes` named `name`, with a LibreOffice that is not there:
+    /// what comes back says how far the file got.
+    fn converting(name: &str, bytes: &[u8]) -> Result<PathBuf, ConvertError> {
+        let dir = std::env::temp_dir().join(format!(
+            "ul-convert-ps-{}-{}",
+            std::process::id(),
+            name.replace('.', "-")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join(name);
+        std::fs::write(&source, bytes).unwrap();
+        /* Absolute, and nowhere: a bare `soffice` would be looked for on the
+        PATH, and a gate that let the file through would start the real one. */
+        let backend = Backend {
+            path: dir
+                .join("no-libreoffice-here")
+                .to_string_lossy()
+                .into_owned(),
+            formats: Vec::new(),
+        };
+        let result = to_pdf(
+            &backend,
+            &source,
+            &dir.join("out"),
+            &dir.join("profile"),
+            &dir.join("in"),
+            Duration::from_secs(5),
+        );
+        // Whatever happened, the private copy is not left behind.
+        assert!(
+            !dir.join("in").join(name).exists() || matches!(result, Err(ConvertError::Start(_))),
+            "{name}: the staged copy was left after {result:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
+    fn postscript_is_known_by_its_first_bytes() {
+        for (name, head) in POSTSCRIPT {
+            assert!(is_postscript(head), "{name}");
+        }
+        assert!(!is_postscript(b"%PDF-1.4"));
+        assert!(!is_postscript(b"RIFF\x10\0\0\0CDRXvrsn"));
+        assert!(!is_postscript(b" %!PS"));
+        assert!(!is_postscript(b""));
+    }
+
+    #[test]
+    fn the_formats_offered_are_the_ones_converted_here() {
+        if POSTSCRIPT_IS_CONVERTED {
+            assert_eq!(formats(), &FORMATS);
+        } else {
+            assert_eq!(formats(), &["cdr"]);
+        }
+        assert_eq!(POSTSCRIPT_IS_CONVERTED, cfg!(windows));
+    }
+
+    /// Outside Windows LibreOffice would hand PostScript with no preview of its
+    /// own to Ghostscript, and nothing out here can stop it: refused before it
+    /// is started, by content whatever the name, while a CorelDRAW drawing
+    /// still goes through to it.
+    #[cfg(not(windows))]
+    #[test]
+    fn outside_windows_postscript_never_reaches_libreoffice() {
+        for (name, bytes) in POSTSCRIPT {
+            let result = converting(name, bytes);
+            assert!(
+                matches!(result, Err(ConvertError::PostscriptNotRun)),
+                "{name}: {result:?}"
+            );
+        }
+        let disguised = converting("drawing.cdr", POSTSCRIPT[0].1);
+        assert!(
+            matches!(disguised, Err(ConvertError::PostscriptNotRun)),
+            "{disguised:?}"
+        );
+        let corel = converting("drawing.cdr", b"RIFF\x10\0\0\0CDRXvrsn");
+        assert!(matches!(corel, Err(ConvertError::Start(_))), "{corel:?}");
+    }
+
+    /// On Windows LibreOffice is given no PATH its helpers are on (`harden`),
+    /// measured in card 505, so PostScript still goes to it.
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_postscript_still_reaches_libreoffice() {
+        for (name, bytes) in POSTSCRIPT {
+            let result = converting(name, bytes);
+            assert!(
+                matches!(result, Err(ConvertError::Start(_))),
+                "{name}: {result:?}"
             );
         }
     }
