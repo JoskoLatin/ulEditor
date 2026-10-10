@@ -57,22 +57,37 @@ const KEEP: usize = 20;
 /// Resolved before the hook is installed, so the hook only ever reads it.
 static FOLDER: OnceLock<PathBuf> = OnceLock::new();
 
+/// The scratch profile a debug build was started on, if it was: `UL_DATA_DIR`.
+///
+/// For the desktop checks, which start the program on a profile of their own
+/// and must not leave anything in the person's (`lib.rs`, in `setup`, takes the
+/// answers' folder from here too, so the two cannot disagree). **Debug builds
+/// only, and only an absolute path**: a release build never reads the variable,
+/// and a relative one would put the folder under whatever the working directory
+/// is — where the protection of the program's own folders, which names
+/// absolute paths, would not reach it. An empty value is ignored for the same
+/// reason.
+pub fn scratch_profile() -> Option<PathBuf> {
+    scratch_in(
+        std::env::var_os("UL_DATA_DIR").map(PathBuf::from),
+        cfg!(debug_assertions),
+    )
+}
+
+fn scratch_in(value: Option<PathBuf>, debug: bool) -> Option<PathBuf> {
+    value.filter(|path| debug && path.is_absolute())
+}
+
 /// Where Tauri would put a log directory, worked out without Tauri.
 ///
 /// **A debug build started with `UL_DATA_DIR` writes into that profile**, the
-/// same way and for the same reason `trust.rs`'s answers do (`lib.rs`, in
-/// `setup`): the desktop checks start the program on a scratch profile, and a
-/// report written from one of them — a page error a check provoked or merely
-/// tripped over — landed in the person's own `%LOCALAPPDATA%\org.uleditor.app\logs`,
-/// where the ulEditor they have installed announced it as "stopped unexpectedly
-/// last time". A release build never reads the variable: the folder of reports
-/// is not something the environment can move.
+/// same way and for the same reason `trust.rs`'s answers do: a report written
+/// from a check — a page error it provoked or merely tripped over — used to
+/// land in the person's own `%LOCALAPPDATA%\org.uleditor.app\logs`, where the
+/// ulEditor they have installed announced it as "stopped unexpectedly last
+/// time". Which of the two is decided here and nowhere else.
 fn resolve_folder() -> Option<PathBuf> {
-    folder_in(
-        std::env::var_os("UL_DATA_DIR").map(PathBuf::from),
-        cfg!(debug_assertions),
-        local_data_dir(),
-    )
+    folder_in(scratch_profile(), local_data_dir())
 }
 
 fn local_data_dir() -> Option<PathBuf> {
@@ -84,11 +99,36 @@ fn local_data_dir() -> Option<PathBuf> {
 }
 
 /// The decision itself, apart from the environment so a test can make it.
-fn folder_in(scratch: Option<PathBuf>, debug: bool, local: Option<PathBuf>) -> Option<PathBuf> {
+fn folder_in(scratch: Option<PathBuf>, local: Option<PathBuf>) -> Option<PathBuf> {
     match scratch {
-        Some(profile) if debug => Some(profile.join("logs")),
-        _ => Some(local?.join(IDENTIFIER).join("logs")),
+        Some(profile) => Some(profile.join("logs")),
+        None => Some(local?.join(IDENTIFIER).join("logs")),
     }
+}
+
+/// The folders the program installed under its own identifier keeps, whatever
+/// build this is: the reports, and the answers and consents beside the
+/// settings.
+///
+/// A check runs under an identifier of its own, so its own folders are not
+/// these — and these are what a page that was let into a folder above them
+/// could otherwise write into: a "yes" to a project's code, kept for the
+/// ulEditor that is installed. They are shut to the page in every build
+/// (`Workspace::protect`), not only the one that happens to be them.
+pub fn installed_folders() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if let Some(local) = local_data_dir() {
+        found.push(local.join(IDENTIFIER).join("logs"));
+    }
+    let roaming = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+    };
+    if let Some(roaming) = roaming {
+        found.push(roaming.join(IDENTIFIER));
+    }
+    found
 }
 
 /// The folder reports live in, whether or not it exists yet.
@@ -292,28 +332,54 @@ mod tests {
     }
 
     #[test]
-    fn a_debug_build_on_a_scratch_profile_keeps_its_reports_in_it() {
+    fn a_scratch_profile_is_used_by_a_debug_build_when_it_is_absolute() {
+        let here = std::env::temp_dir();
+        assert_eq!(scratch_in(Some(here.clone()), true), Some(here.clone()));
+        /* The folder of reports is not the environment's to move: a release
+        build ignores the variable, so it cannot be pointed at a place the
+        person did not put it. */
+        assert_eq!(scratch_in(Some(here), false), None);
+        assert_eq!(scratch_in(None, true), None);
+        // Relative would land under the working directory, out of the protection's reach.
+        assert_eq!(scratch_in(Some(PathBuf::from("prof")), true), None);
+        assert_eq!(scratch_in(Some(PathBuf::new()), true), None);
+    }
+
+    #[test]
+    fn a_scratch_profile_keeps_its_reports_and_otherwise_the_real_folder_does() {
         let real = Some(PathBuf::from("real-local-app-data"));
         let profile = Some(PathBuf::from("a-check-profile"));
 
         assert_eq!(
-            folder_in(profile.clone(), true, real.clone()),
+            folder_in(profile, real.clone()),
             Some(PathBuf::from("a-check-profile").join("logs")),
             "a check's report goes into the check's profile",
         );
         assert_eq!(
-            folder_in(None, true, real.clone()),
-            Some(PathBuf::from("real-local-app-data").join(IDENTIFIER).join("logs")),
+            folder_in(None, real),
+            Some(
+                PathBuf::from("real-local-app-data")
+                    .join(IDENTIFIER)
+                    .join("logs")
+            ),
             "with no profile the real folder is where it has always been",
         );
-        /* The folder of reports is not the environment's to move: a release
-        build ignores the variable, so it cannot be pointed at a place the
-        person did not put it. */
-        assert_eq!(
-            folder_in(profile, false, real),
-            Some(PathBuf::from("real-local-app-data").join(IDENTIFIER).join("logs")),
-            "a release build does not read the variable",
-        );
+        assert_eq!(folder_in(None, None), None);
+    }
+
+    #[test]
+    fn the_installed_programs_folders_are_named_by_its_identifier() {
+        let folders = installed_folders();
+        assert!(!folders.is_empty(), "this machine names a home folder");
+        for folder in folders {
+            assert!(
+                folder
+                    .components()
+                    .any(|part| part.as_os_str() == IDENTIFIER),
+                "{} is not under {IDENTIFIER}",
+                folder.display()
+            );
+        }
     }
 
     #[test]

@@ -2161,11 +2161,10 @@ pub fn run() {
             /* Where a yes to a project's code is kept (trust.rs).
             `UL_DATA_DIR` is for the desktop checks, in a debug build only:
             they start the program on a scratch profile and must not leave
-            their projects in the person's own answers. */
-            let answers = std::env::var_os("UL_DATA_DIR")
-                .filter(|_| cfg!(debug_assertions))
-                .map(std::path::PathBuf::from)
-                .or_else(|| app.path().app_config_dir().ok());
+            their projects in the person's own answers. The crash reports
+            follow the same profile (`crash::scratch_profile`, an absolute
+            path or nothing). */
+            let answers = crash::scratch_profile().or_else(|| app.path().app_config_dir().ok());
 
             /* The program's own folders are never the page's, whatever it
             opens above them: a page that could write the answers could trust
@@ -2194,6 +2193,13 @@ pub fn run() {
             .flatten()
             {
                 workspace.protect(own);
+            }
+            /* The installed program's own folders, in whatever build this is:
+            a check runs under an identifier of its own, and a folder opened
+            above `%APPDATA%` must not let a page write the answers the
+            installed ulEditor reads. */
+            for installed in crash::installed_folders() {
+                workspace.protect(installed);
             }
             /* What the person consented to before, kept beside the answers and
             shut to the page with them. A folder that cannot be made keeps the
