@@ -114,6 +114,15 @@ save. A tab's `uri` is the path Rust resolved when it was opened (`stat_of`,
 `this.doc.uri` verbatim (markdown:428, code:381, office:2092/2682/2741,
 pdf:2800, image:833 through `targetFor`).
 
+*Note, 2026-10-11 (card 511):* the image editor is the one editor whose file
+changes under its tab: a save into another format writes a new file and the
+shell moves the tab to it. It used to go on naming the `uri` it was opened with,
+so its next save recomputed the same new file and was refused, and the plan
+would otherwise have been applied to the original again. It now follows the
+file it wrote (`#uri` in `editor-image/src/index.ts`), a string the scope holds
+a reading for because it wrote it. The editors above still write `doc.uri`
+verbatim; the converted `.xls` already goes back to its `convert.target`.
+
 **What the token is and is not.** It names a reading. It is not a consent and
 grants nothing: every save still resolves its path through the sandbox
 (`resolve_for_write`, `where_it_was`). A token sent with another name is
