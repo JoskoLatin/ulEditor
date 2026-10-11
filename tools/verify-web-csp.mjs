@@ -143,10 +143,27 @@ try {
   await page.keyboard.press('Control+k');
   await page.getByText('natpis.png').first().waitFor({ timeout: 10_000 });
 
-  // A picture, turned and written: the worker and the WebAssembly.
+  // A picture.
   await open('natpis.png');
   await page.waitForSelector('.ul-img img', { timeout: 20_000 });
   const pane = page.locator('.ul-img:visible');
+
+  /* The text is read first, off the picture as it was made. The editor reads
+     what it shows — after a save, the file it wrote — so a picture turned a
+     quarter and saved is read sideways, which is right and is not what this
+     is asking: it asks whether the OCR runs under the policy at all. Before
+     card 511 the editor read the bytes it was opened with, and the order did
+     not matter. */
+  // Text off the picture: the OCR workers and their model, from the same origin.
+  await pane.locator('.ul-img-language').selectOption('eng');
+  await pane.locator('.ul-img-ocr').click();
+  const read = await page
+    .waitForSelector('.split .cm-content', { timeout: 180_000 })
+    .then(() => page.locator('.split .cm-content').innerText())
+    .catch(() => '');
+  check('text is read off it under the policy', read.toUpperCase().includes('POLICY'), read.slice(0, 40) || 'nothing');
+
+  // The same picture, turned and written: the worker and the WebAssembly.
   await pane.locator('.ul-img-rotate-right').click();
   await page.keyboard.press('Control+s');
   const written = await page
@@ -156,15 +173,6 @@ try {
     .then(() => true)
     .catch(() => false);
   check('a picture is edited under the policy', written);
-
-  // Text off the picture: the OCR workers and their model, from the same origin.
-  await pane.locator('.ul-img-language').selectOption('eng');
-  await pane.locator('.ul-img-ocr').click();
-  const read = await page
-    .waitForSelector('.split .cm-content', { timeout: 180_000 })
-    .then(() => page.locator('.split .cm-content').innerText())
-    .catch(() => '');
-  check('text is read off it under the policy', read.toUpperCase().includes('POLICY'), read.slice(0, 40) || 'nothing');
 
   // A PDF: pdf.js and its worker.
   await open('dokument.pdf');
