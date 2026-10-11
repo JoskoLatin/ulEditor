@@ -149,6 +149,19 @@ class ImageEditor implements EditorInstance {
   /** What the format select was set to on opening — the baseline for "dirty". */
   #encodingAtOpen: ImageEncoding | null = null;
 
+  /* ── the file this editor is showing ───────────────────────────────────
+   *
+   * Not `doc`'s: a save into another format, or a "save as", writes a new file
+   * and the shell moves the tab to it — but the editor is the same instance,
+   * made for the document it was opened with. Everything that means "the
+   * picture I am showing" reads these, which a save keeps up to date; `doc`
+   * stays what it was opened as, and is only where they start.
+   */
+  #uri: string;
+  #name: string;
+  #bytes: Uint8Array;
+  #size: number;
+
   #statusEmitter = new Emitter<string>();
   #dirtyEmitter = new Emitter<boolean>();
   readonly onStatusChange = this.#statusEmitter.event;
@@ -156,9 +169,13 @@ class ImageEditor implements EditorInstance {
 
   constructor(
     private readonly host: EditorHost,
-    private readonly doc: DocumentHandle,
-    private readonly bytes: Uint8Array,
+    doc: DocumentHandle,
+    bytes: Uint8Array,
   ) {
+    this.#uri = doc.uri;
+    this.#name = doc.name;
+    this.#bytes = bytes;
+    this.#size = doc.stat.size;
     this.#ocrLanguage = host.settings.get<OcrLanguage>('ocr.language', 'hrv');
   }
 
@@ -173,7 +190,7 @@ class ImageEditor implements EditorInstance {
     frame.className = 'ul-img-frame';
 
     const img = document.createElement('img');
-    img.alt = this.doc.name;
+    img.alt = this.#name;
 
     frame.appendChild(img);
     stage.appendChild(frame);
@@ -185,14 +202,14 @@ class ImageEditor implements EditorInstance {
     this.#frame = frame;
     this.#img = img;
 
-    this.#objectUrl = await this.#draw(img, this.doc.uri, this.bytes, this.doc.name);
+    this.#objectUrl = await this.#draw(img, this.#uri, this.#bytes, this.#name);
 
     if (!this.#objectUrl) {
       stage.replaceChildren();
       const error = document.createElement('div');
       error.className = 'ul-img-error';
       error.textContent = t('{name} cannot be displayed. This browser may not support the format.', {
-        name: this.doc.name,
+        name: this.#name,
       });
       error.style.whiteSpace = 'pre-line';
       stage.appendChild(error);
@@ -221,7 +238,7 @@ class ImageEditor implements EditorInstance {
        saying which way is up. */
     if (this.host.images.available()) {
       try {
-        this.#info = await this.host.images.info(this.doc.uri);
+        this.#info = await this.host.images.info(this.#uri);
         if (this.#info && !this.#info.editable) {
           /* A GIF or an `.avif` can be shown and not written. Editing is still
              offered — what it will produce instead is chosen here and said in
@@ -280,7 +297,7 @@ class ImageEditor implements EditorInstance {
        bar carries it, so it leaves the vertical toolbar. */
     const info = document.createElement('span');
     info.className = 'readout';
-    info.textContent = humanBytes(this.doc.stat.size);
+    info.textContent = humanBytes(this.#size);
 
     /* Text recognition: the language, then the button. The language sits beside
        the button because it is chosen before each run rather than in settings —
@@ -650,8 +667,8 @@ class ImageEditor implements EditorInstance {
 
     try {
       const result = await recogniseImage(
-        this.bytes,
-        mimeFor(this.doc.name),
+        this.#bytes,
+        mimeFor(this.#name),
         this.#ocrLanguage,
         (progress) => {
           if (progress.stage === 'recognizing text') {
@@ -668,7 +685,7 @@ class ImageEditor implements EditorInstance {
       }
 
       await this.host.commands.execute('scratch.openText', {
-        name: t('Text from {name}', { name: this.doc.name.replace(/\.[^.]+$/, '') }),
+        name: t('Text from {name}', { name: this.#name.replace(/\.[^.]+$/, '') }),
         text: result.text,
       });
 
@@ -763,7 +780,7 @@ class ImageEditor implements EditorInstance {
     const parts = [
       `${shown.width} × ${shown.height} px`,
       `${Math.round(this.#scale * 100)}%`,
-      humanBytes(this.doc.stat.size),
+      humanBytes(this.#size),
     ];
 
     if (this.isDirty()) {
@@ -830,11 +847,11 @@ class ImageEditor implements EditorInstance {
 
     /* A "save as" was given a name by the person, and that name wins. A plain
        save follows the format: unchanged, it writes the same file. */
-    const uri = target?.uri ?? targetFor(this.doc.uri, this.#effectiveEncoding());
+    const uri = target?.uri ?? targetFor(this.#uri, this.#effectiveEncoding());
     /* A change of format writes beside the original, under a name nobody
        typed. If a file already has that name it is somebody's, and a plain
        save does not get to replace it; "save as" asks, and that is the way. */
-    if (!target && uri !== this.doc.uri) {
+    if (!target && uri !== this.#uri) {
       const taken = await this.host.fs.stat(uri).then(
         () => true,
         () => false,
@@ -847,7 +864,13 @@ class ImageEditor implements EditorInstance {
         );
       }
     }
-    const written = await images.write(this.doc.uri, uri, this.#plan(), options);
+    const written = await images.write(this.#uri, uri, this.#plan(), options);
+
+    /* From here the file is the one just written: the shell moves the tab to
+       it, and the next save must start from it — the plan below is spent, and
+       a plan applied to the original again would throw this one away. */
+    this.#uri = uri;
+    this.#name = uri.slice(Math.max(uri.lastIndexOf('/'), uri.lastIndexOf('\\')) + 1);
 
     this.#rotate = 0;
     this.#flipH = false;
@@ -908,6 +931,8 @@ class ImageEditor implements EditorInstance {
     if (!img) return;
 
     const bytes = await this.host.fs.readBytes(uri);
+    this.#bytes = bytes;
+    this.#size = bytes.length;
     const url = await this.#draw(img, uri, bytes, uri);
     if (url) {
       this.#natural = { width: img.naturalWidth, height: img.naturalHeight };
@@ -939,8 +964,8 @@ class ImageEditor implements EditorInstance {
 
   async copySelection(): Promise<ClipboardPayload | null> {
     return {
-      ...plainPayload(this.doc.name, { editorId: 'org.uleditor.image', uri: this.doc.uri }),
-      'image/png': this.bytes,
+      ...plainPayload(this.#name, { editorId: 'org.uleditor.image', uri: this.#uri }),
+      'image/png': this.#bytes,
     };
   }
 

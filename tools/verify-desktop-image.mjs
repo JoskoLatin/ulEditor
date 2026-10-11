@@ -216,6 +216,43 @@ try {
       await until(async () => (await page.locator('.tab.active, .tab[data-active="true"]').innerText().catch(() => '')).includes('slika.jpg')),
       await page.locator('.tab.active, .tab[data-active="true"]').innerText().catch(() => ''),
     );
+
+    /* ── and the next save goes to the file the tab now shows (card 511) ──
+       The editor used to keep the path it was opened with: its second save
+       worked out the same new `.jpg`, found it there, and refused with
+       "already exists" — and had it not, it would have applied the plan to
+       the original PNG and thrown the first change away. */
+    const first = await shown();
+    const pngAfter = await readFile(file);
+    const jpegBefore = await readFile(jpeg);
+    await pane.locator('.ul-img-rotate-right').click();
+    await page.keyboard.press('Control+S');
+    const wrote = await until(async () => !(await readFile(jpeg)).equals(jpegBefore), 15000);
+    const toasts = (await page.locator('.toast').allInnerTexts()).join(' | ');
+    check(
+      'a second save writes the file the tab follows, and is not refused',
+      wrote && !/already exists/.test(toasts),
+      toasts.slice(0, 120) || 'no message',
+    );
+    await until(async () => (await shown()).width === first.height, 10000);
+    const second = await shown();
+    check(
+      'the picture shown is the one it wrote, turned once more',
+      second.width === first.height && second.height === first.width,
+      `${first.width} × ${first.height} → ${second.width} × ${second.height}`,
+    );
+    const turnedAgain = await readFile(jpeg);
+    check(
+      'it is still a JPEG, and is the first save turned (the sizes above), not the original again',
+      turnedAgain[0] === 0xff && turnedAgain[1] === 0xd8 && turnedAgain.length > 0,
+      `${turnedAgain.length} bytes`,
+    );
+    check('the original is as the first saves left it', (await readFile(file)).equals(pngAfter));
+    check(
+      'and no other file appeared',
+      (await readdir(workspace)).sort().join(',') === 'slika.jpg,slika.png',
+      (await readdir(workspace)).join(', '),
+    );
   }
 
   check(
