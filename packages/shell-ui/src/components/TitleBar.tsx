@@ -161,15 +161,20 @@ export function TitleBar() {
   const instance = activeTabId ? activeInstance() : null;
 
   /*
-   * `data-tauri-drag-region` is what makes an undecorated window movable, and it
-   * works on the element the click actually lands on — so it goes on the bar and
-   * on the title, and never on anything a person is meant to press. A
-   * double-click on it maximises, which the system used to do for us.
+   * `data-tauri-drag-region` is what makes an undecorated window movable. Bare,
+   * it works only on the element the press actually lands on, so it goes on the
+   * bar and on both groups as well: in a wide window the groups stretch over
+   * their columns, and the empty bar beside the buttons is theirs. `deep` takes
+   * in everything inside, and goes only where nothing inside is to be pressed —
+   * the name and the title, whose document name is a `<b>` of its own. A button
+   * blocks it either way; a menu heading's panel is not the group's, so it does
+   * not move the window either. A double-click maximises, which the system used
+   * to do for us. `tools/verify-desktop-titlebar.mjs` walks the bar.
    */
   return (
     <header className="titlebar" data-tauri-drag-region>
-      <div className="titlebar-left">
-        <div className="brand" title={`ulEditor ${__APP_VERSION__}`}>
+      <div className="titlebar-left" data-tauri-drag-region>
+        <div className="brand" title={`ulEditor ${__APP_VERSION__}`} data-tauri-drag-region="deep">
           <span>ul</span>
           <b>Editor</b>
           <small>{__APP_VERSION__}</small>
@@ -223,7 +228,7 @@ export function TitleBar() {
         </button>
       </div>
 
-      <div className="titlebar-title" data-tauri-drag-region>
+      <div className="titlebar-title" data-tauri-drag-region="deep">
         {active ? (
           <>
             <b>{active.name}</b>
@@ -235,7 +240,7 @@ export function TitleBar() {
         )}
       </div>
 
-      <div className="titlebar-right">
+      <div className="titlebar-right" data-tauri-drag-region>
         <button
           className="chrome-btn"
           onClick={() => setPaletteOpen(true)}
