@@ -248,6 +248,30 @@ try {
       `${turnedAgain.length} bytes`,
     );
     check('the original is as the first saves left it', (await readFile(file)).equals(pngAfter));
+
+    /* ── a name worked out by the program replaces nothing (card 522) ──
+       The editor looks first and says "already exists"; a file put there
+       after the look is refused by the core itself. Asked of the commands
+       the editor uses, with `fresh`, over a file that is there. */
+    const jpegNow = await readFile(jpeg);
+    const refusals = await page.evaluate(
+      async ({ source, target }) => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        const refusal = (call) => call.then(() => 'written', (err) => String(err));
+        return {
+          image: await refusal(invoke('image_write', { source, target, ops: { rotate: 90 }, begin: true, fresh: true })),
+          file: await refusal(invoke('write_file', { path: target, contents: [1, 2, 3], begin: true, fresh: true })),
+        };
+      },
+      { source: file, target: jpeg },
+    );
+    check(
+      'the core refuses a fresh picture over a file that is there',
+      /already exists/.test(refusals.image),
+      refusals.image.slice(0, 120),
+    );
+    check('and a fresh file the same way', /already exists/.test(refusals.file), refusals.file.slice(0, 120));
+    check('and the file there is untouched', (await readFile(jpeg)).equals(jpegNow));
     check(
       'and no other file appeared',
       (await readdir(workspace)).sort().join(',') === 'slika.jpg,slika.png',

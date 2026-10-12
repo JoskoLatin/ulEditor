@@ -44,6 +44,11 @@ pub enum VfsError {
     /// nobody is asked to write over anything.
     #[error("{0} was not read here")]
     NotRead(String),
+    /// A save under a name the program worked out itself — a picture saved in
+    /// another format beside the original — found the name taken. Nothing was
+    /// written, and nobody is asked: a file there is somebody's (`save_new`).
+    #[error("{0} already exists")]
+    Exists(String),
     #[error("file system error: {0}")]
     Io(#[from] io::Error),
 }
@@ -1079,18 +1084,64 @@ impl Workspace {
                 (resolved, source)
             }
         };
-        let written = self.write_resolved(&target, data, &source, held)?;
+        let written = self.write_resolved(&target, data, &source, held, false)?;
+        Ok(self.remember(name, target, written, reading, begin))
+    }
 
-        /* What the next save compares against: the new version, so long as
-        the file in its place now is it — asked by which file it is, since
-        between the rename and this the name is anybody's. One that is not,
-        or cannot be looked at, is never taken for it; the protection kept is
-        what this save gave, read from the new version before it was let go. */
+    /// Writes a file under a name nobody typed — a picture saved in another
+    /// format, beside the original — and never over one that is there:
+    /// `VfsError::Exists`, and nothing written. A page that looked first
+    /// (`stat`) and saw nothing has not made the name its own; a program
+    /// that put a file there after the look would otherwise have it replaced
+    /// without a word (the review of 21d6f71, card 522). With `begin`, what
+    /// was written becomes a reading, as with `save`.
+    ///
+    /// The name is taken with `create_new` the moment before the new version
+    /// is renamed into it, so whatever was there by then is refused, a link
+    /// included. Taken any earlier, the empty file would be the one whose
+    /// security the new version is given. Left is the moment between taking
+    /// the name and the rename: one that did not need it — a rename that
+    /// refuses to replace — is `renameat2`, a new dependency on Linux and
+    /// nothing at all on macOS, or a hard link, which FAT and 9P refuse.
+    pub fn save_new(
+        &mut self,
+        path: impl AsRef<Path>,
+        data: &[u8],
+        begin: bool,
+    ) -> Result<Option<Reading>, VfsError> {
+        let name = reading_name(path.as_ref());
+        if begin {
+            self.room_for_a_reading(&name)?;
+        }
+        let resolved = self.resolve_for_write(path)?;
+        /* Asked first too, so that a name already taken costs no write: the
+        answer that counts is the one `write_resolved` gets. */
+        if fs::symlink_metadata(&resolved).is_ok() {
+            return Err(VfsError::Exists(display(&resolved)));
+        }
+        let written = self.write_resolved(&resolved, data, &Source::Document, None, true)?;
+        Ok(self.remember(name, resolved, written, None, begin))
+    }
+
+    /// What the next save compares against, after one that wrote `written`
+    /// to `target`: the new version, so long as the file in its place now is
+    /// it — asked by which file it is, since between the rename and this the
+    /// name is anybody's. One that is not, or cannot be looked at, is never
+    /// taken for it; the protection kept is what the save gave, read from the
+    /// new version before it was let go.
+    fn remember(
+        &mut self,
+        name: PathBuf,
+        target: PathBuf,
+        written: Written,
+        reading: Option<Reading>,
+        begin: bool,
+    ) -> Option<Reading> {
         let now = Fingerprint::at(&target).filter(|now| now.same_id(&written.print));
         let token = match reading {
             Some(token) => token,
             None if begin => self.take_a_token(),
-            None => return Ok(None),
+            None => return None,
         };
         let record = Opened {
             name,
@@ -1100,7 +1151,7 @@ impl Workspace {
             owner: now,
         };
         self.seen.insert(token, record);
-        Ok(Some(token))
+        Some(token)
     }
 
     /// Where a document read from `at` is written when its name no longer
@@ -1156,19 +1207,21 @@ impl Workspace {
     /// refused, and the next name is tried.
     pub fn write(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), VfsError> {
         let resolved = self.resolve_for_write(path)?;
-        self.write_resolved(&resolved, data, &Source::Document, None)
+        self.write_resolved(&resolved, data, &Source::Document, None, false)
             .map(|_| ())
     }
 
     /// `write`, for a path already resolved, with the protection the new
     /// version is to have from `source` (see `save`). `held` is the document,
-    /// let go only just before the new version takes its place.
+    /// let go only just before the new version takes its place. With
+    /// `new_only`, nothing there is replaced (`save_new`).
     fn write_resolved(
         &self,
         resolved: &Path,
         data: &[u8],
         source: &Source<'_>,
         held: Option<fs::File>,
+        new_only: bool,
     ) -> Result<Written, VfsError> {
         use std::io::Write;
 
@@ -1227,11 +1280,40 @@ impl Workspace {
         /* Let go only now: held, the document could not be replaced by the
         rename either. */
         drop(held);
+        /* The name taken, for a file that is to replace nothing: whatever has
+        it now — a file, a link, a link to nothing — makes `create_new` fail,
+        and the new version is thrown away rather than put over it. */
+        let taken = if new_only {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&resolved)
+            {
+                Ok(file) => Fingerprint::of(&file).ok(),
+                Err(err) => {
+                    let _ = fs::remove_file(&temp);
+                    return Err(if err.kind() == io::ErrorKind::AlreadyExists {
+                        VfsError::Exists(display(&resolved))
+                    } else {
+                        err.into()
+                    });
+                }
+            }
+        } else {
+            None
+        };
         /* A rename replaces a link in the document's place rather than
         writing through it, and takes the document away only by putting the
         new version there. */
         if let Err(err) = fs::rename(&temp, &resolved) {
             let _ = fs::remove_file(&temp);
+            /* The empty file that took the name goes too — so long as it is
+            still the one this save made. */
+            if let Some(taken) = &taken {
+                if Fingerprint::at(&resolved).is_some_and(|now| now.same_file(taken)) {
+                    let _ = fs::remove_file(&resolved);
+                }
+            }
             return Err(err.into());
         }
         sweep_leftovers(&resolved);
@@ -2706,6 +2788,98 @@ mod tests {
         let refused = workspace.save(&file, b"mine, edited", false, Some(tab), false);
         assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
         assert_eq!(fs::read_to_string(&file).unwrap(), "an export, and longer");
+    }
+
+    /// Nothing beside `file` but `file` itself: no temporary file left.
+    fn alone_in_its_folder(file: &Path) -> Vec<String> {
+        fs::read_dir(file.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| Some(name.as_str()) != file.file_name().and_then(|n| n.to_str()))
+            .collect()
+    }
+
+    /// A picture saved in another format goes beside the original under a
+    /// name nobody typed; a file already there is somebody's, and is not
+    /// replaced (card 522).
+    #[test]
+    fn a_save_under_a_new_name_replaces_nothing() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("new-name-taken")).unwrap();
+        let file = root.join("slika.webp");
+        fs::write(&file, "somebody's").unwrap();
+
+        let refused = workspace.save_new(&file, b"the picture", true);
+        assert!(matches!(refused, Err(VfsError::Exists(_))), "{refused:?}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "somebody's");
+        assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
+    }
+
+    /// The look before the write is not what refuses: a file put there after
+    /// it is found when the name is taken, and kept.
+    #[test]
+    fn a_file_put_there_after_the_look_is_not_replaced() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("new-name-raced")).unwrap();
+        let file = root.join("slika.webp");
+        let resolved = workspace.resolve_for_write(&file).unwrap();
+        // Past the look in `save_new`: the name was free then.
+        fs::write(&resolved, "put there meanwhile").unwrap();
+
+        let refused =
+            workspace.write_resolved(&resolved, b"the picture", &Source::Document, None, true);
+        assert!(
+            matches!(refused, Err(VfsError::Exists(_))),
+            "{:?}",
+            refused.err()
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "put there meanwhile");
+        assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
+    }
+
+    /// A link in the name — to nothing, too — is a name taken, not a door.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_under_the_new_name_is_not_written_through() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("new-name-link")).unwrap();
+        let file = root.join("slika.webp");
+        let outside = root.join("nowhere.webp");
+        std::os::unix::fs::symlink(&outside, &file).unwrap();
+        let resolved = root.join("slika.webp");
+
+        let refused =
+            workspace.write_resolved(&resolved, b"the picture", &Source::Document, None, true);
+        assert!(
+            matches!(refused, Err(VfsError::Exists(_))),
+            "{:?}",
+            refused.err()
+        );
+        assert!(!outside.exists());
+        assert!(fs::symlink_metadata(&file).unwrap().is_symlink());
+    }
+
+    /// A free name is written, and what was written is a reading: the next
+    /// save of it is compared with it, and one by somebody else in between is
+    /// asked about.
+    #[test]
+    fn a_save_under_a_new_name_begins_a_reading() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("new-name-free")).unwrap();
+        let file = root.join("slika.webp");
+
+        let token = workspace
+            .save_new(&file, b"the picture", true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "the picture");
+        workspace
+            .save(&file, b"turned", false, Some(token), false)
+            .unwrap();
+        fs::write(&file, "somebody else's, and longer").unwrap();
+        let refused = workspace.save(&file, b"turned again", false, Some(token), false);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
     }
 
     /// A reading continues only under the name it was made under: sent with

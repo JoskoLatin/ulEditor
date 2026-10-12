@@ -63,6 +63,13 @@ export interface WriteOptions {
    * Set for one write, after the person said so — never kept.
    */
   overwriteChanged?: boolean;
+  /**
+   * The name is one the editor worked out itself — a picture saved in another
+   * format beside the original — and nothing already there is replaced: such
+   * a write is refused, and nobody is asked. A look first (`stat`) is not
+   * enough, since a file can be put there after it.
+   */
+  fresh?: boolean;
 }
 
 /**

@@ -1071,7 +1071,9 @@ fn forget_readings(state: State<'_, AppState>, readings: Vec<Reading>) -> Result
 /// when it was read to be edited, until the page passes `overwrite` — which
 /// it does only after the person said so, for that one save. Compared with
 /// the reading it names, if any; with `begin`, a file nobody read becomes a
-/// reading, and its token is what comes back (ADR 0006).
+/// reading, and its token is what comes back (ADR 0006). With `fresh`, the
+/// name is one the page worked out itself, and nothing there is replaced
+/// (`Workspace::save_new`).
 #[tauri::command]
 fn write_file(
     state: State<'_, AppState>,
@@ -1080,16 +1082,41 @@ fn write_file(
     overwrite: Option<bool>,
     reading: Option<Reading>,
     begin: Option<bool>,
+    fresh: Option<bool>,
 ) -> Result<Option<Reading>, VfsError> {
     with_workspace(&state, |workspace| {
-        workspace.save(
+        save_in(
+            workspace,
             &path,
             &contents,
             overwrite.unwrap_or(false),
             reading,
             begin.unwrap_or(false),
+            fresh.unwrap_or(false),
         )
     })
+}
+
+/// A save as the page asked for it: over a reading, or, `fresh`, of a file
+/// that must not be there yet. A fresh save naming a reading names a file
+/// that was read or written, so one that is there: refused as taken, rather
+/// than either half of the request being dropped.
+fn save_in(
+    workspace: &mut Workspace,
+    path: &str,
+    data: &[u8],
+    overwrite: bool,
+    reading: Option<Reading>,
+    begin: bool,
+    fresh: bool,
+) -> Result<Option<Reading>, VfsError> {
+    if !fresh {
+        return workspace.save(path, data, overwrite, reading, begin);
+    }
+    if reading.is_some() {
+        return Err(VfsError::Exists(path.to_owned()));
+    }
+    workspace.save_new(path, data, begin)
 }
 
 /* ── images ──────────────────────────────────────────────────────────── */
@@ -1191,16 +1218,19 @@ fn image_write(
     overwrite: Option<bool>,
     reading: Option<Reading>,
     begin: Option<bool>,
+    fresh: Option<bool>,
 ) -> Result<WithReading<Written>, ImageCommandError> {
     let bytes = with_workspace(&state, |workspace| workspace.read(&source))?;
     let (out, written) = ul_image::apply(&bytes, &ops)?;
     let reading = with_workspace(&state, |workspace| {
-        workspace.save(
+        save_in(
+            workspace,
             &target,
             &out,
             overwrite.unwrap_or(false),
             reading,
             begin.unwrap_or(false),
+            fresh.unwrap_or(false),
         )
     })?;
     Ok(WithReading {

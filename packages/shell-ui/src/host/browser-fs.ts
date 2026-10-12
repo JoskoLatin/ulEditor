@@ -276,11 +276,18 @@ export class BrowserFileSystem implements VirtualFileSystem {
    * original. Only in a folder the person opened: a file opened on its own
    * has no folder here to write a sibling into.
    */
-  async #writableHandle(uri: Uri): Promise<FsFileHandle> {
-    if (this.#handles.has(uri)) return this.#fileHandle(uri);
+  async #writableHandle(uri: Uri, fresh: boolean): Promise<FsFileHandle> {
     const slash = uri.lastIndexOf('/');
     const parentUri = uri.slice(0, slash);
     const name = uri.slice(slash + 1);
+    if (this.#handles.has(uri)) {
+      /* A name the editor worked out itself replaces nothing, a file this
+         program already knows included (`WriteOptions.fresh`). */
+      if (fresh) {
+        throw new Error(t('{name} already exists. Use Save as to replace it or to choose another name.', { name }));
+      }
+      return this.#fileHandle(uri);
+    }
     const parent = this.#handles.get(parentUri);
     if (!parent || parent.kind !== 'directory' || !name || name === '.' || name === '..') {
       throw new Error(t('A new file can only be written into a folder that is open.'));
@@ -302,8 +309,8 @@ export class BrowserFileSystem implements VirtualFileSystem {
     return handle;
   }
 
-  async writeBytes(uri: Uri, data: Uint8Array, _opts?: WriteOptions): Promise<void> {
-    const handle = await this.#writableHandle(uri);
+  async writeBytes(uri: Uri, data: Uint8Array, opts?: WriteOptions): Promise<void> {
+    const handle = await this.#writableHandle(uri, opts?.fresh === true);
     await this.#ensureWritable(handle);
     const writable = await handle.createWritable();
     // A copy into a fresh ArrayBuffer — writable does not accept views onto a SharedArrayBuffer.

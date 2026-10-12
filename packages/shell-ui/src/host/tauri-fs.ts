@@ -147,6 +147,7 @@ export class TauriFileSystem implements VirtualFileSystem {
       overwrite: opts?.overwriteChanged === true,
       reading: reading ?? null,
       begin,
+      fresh: opts?.fresh === true,
     });
   }
 

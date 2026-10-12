@@ -123,6 +123,23 @@ file it wrote (`#uri` in `editor-image/src/index.ts`), a string the scope holds
 a reading for because it wrote it. The editors above still write `doc.uri`
 verbatim; the converted `.xls` already goes back to its `convert.target`.
 
+*Note, 2026-10-12 (card 522):* two things the review of 21d6f71 found. First,
+the scope read the image editor's look after a save (`info`) as the reading
+again, and a reading read again takes in whatever is there now — so a file put
+in place of the one just written became what the next save was compared with,
+and that save went ahead without a question. Now `info` makes a reading only of
+the tab's own document before it has one; once there is a reading — from
+`doc.bytes()` or from a write — a look is only a look, and the reading stays
+what the save wrote. Second, the save into another format is written under a
+name nobody typed, and the editor's `stat` before it was the only thing keeping
+a file put there afterwards from being replaced. Such a write now says so
+(`WriteOptions.fresh`, `fresh` on `write_file` and `image_write`), and the core
+writes it with `Workspace::save_new`, which takes the name with `create_new` the
+moment before the rename and refuses a file, or a link, that has it. A fresh
+write naming a reading is refused as taken. What is left is the moment between
+taking the name and the rename: a rename that will not replace is `renameat2`
+(a new dependency, Linux only) or a hard link (refused by FAT and 9P).
+
 **What the token is and is not.** It names a reading. It is not a consent and
 grants nothing: every save still resolves its path through the sandbox
 (`resolve_for_write`, `where_it_was`). A token sent with another name is

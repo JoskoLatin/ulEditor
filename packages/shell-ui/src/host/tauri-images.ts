@@ -64,6 +64,7 @@ export class TauriImages implements ImageService {
         overwrite: options?.overwriteChanged === true,
         reading: reading ?? null,
         begin,
+        fresh: options?.fresh === true,
       },
     );
     return { written, reading: made };

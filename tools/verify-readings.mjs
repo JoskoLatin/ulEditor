@@ -12,8 +12,11 @@
  *   write of that path carries the one it got;
  * - another tab writing the first one's document sends no reading — nor
  *   does the same path in other letters;
- * - the image editor's look at its document after a save carries the
- *   reading that save made;
+ * - the image editor's look at its document after a save is only a look:
+ *   read as the reading again, a file put there between the save and the
+ *   look would be taken for what was written (card 522);
+ * - a picture saved in another format goes with `fresh`, which the core
+ *   refuses over any file that is there;
  * - closing forgets the tab's readings and nobody else's;
  * - where the file system keeps no readings (the web), the scope is the
  *   host itself.
@@ -77,8 +80,8 @@ function fakeCore() {
       calls.push({ op: 'info', uri: source, reading, made });
       return { info: { width: 1, height: 1 }, reading: made };
     },
-    async writeDocument(_source, target, _ops, _options, reading, begin) {
-      calls.push({ op: 'image-write', uri: target, reading, begin });
+    async writeDocument(_source, target, _ops, options, reading, begin) {
+      calls.push({ op: 'image-write', uri: target, reading, begin, fresh: options?.fresh });
       return { written: { width: 1, height: 1 }, reading: reading ?? (begin ? ++next : null) };
     },
     available: () => true,
@@ -153,8 +156,27 @@ check(
   last('image-write').reading === first.made && last('image-write').begin === false,
   JSON.stringify(last('image-write')),
 );
+const readingsBefore = core.calls.filter((c) => c.op === 'info').length;
 await picture.host.images.info('C:/d/slika.png');
-check('and the look after it, the same reading', last('info').reading === last('image-write').reading, JSON.stringify(last('info')));
+check(
+  'and the look after it is only a look, not the reading read again',
+  core.calls.filter((c) => c.op === 'info').length === readingsBefore && last('look')?.uri === 'C:/d/slika.png',
+  JSON.stringify(last('info')),
+);
+await picture.host.images.write('C:/d/slika.png', 'C:/d/slika.webp', {}, { fresh: true });
+check(
+  'a save in another format is fresh, with no reading, and begins one',
+  last('image-write').uri === 'C:/d/slika.webp' &&
+    last('image-write').fresh === true &&
+    last('image-write').reading === undefined &&
+    last('image-write').begin === true,
+  JSON.stringify(last('image-write')),
+);
+await picture.host.images.info('C:/d/slika.webp');
+check(
+  'and the look at what it wrote is only a look',
+  core.calls.filter((c) => c.op === 'info').length === readingsBefore && last('look')?.uri === 'C:/d/slika.webp',
+);
 await picture.host.images.info('C:/d/elsewhere.png');
 check('a picture it never read or wrote is only looked at', last('look')?.uri === 'C:/d/elsewhere.png');
 

@@ -850,8 +850,11 @@ class ImageEditor implements EditorInstance {
     const uri = target?.uri ?? targetFor(this.#uri, this.#effectiveEncoding());
     /* A change of format writes beside the original, under a name nobody
        typed. If a file already has that name it is somebody's, and a plain
-       save does not get to replace it; "save as" asks, and that is the way. */
-    if (!target && uri !== this.#uri) {
+       save does not get to replace it; "save as" asks, and that is the way.
+       The look here says so in the person's words; what refuses a file put
+       there after it is the write itself (`fresh`). */
+    const fresh = !target && uri !== this.#uri;
+    if (fresh) {
       const taken = await this.host.fs.stat(uri).then(
         () => true,
         () => false,
@@ -864,7 +867,7 @@ class ImageEditor implements EditorInstance {
         );
       }
     }
-    const written = await images.write(this.#uri, uri, this.#plan(), options);
+    const written = await images.write(this.#uri, uri, this.#plan(), fresh ? { ...options, fresh } : options);
 
     /* From here the file is the one just written: the shell moves the tab to
        it, and the next save must start from it — the plan below is spent, and

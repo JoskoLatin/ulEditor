@@ -20,7 +20,15 @@
  * is edited or asked about.
  */
 
-import type { ImageInfo, ImageOps, ImageService, ImageWritten, Uri, VirtualFileSystem } from '@uleditor/plugin-sdk';
+import type {
+  ImageInfo,
+  ImageOps,
+  ImageService,
+  ImageWritten,
+  Uri,
+  VirtualFileSystem,
+  WriteOptions,
+} from '@uleditor/plugin-sdk';
 
 import type { ImageRequest, ImageResponse } from './image-worker.js';
 
@@ -107,10 +115,10 @@ export class WasmImages implements ImageService {
     return answer(await this.#worker.ask({ op: 'info', bytes })).info as ImageInfo;
   }
 
-  async write(source: Uri, target: Uri, ops: ImageOps): Promise<ImageWritten> {
+  async write(source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions): Promise<ImageWritten> {
     const bytes = own(await this.fs.readBytes(source));
     const done = answer(await this.#worker.ask({ op: 'apply', bytes, ops }));
-    await this.fs.writeBytes(target, new Uint8Array(done.bytes as ArrayBuffer));
+    await this.fs.writeBytes(target, new Uint8Array(done.bytes as ArrayBuffer), options);
     return done.written as ImageWritten;
   }
 

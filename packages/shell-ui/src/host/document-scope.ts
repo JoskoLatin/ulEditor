@@ -153,10 +153,14 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
         infoDocument: undefined,
         writeDocument: undefined,
         info: async (source: Uri) => {
-          /* The tab's own document, or a file it wrote: read as a reading.
-             Anything else is only looked at. */
-          if (source !== doc.uri && !readings.has(source)) return images.info(source);
-          const { info, reading } = await images.infoDocument(source, readings.get(source));
+          /* The tab's own document, not read yet: read as a reading. Once
+             there is one — the document's bytes, or a file this tab wrote —
+             a look is only a look. Read as the reading again, it would take
+             whatever is there now for what was written: a file put in its
+             place between the save and the look would be agreed to, and the
+             next save go ahead without a question (card 522). */
+          if (source !== doc.uri || readings.has(source)) return images.info(source);
+          const { info, reading } = await images.infoDocument(source);
           readings.set(source, reading);
           return info;
         },
