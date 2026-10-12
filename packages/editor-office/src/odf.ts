@@ -60,6 +60,7 @@ import {
   lastPieceOf,
   odtAlike,
   odtDivisionRefusal,
+  odtIsPlain,
   odtJoinRefusal,
   odtRemovalRefusal,
   odtRowRefusal,
@@ -1050,7 +1051,13 @@ export function readOdt(bytes: Uint8Array): Preview {
   const xml = readText(opened.archive, 'content.xml') ?? '';
   const pieces = findOdtPieces(xml);
   const paragraphs = findOdtParagraphs(xml);
-  const styles = readOdtStyles(xml, readText(opened.archive, 'styles.xml'));
+  /* A part the scanner and the parser could read differently is shown and not
+     edited (`odtIsPlain`); and `styles.xml` is read for the style a new
+     paragraph hands on only when it parsed and is as plain — otherwise its
+     names would be copied out of a part nobody checked (the review of 459). */
+  const plain = odtIsPlain(xml);
+  const stylesXml = opened.styles ? readText(opened.archive, 'styles.xml') : null;
+  const styles = readOdtStyles(xml, stylesXml !== null && odtIsPlain(stylesXml) === null ? stylesXml : null);
 
   /* The paragraphs are counted over the raw part and over the parsed tree, and
      a paragraph is named in the view only when the two counts agree — a new
@@ -1072,14 +1079,15 @@ export function readOdt(bytes: Uint8Array): Preview {
     ordered: listStyles(opened),
     urls: [],
     notes: new Set(),
-    pieces: pairPieces(opened.content, pieces),
+    /* Not plain: nothing is named, so nothing can be pointed at. */
+    pieces: plain === null ? pairPieces(opened.content, pieces) : new Map(),
     paraIndex,
     insertable:
-      paraIndex.size === paragraphs.length
+      plain === null && paraIndex.size === paragraphs.length
         ? new Set(paragraphs.filter((one) => one.refusal === null).map((one) => one.index))
         : new Set(),
     rowIndex,
-    markedRows: rowIndex.size === rows.length ? new Set(rows.map((one) => one.index)) : new Set(),
+    markedRows: plain === null && rowIndex.size === rows.length ? new Set(rows.map((one) => one.index)) : new Set(),
   };
 
   const body = document.createElement('div');
@@ -1155,6 +1163,8 @@ export function readOdt(bytes: Uint8Array): Preview {
   const meta = readXml(opened.archive, 'meta.xml');
   const title = (meta ? tag(meta, 'title')?.textContent : '')?.trim() ?? '';
 
+  if (plain !== null) ctx.notes.add('This document is written in a way this program does not edit safely — it is shown, not edited.');
+
   return {
     title,
     body,
@@ -1166,7 +1176,7 @@ export function readOdt(bytes: Uint8Array): Preview {
       ctx.urls.length = 0;
     },
     source:
-      ctx.pieces.size > 0
+      ctx.pieces.size > 0 && plain === null
         ? odtSource(opened.archive, xml, pieces, paragraphs, styles, ctx.insertable, rows, ctx.markedRows)
         : undefined,
   };
@@ -1183,6 +1193,8 @@ function said(why: string, act: 'add' | 'remove' | 'split' | 'join'): string {
         : act === 'split'
           ? t('This paragraph starts a new page or page style — splitting it would start a second one.')
           : t('This paragraph starts a new page or page style — removing it would change the pages after it.');
+    case 'the paragraph holds a picture or an object':
+      return t('This paragraph holds a picture or an object — removing it here would take that too.');
     case 'the paragraph holds text the view does not show':
       return t('This paragraph holds a text box or a comment this view does not show — removing it would take that text too.');
     case 'a tracked change is recorded in the paragraph':
@@ -1242,20 +1254,27 @@ function odtSource(
     /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
        the ranges, never the order. */
     textOf: (index) => pieces[index]?.text ?? '',
-    write: (edits, added, removed, divided, joined, newRows) =>
-      writeOdf(
-        archive,
-        applyOdtEdits(xml, pieces, edits, {
-          paragraphs,
-          styles,
-          inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
-          removals: removed,
-          cuts: (divided ?? []).map((one) => ({ piece: one.index, parts: one.parts })),
-          joins: joined,
-          rows,
-          rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
-        }),
-      ),
+    write: (edits, added, removed, divided, joined, newRows) => {
+      const written = applyOdtEdits(xml, pieces, edits, {
+        paragraphs,
+        styles,
+        inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
+        removals: removed,
+        cuts: (divided ?? []).map((one) => ({ piece: one.index, parts: one.parts })),
+        joins: joined,
+        rows,
+        rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
+      });
+      /* Read back by a real parser before it goes anywhere: the writer works
+         on byte ranges, and a part it got wrong is a document nobody opens
+         again — refused here, the file on disk stays as it was (the review
+         of card 459). */
+      const check = new DOMParser().parseFromString(written, 'application/xml');
+      if (check.getElementsByTagName('parsererror').length > 0) {
+        throw new Error(t('This change could not be written as a well-formed document, so nothing was saved.'));
+      }
+      return writeOdf(archive, written);
+    },
 
     paragraphs:
       insertable.size > 0

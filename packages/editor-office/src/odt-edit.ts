@@ -27,7 +27,7 @@
  * [`odf.ts`](./odf.ts), where a DOM exists.
  */
 
-import { escapeXml, localName, scanTags, tagAttr, unescapeXml, type Tag } from './docx-edit.js';
+import { escapeXml, localName, ownAttr, scanTags, unescapeXml, type Tag } from './docx-edit.js';
 
 /* ── the pieces ──────────────────────────────────────────────────────── */
 
@@ -140,7 +140,7 @@ export function findOdtPieces(xml: string): OdtPiece[] {
     if (SPACING.has(local)) {
       /* Added before the frame is pushed, so it lands in the piece it is part
          of rather than in one of its own. */
-      add(tag.start, tag.end, local === 's' ? spacesOf(numberOf(tagAttr(xml, tag, 'c'))) : '\t');
+      add(tag.start, tag.end, local === 's' ? spacesOf(numberOf(ownAttr(xml, tag, 'c'))) : '\t');
       if (!tag.selfClosing) stack.push({ ordinal, editable: false, spacing: true });
       continue;
     }
@@ -179,7 +179,13 @@ export interface OdtEdit {
 
 /** A new line is an element here, not a character; a pasted one becomes a space. */
 function oneLine(text: string): string {
-  return text.replace(/[\r\n]+/g, ' ');
+  /* And what XML 1.0 cannot hold at all — a vertical tab, a form feed, the
+     other control characters, a lone surrogate — is left out: a browser keeps
+     them in what is typed or pasted, and one of them in the part is a file no
+     reader opens (the review of card 459). */
+  return text
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 }
 
 /**
@@ -238,13 +244,78 @@ const TEXT_NS = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
  * read rather than assumed.
  */
 export function textPrefix(xml: string): string {
-  const root = scanTags(xml).next().value;
-  if (!root) return 'text';
+  return prefixFor(xml, TEXT_NS, 'text');
+}
 
-  const found = new RegExp(`xmlns:([A-Za-z_][\\w.-]*)\\s*=\\s*["']${TEXT_NS}["']`).exec(
-    xml.slice(root.start, root.end),
-  );
-  return found ? found[1]! : 'text';
+const OFFICE_NS = 'urn:oasis:names:tc:opendocument:xmlns:office:1.0';
+const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
+const DRAW_NS = 'urn:oasis:names:tc:opendocument:xmlns:drawing:1.0';
+
+/**
+ * The namespaces the root element declares, prefix to URI — read attribute
+ * after attribute, so a declaration written inside another attribute's value
+ * is not taken for one (the review of card 459). Once per part.
+ */
+function rootNamespaces(xml: string): Map<string, string> {
+  if (namespacesRead?.xml === xml) return namespacesRead.map;
+  const map = new Map<string, string>();
+  const root = scanTags(xml).next().value;
+  if (root) {
+    const attribute = /\s([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+    const body = xml.slice(root.start, root.end);
+    for (let match = attribute.exec(body); match; match = attribute.exec(body)) {
+      const name = match[1]!;
+      if (name === 'xmlns') map.set('', match[2] ?? match[3] ?? '');
+      else if (name.startsWith('xmlns:')) map.set(name.slice(6), match[2] ?? match[3] ?? '');
+    }
+  }
+  namespacesRead = { xml, map };
+  return map;
+}
+let namespacesRead: { xml: string; map: Map<string, string> } | null = null;
+
+/** The prefix the root binds a namespace to; `fallback` where it binds none. */
+function prefixFor(xml: string, uri: string, fallback: string): string {
+  for (const [prefix, bound] of rootNamespaces(xml)) {
+    if (bound === uri && prefix !== '') return prefix;
+  }
+  return fallback;
+}
+
+/**
+ * Why this part is not one whose structure may be edited here; `null` when
+ * it may.
+ *
+ * The view counts paragraphs and rows over the parsed tree, the writer over
+ * the raw part, and an edit is offered only where the two counts agree. A
+ * count can agree while the elements differ: a processing instruction a
+ * scanner and a parser end in different places, a namespace bound again
+ * inside the part or to two prefixes, an entity a DTD declares — each hides
+ * an element from one side and not the other, and the next removal takes the
+ * paragraph beside the one pointed at (the review of card 459). LibreOffice
+ * writes none of these, so a part holding one is shown and not edited.
+ */
+export function odtIsPlain(xml: string): string | null {
+  const start = xml.replace(/^﻿/, '').trimStart();
+  const prolog = /^<\?xml\b[\s\S]*?\?>/.exec(start)?.[0] ?? '';
+  if (start.slice(prolog.length).includes('<?')) return 'a processing instruction';
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) return 'a document type declaration';
+
+  const namespaces = rootNamespaces(xml);
+  if (namespaces.has('')) return 'a default namespace';
+  for (const uri of [TEXT_NS, TABLE_NS, OFFICE_NS]) {
+    if ([...namespaces.values()].filter((bound) => bound === uri).length > 1) return 'a namespace bound to two prefixes';
+  }
+
+  let first = true;
+  for (const tag of scanTags(xml)) {
+    if (tag.closing) continue;
+    if (!first && /\sxmlns(?::|\s*=)/.test(xml.slice(tag.start, tag.end))) return 'a namespace declared inside the part';
+    const colon = tag.name.indexOf(':');
+    if (colon < 1 || !namespaces.has(tag.name.slice(0, colon))) return 'an element in an undeclared namespace';
+    first = false;
+  }
+  return null;
 }
 
 function editable(pieces: OdtPiece[], edits: OdtEdit[]): { piece: OdtPiece; text: string }[] {
@@ -290,8 +361,12 @@ export interface OdtParagraph {
  */
 export function findOdtParagraphs(xml: string): OdtParagraph[] {
   const prefix = textPrefix(xml);
+  /* The parent by its whole name, in its own namespace: `x:text` in some other
+     namespace is not the body, whatever its local name (the review of card 459). */
+  const body = `${prefixFor(xml, OFFICE_NS, 'office')}:text`;
+  const lists = new Set([`${prefix}:list-item`, `${prefix}:list-header`]);
   const paragraphs: OdtParagraph[] = [];
-  const stack: { local: string; paragraph: OdtParagraph | null }[] = [];
+  const stack: { name: string; paragraph: OdtParagraph | null }[] = [];
 
   for (const tag of scanTags(xml)) {
     if (tag.closing) {
@@ -303,7 +378,7 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
     const own = tag.name === `${prefix}:p` || tag.name === `${prefix}:h`;
     let paragraph: OdtParagraph | null = null;
     if (own) {
-      const parent = stack[stack.length - 1]?.local ?? '';
+      const parent = stack[stack.length - 1]?.name ?? '';
       paragraph = {
         index: paragraphs.length,
         start: tag.start,
@@ -312,18 +387,18 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
         selfClosing: tag.selfClosing,
         kind: local === 'h' ? 'h' : 'p',
         name: tag.name,
-        style: tagAttr(xml, tag, 'style-name'),
-        level: local === 'h' ? tagAttr(xml, tag, 'outline-level') : null,
+        style: ownAttr(xml, tag, 'style-name'),
+        level: local === 'h' ? ownAttr(xml, tag, 'outline-level') : null,
         refusal:
-          parent === 'text'
+          parent === body
             ? null
-            : parent === 'list-item' || parent === 'list-header'
+            : lists.has(parent)
               ? 'the paragraph is in a list'
               : 'the paragraph is not in the body of the document',
       };
       paragraphs.push(paragraph);
     }
-    if (!tag.selfClosing) stack.push({ local, paragraph });
+    if (!tag.selfClosing) stack.push({ name: tag.name, paragraph });
   }
 
   return paragraphs;
@@ -383,17 +458,17 @@ function paragraphStyles(xml: string, region: string): Map<string, OdtParagraphS
         open = null;
         continue;
       }
-      const name = tagAttr(xml, tag, 'name');
-      const family = tagAttr(xml, tag, 'family');
+      const name = ownAttr(xml, tag, 'name');
+      const family = ownAttr(xml, tag, 'family');
       if (!name || family !== 'paragraph') {
         open = null;
         continue;
       }
-      const master = tagAttr(xml, tag, 'master-page-name');
+      const master = ownAttr(xml, tag, 'master-page-name');
       const style: OdtParagraphStyle = {
-        parent: tagAttr(xml, tag, 'parent-style-name'),
-        next: tagAttr(xml, tag, 'next-style-name'),
-        level: tagAttr(xml, tag, 'default-outline-level'),
+        parent: ownAttr(xml, tag, 'parent-style-name'),
+        next: ownAttr(xml, tag, 'next-style-name'),
+        level: ownAttr(xml, tag, 'default-outline-level'),
         page: master !== null && master !== '',
       };
       styles.set(name, style);
@@ -401,7 +476,7 @@ function paragraphStyles(xml: string, region: string): Map<string, OdtParagraphS
       continue;
     }
     if (open && !tag.closing && local === 'paragraph-properties') {
-      if (tagAttr(xml, tag, 'break-before') === 'page' || tagAttr(xml, tag, 'break-after') === 'page') {
+      if (ownAttr(xml, tag, 'break-before') === 'page' || ownAttr(xml, tag, 'break-after') === 'page') {
         open.page = true;
       }
     }
@@ -481,7 +556,10 @@ export function successorOf(
 
 /** An attribute value as it goes back between double quotes. */
 function quoted(raw: string): string {
-  return raw.replace(/"/g, '&quot;');
+  /* The value as the file means it, written whole again: a name out of a
+     part nobody parsed — `styles.xml` — can hold a `<` or an `&`, and copied
+     as it stands it would break the part it goes into. */
+  return escapeXml(unescapeXml(raw)).replace(/"/g, '&quot;');
 }
 
 /**
@@ -521,7 +599,7 @@ function spansAround(xml: string, paragraph: OdtParagraph, piece: { start: numbe
       continue;
     }
     const shifted = { start: tag.start + from, end: tag.end + from };
-    open.push(tag.name === `${prefix}:span` ? { name: tag.name, style: tagAttr(xml, shifted, 'style-name') } : null);
+    open.push(tag.name === `${prefix}:span` ? { name: tag.name, style: ownAttr(xml, shifted, 'style-name') } : null);
   }
   return open.every((span): span is OpenSpan => span !== null) ? open : null;
 }
@@ -534,8 +612,18 @@ const closing = (spans: OpenSpan[]): string =>
 
 /** The pieces that are a paragraph's own — not ones in a frame or a note it holds. */
 function piecesOf(pieces: OdtPiece[], paragraphs: OdtParagraph[], paragraph: OdtParagraph): OdtPiece[] {
+  /* The paragraphs nested in it — a text box's, a note's — follow it in
+     order; a piece in one of them is not its own. Found once, rather than
+     each piece asking for its paragraph from the top. */
+  const nested: OdtParagraph[] = [];
+  for (let i = paragraph.index + 1; i < paragraphs.length && paragraphs[i]!.start < paragraph.end; i++) {
+    nested.push(paragraphs[i]!);
+  }
   return pieces.filter(
-    (piece) => piece.start >= paragraph.start && piece.end <= paragraph.end && paragraphOf(paragraphs, piece) === paragraph,
+    (piece) =>
+      piece.start >= paragraph.start &&
+      piece.end <= paragraph.end &&
+      !nested.some((inner) => piece.start >= inner.start && piece.end <= inner.end),
   );
 }
 
@@ -607,19 +695,19 @@ function rangesBalanced(xml: string, from: number, to: number): boolean {
     const local = localName(raw.name);
     const tag = { start: raw.start + from, end: raw.end + from };
     if (local === 'annotation') {
-      const name = tagAttr(xml, tag, 'name');
+      const name = ownAttr(xml, tag, 'name');
       /* A comment with a name is the start of a range only if its end is
          written somewhere; one without an end is a comment on a point. */
-      if (name !== null && xml.includes('annotation-end') && annotationEnds(xml).has(name)) add('annotation', 'starts', name);
+      if (name !== null && annotationEnds(xml).has(name)) add('annotation', 'starts', name);
       continue;
     }
     if (local === 'annotation-end') {
-      add('annotation', 'ends', tagAttr(xml, tag, 'name') ?? '');
+      add('annotation', 'ends', ownAttr(xml, tag, 'name') ?? '');
       continue;
     }
     for (const [open, close, key] of PAIRED) {
-      if (local === open) add(open, 'starts', tagAttr(xml, tag, key) ?? '');
-      else if (local === close) add(open, 'ends', tagAttr(xml, tag, key) ?? '');
+      if (local === open) add(open, 'starts', ownAttr(xml, tag, key) ?? '');
+      else if (local === close) add(open, 'ends', ownAttr(xml, tag, key) ?? '');
     }
   }
   for (const pair of halves.values()) {
@@ -636,7 +724,7 @@ function annotationEnds(xml: string): Set<string> {
   if (endsRead?.xml === xml) return endsRead.names;
   const names = new Set<string>();
   for (const tag of scanTags(xml)) {
-    if (!tag.closing && localName(tag.name) === 'annotation-end') names.add(tagAttr(xml, tag, 'name') ?? '');
+    if (!tag.closing && localName(tag.name) === 'annotation-end') names.add(ownAttr(xml, tag, 'name') ?? '');
   }
   endsRead = { xml, names };
   return names;
@@ -682,6 +770,14 @@ export function odtRemovalRefusal(
      page of text. Measured: one such paragraph in the corpus held forty. */
   const inner = paragraphs[index + 1];
   if (inner && inner.start < span.end) return 'the paragraph holds text the view does not show';
+  /* And a picture, a chart, a formula or a shape: the view draws some
+     pictures and none of the rest — a Word document written as .odt carries
+     its EMF pictures there — so a line that looks empty can hold one, and
+     taking the line away would take it too (the review of card 459). */
+  const draw = prefixFor(xml, DRAW_NS, 'draw');
+  for (const tag of scanTags(xml.slice(span.start, span.end))) {
+    if (!tag.closing && tag.name.startsWith(`${draw}:`)) return 'the paragraph holds a picture or an object';
+  }
   const body = paragraphs.filter((one) => one.refusal === null);
   const alive = survivors ?? new Set(body.map((one) => one.index));
   if (!alive.has(index)) return 'there is no such paragraph';
@@ -918,50 +1014,63 @@ const count = (raw: string | null, most: number): number => {
  * in the new row.
  */
 export function findOdtRows(xml: string): OdtRow[] {
+  /* Every name in its own namespace: a `table-row` of some other namespace
+     is no row of a table (the review of card 459). */
+  const table = prefixFor(xml, TABLE_NS, 'table');
+  const body = `${prefixFor(xml, OFFICE_NS, 'office')}:text`;
+  const region = new Set([...ROW_REGION].map((local) => `${table}:${local}`));
+  const rowName = `${table}:table-row`;
+  const cellNames = new Set([`${table}:table-cell`, `${table}:covered-table-cell`]);
+
   const rows: OdtRow[] = [];
-  const stack: { local: string; start: number }[] = [];
-  const open: OdtRow[] = [];
+  /* The cells of each row, gathered in the same pass: asked of the row
+     afterwards, a table nested a thousand deep was scanned a thousand times. */
+  const raw = new Map<OdtRow, Tag[]>();
+  const stack: { name: string; start: number; row: OdtRow | null; cell: Tag | null }[] = [];
 
   for (const tag of scanTags(xml)) {
-    const local = localName(tag.name);
     if (tag.closing) {
       const popped = stack.pop();
-      if (popped?.local === 'table-row') {
-        const row = open.pop();
-        if (row) row.end = tag.end;
-      }
+      if (popped?.row) popped.row.end = tag.end;
+      if (popped?.cell) popped.cell.end = tag.end;
       continue;
     }
-    if (local === 'table-row') {
-      let table = -1;
+    let row: OdtRow | null = null;
+    let cell: Tag | null = null;
+    const parent = stack[stack.length - 1];
+    if (tag.name === rowName) {
+      let owner = -1;
       let where = '';
       for (let i = stack.length - 1; i >= 0; i--) {
         const frame = stack[i]!;
-        if (table === -1 && frame.local === 'table') table = frame.start;
-        if (ROW_REGION.has(frame.local)) continue;
-        where = frame.local;
+        if (owner === -1 && frame.name === `${table}:table`) owner = frame.start;
+        if (region.has(frame.name)) continue;
+        where = frame.name;
         break;
       }
-      const row: OdtRow = {
+      row = {
         index: rows.length,
         start: tag.start,
         end: tag.end,
-        table,
+        table: owner,
         cells: [],
         continued: false,
         refusal:
-          table === -1
+          owner === -1
             ? 'the row is not a row of a table'
-            : where !== 'text'
+            : where !== body
               ? 'the table is not in the body of the document'
-              : count(tagAttr(xml, tag, 'number-rows-repeated'), 2) > 1
+              : count(ownAttr(xml, tag, 'number-rows-repeated'), 2) > 1
                 ? 'the row stands for several rows'
                 : null,
       };
       rows.push(row);
-      if (!tag.selfClosing) open.push(row);
+      raw.set(row, []);
+    } else if (cellNames.has(tag.name) && parent?.row) {
+      cell = { ...tag };
+      raw.get(parent.row)!.push(cell);
     }
-    if (!tag.selfClosing) stack.push({ local, start: tag.start });
+    if (!tag.selfClosing) stack.push({ name: tag.name, start: tag.start, row, cell });
   }
 
   /* The cells, against each table's grid, row after row. The grid is
@@ -976,18 +1085,16 @@ export function findOdtRows(xml: string): OdtRow[] {
     pending.set(row.table, below);
     const fromAbove = below.map((left) => left > 0);
     let column = 0;
-    for (const tag of childrenOf(xml, row)) {
+    for (const tag of raw.get(row) ?? []) {
       const local = localName(tag.name);
-      if (local !== 'table-cell' && local !== 'covered-table-cell') continue;
       if (column >= MOST_COLUMNS) {
         row.refusal ??= 'the table is wider than this program follows';
         break;
       }
       const covered = local === 'covered-table-cell';
-      const own = openingOf(xml, tag);
-      const repeat = count(tagAttr(xml, own, 'number-columns-repeated'), 64);
-      const span = covered ? 1 : count(tagAttr(xml, own, 'number-columns-spanned'), 1024);
-      const down = covered ? 1 : count(tagAttr(xml, own, 'number-rows-spanned'), 1 << 20);
+      const repeat = count(ownAttr(xml, tag, 'number-columns-repeated'), 64);
+      const span = covered ? 1 : count(ownAttr(xml, tag, 'number-columns-spanned'), 1024);
+      const down = covered ? 1 : count(ownAttr(xml, tag, 'number-rows-spanned'), 1 << 20);
       row.cells.push({ tag, covered, fromAbove: covered && fromAbove[column] === true, span, repeat });
       if (covered && fromAbove[column]) row.continued = true;
       for (let r = 0; r < repeat && column < MOST_COLUMNS; r++) {
@@ -1042,13 +1149,6 @@ export function odtRowShape(row: OdtRow): number[] {
   return shape;
 }
 
-/** The prefix the root element is written with — `office`, almost always. */
-function rootPrefix(xml: string, fallback: string): string {
-  const root = scanTags(xml).next().value;
-  const colon = root ? root.name.indexOf(':') : -1;
-  return root && colon > 0 ? root.name.slice(0, colon) : fallback;
-}
-
 /**
  * The markup of a new row: **the row it follows, emptied** — the row's style,
  * each cell's style and span, and each cell's first paragraph's style, each
@@ -1056,22 +1156,21 @@ function rootPrefix(xml: string, fallback: string): string {
  */
 export function odtRowMarkup(xml: string, row: OdtRow, texts: readonly string[]): string {
   const prefix = textPrefix(xml);
-  const rowTag = scanTags(xml.slice(row.start, row.end)).next().value!;
-  const table = rowTag.name.slice(0, rowTag.name.indexOf(':'));
-  const office = rootPrefix(xml, 'office');
+  const table = prefixFor(xml, TABLE_NS, 'table');
+  const office = prefixFor(xml, OFFICE_NS, 'office');
   const styled = (raw: string | null) => (raw !== null ? ` ${table}:style-name="${quoted(raw)}"` : '');
 
-  let out = `<${table}:table-row${styled(tagAttr(xml, openingOf(xml, row), 'style-name'))}>`;
+  let out = `<${table}:table-row${styled(ownAttr(xml, openingOf(xml, row), 'style-name'))}>`;
   let at = 0;
   for (const cell of row.cells) {
     if (cell.covered && !cell.fromAbove) continue;
     const own = openingOf(xml, cell.tag);
-    const style = tagAttr(xml, own, 'style-name');
-    const typed = tagAttr(xml, own, 'value-type') !== null ? ` ${office}:value-type="string"` : '';
+    const style = ownAttr(xml, own, 'style-name');
+    const typed = ownAttr(xml, own, 'value-type') !== null ? ` ${office}:value-type="string"` : '';
     const first = cell.covered
       ? undefined
       : childrenOf(xml, cell.tag).find((child) => child.name === `${prefix}:p` || child.name === `${prefix}:h`);
-    const paragraphStyle = first ? tagAttr(xml, openingOf(xml, first), 'style-name') : null;
+    const paragraphStyle = first ? ownAttr(xml, openingOf(xml, first), 'style-name') : null;
     for (let r = 0; r < cell.repeat; r++) {
       const text = texts[at++] ?? '';
       const p = paragraphStyle !== null ? ` ${prefix}:style-name="${quoted(paragraphStyle)}"` : '';

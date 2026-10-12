@@ -67,6 +67,7 @@ const {
   anchorOdtRow,
   odtRowShape,
   odtRowRefusal,
+  odtIsPlain,
 } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odt-edit.ts')).href);
 const { scanTags } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/docx-edit.ts')).href);
 const { writeOdf } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odf-package.ts')).href);
@@ -555,6 +556,111 @@ const ROW = { header: 0, merged: 1, covered: 2, wide: 3, repeatedCells: 4, repea
   );
 }
 
+/* ── what somebody else's file can do (the review of card 459) ───────── */
+
+/** Every part the writer produced, for a real parser to read below. */
+const written = [];
+const NS =
+  'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+  'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+  'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ' +
+  'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' +
+  'xmlns:xlink="http://www.w3.org/1999/xlink"';
+const part = (body, ns = NS, before = '') =>
+  `<?xml version="1.0" encoding="UTF-8"?>${before}<office:document-content ${ns}><office:body><office:text>${body}</office:text></office:body></office:document-content>`;
+{
+  const ghost = part(
+    '<text:p>Alpha</text:p><?x a><text:p>ghost</text:p>?><text:p>Bravo</text:p><text:p>Charlie</text:p>',
+  );
+  check(
+    'a processing instruction hides nothing from the scan that a parser would see, and the reverse',
+    JSON.stringify(findOdtParagraphs(ghost).map((one) => textOf(ghost, one))) === '["Alpha","Bravo","Charlie"]',
+    JSON.stringify(findOdtParagraphs(ghost).map((one) => textOf(ghost, one))),
+  );
+  const hostile = [
+    ['a processing instruction in the part', ghost, 'a processing instruction'],
+    [
+      'an entity a DTD declares',
+      part('<text:p>A</text:p>&e;', NS, '<!DOCTYPE x [<!ENTITY e "<text:p>E</text:p>">]>'),
+      'a document type declaration',
+    ],
+    [
+      'the text namespace bound again inside the part',
+      part('<text:p>A</text:p><x:p xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0">B</x:p>'),
+      'a namespace declared inside the part',
+    ],
+    [
+      'a text:p of some other namespace',
+      part('<text:p>A</text:p><text:p xmlns:text="urn:evil">B</text:p>'),
+      'a namespace declared inside the part',
+    ],
+    ['a default namespace', part('<text:p>A</text:p>', `${NS} xmlns="urn:x"`), 'a default namespace'],
+    [
+      'the text namespace bound to two prefixes',
+      part('<text:p>A</text:p><t:p>B</t:p>', `${NS} xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0"`),
+      'a namespace bound to two prefixes',
+    ],
+    ['an element whose prefix nobody declared', part('<text:p>A</text:p><foo:bar/>'), 'an element in an undeclared namespace'],
+  ];
+  for (const [label, xml, reason] of hostile) {
+    check(`shown and not edited: ${label}`, odtIsPlain(xml) === reason, odtIsPlain(xml) ?? 'taken for plain');
+  }
+  check('and a part as LibreOffice writes it is plain', odtIsPlain(doc.xml) === null, odtIsPlain(doc.xml) ?? '');
+
+  const faked = part('<text:p>A</text:p>', `note=' xmlns:fake="urn:oasis:names:tc:opendocument:xmlns:text:1.0"' ${NS}`);
+  const fakeDoc = { xml: faked, pieces: findOdtPieces(faked), paragraphs: findOdtParagraphs(faked), styles: readOdtStyles(faked, null) };
+  check(
+    'a namespace written inside an attribute value is not taken for a declaration',
+    plan(fakeDoc, { inserts: [{ after: 0, text: 'dva  razmaka' }] }).includes('<text:s/>'),
+  );
+
+  const pictured = part(
+    '<text:p>Prije</text:p><text:p><draw:frame draw:name="slika"><draw:image xlink:href="Pictures/a.emf"/></draw:frame></text:p><text:p>Poslije</text:p>',
+  );
+  const pic = { xml: pictured, pieces: findOdtPieces(pictured), paragraphs: findOdtParagraphs(pictured), styles: readOdtStyles(pictured, null) };
+  check(
+    'not removed: a line holding only a picture the view may not draw',
+    odtRemovalRefusal(pictured, pic.paragraphs, pic.styles, 1) === 'the paragraph holds a picture or an object',
+  );
+
+  const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
+  check(
+    'what XML cannot hold is left out of what was typed',
+    controls.includes('>abcde<') && !/[\u0001\u000B\u000C]/.test(controls),
+  );
+  written.push(controls);
+
+  const oddStyles =
+    `<office:document-styles ${NS} xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>` +
+    `<style:style style:name="Text_20_body" style:family="paragraph" style:next-style-name="a&amp;b&lt;c&e;"/></office:styles></office:document-styles>`;
+  const odd = { ...doc, styles: readOdtStyles(doc.xml, oddStyles) };
+  const oddOut = plan(odd, { inserts: [{ after: AT.bold, text: 'x' }] });
+  check(
+    'a style name out of styles.xml goes in escaped once, not twice and not raw',
+    oddOut.includes('text:style-name="a&amp;b&lt;c&amp;e;"'),
+    /text:style-name="a[^"]*c"/.exec(oddOut)?.[0] ?? 'not found',
+  );
+  written.push(oddOut);
+
+  /* Cost: tables nested a thousand deep, and twenty thousand named comments. */
+  let nest = '<table:table-row><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row>';
+  for (let i = 0; i < 1000; i++) nest = `<table:table><table:table-row><table:table-cell>${nest}</table:table-cell></table:table-row></table:table>`;
+  const deep = part(`<table:table>${nest}</table:table>${'<table:table><table:table-row><table:table-cell/></table:table-row></table:table>'.repeat(20000)}`);
+  let started = Date.now();
+  findOdtRows(deep);
+  const deepTook = Date.now() - started;
+  check('tables nested a thousand deep are read in one pass', deepTook < 1500, `${deepTook} ms`);
+
+  const comments = part(
+    `<text:p>${'<office:annotation office:name="c"><text:p>k</text:p></office:annotation>'.repeat(20000)}</text:p><text:p>B</text:p>`,
+  );
+  const commented = findOdtParagraphs(comments);
+  started = Date.now();
+  odtRemovalRefusal(comments, commented, readOdtStyles(comments, null), 0);
+  const commentsTook = Date.now() - started;
+  check('twenty thousand named comments are judged without reading the part for each', commentsTook < 1500, `${commentsTook} ms`);
+}
+
 /* ── everything at once ──────────────────────────────────────────────── */
 
 {
@@ -645,6 +751,7 @@ if (SOFFICE && words.length) {
 const stats = { files: 0, body: 0, list: 0, elsewhere: 0, inserts: 0, removals: 0, cuts: 0, joins: 0, rows: 0, rowsOffered: 0 };
 const damaged = [];
 const readable = [];
+const notPlain = [];
 
 for (const file of files) {
   let one;
@@ -654,6 +761,7 @@ for (const file of files) {
     continue;
   }
   stats.files++;
+  if (odtIsPlain(one.xml) !== null) notPlain.push(`${basename(file)}: ${odtIsPlain(one.xml)}`);
   const body = one.paragraphs.filter((span) => span.refusal === null);
   stats.body += body.length;
   stats.list += one.paragraphs.filter((span) => span.refusal === 'the paragraph is in a list').length;
@@ -695,6 +803,7 @@ for (const file of files) {
   for (const [kind, reshaping, delta] of steps) {
     stats[`${kind === 'removal' ? 'removals' : kind === 'insert' ? 'inserts' : `${kind}s`}`]++;
     const out = plan(one, reshaping);
+    written.push(out);
     const rowsRight = kind !== 'row' || findOdtRows(out).length === findOdtRows(one.xml).length + 1;
     const ok = balanced(out) && rowsRight && count(out) === one.paragraphs.length + delta && plan(one, reshaping) === out;
     if (!ok) damaged.push(`${basename(file)}: ${kind} (${one.paragraphs.length} → ${count(out)}, balanced ${balanced(out)})`);
@@ -751,6 +860,38 @@ check(
     ? damaged.slice(0, 4).join(' | ')
     : `${stats.inserts} insertions, ${stats.removals} removals, ${stats.cuts} divisions, ${stats.joins} joins, ${stats.rows} rows (${stats.rowsOffered} rows could take one)`,
 );
+
+check(
+  'every document in the corpus is plain enough to edit — the gate costs LibreOffice’s own files nothing',
+  stats.files > 0 && notPlain.length === 0,
+  notPlain.slice(0, 3).join(' | ') || `${stats.files} files`,
+);
+
+/* ── read by a real parser ───────────────────────────────────────────── */
+
+/* The writer's own `balanced` shares the writer's scanner; a parser that
+   shares nothing with it reads every part it wrote here — the same parser
+   the editor reads them back with, which refuses to save what it cannot. */
+{
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  let broken = [];
+  for (let at = 0; at < written.length; at += 20) {
+    const batch = written.slice(at, at + 20);
+    const errors = await page.evaluate(
+      (parts) =>
+        parts.map((xml) => {
+          const parsed = new DOMParser().parseFromString(xml, 'application/xml');
+          return parsed.getElementsByTagName('parsererror')[0]?.textContent?.slice(0, 120) ?? null;
+        }),
+      batch,
+    );
+    broken = broken.concat(errors.map((error, k) => (error ? `#${at + k}: ${error}` : null)).filter(Boolean));
+  }
+  await browser.close();
+  check('a real XML parser reads every part the writer wrote', written.length > 0 && broken.length === 0, broken[0] ?? `${written.length} parts`);
+}
 
 /* ── read back by LibreOffice ────────────────────────────────────────── */
 

@@ -623,5 +623,9 @@
   "This text is drawn by the program that wrote the file, so it cannot be split.": "Ovaj tekst iscrtava program koji je napisao datoteku, pa se ne može podijeliti.",
   "Something stands between these paragraphs — a table, a list, a section or a picture.": "Između ovih odlomaka nešto stoji — tablica, popis, odjeljak ili slika.",
   "This row stands for several identical rows in the file — a new row cannot go among them.": "Ovaj redak u datoteci predstavlja nekoliko jednakih redaka — novi redak ne može ići među njih.",
-  "This table is wider than this program follows — a new row cannot be added to it here.": "Ova je tablica šira nego što je program prati — ovdje joj se ne može dodati novi redak."
+  "This table is wider than this program follows — a new row cannot be added to it here.": "Ova je tablica šira nego što je program prati — ovdje joj se ne može dodati novi redak.",
+  "This document is written in a way this program does not edit safely — it is shown, not edited.": "Ovaj je dokument zapisan na način koji ovaj program ne uređuje sigurno — prikazuje se, ali se ne uređuje.",
+  "This paragraph holds a picture or an object — removing it here would take that too.": "Ovaj odlomak sadrži sliku ili objekt — uklanjanjem ovdje nestao bi i on.",
+  "This change could not be written as a well-formed document, so nothing was saved.": "Ova se promjena nije mogla zapisati kao ispravan dokument, pa ništa nije spremljeno.",
+  "Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below. Layout and styles stay as they are.": "Tekst se može pretipkati — dvaput klikni na njega. Enter pri tipkanju dijeli odlomak na mjestu pokazivača ili na njegovu kraju počinje novi; Backspace na početku retka spaja ga s onim iznad, Delete na kraju s onim ispod; Ctrl+Shift+Backspace uklanja odlomak u kojem je pokazivač, a Ctrl+Enter u tablici dodaje redak ispod. Raspored i stilovi ostaju kakvi jesu."
 }

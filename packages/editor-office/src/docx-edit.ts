@@ -61,7 +61,16 @@ export function* scanTags(xml: string): Generator<Tag> {
       i = close === -1 ? xml.length : close + 3;
       continue;
     }
-    if (xml.startsWith('<?', open) || xml.startsWith('<!', open)) {
+    /* A processing instruction ends at `?>`, not at the first `>`: ended
+       there, `<?x a><w:p>…</w:p>?>` would hand the scan a paragraph no parser
+       sees, and every ordinal after it would name the next one (the review of
+       card 459). */
+    if (xml.startsWith('<?', open)) {
+      const close = xml.indexOf('?>', open + 2);
+      i = close === -1 ? xml.length : close + 2;
+      continue;
+    }
+    if (xml.startsWith('<!', open)) {
       const close = xml.indexOf('>', open);
       i = close === -1 ? xml.length : close + 1;
       continue;
@@ -119,6 +128,38 @@ export function tagAttr(xml: string, tag: { start: number; end: number }, local:
   ).exec(body);
   if (!match) return null;
   return match[3] ?? match[4] ?? null;
+}
+
+/**
+ * `tagAttr`, read the way a parser reads it: in the opening tag alone, and
+ * attribute after attribute. Matched anywhere in the range, a name inside
+ * another attribute's value — `class-names=" style-name='X'"` — or on a child
+ * is read as the element's own (the review of card 459). The OpenDocument
+ * text's structure is read with this; the other readers keep `tagAttr`,
+ * which some of them ask over a whole element on purpose.
+ */
+export function ownAttr(xml: string, tag: { start: number; end: number }, local: string): string | null {
+  let end = tag.start + 1;
+  let quote = '';
+  while (end < tag.end) {
+    const ch = xml[end]!;
+    if (quote) {
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '>') {
+      break;
+    }
+    end++;
+  }
+  const body = xml.slice(tag.start, end);
+  const attribute = /\s([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  /* Asked with a prefix, by the whole name; asked without, by the local one. */
+  const qualified = local.includes(':');
+  for (let match = attribute.exec(body); match; match = attribute.exec(body)) {
+    if ((qualified ? match[1] : localName(match[1]!)) === local) return match[2] ?? match[3] ?? null;
+  }
+  return null;
 }
 
 /* ── runovi ──────────────────────────────────────────────────────────── */

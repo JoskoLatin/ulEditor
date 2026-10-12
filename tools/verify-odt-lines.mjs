@@ -278,6 +278,38 @@ try {
   );
   await done();
 
+  check(
+    'the bar names the keys this document has, and no merge',
+    !(await page.locator('.ul-office').first().innerText()).includes('Ctrl+M'),
+  );
+
+  /* ── a part the scanner and the parser could read differently ───────── */
+
+  const ghost = zipSync({
+    mimetype: [base.mimetype, { level: 0 }],
+    'META-INF/manifest.xml': base['META-INF/manifest.xml'],
+    'content.xml': strToU8(
+      content.replace(
+        '<text:p text:style-name="Text_20_body">Drugi odlomak teksta.</text:p>',
+        '<?x a><text:p>duh</text:p>?><text:p text:style-name="Text_20_body">Drugi odlomak teksta.</text:p>',
+      ),
+    ),
+    'styles.xml': strToU8(styles),
+  });
+  await page.evaluate((bytes) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'duh.odt'));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  }, Array.from(ghost));
+  await page.waitForFunction(() => document.querySelectorAll('.ul-office').length >= 2, null, { timeout: 20000 });
+  const shown = page.locator('.ul-office:visible').first();
+  check(
+    'a document with a processing instruction in its part is shown, and offers nothing to edit',
+    (await shown.locator('[data-paragraph], [data-row], .ul-office-run[data-run]').count()) === 0 &&
+      /shown, not edited/.test(await shown.innerText()),
+    (await shown.innerText()).slice(0, 160),
+  );
+
   check('nothing threw in the page', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message : String(err));

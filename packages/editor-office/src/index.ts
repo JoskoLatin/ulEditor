@@ -464,7 +464,11 @@ class DocumentPreviewEditor implements EditorInstance {
            the outline and the search are the same either way. */
         this.preview.source
           ? this.preview.source.paragraphs
-            ? this.preview.source.rows
+            ? this.preview.source.rows && !this.preview.source.rows.mergeRefusalAt
+              ? t(
+                  'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below. Layout and styles stay as they are.',
+                )
+              : this.preview.source.rows
               ? t(
                   'Text can be retyped — double-click it. Enter while typing splits the paragraph at the cursor, or starts a new one at its end; Backspace at the start of a line joins it to the one above, Delete at the end to the one below; Ctrl+Shift+Backspace removes the paragraph the cursor is in, and Ctrl+Enter in a table adds a row below and Ctrl+M merges the cells you select. Layout and styles stay as they are.',
                 )
