@@ -51,7 +51,23 @@ import {
 } from './ooxml.js';
 import type { Preview, PreviewOutline } from './docx.js';
 import { writeOdf } from './odf-package.js';
-import { applyOdtEdits, findOdtPieces, spacesOf, type OdtPiece } from './odt-edit.js';
+import {
+  applyOdtEdits,
+  findOdtParagraphs,
+  findOdtPieces,
+  lastPieceOf,
+  odtAlike,
+  odtDivisionRefusal,
+  odtJoinRefusal,
+  odtRemovalRefusal,
+  odtShowsNothing,
+  paragraphOf,
+  readOdtStyles,
+  spacesOf,
+  type OdtParagraph,
+  type OdtPiece,
+  type OdtStyles,
+} from './odt-edit.js';
 import { MAX_COLS, MAX_ROWS, truncationNote, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
 
 /**
@@ -598,6 +614,19 @@ interface Context {
   notes: Set<string>;
   /** Node → the piece of `content.xml` it may be rewritten through; empty for a spreadsheet. */
   pieces: Map<Node, number>;
+  /** Each `text:p` and `text:h` → its ordinal, the one `findOdtParagraphs` counts it by. */
+  paraIndex: Map<Element, number>;
+  /** The paragraphs the view names — the body's, or none when the two counts disagree. */
+  insertable: Set<number>;
+}
+
+const TEXT_NS = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
+
+/** Marks the element that shows a paragraph with its ordinal, where the plan may name it. */
+function markParagraph<T extends HTMLElement>(element: T, node: Element, ctx: Context): T {
+  const index = ctx.paraIndex.get(node);
+  if (index !== undefined && ctx.insertable.has(index)) element.dataset.paragraph = String(index);
+  return element;
 }
 
 function textStyles(opened: Opened): Map<string, TextStyle> {
@@ -1005,6 +1034,18 @@ export function readOdt(bytes: Uint8Array): Preview {
    */
   const xml = readText(opened.archive, 'content.xml') ?? '';
   const pieces = findOdtPieces(xml);
+  const paragraphs = findOdtParagraphs(xml);
+  const styles = readOdtStyles(xml, readText(opened.archive, 'styles.xml'));
+
+  /* The paragraphs are counted over the raw part and over the parsed tree, and
+     a paragraph is named in the view only when the two counts agree — a new
+     paragraph written after the wrong one is worse than none. */
+  const paraIndex = new Map<Element, number>();
+  for (const el of opened.content.querySelectorAll('*')) {
+    if (el.namespaceURI === TEXT_NS && (el.localName === 'p' || el.localName === 'h')) {
+      paraIndex.set(el, paraIndex.size);
+    }
+  }
 
   const ctx: Context = {
     archive: opened.archive,
@@ -1013,6 +1054,11 @@ export function readOdt(bytes: Uint8Array): Preview {
     urls: [],
     notes: new Set(),
     pieces: pairPieces(opened.content, pieces),
+    paraIndex,
+    insertable:
+      paraIndex.size === paragraphs.length
+        ? new Set(paragraphs.filter((one) => one.refusal === null).map((one) => one.index))
+        : new Set(),
   };
 
   const body = document.createElement('div');
@@ -1025,7 +1071,7 @@ export function readOdt(bytes: Uint8Array): Preview {
         case 'h': {
           const content = inlineContent(node, ctx);
           const level = Math.min(Math.max(attrNum(node, 'outline-level') ?? 1, 1), 6);
-          const element = document.createElement(`h${level}`);
+          const element = markParagraph(document.createElement(`h${level}`), node, ctx);
           element.append(...content);
           element.id = `naslov-${outline.length}`;
           outline.push({
@@ -1040,12 +1086,12 @@ export function readOdt(bytes: Uint8Array): Preview {
           const content = inlineContent(node, ctx);
           if (content.length === 0) {
             // An empty paragraph is deliberate spacing, not junk.
-            const spacer = document.createElement('p');
+            const spacer = markParagraph(document.createElement('p'), node, ctx);
             spacer.className = 'ul-office-blank';
             into.appendChild(spacer);
             break;
           }
-          const p = document.createElement('p');
+          const p = markParagraph(document.createElement('p'), node, ctx);
           if (/quotation/i.test(attr(node, 'style-name') ?? '')) p.className = 'ul-office-quote';
           p.append(...content);
           into.appendChild(p);
@@ -1098,24 +1144,129 @@ export function readOdt(bytes: Uint8Array): Preview {
       for (const url of ctx.urls) URL.revokeObjectURL(url);
       ctx.urls.length = 0;
     },
-    source: ctx.pieces.size > 0 ? odtSource(opened.archive, xml, pieces) : undefined,
+    source:
+      ctx.pieces.size > 0 ? odtSource(opened.archive, xml, pieces, paragraphs, styles, ctx.insertable) : undefined,
   };
+}
+
+/** A reason the pure half gives in English, said to a person in their own language. */
+function said(why: string, act: 'add' | 'remove' | 'split' | 'join'): string {
+  switch (why) {
+    case 'the paragraph is in a list':
+      return t('Paragraphs in a list cannot be added, removed, split or joined in an OpenDocument text yet.');
+    case 'the paragraph starts a page':
+      return act === 'join'
+        ? t('The next paragraph starts a new page or page style — joining them would lose it.')
+        : act === 'split'
+          ? t('This paragraph starts a new page or page style — splitting it would start a second one.')
+          : t('This paragraph starts a new page or page style — removing it would change the pages after it.');
+    case 'the paragraph holds text the view does not show':
+      return t('This paragraph holds a text box or a comment this view does not show — removing it would take that text too.');
+    case 'a tracked change is recorded in the paragraph':
+      return t('A tracked change is recorded in this paragraph — changing it would leave the record describing other text.');
+    case 'a tracked change is recorded where the paragraphs meet':
+      return t('A tracked change is recorded where these paragraphs meet — joining them would lose it.');
+    case 'a marked stretch continues outside the paragraph':
+      return act === 'split'
+        ? t('A comment or a reference mark runs through this spot — splitting here would cut it in two.')
+        : t('A comment or a reference mark continues outside this paragraph.');
+    case 'the text is inside an element a cut would tear in two':
+      return t('The cursor is inside a link or a field — splitting here would cut it in two.');
+    case 'the text cannot be retyped':
+      return t('This text is drawn by the program that wrote the file, so it cannot be split.');
+    case 'the last paragraph of the document':
+      return t('The last remaining paragraph of a document cannot be removed.');
+    case 'nothing follows the paragraph':
+      return t('Nothing follows this paragraph to join to it.');
+    case 'something stands between the two paragraphs':
+      return t('Something stands between these paragraphs — a table, a list, a section or a picture.');
+    case 'there is no such paragraph':
+      return t('This piece of text is not in a paragraph of the document.');
+    default:
+      return act === 'add'
+        ? t('A new paragraph can only go into the body of the document — not into a table cell or a text box.')
+        : act === 'remove'
+          ? t('Only a paragraph in the body of the document can be removed — not one in a table cell or a text box.')
+          : act === 'split'
+            ? t('Only a paragraph in the body of the document can be split — not one in a table cell or a text box.')
+            : t('Only paragraphs in the body of the document can be joined — not ones in a table cell or a text box.');
+  }
 }
 
 /**
  * The seam the editor writes through.
  *
- * Every save applies the whole edit list to the file **as it was opened**, so
- * the ranges never move underneath the ordinals and writing twice writes the
- * same bytes. Nothing is offered for `paragraphs`: an OpenDocument text can have
- * its text rewritten here and cannot yet have anything added to it, and the
- * editor above reads that absence rather than being told which format it holds.
+ * Every save applies the whole plan to the file **as it was opened**, so the
+ * ranges never move underneath the ordinals and writing twice writes the same
+ * bytes. `paragraphs` is offered when the view named at least one paragraph of
+ * the body — the guard the Word reader keeps, for the same reason.
  */
-function odtSource(archive: Archive, xml: string, pieces: OdtPiece[]): NonNullable<Preview['source']> {
+function odtSource(
+  archive: Archive,
+  xml: string,
+  pieces: OdtPiece[],
+  paragraphs: OdtParagraph[],
+  styles: OdtStyles,
+  insertable: Set<number>,
+): NonNullable<Preview['source']> {
+  /** The survivors of the plan so far, for the rules that judge what would be left. */
+  const alive = (planned: ReadonlySet<number>) =>
+    new Set(paragraphs.filter((one) => one.refusal === null && !planned.has(one.index)).map((one) => one.index));
+
   return {
     /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
        the ranges, never the order. */
     textOf: (index) => pieces[index]?.text ?? '',
-    write: (edits) => writeOdf(archive, applyOdtEdits(xml, pieces, edits)),
+    write: (edits, added, removed, divided, joined) =>
+      writeOdf(
+        archive,
+        applyOdtEdits(xml, pieces, edits, {
+          paragraphs,
+          styles,
+          inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
+          removals: removed,
+          cuts: (divided ?? []).map((one) => ({ piece: one.index, parts: one.parts })),
+          joins: joined,
+        }),
+      ),
+
+    paragraphs:
+      insertable.size > 0
+        ? {
+            refusalNear: (index) => {
+              const piece = pieces[index];
+              const paragraph = piece ? paragraphOf(paragraphs, piece) : null;
+              if (!paragraph) return t('This piece of text is not in a paragraph of the document.');
+              return paragraph.refusal ? said(paragraph.refusal, 'add') : null;
+            },
+            removalRefusalAt: (paragraph, planned) => {
+              const why = odtRemovalRefusal(xml, paragraphs, styles, paragraph, alive(planned));
+              return why === null ? null : said(why, 'remove');
+            },
+            divisionRefusalAt: (index) => {
+              const piece = pieces[index];
+              if (!piece) return t('This piece of text is not in a paragraph of the document.');
+              const why = odtDivisionRefusal(xml, paragraphs, styles, piece);
+              return why === null ? null : said(why, 'split');
+            },
+            joinRefusalAt: (paragraph, planned) => {
+              const why = odtJoinRefusal(xml, paragraphs, styles, paragraph, alive(planned));
+              return why === null ? null : said(why, 'join');
+            },
+            emptyAt: (paragraph, edits) => {
+              const span = paragraphs[paragraph];
+              return span ? odtShowsNothing(xml, pieces, span, edits) : false;
+            },
+            alike: (a, b) => {
+              const first = paragraphs[a];
+              const second = paragraphs[b];
+              return !!first && !!second && odtAlike(first, second);
+            },
+            continuedRunAt: (paragraph) => {
+              const span = paragraphs[paragraph];
+              return span ? (lastPieceOf(xml, pieces, paragraphs, span)?.index ?? null) : null;
+            },
+          }
+        : undefined,
   };
 }

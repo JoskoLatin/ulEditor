@@ -254,18 +254,782 @@ function editable(pieces: OdtPiece[], edits: OdtEdit[]): { piece: OdtPiece; text
     .filter((pair): pair is { piece: OdtPiece; text: string } => !!pair.piece && !pair.piece.refusal);
 }
 
-/**
- * Writes the new texts into `content.xml`, changing only their ranges.
- *
- * From the end backwards, so the offsets do not shift underfoot.
- */
-export function applyOdtEdits(xml: string, pieces: OdtPiece[], edits: OdtEdit[]): string {
-  const prefix = textPrefix(xml);
-  const ordered = editable(pieces, edits).sort((a, b) => b.piece.start - a.piece.start);
+/* ── paragraphs ──────────────────────────────────────────────────────── */
 
+export interface OdtParagraph {
+  /** The ordinal among every `text:p` and `text:h` in the part, nested ones included. */
+  index: number;
+  start: number;
+  end: number;
+  /** Where its opening tag ends — where its content begins, unless it closes itself. */
+  openEnd: number;
+  selfClosing: boolean;
+  /** `p` or `h`. */
+  kind: 'p' | 'h';
+  /** The name as the file writes it, prefix and all: `text:p`. */
+  name: string;
+  /** `text:style-name`, as it stands in the file. */
+  style: string | null;
+  /** `text:outline-level` of a heading. */
+  level: string | null;
+  /** Why this paragraph is not one the plan may add after, take away, divide or join; `null` when it is. */
+  refusal: string | null;
+}
+
+/**
+ * Every `text:p` and `text:h` in `content.xml`, in document order.
+ *
+ * The ordinals count **every** paragraph — one in a table cell, a list, a
+ * frame's text box — so an index names a paragraph for the life of the
+ * document, as `findParagraphs` does for Word. Which of them the plan may
+ * reshape is `refusal`: only a paragraph standing directly in `office:text`.
+ * A list item is a paragraph inside a `text:list-item`, and a new one after it
+ * is a new **item** — a different anchor, and not yet this one. Measured on 60
+ * documents LibreOffice wrote from the real corpus: 1069 paragraphs in the
+ * body, 239 in lists, 972 in table cells.
+ */
+export function findOdtParagraphs(xml: string): OdtParagraph[] {
+  const prefix = textPrefix(xml);
+  const paragraphs: OdtParagraph[] = [];
+  const stack: { local: string; paragraph: OdtParagraph | null }[] = [];
+
+  for (const tag of scanTags(xml)) {
+    if (tag.closing) {
+      const popped = stack.pop();
+      if (popped?.paragraph) popped.paragraph.end = tag.end;
+      continue;
+    }
+    const local = localName(tag.name);
+    const own = tag.name === `${prefix}:p` || tag.name === `${prefix}:h`;
+    let paragraph: OdtParagraph | null = null;
+    if (own) {
+      const parent = stack[stack.length - 1]?.local ?? '';
+      paragraph = {
+        index: paragraphs.length,
+        start: tag.start,
+        end: tag.end,
+        openEnd: tag.end,
+        selfClosing: tag.selfClosing,
+        kind: local === 'h' ? 'h' : 'p',
+        name: tag.name,
+        style: tagAttr(xml, tag, 'style-name'),
+        level: local === 'h' ? tagAttr(xml, tag, 'outline-level') : null,
+        refusal:
+          parent === 'text'
+            ? null
+            : parent === 'list-item' || parent === 'list-header'
+              ? 'the paragraph is in a list'
+              : 'the paragraph is not in the body of the document',
+      };
+      paragraphs.push(paragraph);
+    }
+    if (!tag.selfClosing) stack.push({ local, paragraph });
+  }
+
+  return paragraphs;
+}
+
+/** The innermost paragraph a range sits in; `null` for one outside every paragraph. */
+export function paragraphOf(paragraphs: OdtParagraph[], range: { start: number; end: number }): OdtParagraph | null {
+  let innermost: OdtParagraph | null = null;
+  for (const one of paragraphs) {
+    if (one.start > range.start) break;
+    if (one.end >= range.end && !one.selfClosing) innermost = one;
+  }
+  return innermost;
+}
+
+/** Where a paragraph's content lies — between its tags; at its end for one that closes itself. */
+function insideOf(xml: string, paragraph: OdtParagraph): { start: number; end: number } {
+  if (paragraph.selfClosing) return { start: paragraph.end, end: paragraph.end };
+  return { start: paragraph.openEnd, end: xml.lastIndexOf('<', paragraph.end - 1) };
+}
+
+/* ── styles ──────────────────────────────────────────────────────────── */
+
+export interface OdtParagraphStyle {
+  parent: string | null;
+  /** `style:next-style-name` — the style the paragraph after this one takes. */
+  next: string | null;
+  /** `style:default-outline-level`: a style that makes a paragraph a heading. */
+  level: string | null;
+  /** It starts a page: a master page of its own, or a page break before or after it. */
+  page: boolean;
+}
+
+export interface OdtStyles {
+  /** The automatic styles of `content.xml` — the paragraph's own formatting. */
+  automatic: Map<string, OdtParagraphStyle>;
+  /** The styles of `styles.xml` a person can see by name — `Heading 1`, `Text body`. */
+  common: Map<string, OdtParagraphStyle>;
+}
+
+/** The paragraph styles in one region of a part — `office:automatic-styles` or `office:styles`. */
+function paragraphStyles(xml: string, region: string): Map<string, OdtParagraphStyle> {
+  const styles = new Map<string, OdtParagraphStyle>();
+  let inside = 0;
+  let open: OdtParagraphStyle | null = null;
+
+  for (const tag of scanTags(xml)) {
+    const local = localName(tag.name);
+    if (local === region && !tag.selfClosing) {
+      inside += tag.closing ? -1 : 1;
+      continue;
+    }
+    if (inside === 0) continue;
+
+    if (local === 'style') {
+      if (tag.closing) {
+        open = null;
+        continue;
+      }
+      const name = tagAttr(xml, tag, 'name');
+      const family = tagAttr(xml, tag, 'family');
+      if (!name || family !== 'paragraph') {
+        open = null;
+        continue;
+      }
+      const master = tagAttr(xml, tag, 'master-page-name');
+      const style: OdtParagraphStyle = {
+        parent: tagAttr(xml, tag, 'parent-style-name'),
+        next: tagAttr(xml, tag, 'next-style-name'),
+        level: tagAttr(xml, tag, 'default-outline-level'),
+        page: master !== null && master !== '',
+      };
+      styles.set(name, style);
+      open = tag.selfClosing ? null : style;
+      continue;
+    }
+    if (open && !tag.closing && local === 'paragraph-properties') {
+      if (tagAttr(xml, tag, 'break-before') === 'page' || tagAttr(xml, tag, 'break-after') === 'page') {
+        open.page = true;
+      }
+    }
+  }
+
+  return styles;
+}
+
+export function readOdtStyles(contentXml: string, stylesXml: string | null): OdtStyles {
+  return {
+    automatic: paragraphStyles(contentXml, 'automatic-styles'),
+    common: stylesXml ? paragraphStyles(stylesXml, 'styles') : new Map(),
+  };
+}
+
+/**
+ * Whether a paragraph of this style starts a page — the OpenDocument form of
+ * Word's section break. A master page named on a style starts the page style
+ * there, and a page break before or after is the same kind of thing: carried
+ * into a second paragraph it would start a second page, and taken away with
+ * the first it would rewire the layout of everything after it. Measured: three
+ * of 1069 body paragraphs, all of them the first of their document.
+ */
+export function startsPage(styles: OdtStyles, style: string | null): boolean {
+  const seen = new Set<string>();
+  let name = style;
+  let automatic = true;
+  while (name !== null && !seen.has(name)) {
+    seen.add(name);
+    const found = (automatic ? styles.automatic.get(name) : undefined) ?? styles.common.get(name);
+    if (!found) return false;
+    if (found.page) return true;
+    name = found.parent;
+    automatic = false;
+  }
+  return false;
+}
+
+/** The common style a paragraph's own style stands on: itself, or an automatic style's parent. */
+function commonOf(styles: OdtStyles, style: string | null): string | null {
+  if (style === null) return null;
+  return styles.automatic.get(style)?.parent ?? style;
+}
+
+/**
+ * What a new paragraph after one of this style is: its style, and whether it
+ * is a heading and at what level.
+ *
+ * The style the paragraph's own style **hands on**, through
+ * `style:next-style-name` on the common style beneath it — so a paragraph after
+ * a heading is body text, as LibreOffice gives it, and not a second heading.
+ * The heading's own direct formatting (an automatic style) is not carried into
+ * a paragraph of another style: that would mean writing a new automatic style
+ * into the part, and a heading's centring is not the body text's.
+ *
+ * A style that hands on nothing hands on itself, automatic style and all —
+ * Enter at the end of a centred paragraph gives a centred paragraph — except
+ * where that style starts a page, which a second paragraph must not.
+ */
+export function successorOf(
+  styles: OdtStyles,
+  paragraph: Pick<OdtParagraph, 'kind' | 'style' | 'level'>,
+): { kind: 'p' | 'h'; style: string | null; level: string | null } {
+  const common = commonOf(styles, paragraph.style);
+  const next = common !== null ? styles.common.get(common)?.next ?? null : null;
+  if (next !== null && next !== common) {
+    const level = styles.common.get(next)?.level ?? null;
+    return { kind: level ? 'h' : 'p', style: next, level };
+  }
+  if (!startsPage(styles, paragraph.style)) {
+    return { kind: paragraph.kind, style: paragraph.style, level: paragraph.level };
+  }
+  const parent = paragraph.style !== null ? (styles.automatic.get(paragraph.style)?.parent ?? null) : null;
+  const style = parent !== null && !startsPage(styles, parent) ? parent : null;
+  return { kind: paragraph.kind, style, level: paragraph.level };
+}
+
+/** An attribute value as it goes back between double quotes. */
+function quoted(raw: string): string {
+  return raw.replace(/"/g, '&quot;');
+}
+
+/**
+ * The opening tag of a paragraph this program writes — built, never copied:
+ * a copy would carry `xml:id` and `text:id`, and two paragraphs with one id
+ * is a file LibreOffice repairs or refuses.
+ */
+function openingTag(
+  prefix: string,
+  shape: { kind: 'p' | 'h'; style: string | null; level: string | null },
+): string {
+  const style = shape.style !== null ? ` ${prefix}:style-name="${quoted(shape.style)}"` : '';
+  const level = shape.kind === 'h' && shape.level !== null ? ` ${prefix}:outline-level="${quoted(shape.level)}"` : '';
+  return `<${prefix}:${shape.kind}${style}${level}>`;
+}
+
+/* ── the formatting a person is continuing ───────────────────────────── */
+
+interface OpenSpan {
+  name: string;
+  style: string | null;
+}
+
+/**
+ * The `text:span`s a piece of text stands in, outermost first; `null` when
+ * anything else stands between it and its paragraph — a link, a field — which
+ * a cut would tear in two and a new line cannot continue.
+ */
+function spansAround(xml: string, paragraph: OdtParagraph, piece: { start: number }): OpenSpan[] | null {
+  const prefix = textPrefix(xml);
+  const open: (OpenSpan | null)[] = [];
+  const from = paragraph.openEnd;
+  for (const tag of scanTags(xml.slice(from, piece.start))) {
+    if (tag.selfClosing) continue;
+    if (tag.closing) {
+      open.pop();
+      continue;
+    }
+    const shifted = { start: tag.start + from, end: tag.end + from };
+    open.push(tag.name === `${prefix}:span` ? { name: tag.name, style: tagAttr(xml, shifted, 'style-name') } : null);
+  }
+  return open.every((span): span is OpenSpan => span !== null) ? open : null;
+}
+
+const opening = (spans: OpenSpan[], prefix: string): string =>
+  spans.map((span) => `<${span.name}${span.style !== null ? ` ${prefix}:style-name="${quoted(span.style)}"` : ''}>`).join('');
+
+const closing = (spans: OpenSpan[]): string =>
+  [...spans].reverse().map((span) => `</${span.name}>`).join('');
+
+/** The pieces that are a paragraph's own — not ones in a frame or a note it holds. */
+function piecesOf(pieces: OdtPiece[], paragraphs: OdtParagraph[], paragraph: OdtParagraph): OdtPiece[] {
+  return pieces.filter(
+    (piece) => piece.start >= paragraph.start && piece.end <= paragraph.end && paragraphOf(paragraphs, piece) === paragraph,
+  );
+}
+
+/**
+ * The piece a new line after this paragraph continues: its last, when nothing
+ * but closing tags follows it and only spans stand around it — the formatting
+ * at the point the person is typing from. `null` when the paragraph ends in
+ * something else, or has no text of its own.
+ */
+export function lastPieceOf(
+  xml: string,
+  pieces: OdtPiece[],
+  paragraphs: OdtParagraph[],
+  paragraph: OdtParagraph,
+): OdtPiece | null {
+  const own = piecesOf(pieces, paragraphs, paragraph);
+  const last = own[own.length - 1];
+  if (!last || last.refusal) return null;
+  const after = xml.slice(last.end, insideOf(xml, paragraph).end);
+  if (!/^(\s*<\/[^>]+>)*\s*$/.test(after)) return null;
+  return spansAround(xml, paragraph, last) ? last : null;
+}
+
+/**
+ * The markup of one new paragraph after `line` — the style it hands on, and
+ * the typed text in the spans of the piece the line ends in.
+ */
+export function odtParagraphMarkup(
+  xml: string,
+  styles: OdtStyles,
+  line: OdtParagraph,
+  continued: OdtPiece | null,
+  continuedIn: OdtParagraph,
+  text: string,
+): string {
+  const prefix = textPrefix(xml);
+  const shape = successorOf(styles, line);
+  const spans = continued ? (spansAround(xml, continuedIn, continued) ?? []) : [];
+  return `${openingTag(prefix, shape)}${opening(spans, prefix)}${odtTextXml(text, prefix)}${closing(spans)}</${prefix}:${shape.kind}>`;
+}
+
+/* ── what may not be torn in half ────────────────────────────────────── */
+
+/** Marks that open in one place and close in another, matched by the attribute named. */
+const PAIRED: readonly (readonly [string, string, string])[] = [
+  ['reference-mark-start', 'reference-mark-end', 'name'],
+  ['toc-mark-start', 'toc-mark-end', 'id'],
+  ['alphabetical-index-mark-start', 'alphabetical-index-mark-end', 'id'],
+  ['user-index-mark-start', 'user-index-mark-end', 'id'],
+];
+
+const TRACKED = new Set(['change', 'change-start', 'change-end']);
+
+/**
+ * Whether every marked stretch opened within `[from, to)` closes within it,
+ * and the reverse — a comment's range (`office:annotation` named, and its
+ * `office:annotation-end`) and the index and reference marks. Bookmarks are not
+ * among them: OpenDocument lets a bookmark run from one paragraph into another.
+ */
+function rangesBalanced(xml: string, from: number, to: number): boolean {
+  const halves = new Map<string, { starts: Set<string>; ends: Set<string> }>();
+  const add = (key: string, half: 'starts' | 'ends', id: string) => {
+    const pair = halves.get(key) ?? { starts: new Set<string>(), ends: new Set<string>() };
+    pair[half].add(id);
+    halves.set(key, pair);
+  };
+  for (const raw of scanTags(xml.slice(from, to))) {
+    if (raw.closing) continue;
+    const local = localName(raw.name);
+    const tag = { start: raw.start + from, end: raw.end + from };
+    if (local === 'annotation') {
+      const name = tagAttr(xml, tag, 'name');
+      /* A comment with a name is the start of a range only if its end is
+         written somewhere; one without an end is a comment on a point. */
+      if (name !== null && xml.includes('annotation-end') && annotationEnds(xml).has(name)) add('annotation', 'starts', name);
+      continue;
+    }
+    if (local === 'annotation-end') {
+      add('annotation', 'ends', tagAttr(xml, tag, 'name') ?? '');
+      continue;
+    }
+    for (const [open, close, key] of PAIRED) {
+      if (local === open) add(open, 'starts', tagAttr(xml, tag, key) ?? '');
+      else if (local === close) add(open, 'ends', tagAttr(xml, tag, key) ?? '');
+    }
+  }
+  for (const pair of halves.values()) {
+    if ([...pair.starts].some((id) => !pair.ends.has(id))) return false;
+    if ([...pair.ends].some((id) => !pair.starts.has(id))) return false;
+  }
+  return true;
+}
+
+/** The names every `office:annotation-end` in the part closes. */
+function annotationEnds(xml: string): Set<string> {
+  const names = new Set<string>();
+  for (const tag of scanTags(xml)) {
+    if (!tag.closing && localName(tag.name) === 'annotation-end') names.add(tagAttr(xml, tag, 'name') ?? '');
+  }
+  return names;
+}
+
+/** Whether a tracked change is recorded anywhere in a range. */
+function tracked(xml: string, from: number, to: number): boolean {
+  for (const tag of scanTags(xml.slice(from, to))) {
+    if (!tag.closing && TRACKED.has(localName(tag.name))) return true;
+  }
+  return false;
+}
+
+/* ── the rules ───────────────────────────────────────────────────────── */
+
+/**
+ * Why this paragraph may not be taken away; `null` when it may.
+ *
+ * - **Only a body paragraph** — see `findOdtParagraphs`.
+ * - **Not one that starts a page** (`startsPage`).
+ * - **Not half a marked stretch**, and not one a tracked change is recorded
+ *   in: the record would be left describing text that is gone.
+ * - **Not the last paragraph standing**, judged against `survivors` — the body
+ *   paragraphs the plan still keeps — so taking them away one at a time cannot
+ *   reach a place one step may not.
+ */
+export function odtRemovalRefusal(
+  xml: string,
+  paragraphs: OdtParagraph[],
+  styles: OdtStyles,
+  index: number,
+  survivors?: ReadonlySet<number>,
+): string | null {
+  const span = paragraphs[index];
+  if (!span) return 'there is no such paragraph';
+  if (span.refusal) return span.refusal;
+  if (startsPage(styles, span.style)) return 'the paragraph starts a page';
+  if (tracked(xml, span.start, span.end)) return 'a tracked change is recorded in the paragraph';
+  if (!rangesBalanced(xml, span.start, span.end)) return 'a marked stretch continues outside the paragraph';
+  /* A text box anchored in it, or a comment, holds paragraphs of its own,
+     which the view does not draw: the line looks nearly empty and carries a
+     page of text. Measured: one such paragraph in the corpus held forty. */
+  const inner = paragraphs[index + 1];
+  if (inner && inner.start < span.end) return 'the paragraph holds text the view does not show';
+  const body = paragraphs.filter((one) => one.refusal === null);
+  const alive = survivors ?? new Set(body.map((one) => one.index));
+  if (!alive.has(index)) return 'there is no such paragraph';
+  if (!body.some((one) => one.index !== index && alive.has(one.index))) return 'the last paragraph of the document';
+  return null;
+}
+
+/**
+ * Why the paragraph a piece of text stands in may not be divided inside it —
+ * Enter in the middle of a sentence; `null` when it may.
+ *
+ * A cut closes the paragraph where it falls and opens another, so whatever
+ * else is open there is closed and opened again: a `text:span` can be, its
+ * formatting is its style; a link, a field or anything else would become two.
+ * And a marked stretch must close on the side it opened.
+ */
+export function odtDivisionRefusal(
+  xml: string,
+  paragraphs: OdtParagraph[],
+  styles: OdtStyles,
+  piece: OdtPiece,
+): string | null {
+  const paragraph = paragraphOf(paragraphs, piece);
+  if (!paragraph || paragraph.refusal) return paragraph?.refusal ?? 'the paragraph is not in the body of the document';
+  if (piece.refusal) return 'the text cannot be retyped';
+  if (startsPage(styles, paragraph.style)) return 'the paragraph starts a page';
+  if (!spansAround(xml, paragraph, piece)) return 'the text is inside an element a cut would tear in two';
+  if (tracked(xml, paragraph.start, paragraph.end)) return 'a tracked change is recorded in the paragraph';
+  const inside = insideOf(xml, paragraph);
+  if (!rangesBalanced(xml, inside.start, piece.start) || !rangesBalanced(xml, piece.end, inside.end)) {
+    return 'a marked stretch continues outside the paragraph';
+  }
+  return null;
+}
+
+/** What may stand between two body paragraphs a join brings together: nothing but layout's own marks. */
+const BETWEEN = new Set(['soft-page-break']);
+
+/**
+ * The next body paragraph the plan keeps, and whether anything but white
+ * space, a soft page break and paragraphs the plan removes stands between.
+ */
+function partnerOf(
+  xml: string,
+  body: OdtParagraph[],
+  span: OdtParagraph,
+  alive: ReadonlySet<number>,
+): OdtParagraph | string {
+  let from = span.end;
+  for (const one of body) {
+    if (one.index <= span.index) continue;
+    for (const tag of scanTags(xml.slice(from, one.start))) {
+      if (!tag.closing && !BETWEEN.has(localName(tag.name))) return 'something stands between the two paragraphs';
+    }
+    if (xml.slice(from, one.start).replace(/<[^>]*>/g, '').trim() !== '') return 'something stands between the two paragraphs';
+    if (alive.has(one.index)) return one;
+    from = one.end;
+  }
+  return 'nothing follows the paragraph';
+}
+
+/**
+ * Why a paragraph may not be joined with the next one the plan keeps — Delete
+ * at its end, Backspace at the start of the next; `null` when it may.
+ *
+ * The joined paragraph keeps the first one's tag and style, as LibreOffice
+ * keeps them. So the next one may not start a page — its page would go — while
+ * the first may: its page starts where it always did.
+ */
+export function odtJoinRefusal(
+  xml: string,
+  paragraphs: OdtParagraph[],
+  styles: OdtStyles,
+  index: number,
+  survivors?: ReadonlySet<number>,
+): string | null {
+  const span = paragraphs[index];
+  if (!span) return 'there is no such paragraph';
+  if (span.refusal) return span.refusal;
+  const body = paragraphs.filter((one) => one.refusal === null);
+  const alive = survivors ?? new Set(body.map((one) => one.index));
+  if (!alive.has(index)) return 'there is no such paragraph';
+  const next = partnerOf(xml, body, span, alive);
+  if (typeof next === 'string') return next;
+  if (startsPage(styles, next.style)) return 'the paragraph starts a page';
+  if (tracked(xml, span.start, span.end) || tracked(xml, next.start, next.end)) {
+    return 'a tracked change is recorded where the paragraphs meet';
+  }
+  return null;
+}
+
+/** Marks that show nothing on the page — a line holding only these is an empty line. */
+const SHOWS_NOTHING = new Set([
+  'span',
+  'bookmark',
+  'bookmark-start',
+  'bookmark-end',
+  'soft-page-break',
+  'reference-mark',
+  'reference-mark-start',
+  'reference-mark-end',
+  'annotation-end',
+]);
+
+/**
+ * Whether a stretch of a paragraph shows nothing, with the rewrites of its
+ * pieces as the plan holds them. A space written as `text:s` or a tab is
+ * something; white space in the character data is not, since OpenDocument
+ * collapses it. Anything not listed counts as something, so an element nobody
+ * thought of can only make a line count as holding text.
+ */
+function showsNothingIn(
+  xml: string,
+  from: number,
+  to: number,
+  pieces: OdtPiece[],
+  typed: ReadonlyMap<number, string>,
+): boolean {
+  const retyped = pieces.filter((piece) => typed.has(piece.index) && piece.start >= from && piece.end <= to);
+  if (retyped.some((piece) => typed.get(piece.index)!.length > 0)) return false;
+  const skipped = (at: number) => retyped.some((piece) => at >= piece.start && at < piece.end);
+
+  let after = from;
+  for (const raw of scanTags(xml.slice(from, to))) {
+    const start = raw.start + from;
+    if (start > after && !skipped(after) && xml.slice(after, start).trim() !== '') return false;
+    after = raw.end + from;
+    if (raw.closing || skipped(start)) continue;
+    if (!SHOWS_NOTHING.has(localName(raw.name))) return false;
+  }
+  return !(to > after && !skipped(after) && xml.slice(after, to).trim() !== '');
+}
+
+/** Whether a paragraph shows nothing, with the rewrites the plan holds. */
+export function odtShowsNothing(
+  xml: string,
+  pieces: OdtPiece[],
+  paragraph: OdtParagraph,
+  typed: ReadonlyMap<number, string> = new Map(),
+): boolean {
+  const inside = insideOf(xml, paragraph);
+  return showsNothingIn(xml, inside.start, inside.end, pieces, typed);
+}
+
+/** Whether two paragraphs would give a new line the same shape: the same tag, style and level. */
+export function odtAlike(a: OdtParagraph, b: OdtParagraph): boolean {
+  return a.kind === b.kind && a.style === b.style && a.level === b.level;
+}
+
+/* ── writing the plan ────────────────────────────────────────────────── */
+
+/** A piece of text divided by Enter: the first part stays, every later one begins a paragraph. */
+export interface OdtCut {
+  piece: number;
+  parts: string[];
+}
+
+export interface OdtReshaping {
+  paragraphs: OdtParagraph[];
+  styles: OdtStyles;
+  /** New paragraphs, each after a paragraph of the original part. */
+  inserts?: { after: number; text: string }[];
+  /** Paragraphs of the original part the plan takes away. */
+  removals?: number[];
+  cuts?: OdtCut[];
+  /** Paragraphs of the original part joined with the next one the plan keeps. */
+  joins?: number[];
+}
+
+/**
+ * Writes the new texts into `content.xml`, changing only their ranges — and,
+ * with a reshaping, every new paragraph, removal, division and join in the
+ * same pass, from the original as it was opened, as `applyDocxEdits` does for
+ * Word and for the same reasons: back to front so no offset moves under the
+ * next operation, a removal before an insertion at the same offset, a new
+ * paragraph nobody typed into not written, and every step judged again here
+ * rather than trusted, because a caller is not obliged to have asked first.
+ */
+export function applyOdtEdits(
+  xml: string,
+  pieces: OdtPiece[],
+  edits: OdtEdit[],
+  reshaping?: OdtReshaping,
+): string {
+  const prefix = textPrefix(xml);
+  const operations: { at: number; end: number; text: string; order: number }[] = [];
+  const paragraphs = reshaping?.paragraphs ?? [];
+  const styles = reshaping?.styles ?? { automatic: new Map(), common: new Map() };
+  const byIndex = new Map(pieces.map((piece) => [piece.index, piece]));
+  const typed = new Map(editable(pieces, edits).map(({ piece, text }) => [piece.index, text]));
+  const body = paragraphs.filter((span) => span.refusal === null);
+
+  /* The removals first, judged one by one against what the ones before them left. */
+  const removed: OdtParagraph[] = [];
+  if (reshaping?.removals?.length) {
+    const alive = new Set(body.map((span) => span.index));
+    for (const index of [...reshaping.removals].sort((a, b) => a - b)) {
+      if (odtRemovalRefusal(xml, paragraphs, styles, index, alive) !== null) continue;
+      alive.delete(index);
+      removed.push(paragraphs[index]!);
+    }
+  }
+  const inRemoved = (range: { start: number; end: number }) =>
+    removed.some((span) => range.start >= span.start && range.end <= span.end);
+
+  /* The cuts next: a divided paragraph is written as one operation from its
+     first cut to the end of its content, so nothing else may touch that range. */
+  const cutByPiece = new Map<number, OdtCut>();
+  const divided = new Map<number, OdtPiece[]>();
+  for (const cut of reshaping?.cuts ?? []) {
+    const piece = byIndex.get(cut.piece);
+    if (!piece || cut.parts.length < 2 || cutByPiece.has(cut.piece)) continue;
+    const paragraph = paragraphOf(paragraphs, piece);
+    if (!paragraph || inRemoved(paragraph)) continue;
+    if (odtDivisionRefusal(xml, paragraphs, styles, piece) !== null) continue;
+    cutByPiece.set(cut.piece, cut);
+    divided.set(paragraph.index, [...(divided.get(paragraph.index) ?? []), piece]);
+  }
+  const claimed = [...divided].map(([index, cut]) => ({
+    from: Math.min(...cut.map((piece) => piece.start)),
+    to: insideOf(xml, paragraphs[index]!).end,
+  }));
+
+  /* The joins, in ordinal order, each judged against the links before it. An
+     empty first line is not joined: Backspace after an empty line takes the
+     line away, and the plan says that with a removal. */
+  const joinedTo = new Map<number, number>();
+  const joins: { first: OdtParagraph; next: OdtParagraph }[] = [];
+  const lineShowsNothing = (span: OdtParagraph): boolean => {
+    const cut = divided.get(span.index);
+    if (cut) {
+      const last = [...cut].sort((a, b) => b.start - a.start)[0]!;
+      if (cutByPiece.get(last.index)!.parts.at(-1)!.length > 0) return false;
+      return showsNothingIn(xml, last.end, insideOf(xml, span).end, pieces, typed);
+    }
+    if (!odtShowsNothing(xml, pieces, span, typed)) return false;
+    const before = joinedTo.get(span.index);
+    return before === undefined || lineShowsNothing(paragraphs[before]!);
+  };
+  if (reshaping?.joins?.length) {
+    const alive = new Set(body.filter((span) => !removed.includes(span)).map((span) => span.index));
+    const followed = new Set(
+      (reshaping.inserts ?? []).filter((insert) => insert.text.length > 0).map((insert) => insert.after),
+    );
+    for (const index of [...new Set(reshaping.joins)].sort((a, b) => a - b)) {
+      if (odtJoinRefusal(xml, paragraphs, styles, index, alive) !== null) continue;
+      const first = paragraphs[index]!;
+      const next = partnerOf(xml, body, first, alive) as OdtParagraph;
+      const crossed = body.filter((span) => span.index >= index && span.index < next.index);
+      if (crossed.some((span) => followed.has(span.index))) continue;
+      if (lineShowsNothing(first)) continue;
+      joinedTo.set(next.index, index);
+      joins.push({ first, next });
+    }
+  }
+  /** The paragraph whose tag and style the line holding this one is written with. */
+  const headOf = (index: number): OdtParagraph => {
+    let at = index;
+    while (joinedTo.has(at)) at = joinedTo.get(at)!;
+    return paragraphs[at]!;
+  };
+  /** The piece a new line after this paragraph continues, and the paragraph it stands in. */
+  const lineEnd = (index: number): { piece: OdtPiece | null; in: OdtParagraph } => {
+    for (let at: number | undefined = index; at !== undefined; at = joinedTo.get(at)) {
+      const found = lastPieceOf(xml, pieces, paragraphs, paragraphs[at]!);
+      if (found) return { piece: found, in: paragraphs[at]! };
+    }
+    return { piece: null, in: paragraphs[index]! };
+  };
+
+  for (const [index, text] of typed) {
+    const piece = byIndex.get(index)!;
+    if (inRemoved(piece)) continue;
+    if (claimed.some((range) => piece.start >= range.from && piece.end <= range.to)) continue;
+    operations.push({ at: piece.start, end: piece.end, text: odtTextXml(text, prefix), order: 0 });
+  }
+
+  (reshaping?.inserts ?? []).forEach((insert, order) => {
+    const paragraph = paragraphs[insert.after];
+    if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
+    const end = lineEnd(paragraph.index);
+    operations.push({
+      at: paragraph.end,
+      end: paragraph.end,
+      text: odtParagraphMarkup(xml, styles, headOf(paragraph.index), end.piece, end.in, insert.text),
+      order,
+    });
+  });
+
+  /** A stretch of the original carried into a divided paragraph, with the rewrites inside it applied. */
+  const carried = (from: number, to: number): string => {
+    const inside = [...typed.keys()]
+      .map((index) => byIndex.get(index)!)
+      .filter((piece) => piece.start >= from && piece.end <= to)
+      .sort((a, b) => b.start - a.start);
+    let text = xml.slice(from, to);
+    for (const piece of inside) {
+      text = text.slice(0, piece.start - from) + odtTextXml(typed.get(piece.index)!, prefix) + text.slice(piece.end - from);
+    }
+    return text;
+  };
+
+  /* A divided paragraph, written whole: each cut closes the spans around it
+     and the line, and opens a paragraph of the line's own shape — both halves
+     of a heading are headings — with the same spans again. */
+  for (const [index, cut] of divided) {
+    const paragraph = paragraphs[index]!;
+    const head = headOf(index);
+    const end = insideOf(xml, paragraph).end;
+    const ordered = [...cut].sort((a, b) => a.start - b.start);
+    const shape = { kind: head.kind, style: head.style, level: head.level };
+
+    let text = '';
+    ordered.forEach((piece, k) => {
+      if (k > 0) text += carried(ordered[k - 1]!.end, piece.start);
+      const spans = spansAround(xml, paragraph, piece)!;
+      const [first, ...rest] = cutByPiece.get(piece.index)!.parts;
+      text += odtTextXml(first!, prefix);
+      for (const part of rest) {
+        text += `${closing(spans)}</${head.name}>${openingTag(prefix, shape)}${opening(spans, prefix)}${odtTextXml(part, prefix)}`;
+      }
+    });
+    text += carried(ordered[ordered.length - 1]!.end, end);
+    operations.push({ at: ordered[0]!.start, end, text, order: 0 });
+  }
+
+  /* A join, written as the boundary it takes away: from the first
+     paragraph's closing tag to the end of the next one's opening tag. The
+     line closes with the next one's closing tag, which is rewritten to the
+     line's own where the two differ — a body paragraph joined onto a heading
+     closes as a heading — and written where the next one closes itself. */
+  const firsts = new Set(joins.map((join) => join.first.index));
+  for (const join of joins) {
+    const from = insideOf(xml, join.first);
+    const to = insideOf(xml, join.next);
+    const head = headOf(join.first.index);
+    const last = !firsts.has(join.next.index);
+    const close = last && join.next.selfClosing ? `</${head.name}>` : '';
+    operations.push({ at: from.end, end: to.start, text: close, order: 0 });
+    if (last && !join.next.selfClosing && join.next.name !== head.name) {
+      operations.push({ at: to.end, end: join.next.end, text: `</${head.name}>`, order: 0 });
+    }
+  }
+
+  for (const span of removed) {
+    if (joins.some((join) => span.start >= join.first.end && span.end <= join.next.start)) continue;
+    operations.push({ at: span.start, end: span.end, text: '', order: 0 });
+  }
+
+  operations.sort((a, b) => b.at - a.at || b.end - b.at - (a.end - a.at) || b.order - a.order);
   let out = xml;
-  for (const { piece, text } of ordered) {
-    out = out.slice(0, piece.start) + odtTextXml(text, prefix) + out.slice(piece.end);
+  for (const operation of operations) {
+    out = out.slice(0, operation.at) + operation.text + out.slice(operation.end);
   }
   return out;
 }

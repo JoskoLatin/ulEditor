@@ -951,10 +951,14 @@ const ODF_NS =
   `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
   `xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2"`;
 
-const ODF_MANIFEST = (mime) =>
+/* Every part listed: LibreOffice refuses a package whose manifest leaves out
+   the parts it holds ("source file could not be loaded"), and a fixture it
+   cannot open is one `readback` asks nothing about. */
+const ODF_MANIFEST = (mime, parts = ['content.xml', 'styles.xml']) =>
   `<?xml version="1.0" encoding="UTF-8"?>\n<manifest:manifest ` +
   `xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">` +
   `<manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/>` +
+  parts.map((part) => `<manifest:file-entry manifest:full-path="${part}" manifest:media-type="text/xml"/>`).join('') +
   `</manifest:manifest>`;
 
 /**
@@ -1093,7 +1097,7 @@ export function makeOdt() {
   const mime = 'application/vnd.oasis.opendocument.text';
   return zipSync({
     mimetype: [strToU8(mime), { level: 0 }],
-    'META-INF/manifest.xml': strToU8(ODF_MANIFEST(mime)),
+    'META-INF/manifest.xml': strToU8(ODF_MANIFEST(mime, ['content.xml', 'meta.xml', 'styles.xml'])),
     'content.xml': strToU8(content),
     'meta.xml': strToU8(
       `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${ODF_NS}>` +
@@ -1108,6 +1112,90 @@ export function makeOdt() {
         `<style:header><text:p>ulEditor</text:p></style:header>` +
         `</style:master-page></office:master-styles></office:document-styles>`,
     ),
+  });
+}
+
+/**
+ * An `.odt` for the paragraphs a plan adds, removes, divides and joins — one
+ * of every boundary those have to know about, in the order the checks name
+ * them by (`ODT_PARAGRAPHS`).
+ *
+ * The styles are written the way LibreOffice writes them: a paragraph names
+ * an automatic style in `content.xml`, which stands on a common style in
+ * `styles.xml`, and only the common style says what the next paragraph is.
+ */
+export const ODT_PARAGRAPHS = {
+  /* The deleted text a tracked change keeps, in `text:tracked-changes` at the top of the body. */
+  deleted: 0,
+  cover: 1,
+  heading: 2,
+  bold: 3,
+  blank: 4,
+  link: 5,
+  pageBreak: 6,
+  listItem: 7,
+  commentStart: 8,
+  commentInside: 9,
+  commentEnd: 10,
+  cell: 11,
+  tracked: 12,
+  last: 13,
+};
+
+export function makeOdtParagraphs() {
+  const automatic =
+    `<office:automatic-styles>` +
+    `<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard" style:master-page-name="Standard"/>` +
+    `<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Heading_20_1">` +
+    `<style:paragraph-properties fo:text-align="center"/></style:style>` +
+    `<style:style style:name="P3" style:family="paragraph" style:parent-style-name="Text_20_body">` +
+    `<style:paragraph-properties fo:text-align="end"/></style:style>` +
+    `<style:style style:name="P4" style:family="paragraph" style:parent-style-name="Text_20_body">` +
+    `<style:paragraph-properties fo:break-before="page"/></style:style>` +
+    `<style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>` +
+    `</office:automatic-styles>`;
+
+  const body =
+    `<text:p text:style-name="P1">Naslovna stranica</text:p>` +
+    `<text:h text:style-name="P2" text:outline-level="1" xml:id="h1">Poglavlje čćžšđ</text:h>` +
+    `<text:p text:style-name="Text_20_body" xml:id="p2">Prvi odlomak s <text:span text:style-name="T1">podebljanim krajem</text:span></text:p>` +
+    `<text:p text:style-name="P3"/>` +
+    `<text:p text:style-name="P3">Desno, s poveznicom <text:a xlink:type="simple" xlink:href="https://example.org/">ovdje</text:a> i dalje.</text:p>` +
+    `<text:p text:style-name="P4">Nova stranica počinje ovdje.</text:p>` +
+    `<text:list><text:list-item><text:p text:style-name="Text_20_body">stavka popisa</text:p></text:list-item></text:list>` +
+    `<text:p text:style-name="Text_20_body">Komentar <office:annotation office:name="c1"><dc:creator>Čovik</dc:creator>` +
+    `<text:p>bilješka</text:p></office:annotation>počinje ovdje</text:p>` +
+    `<text:p text:style-name="Text_20_body">i završava ovdje<office:annotation-end office:name="c1"/>.</text:p>` +
+    `<table:table table:name="T"><table:table-column/><table:table-row><table:table-cell office:value-type="string">` +
+    `<text:p>ćelija</text:p></table:table-cell></table:table-row></table:table>` +
+    `<text:p text:style-name="Text_20_body">Promjena <text:change text:change-id="ct1"/>zabilježena.</text:p>` +
+    `<text:p text:style-name="Text_20_body">Zadnji odlomak.</text:p>`;
+
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<office:document-content ${ODF_NS} office:version="1.3">${automatic}` +
+    `<office:body><office:text>` +
+    `<text:tracked-changes><text:changed-region xml:id="ct1" text:id="ct1"><text:deletion>` +
+    `<office:change-info><dc:creator>Čovik</dc:creator><dc:date>2026-10-12T10:00:00</dc:date></office:change-info>` +
+    `<text:p>izbrisano</text:p></text:deletion></text:changed-region></text:tracked-changes>` +
+    `${body}</office:text></office:body></office:document-content>`;
+
+  const styles =
+    `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${ODF_NS} office:version="1.3"><office:styles>` +
+    `<style:style style:name="Standard" style:family="paragraph" style:class="text"/>` +
+    `<style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Text_20_body"/>` +
+    `<style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" ` +
+    `style:parent-style-name="Heading" style:next-style-name="Text_20_body" style:default-outline-level="1"/>` +
+    `<style:style style:name="Text_20_body" style:display-name="Text body" style:family="paragraph" style:parent-style-name="Standard"/>` +
+    `</office:styles><office:master-styles><style:master-page style:name="Standard"/></office:master-styles>` +
+    `</office:document-styles>`;
+
+  const mime = 'application/vnd.oasis.opendocument.text';
+  return zipSync({
+    mimetype: [strToU8(mime), { level: 0 }],
+    'META-INF/manifest.xml': strToU8(ODF_MANIFEST(mime)),
+    'content.xml': strToU8(content),
+    'styles.xml': strToU8(styles),
   });
 }
 

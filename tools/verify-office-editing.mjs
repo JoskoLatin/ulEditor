@@ -60,15 +60,16 @@ function check(name, passed, detail = '') {
 /**
  * The two ways this program writes text into a document it did not create.
  *
- * `adds` is not a preference: a Word document can be given a paragraph it did
- * not have and an OpenDocument text cannot, and the difference lives entirely in
- * the seam behind `Preview.source`. Checking both sides of it here is how we
- * know the editor is reading that seam rather than knowing which format it holds
- * — the same class drives both.
+ * Both are given a paragraph they did not have, through the same command, and
+ * the difference lives entirely in the seam behind `Preview.source` — the same
+ * class drives both. `whole` is the rest of the walk, which is Word's alone:
+ * removing a paragraph behind a table, rows and merged cells. An OpenDocument
+ * text's own paragraph rules are `verify-odt-paragraphs.mjs` and, in the page,
+ * `verify-odt-lines.mjs`.
  */
 const DOCUMENTS = [
-  { label: 'docx', file: 'report.docx', bytes: makeDocx(), part: 'word/document.xml', adds: true },
-  { label: 'odt', file: 'izvjestaj.odt', bytes: makeOdt(), part: 'content.xml', adds: false },
+  { label: 'docx', file: 'report.docx', bytes: makeDocx(), part: 'word/document.xml', whole: true },
+  { label: 'odt', file: 'izvjestaj.odt', bytes: makeOdt(), part: 'content.xml', whole: false },
 ];
 
 if (alreadyRunning()) {
@@ -221,7 +222,7 @@ try {
 
     /* ── a paragraph that was not there ──────────────────────────────── */
 
-    const paragraphsBefore = (strFromU8(after[document.part]).match(/<(w:p|text:p)[\s>]/g) ?? []).length;
+    const paragraphsBefore = (strFromU8(after[document.part]).match(/<(w:p|text:p|text:h)[\s>]/g) ?? []).length;
 
     // The cursor has to be somewhere: the command inserts after the paragraph
     // it is in, and refuses out loud when it is nowhere.
@@ -230,32 +231,6 @@ try {
     await page.waitForTimeout(300);
 
     const fresh = await page.locator('.ul-office-doc [data-new]').count();
-
-    if (!document.adds) {
-      /* The whole point of the seam: a format with nothing to say about
-         structure is offered nothing, and the keystroke passes through without
-         doing something invisible. */
-      check(say('a format that cannot take a paragraph is given no way to add one'), fresh === 0);
-      check(
-        say('and the document is not marked as changed by a key that did nothing'),
-        (await page.locator('.tab[data-dirty="true"]').count()) === 0,
-      );
-
-      /* And the same for taking one away: no seam, no command, and a key that
-         passes through rather than hiding a line the file will keep. */
-      await page.locator('.ul-office-run').first().click();
-      await page.keyboard.press('Control+Shift+Backspace');
-      await page.waitForTimeout(300);
-      check(
-        say('nor any way to remove one'),
-        (await page.locator('.ul-office-doc .is-removed').count()) === 0 &&
-          (await page.locator('.tab[data-dirty="true"]').count()) === 0,
-      );
-      await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
-      await page.locator('.tab .close').first().click();
-      await page.waitForTimeout(400);
-      continue;
-    }
 
     check(say('the new paragraph appears in the view'), fresh === 1, `${fresh}`);
     check(
@@ -289,7 +264,7 @@ try {
 
     const grown = unzipSync(await readFile(document.path));
     const grownPart = strFromU8(grown[document.part]);
-    const paragraphsAfter = (grownPart.match(/<(w:p|text:p)[\s>]/g) ?? []).length;
+    const paragraphsAfter = (grownPart.match(/<(w:p|text:p|text:h)[\s>]/g) ?? []).length;
 
     check(say('the new paragraph is in the file'), grownPart.includes(ADDED));
     check(
@@ -320,7 +295,7 @@ try {
     const twice = strFromU8(unzipSync(await readFile(document.path))[document.part]);
     check(
       say('saving a second time does not add it a second time'),
-      (twice.match(/<(w:p|text:p)[\s>]/g) ?? []).length === paragraphsAfter,
+      (twice.match(/<(w:p|text:p|text:h)[\s>]/g) ?? []).length === paragraphsAfter,
     );
 
     await page.locator('.tab .close').first().click();
@@ -330,6 +305,14 @@ try {
       say('and it is there when the document is opened again'),
       (await page.locator('.ul-office-doc').innerText()).includes(ADDED),
     );
+
+    /* The rest of the walk is Word's alone — see DOCUMENTS. */
+    if (!document.whole) {
+      await page.screenshot({ path: resolve(ROOT, `tools/screenshots/desktop-${document.label}-edit.png`) });
+      await page.locator('.tab .close').first().click();
+      await page.waitForTimeout(400);
+      continue;
+    }
 
     /* ── a paragraph the file will no longer have ────────────────────── */
 

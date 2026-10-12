@@ -610,5 +610,16 @@
   "A tracked change is recorded on one of these cells — merging them would claim the same reviewer did it.": "Na jednoj od ovih ćelija zabilježena je praćena promjena — spajanje bi tvrdilo da ga je napravio isti recenzent.",
   "A tracked change is recorded on this row — merging its cells would claim the same reviewer did it.": "Na ovom retku zabilježena je praćena promjena — spajanje njegovih ćelija tvrdilo bi da ga je napravio isti recenzent.",
   "Cells can only be merged in a table in the body of the document — not in one in a header, a text box or a content control.": "Ćelije se mogu spajati samo u tablici u tijelu dokumenta — ne u onoj u zaglavlju, tekstualnom okviru ili kontroli sadržaja.",
-  "This number is out of date: a cell {formula} reads has been retyped, and this is not a formula it can work out. Excel settles it on opening.": "Ovaj broj više nije točan: pretipkana je ćelija koju {formula} čita, a ovo nije formula koju program zna izračunati. Excel će je srediti pri otvaranju."
+  "This number is out of date: a cell {formula} reads has been retyped, and this is not a formula it can work out. Excel settles it on opening.": "Ovaj broj više nije točan: pretipkana je ćelija koju {formula} čita, a ovo nije formula koju program zna izračunati. Excel će je srediti pri otvaranju.",
+  "Paragraphs in a list cannot be added, removed, split or joined in an OpenDocument text yet.": "Odlomci u popisu u OpenDocument tekstu još se ne mogu dodavati, uklanjati, dijeliti ni spajati.",
+  "The next paragraph starts a new page or page style — joining them would lose it.": "Sljedeći odlomak počinje novu stranicu ili stil stranice — spajanjem bi se to izgubilo.",
+  "This paragraph starts a new page or page style — splitting it would start a second one.": "Ovaj odlomak počinje novu stranicu ili stil stranice — dijeljenjem bi počela još jedna.",
+  "This paragraph starts a new page or page style — removing it would change the pages after it.": "Ovaj odlomak počinje novu stranicu ili stil stranice — uklanjanjem bi se promijenile stranice iza njega.",
+  "This paragraph holds a text box or a comment this view does not show — removing it would take that text too.": "Ovaj odlomak sadrži okvir s tekstom ili komentar koji ovaj prikaz ne pokazuje — uklanjanjem bi nestao i taj tekst.",
+  "A tracked change is recorded in this paragraph — changing it would leave the record describing other text.": "U ovom odlomku zabilježena je praćena promjena — izmjenom bi zapis opisivao drugi tekst.",
+  "A comment or a reference mark runs through this spot — splitting here would cut it in two.": "Ovuda prolazi komentar ili oznaka reference — dijeljenje ovdje presjeklo bi ga na dva dijela.",
+  "A comment or a reference mark continues outside this paragraph.": "Komentar ili oznaka reference nastavlja se izvan ovog odlomka.",
+  "The cursor is inside a link or a field — splitting here would cut it in two.": "Pokazivač je unutar poveznice ili polja — dijeljenje ovdje presjeklo bi ga na dva dijela.",
+  "This text is drawn by the program that wrote the file, so it cannot be split.": "Ovaj tekst iscrtava program koji je napisao datoteku, pa se ne može podijeliti.",
+  "Something stands between these paragraphs — a table, a list, a section or a picture.": "Između ovih odlomaka nešto stoji — tablica, popis, odjeljak ili slika."
 }

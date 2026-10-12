@@ -260,8 +260,8 @@ jobs:
         shell: bash
 
       # The checks that load the shell's own modules into the page — a crash
-      # caught by the boundary, and the .docx table, cell and line routines
-      # driven through the reader. They need Vite's development server rather
+      # caught by the boundary, the .docx table, cell and line routines and the
+      # .odt line routines, driven through the reader. They need Vite's development server rather
       # than the built page, so it is started for them. Linux only: what they
       # test is the same code in the same Chromium on every runner.
       - name: Checks against the development server
@@ -275,6 +275,7 @@ jobs:
           node tools/verify-crash.mjs --url http://localhost:5274
           node tools/verify-docx-cells.mjs --url http://localhost:5274
           node tools/verify-docx-lines.mjs --url http://localhost:5274
+          node tools/verify-odt-lines.mjs --url http://localhost:5274
           node tools/verify-docx-table.mjs --url http://localhost:5274
         shell: bash
 
