@@ -27,7 +27,7 @@
  * [`odf.ts`](./odf.ts), where a DOM exists.
  */
 
-import { escapeXml, localName, scanTags, tagAttr, unescapeXml } from './docx-edit.js';
+import { escapeXml, localName, scanTags, tagAttr, unescapeXml, type Tag } from './docx-edit.js';
 
 /* ── the pieces ──────────────────────────────────────────────────────── */
 
@@ -826,6 +826,248 @@ export function odtAlike(a: OdtParagraph, b: OdtParagraph): boolean {
   return a.kind === b.kind && a.style === b.style && a.level === b.level;
 }
 
+/* ── a new row in a table ────────────────────────────────────────────── */
+
+/** One cell of a row as the grid sees it. */
+interface OdtCell {
+  tag: Tag;
+  /** `covered-table-cell` — a place another cell's span covers. */
+  covered: boolean;
+  /** Covered by a cell of a row above, rather than by the one before it in this row. */
+  fromAbove: boolean;
+  /** Columns of the grid it covers, `number-columns-spanned`. */
+  span: number;
+  /** `number-columns-repeated`: one element written for that many cells. */
+  repeat: number;
+}
+
+export interface OdtRow {
+  /** The ordinal among every `table:table-row` in the part, nested tables' included. */
+  index: number;
+  start: number;
+  end: number;
+  /** Where its own table begins; the rows of one table share it. */
+  table: number;
+  cells: OdtCell[];
+  /** Some cell of it is covered by a cell of a row above — it is inside a merge. */
+  continued: boolean;
+  /** Why no new row may follow this one; `null` when one may. */
+  refusal: string | null;
+}
+
+/** What may stand between a row and the body: its own table, and a cell of an outer one. */
+const ROW_REGION = new Set(['table', 'table-row', 'table-cell', 'table-rows', 'table-header-rows', 'table-row-group']);
+
+/** The direct children of an element, by their ranges. */
+function childrenOf(xml: string, outer: { start: number; end: number }): Tag[] {
+  const found: Tag[] = [];
+  let depth = 0;
+  let opened: Tag | null = null;
+  for (const tag of scanTags(xml.slice(outer.start, outer.end))) {
+    const shifted = { ...tag, start: tag.start + outer.start, end: tag.end + outer.start };
+    if (shifted.selfClosing) {
+      if (depth === 1) found.push(shifted);
+      continue;
+    }
+    if (shifted.closing) {
+      depth--;
+      if (depth === 1 && opened) {
+        found.push({ ...opened, end: shifted.end });
+        opened = null;
+      }
+      continue;
+    }
+    depth++;
+    if (depth === 2 && !opened) opened = shifted;
+  }
+  return found;
+}
+
+/**
+ * An element's opening tag alone — the range its own attributes are read
+ * from. Read over the whole element, an attribute it lacks would be found on
+ * a child: a row without a style would take its first cell's.
+ */
+function openingOf(xml: string, element: { start: number }): { start: number; end: number } {
+  const first = scanTags(xml.slice(element.start)).next().value;
+  return { start: element.start, end: element.start + (first?.end ?? 0) };
+}
+
+const count = (raw: string | null, most: number): number => {
+  const n = raw === null ? 1 : Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, most) : 1;
+};
+
+/**
+ * Every `table:table-row` in the part, in document order, with its cells
+ * read against the grid.
+ *
+ * A cell spanning rows (`number-rows-spanned`) leaves a `covered-table-cell`
+ * in each row below it that it reaches; a cell spanning columns leaves them
+ * after itself in its own row. The two look alike in the file, and only the
+ * grid tells them apart — which matters, because a new row below a merge goes
+ * below the last row it reaches, and a covered cell there is a cell of its own
+ * in the new row.
+ */
+export function findOdtRows(xml: string): OdtRow[] {
+  const rows: OdtRow[] = [];
+  const stack: { local: string; start: number }[] = [];
+  const open: OdtRow[] = [];
+
+  for (const tag of scanTags(xml)) {
+    const local = localName(tag.name);
+    if (tag.closing) {
+      const popped = stack.pop();
+      if (popped?.local === 'table-row') {
+        const row = open.pop();
+        if (row) row.end = tag.end;
+      }
+      continue;
+    }
+    if (local === 'table-row') {
+      let table = -1;
+      let where = '';
+      for (let i = stack.length - 1; i >= 0; i--) {
+        const frame = stack[i]!;
+        if (table === -1 && frame.local === 'table') table = frame.start;
+        if (ROW_REGION.has(frame.local)) continue;
+        where = frame.local;
+        break;
+      }
+      const row: OdtRow = {
+        index: rows.length,
+        start: tag.start,
+        end: tag.end,
+        table,
+        cells: [],
+        continued: false,
+        refusal:
+          table === -1
+            ? 'the row is not a row of a table'
+            : where !== 'text'
+              ? 'the table is not in the body of the document'
+              : count(tagAttr(xml, tag, 'number-rows-repeated'), 2) > 1
+                ? 'the row stands for several rows'
+                : null,
+      };
+      rows.push(row);
+      if (!tag.selfClosing) open.push(row);
+    }
+    if (!tag.selfClosing) stack.push({ local, start: tag.start });
+  }
+
+  /* The cells, against each table's grid, row after row. */
+  const pending = new Map<number, number[]>();
+  for (const row of rows) {
+    if (row.table === -1) continue;
+    const below = pending.get(row.table) ?? [];
+    pending.set(row.table, below);
+    const fromAbove = below.map((left) => left > 0);
+    let column = 0;
+    for (const tag of childrenOf(xml, row)) {
+      const local = localName(tag.name);
+      if (local !== 'table-cell' && local !== 'covered-table-cell') continue;
+      const covered = local === 'covered-table-cell';
+      const own = openingOf(xml, tag);
+      const repeat = count(tagAttr(xml, own, 'number-columns-repeated'), 64);
+      const span = covered ? 1 : count(tagAttr(xml, own, 'number-columns-spanned'), 1024);
+      const down = covered ? 1 : count(tagAttr(xml, own, 'number-rows-spanned'), 1 << 20);
+      row.cells.push({ tag, covered, fromAbove: covered && fromAbove[column] === true, span, repeat });
+      if (covered && fromAbove[column]) row.continued = true;
+      for (let r = 0; r < repeat; r++) {
+        if (down > 1) for (let c = column; c < column + span; c++) below[c] = down;
+        column += span;
+      }
+    }
+    for (let c = 0; c < below.length; c++) if (below[c]! > 0) below[c]! -= 1;
+  }
+
+  return rows;
+}
+
+/** The next row of the same table — one that begins where it does; `null` at its end. A nested table's rows are not its own. */
+function nextRowOf(rows: OdtRow[], row: OdtRow): OdtRow | null {
+  for (let i = row.index + 1; i < rows.length; i++) {
+    if (rows[i]!.table === row.table) return rows[i]!;
+  }
+  return null;
+}
+
+/** The row a new one actually follows: below the last row a cell merged down reaches. */
+export function anchorOdtRow(rows: OdtRow[], row: OdtRow): OdtRow {
+  let at = row;
+  for (let next = nextRowOf(rows, at); next !== null && next.continued; next = nextRowOf(rows, at)) at = next;
+  return at;
+}
+
+/** Why no new row may follow this one; `null` when one may. */
+export function odtRowRefusal(rows: OdtRow[], index: number): string | null {
+  const row = rows[index];
+  if (!row) return 'there is no such row';
+  if (row.refusal) return row.refusal;
+  const anchor = anchorOdtRow(rows, row);
+  if (anchor.refusal) return anchor.refusal;
+  if (anchor.cells.length === 0) return 'the row has no cells';
+  return null;
+}
+
+/**
+ * The cells a new row after this one has, as wide across the grid as these
+ * are: a cell keeps its span, a cell repeated is that many cells, a place
+ * covered from the row above is a cell of its own, and a place covered by the
+ * cell before it in this row is that cell's.
+ */
+export function odtRowShape(row: OdtRow): number[] {
+  const shape: number[] = [];
+  for (const cell of row.cells) {
+    if (cell.covered && !cell.fromAbove) continue;
+    for (let r = 0; r < cell.repeat; r++) shape.push(cell.covered ? 1 : cell.span);
+  }
+  return shape;
+}
+
+/** The prefix the root element is written with — `office`, almost always. */
+function rootPrefix(xml: string, fallback: string): string {
+  const root = scanTags(xml).next().value;
+  const colon = root ? root.name.indexOf(':') : -1;
+  return root && colon > 0 ? root.name.slice(0, colon) : fallback;
+}
+
+/**
+ * The markup of a new row: **the row it follows, emptied** — the row's style,
+ * each cell's style and span, and each cell's first paragraph's style, each
+ * built rather than copied; no content, no spanning down, no ids.
+ */
+export function odtRowMarkup(xml: string, row: OdtRow, texts: readonly string[]): string {
+  const prefix = textPrefix(xml);
+  const rowTag = scanTags(xml.slice(row.start, row.end)).next().value!;
+  const table = rowTag.name.slice(0, rowTag.name.indexOf(':'));
+  const office = rootPrefix(xml, 'office');
+  const styled = (raw: string | null) => (raw !== null ? ` ${table}:style-name="${quoted(raw)}"` : '');
+
+  let out = `<${table}:table-row${styled(tagAttr(xml, openingOf(xml, row), 'style-name'))}>`;
+  let at = 0;
+  for (const cell of row.cells) {
+    if (cell.covered && !cell.fromAbove) continue;
+    const own = openingOf(xml, cell.tag);
+    const style = tagAttr(xml, own, 'style-name');
+    const typed = tagAttr(xml, own, 'value-type') !== null ? ` ${office}:value-type="string"` : '';
+    const first = cell.covered
+      ? undefined
+      : childrenOf(xml, cell.tag).find((child) => child.name === `${prefix}:p` || child.name === `${prefix}:h`);
+    const paragraphStyle = first ? tagAttr(xml, openingOf(xml, first), 'style-name') : null;
+    for (let r = 0; r < cell.repeat; r++) {
+      const text = texts[at++] ?? '';
+      const p = paragraphStyle !== null ? ` ${prefix}:style-name="${quoted(paragraphStyle)}"` : '';
+      const paragraph = text.length > 0 ? `<${prefix}:p${p}>${odtTextXml(text, prefix)}</${prefix}:p>` : `<${prefix}:p${p}/>`;
+      const span = cell.covered || cell.span === 1 ? '' : ` ${table}:number-columns-spanned="${cell.span}"`;
+      out += `<${table}:table-cell${styled(style)}${typed}${span}>${paragraph}</${table}:table-cell>`;
+      if (!cell.covered) for (let c = 1; c < cell.span; c++) out += `<${table}:covered-table-cell/>`;
+    }
+  }
+  return `${out}</${table}:table-row>`;
+}
+
 /* ── writing the plan ────────────────────────────────────────────────── */
 
 /** A piece of text divided by Enter: the first part stays, every later one begins a paragraph. */
@@ -844,6 +1086,10 @@ export interface OdtReshaping {
   cuts?: OdtCut[];
   /** Paragraphs of the original part joined with the next one the plan keeps. */
   joins?: number[];
+  /** The rows of the original part, for new rows to name and be built from. */
+  rows?: OdtRow[];
+  /** New rows, each after a row of the original part, with what was typed into each cell. */
+  rowInserts?: { after: number; cells: string[] }[];
 }
 
 /**
@@ -1025,6 +1271,18 @@ export function applyOdtEdits(
     if (joins.some((join) => span.start >= join.first.end && span.end <= join.next.start)) continue;
     operations.push({ at: span.start, end: span.end, text: '', order: 0 });
   }
+
+  /* A new row, after the row it follows — below the last row a merge
+     reaches — and only one somebody typed into: a row of empty cells has
+     nothing in it a person could put a cursor in again. Two after one row
+     keep the order they were added in. */
+  const rows = reshaping?.rows ?? [];
+  (reshaping?.rowInserts ?? []).forEach((insert, order) => {
+    if (insert.cells.every((text) => text.length === 0)) return;
+    if (odtRowRefusal(rows, insert.after) !== null) return;
+    const anchor = anchorOdtRow(rows, rows[insert.after]!);
+    operations.push({ at: anchor.end, end: anchor.end, text: odtRowMarkup(xml, anchor, insert.cells), order });
+  });
 
   operations.sort((a, b) => b.at - a.at || b.end - b.at - (a.end - a.at) || b.order - a.order);
   let out = xml;

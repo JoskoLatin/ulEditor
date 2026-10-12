@@ -2162,12 +2162,13 @@ class DocumentPreviewEditor implements EditorInstance {
   }
 
   /**
-   * The coarse question for merging cells: has this format an answer for the
-   * rows of a table at all? A Word document says yes; the OpenDocument text,
-   * the old binary `.doc` and the Rich Text driven by this same class say no.
+   * The coarse question for merging cells: has this format an answer for
+   * merging the cells of a table at all? A Word document says yes; the
+   * OpenDocument text, which can add a row but not merge cells, the old
+   * binary `.doc` and the Rich Text driven by this same class say no.
    */
   canMergeCells(): boolean {
-    return this.preview.source?.rows !== undefined;
+    return this.preview.source?.rows?.mergeRefusalAt !== undefined;
   }
 
   /**
@@ -2180,7 +2181,7 @@ class DocumentPreviewEditor implements EditorInstance {
    */
   mergeCells(): void {
     const source = this.preview.source;
-    if (!source?.rows) return;
+    if (!source?.rows?.mergeRefusalAt) return;
 
     /* Where the selection is, read BEFORE the blur below — blurring collapses
        it, and a collapsed selection is one cell, which is not a merge. */
@@ -2234,7 +2235,7 @@ class DocumentPreviewEditor implements EditorInstance {
     const seam = this.preview.source?.rows;
     const selection = document.getSelection();
     const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    if (!seam || !selection || !range || !body.contains(range.commonAncestorContainer)) {
+    if (!seam?.mergeRefusalAt || !selection || !range || !body.contains(range.commonAncestorContainer)) {
       return { refusal: t('Select two cells or more of one row to merge them.') };
     }
 

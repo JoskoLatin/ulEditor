@@ -224,8 +224,11 @@ export interface TableRowSeam {
    * `from` and `count` are in the ordinals `data-tc` carries, so a cell the
    * view never drew — one continuing a vertical merge — still counts, and a
    * run that reaches across one is refused rather than quietly swallowing it.
+   *
+   * Absent where the format can add rows and cannot merge cells — the
+   * OpenDocument text — and the editor then offers no merge at all.
    */
-  mergeRefusalAt(row: number, from: number, count: number): string | null;
+  mergeRefusalAt?(row: number, from: number, count: number): string | null;
 }
 
 export interface ParagraphSeam {

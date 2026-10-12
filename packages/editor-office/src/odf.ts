@@ -52,20 +52,25 @@ import {
 import type { Preview, PreviewOutline } from './docx.js';
 import { writeOdf } from './odf-package.js';
 import {
+  anchorOdtRow,
   applyOdtEdits,
   findOdtParagraphs,
+  findOdtRows,
   findOdtPieces,
   lastPieceOf,
   odtAlike,
   odtDivisionRefusal,
   odtJoinRefusal,
   odtRemovalRefusal,
+  odtRowRefusal,
+  odtRowShape,
   odtShowsNothing,
   paragraphOf,
   readOdtStyles,
   spacesOf,
   type OdtParagraph,
   type OdtPiece,
+  type OdtRow,
   type OdtStyles,
 } from './odt-edit.js';
 import { MAX_COLS, MAX_ROWS, truncationNote, type Cell, type Merge, type Sheet, type Workbook } from './xlsx.js';
@@ -618,7 +623,13 @@ interface Context {
   paraIndex: Map<Element, number>;
   /** The paragraphs the view names — the body's, or none when the two counts disagree. */
   insertable: Set<number>;
+  /** Each `table:table-row` → its ordinal, the one `findOdtRows` counts it by. */
+  rowIndex: Map<Element, number>;
+  /** The rows the view names — all of them, or none when the two counts disagree. */
+  markedRows: Set<number>;
 }
+
+const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
 
 const TEXT_NS = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
 
@@ -954,6 +965,10 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
 
   for (const rowNode of rowsOf(node)) {
     const row = document.createElement('tr');
+    /* The ordinal a new row names, on the row itself — a row that may not
+       take one too, so the seam can be asked why. */
+    const index = ctx.rowIndex.get(rowNode);
+    if (index !== undefined && ctx.markedRows.has(index)) row.dataset.row = String(index);
     const header = isHeaderWrapper && headerRows.has(rowNode);
 
     for (const cellNode of [...rowNode.children]) {
@@ -1040,10 +1055,14 @@ export function readOdt(bytes: Uint8Array): Preview {
   /* The paragraphs are counted over the raw part and over the parsed tree, and
      a paragraph is named in the view only when the two counts agree — a new
      paragraph written after the wrong one is worse than none. */
+  const rows = findOdtRows(xml);
   const paraIndex = new Map<Element, number>();
+  const rowIndex = new Map<Element, number>();
   for (const el of opened.content.querySelectorAll('*')) {
     if (el.namespaceURI === TEXT_NS && (el.localName === 'p' || el.localName === 'h')) {
       paraIndex.set(el, paraIndex.size);
+    } else if (el.namespaceURI === TABLE_NS && el.localName === 'table-row') {
+      rowIndex.set(el, rowIndex.size);
     }
   }
 
@@ -1059,6 +1078,8 @@ export function readOdt(bytes: Uint8Array): Preview {
       paraIndex.size === paragraphs.length
         ? new Set(paragraphs.filter((one) => one.refusal === null).map((one) => one.index))
         : new Set(),
+    rowIndex,
+    markedRows: rowIndex.size === rows.length ? new Set(rows.map((one) => one.index)) : new Set(),
   };
 
   const body = document.createElement('div');
@@ -1145,7 +1166,9 @@ export function readOdt(bytes: Uint8Array): Preview {
       ctx.urls.length = 0;
     },
     source:
-      ctx.pieces.size > 0 ? odtSource(opened.archive, xml, pieces, paragraphs, styles, ctx.insertable) : undefined,
+      ctx.pieces.size > 0
+        ? odtSource(opened.archive, xml, pieces, paragraphs, styles, ctx.insertable, rows, ctx.markedRows)
+        : undefined,
   };
 }
 
@@ -1208,6 +1231,8 @@ function odtSource(
   paragraphs: OdtParagraph[],
   styles: OdtStyles,
   insertable: Set<number>,
+  rows: OdtRow[],
+  markedRows: Set<number>,
 ): NonNullable<Preview['source']> {
   /** The survivors of the plan so far, for the rules that judge what would be left. */
   const alive = (planned: ReadonlySet<number>) =>
@@ -1217,7 +1242,7 @@ function odtSource(
     /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
        the ranges, never the order. */
     textOf: (index) => pieces[index]?.text ?? '',
-    write: (edits, added, removed, divided, joined) =>
+    write: (edits, added, removed, divided, joined, newRows) =>
       writeOdf(
         archive,
         applyOdtEdits(xml, pieces, edits, {
@@ -1227,6 +1252,8 @@ function odtSource(
           removals: removed,
           cuts: (divided ?? []).map((one) => ({ piece: one.index, parts: one.parts })),
           joins: joined,
+          rows,
+          rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
         }),
       ),
 
@@ -1265,6 +1292,33 @@ function odtSource(
             continuedRunAt: (paragraph) => {
               const span = paragraphs[paragraph];
               return span ? (lastPieceOf(xml, pieces, paragraphs, span)?.index ?? null) : null;
+            },
+          }
+        : undefined,
+
+    /* Rows, by the same guard. No `mergeRefusalAt`: the cells of an
+       OpenDocument table cannot be merged here yet, and the editor offers no
+       merge where the seam has none. */
+    rows:
+      markedRows.size > 0
+        ? {
+            refusalAt: (row) => {
+              const why = odtRowRefusal(rows, row);
+              if (why === null) return null;
+              if (why === 'there is no such row') return t('Put the cursor in a row of a table first.');
+              if (why === 'the row has no cells') return t('This row has no cells for a new row to be made from.');
+              if (why === 'the row stands for several rows') {
+                return t('This row stands for several identical rows in the file — a new row cannot go among them.');
+              }
+              return t('A new row can only go into a table in the body of the document — not into one in a header, a text box or a content control.');
+            },
+            anchorAt: (row) => {
+              const span = rows[row];
+              return span ? anchorOdtRow(rows, span).index : row;
+            },
+            shapeAt: (row) => {
+              const span = rows[row];
+              return span ? odtRowShape(anchorOdtRow(rows, span)) : [];
             },
           }
         : undefined,

@@ -63,6 +63,10 @@ const {
   odtJoinRefusal,
   odtShowsNothing,
   lastPieceOf,
+  findOdtRows,
+  anchorOdtRow,
+  odtRowShape,
+  odtRowRefusal,
 } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odt-edit.ts')).href);
 const { scanTags } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/docx-edit.ts')).href);
 const { writeOdf } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odf-package.ts')).href);
@@ -453,6 +457,87 @@ const pieceOf = (text) => doc.pieces.find((piece) => piece.text === text);
   );
 }
 
+/* ── a new row in a table ────────────────────────────────────────────── */
+
+/** Documents with a new row in them, for LibreOffice to read back below. */
+const readableTables = [];
+
+const cell = (text, attrs = '') =>
+  `<table:table-cell table:style-name="C1" office:value-type="string"${attrs}><text:p text:style-name="Table_20_Contents">${text}</text:p></table:table-cell>`;
+const TABLE =
+  `<table:table table:name="Tablica"><table:table-column table:number-columns-repeated="2"/>` +
+  `<table:table-header-rows><table:table-row table:style-name="R1">${cell('Glava A')}${cell('Glava B')}</table:table-row></table:table-header-rows>` +
+  `<table:table-row>${cell('Spojeno dolje', ' table:number-rows-spanned="2"')}${cell('desno 1')}</table:table-row>` +
+  `<table:table-row><table:covered-table-cell table:style-name="C2"/>${cell('desno 2')}</table:table-row>` +
+  `<table:table-row>${cell('Široko', ' table:number-columns-spanned="2"')}<table:covered-table-cell/></table:table-row>` +
+  `<table:table-row>${cell('isto', ' table:number-columns-repeated="2"')}</table:table-row>` +
+  `<table:table-row table:number-rows-repeated="3">${cell('')}${cell('')}</table:table-row>` +
+  `</table:table>`;
+const ROW = { header: 0, merged: 1, covered: 2, wide: 3, repeatedCells: 4, repeated: 5 };
+
+{
+  const archive = unzipSync(makeOdtParagraphs());
+  const xml = strFromU8(archive['content.xml']).replace(
+    '<text:p text:style-name="Text_20_body">Zadnji odlomak.</text:p>',
+    `${TABLE}<text:p text:style-name="Text_20_body">Zadnji odlomak.</text:p>`,
+  );
+  const tabled = open(writeOdf(archive, xml));
+  const rows = findOdtRows(tabled.xml);
+  const own = rows.filter((row) => row.table === rows[rows.length - 1].table);
+  const R = (at) => own[at];
+  const rowCount = (part) => findOdtRows(part).length;
+  const withRows = (inserts) => plan(tabled, { rows, rowInserts: inserts });
+
+  check('a row inside a merge is told apart from one beside it', R(ROW.covered).continued && !R(ROW.wide).continued);
+  check('a new row below a merged cell goes below the last row it reaches', anchorOdtRow(rows, R(ROW.merged)) === R(ROW.covered));
+  check(
+    'and has a cell of its own where the merge covered one',
+    JSON.stringify(odtRowShape(anchorOdtRow(rows, R(ROW.merged)))) === '[1,1]',
+    JSON.stringify(odtRowShape(anchorOdtRow(rows, R(ROW.merged)))),
+  );
+  check('a cell spanning columns keeps its span', JSON.stringify(odtRowShape(R(ROW.wide))) === '[2]');
+  check('a cell written once for two is two cells', JSON.stringify(odtRowShape(R(ROW.repeatedCells))) === '[1,1]');
+  check(
+    'a row written once for three is not added among them',
+    odtRowRefusal(rows, R(ROW.repeated).index) === 'the row stands for several rows',
+  );
+  check(
+    "a table cell's own table is the body's — a table in the text is not refused",
+    odtRowRefusal(rows, R(ROW.header).index) === null,
+  );
+
+  const below = withRows([{ after: R(ROW.merged).index, cells: ['nova lijevo', 'nova desno'] }]);
+  const added = addedAt(tabled.xml, below, R(ROW.covered).end);
+  check('a new row: still well formed, one row more', balanced(below) && rowCount(below) === rows.length + 1);
+  check(
+    'it is the row it follows, emptied: styles built, the merge not carried down, the typed text in',
+    added ===
+      '<table:table-row><table:table-cell table:style-name="C2"><text:p>nova lijevo</text:p></table:table-cell>' +
+        '<table:table-cell table:style-name="C1" office:value-type="string"><text:p text:style-name="Table_20_Contents">nova desno</text:p></table:table-cell></table:table-row>',
+    added ?? 'something else changed',
+  );
+  const wide = addedAt(tabled.xml, withRows([{ after: R(ROW.wide).index, cells: ['široko novo'] }]), R(ROW.wide).end);
+  check(
+    'a row after a wide cell is as wide',
+    wide !== null && wide.includes('table:number-columns-spanned="2"') && wide.includes('<table:covered-table-cell/>'),
+    wide ?? '',
+  );
+  const header = addedAt(tabled.xml, withRows([{ after: R(ROW.header).index, cells: ['a', ''] }]), R(ROW.header).end);
+  check(
+    "a row after the header row takes the row's style, and an empty cell an empty paragraph",
+    header !== null && header.startsWith('<table:table-row table:style-name="R1">') && header.includes('<text:p text:style-name="Table_20_Contents"/>'),
+    header ?? '',
+  );
+  check('a row nobody typed into is not written', withRows([{ after: R(ROW.merged).index, cells: ['', ''] }]) === tabled.xml);
+  check('nor one among repeated rows', withRows([{ after: R(ROW.repeated).index, cells: ['x', 'y'] }]) === tabled.xml);
+  const two = withRows([
+    { after: R(ROW.wide).index, cells: ['prvi'] },
+    { after: R(ROW.wide).index, cells: ['drugi'] },
+  ]);
+  check('two new rows after one keep their order', two.indexOf('prvi') < two.indexOf('drugi') && two.indexOf('prvi') > 0);
+  readableTables.push(writeOdf(tabled.archive, below));
+}
+
 /* ── everything at once ──────────────────────────────────────────────── */
 
 {
@@ -540,7 +625,7 @@ if (SOFFICE && words.length) {
   files.push(...made);
 }
 
-const stats = { files: 0, body: 0, list: 0, elsewhere: 0, inserts: 0, removals: 0, cuts: 0, joins: 0 };
+const stats = { files: 0, body: 0, list: 0, elsewhere: 0, inserts: 0, removals: 0, cuts: 0, joins: 0, rows: 0, rowsOffered: 0 };
 const damaged = [];
 const readable = [];
 
@@ -581,11 +666,20 @@ for (const file of files) {
   }
   const join = middle(joinable);
   if (join) steps.push(['join', { joins: [join.index] }, -1]);
+  const rows = findOdtRows(one.xml);
+  const rowable = rows.filter((row) => odtRowRefusal(rows, row.index) === null);
+  const rowAfter = middle(rowable);
+  if (rowAfter) {
+    const shape = odtRowShape(anchorOdtRow(rows, rowAfter));
+    steps.push(['row', { rows, rowInserts: [{ after: rowAfter.index, cells: shape.map((_, k) => `ulRed${k}`) }] }, shape.length]);
+    stats.rowsOffered += rowable.length;
+  }
 
   for (const [kind, reshaping, delta] of steps) {
     stats[`${kind === 'removal' ? 'removals' : kind === 'insert' ? 'inserts' : `${kind}s`}`]++;
     const out = plan(one, reshaping);
-    const ok = balanced(out) && count(out) === one.paragraphs.length + delta && plan(one, reshaping) === out;
+    const rowsRight = kind !== 'row' || findOdtRows(out).length === findOdtRows(one.xml).length + 1;
+    const ok = balanced(out) && rowsRight && count(out) === one.paragraphs.length + delta && plan(one, reshaping) === out;
     if (!ok) damaged.push(`${basename(file)}: ${kind} (${one.paragraphs.length} → ${count(out)}, balanced ${balanced(out)})`);
   }
 
@@ -621,10 +715,13 @@ for (const file of files) {
           removals: [taking.index],
           cuts: [{ piece: cutting.index, parts: [`${cutting.text.slice(0, half)} ulRezA`, `ulRezB ${cutting.text.slice(half)}`] }],
           joins: [joining.index],
+          ...(rowAfter
+            ? { rows, rowInserts: [{ after: rowAfter.index, cells: odtRowShape(anchorOdtRow(rows, rowAfter)).map(() => 'ulRedak') }] }
+            : {}),
         },
         [{ index: last.index, text: `${last.text} ulSpojA` }],
       );
-      readable.push({ file, bytes: writeOdf(one.archive, out), original: readFileSync(file) });
+      readable.push({ file, bytes: writeOdf(one.archive, out), original: readFileSync(file), row: !!rowAfter });
     }
   }
 }
@@ -633,7 +730,9 @@ check('the corpus was read', stats.files > 0, `${stats.files} files: ${stats.bod
 check(
   'every step of every kind kept the part whole, counted right and wrote the same bytes twice',
   damaged.length === 0 && stats.inserts + stats.removals + stats.cuts + stats.joins > 0,
-  damaged.length ? damaged.slice(0, 4).join(' | ') : `${stats.inserts} insertions, ${stats.removals} removals, ${stats.cuts} divisions, ${stats.joins} joins`,
+  damaged.length
+    ? damaged.slice(0, 4).join(' | ')
+    : `${stats.inserts} insertions, ${stats.removals} removals, ${stats.cuts} divisions, ${stats.joins} joins, ${stats.rows} rows (${stats.rowsOffered} rows could take one)`,
 );
 
 /* ── read back by LibreOffice ────────────────────────────────────────── */
@@ -653,6 +752,10 @@ if (SOFFICE) {
     [{ index: pieceOf('Poglavlje čćžšđ').index, text: 'Poglavlje čćžšđ ulSpojA' }],
   );
   readable.unshift({ file: 'fixture.odt', bytes: writeOdf(doc.archive, fixtureOut), original: makeOdtParagraphs() });
+  /* The table fixture, its new row typed into: only the row is asked about. */
+  for (const bytes of readableTables) {
+    readable.push({ file: 'table.odt', bytes, original: makeOdtParagraphs(), rowOnly: true });
+  }
 
   const back = join(work, 'back');
   mkdirSync(back);
@@ -686,6 +789,11 @@ if (SOFFICE) {
     }
     opened++;
     const line = (word) => edited.find((text) => text.includes(word));
+    if (one.rowOnly) {
+      if (!line('nova lijevo') || !line('nova desno')) wrong.push(`${basename(one.file)}: the new row is not shown`);
+      return;
+    }
+    if (one.row && !line('ulRedak')) wrong.push(`${basename(one.file)}: the new row is not shown`);
     if (!edited.some((text) => text.trim() === MARKER)) wrong.push(`${basename(one.file)}: no line of its own for the new paragraph`);
     if (!line('ulRezA') || !line('ulRezB') || line('ulRezA') === line('ulRezB')) {
       wrong.push(`${basename(one.file)}: the divided paragraph is not two lines`);
@@ -700,7 +808,7 @@ if (SOFFICE) {
   );
   check('the fixture is among them', !unread.includes('fixture.odt'));
   check(
-    'and shows the lines the plan made: a new one, a divided one as two, two joined as one',
+    'and shows the lines the plan made: a new one, a divided one as two, two joined as one, a new row',
     opened > 0 && wrong.length === 0,
     wrong.slice(0, 3).join(' | ') || `${opened} documents`,
   );

@@ -44,6 +44,9 @@ const BODY =
   `<text:h text:style-name="Heading_20_2" text:outline-level="2">Podnaslov</text:h>` +
   `<text:p text:style-name="Text_20_body">Treći odlomak <text:span text:style-name="T1">s podebljanim.</text:span></text:p>` +
   `<text:list><text:list-item><text:p text:style-name="Text_20_body">Stavka popisa</text:p></text:list-item></text:list>` +
+  `<table:table table:name="Tablica"><table:table-column table:number-columns-repeated="2"/>` +
+  `<table:table-row><table:table-cell office:value-type="string"><text:p>Lijevo gore</text:p></table:table-cell>` +
+  `<table:table-cell office:value-type="string"><text:p>Desno gore</text:p></table:table-cell></table:table-row></table:table>` +
   `<text:p text:style-name="Text_20_body">Zadnji odlomak.</text:p>`;
 
 const AUTOMATIC =
@@ -235,14 +238,42 @@ try {
   check('and the page shows exactly what the file holds', await agrees(file), JSON.stringify(await texts()));
   check('Ctrl+Z takes it back', await undoAll(original), JSON.stringify(await texts()));
 
+  /* ── a row in a table ───────────────────────────────────────────────── */
+
+  await run('Lijevo gore').click();
+  await press('Control+Enter');
+  const planned = page.locator('.ul-office-doc [data-new-row]');
+  check(
+    'Ctrl+Enter in a cell adds a row below, with a cell for every cell of the row',
+    (await planned.count()) === 1 && (await planned.locator('td').count()) === 2,
+    `${await planned.count()} rows, ${await planned.locator('td').count()} cells`,
+  );
+  await page.keyboard.type('Novi redak');
+  await planned.locator('.ul-office-run').nth(1).dblclick();
+  await page.keyboard.type('čćž');
+  await done();
+  file = await saved();
+  const rows = [...file.xml.matchAll(/<table:table-row[\s>][\s\S]*?<\/table:table-row>/g)].map((m) => m[0]);
+  check(
+    'the file has the row, after the one the caret was in, with what was typed into each cell',
+    rows.length === 2 && rows[1].includes('<text:p>Novi redak</text:p>') && rows[1].includes('<text:p>čćž</text:p>'),
+    rows[1] ?? 'no second row',
+  );
+  check('and no merge is offered for these cells', !(await page.evaluate(async () => {
+    const { activeInstance } = await import('/src/state/workspace.ts');
+    return activeInstance().canMergeCells?.() ?? false;
+  })));
+  for (let i = 0; i < 6 && (await planned.count()) > 0; i++) await press('Control+Z');
+  check('Ctrl+Z takes the row back', (await planned.count()) === 0 && (await saved()).xml.match(/<table:table-row[\s>]/g).length === 1);
+
   /* ── a boundary the seam refuses ────────────────────────────────────── */
 
   await typeIn('s podebljanim', 'end');
   await press('Delete');
   const said = await status();
   check(
-    'Delete before a list says why it does nothing, and does nothing',
-    /list/i.test(said) && JSON.stringify(await lines()) === JSON.stringify(original),
+    'Delete before a list and a table says why it does nothing, and does nothing',
+    /list|table/i.test(said) && JSON.stringify(await lines()) === JSON.stringify(original),
     said,
   );
   await done();
