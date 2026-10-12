@@ -8,9 +8,10 @@
  * the lines that were on the screen were one line in the saved file. Now:
  *
  * - in a Word document each pasted line is a paragraph of its own, the way
- *   Enter makes them, and Ctrl+Z takes the paste back in one step;
- * - where a paragraph cannot be divided — an OpenDocument text — the lines
- *   are joined with a space, and the status bar says so;
+ *   Enter makes them, and Ctrl+Z takes the paste back in one step — and in
+ *   the body of an OpenDocument text the same (card 459);
+ * - where a paragraph cannot be divided — a table cell — the lines are
+ *   joined with a space, and the status bar says so;
  * - one line is still left to the browser.
  *
  * What a division writes into the file is held by verify-docx-split and
@@ -98,15 +99,27 @@ try {
     JSON.stringify(undone),
   );
 
-  /* ── OpenDocument: joined, and said so ─────────────────────────────── */
+  /* ── OpenDocument: the body divides, a cell joins ──────────────────── */
 
   await drop('lijepljenje.odt', makeOdt());
   const odt = await typeInto();
   await paste('\nRED DVA\nRED TRI');
+  const odtLines = await odt.view.locator('[data-part-of]').evaluateAll((els) => els.map((el) => el.textContent));
+  check(
+    'several lines in the body of an OpenDocument text are paragraphs of their own too',
+    odtLines.includes('RED DVA') && odtLines.includes('RED TRI'),
+    JSON.stringify(odtLines),
+  );
+  check('and the status bar says how many', /3 paragraphs pasted/.test(await status()), (await status()).slice(0, 120));
+
+  const cell = odt.view.locator('td .ul-office-run', { hasText: 'PDF' }).first();
+  await cell.dblclick();
+  await page.keyboard.press('End');
+  await paste('\nĆELIJA DVA\nĆELIJA TRI');
   const joined = await page.locator(':focus').evaluate((el) => el.textContent ?? '');
   check(
-    'where a paragraph cannot be divided the lines are joined with a space',
-    joined === `${odt.before} RED DVA RED TRI`,
+    'where a paragraph cannot be divided — a table cell — the lines are joined with a space',
+    joined === 'PDF ĆELIJA DVA ĆELIJA TRI',
     JSON.stringify(joined),
   );
   check('and the status bar says so', /joined into one/.test(await status()), (await status()).slice(0, 120));
