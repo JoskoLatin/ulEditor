@@ -194,6 +194,21 @@ try {
 
   /* ── a change of format writes a file that is not lying about itself ─ */
 
+  /* What the editor itself asks the core for, written down on the way: the
+     core refuses a name that is taken only when told the name is one the
+     editor worked out (card 522), and nothing else shows that it was told. */
+  /* Read off the IPC request itself — the page's own `invoke` cannot be
+     wrapped, Tauri does not let it be replaced. */
+  const imageWrites = [];
+  page.on('request', (request) => {
+    if (!/\/image_write(\?|$)/.test(request.url())) return;
+    try {
+      const args = JSON.parse(request.postData() ?? '{}');
+      imageWrites.push({ target: args.target, fresh: args.fresh });
+    } catch {
+      imageWrites.push({ unreadable: request.postData()?.slice(0, 80) });
+    }
+  });
   await pane.locator('.ul-img-format').selectOption('jpeg');
   await page.keyboard.press('Control+S');
 
@@ -210,6 +225,12 @@ try {
       'and it really is a JPEG',
       head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff,
       `${head[0].toString(16)} ${head[1].toString(16)} ${head[2].toString(16)}`,
+    );
+    const asked = [...imageWrites];
+    check(
+      'the editor told the core the new name is one it worked out, which replaces nothing',
+      asked.length === 1 && asked[0].target.endsWith('slika.jpg') && asked[0].fresh === true,
+      JSON.stringify(asked),
     );
     check(
       'the tab followed the file it wrote',
@@ -233,6 +254,12 @@ try {
       'a second save writes the file the tab follows, and is not refused',
       wrote && !/already exists/.test(toasts),
       toasts.slice(0, 120) || 'no message',
+    );
+    const again = [...imageWrites];
+    check(
+      'and a save of the file it follows is not fresh: that file is its own',
+      again.length === 2 && again[1].fresh !== true,
+      JSON.stringify(again),
     );
     await until(async () => (await shown()).width === first.height, 10000);
     const second = await shown();

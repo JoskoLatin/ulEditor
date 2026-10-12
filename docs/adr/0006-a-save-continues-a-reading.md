@@ -134,11 +134,20 @@ what the save wrote. Second, the save into another format is written under a
 name nobody typed, and the editor's `stat` before it was the only thing keeping
 a file put there afterwards from being replaced. Such a write now says so
 (`WriteOptions.fresh`, `fresh` on `write_file` and `image_write`), and the core
-writes it with `Workspace::save_new`, which takes the name with `create_new` the
-moment before the rename and refuses a file, or a link, that has it. A fresh
-write naming a reading is refused as taken. What is left is the moment between
-taking the name and the rename: a rename that will not replace is `renameat2`
-(a new dependency, Linux only) or a hard link (refused by FAT and 9P).
+writes it with `Workspace::save_new`, which puts the new version into the name
+in a step that refuses a name taken — a file, a folder or a link: on Windows a
+rename without `MOVEFILE_REPLACE_EXISTING`, on Unix a hard link. Where the file
+system has no hard links (FAT, 9P) the name is taken with `create_new` the
+moment before the rename, and that moment is left; `renameat2` and macOS's
+`renamex_np` would close it, through a dependency this crate does not have. A
+fresh write naming a reading is refused.
+
+The independent review of the fix (a28bf19) also left, as known and not
+introduced here: the new file's protection is read by name from a place
+believed empty (`Source::Document`), as every first save's is; a fresh save
+does not borrow another tab's reading's protection the way a save-as does
+(card 495); and `image_write` reads its source plainly, without comparing it
+with the tab's reading (card 522, point 3).
 
 **What the token is and is not.** It names a reading. It is not a consent and
 grants nothing: every save still resolves its path through the sandbox

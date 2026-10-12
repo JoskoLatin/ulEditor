@@ -1099,8 +1099,8 @@ fn write_file(
 
 /// A save as the page asked for it: over a reading, or, `fresh`, of a file
 /// that must not be there yet. A fresh save naming a reading names a file
-/// that was read or written, so one that is there: refused as taken, rather
-/// than either half of the request being dropped.
+/// this tab read or wrote: refused, rather than either half of the request
+/// being dropped.
 fn save_in(
     workspace: &mut Workspace,
     path: &str,
@@ -1114,7 +1114,9 @@ fn save_in(
         return workspace.save(path, data, overwrite, reading, begin);
     }
     if reading.is_some() {
-        return Err(VfsError::Exists(path.to_owned()));
+        return Err(VfsError::Unsupported(format!(
+            "{path} was opened or saved here, so it is not a new file; use Save as to replace it"
+        )));
     }
     workspace.save_new(path, data, begin)
 }

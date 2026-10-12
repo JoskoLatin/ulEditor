@@ -1096,13 +1096,9 @@ impl Workspace {
     /// without a word (the review of 21d6f71, card 522). With `begin`, what
     /// was written becomes a reading, as with `save`.
     ///
-    /// The name is taken with `create_new` the moment before the new version
-    /// is renamed into it, so whatever was there by then is refused, a link
-    /// included. Taken any earlier, the empty file would be the one whose
-    /// security the new version is given. Left is the moment between taking
-    /// the name and the rename: one that did not need it — a rename that
-    /// refuses to replace — is `renameat2`, a new dependency on Linux and
-    /// nothing at all on macOS, or a hard link, which FAT and 9P refuse.
+    /// The new version is put into the name in a step that refuses a name
+    /// taken (`put_new`): whatever is there by then is refused, a link
+    /// included, and nothing written over it.
     pub fn save_new(
         &mut self,
         path: impl AsRef<Path>,
@@ -1280,44 +1276,81 @@ impl Workspace {
         /* Let go only now: held, the document could not be replaced by the
         rename either. */
         drop(held);
-        /* The name taken, for a file that is to replace nothing: whatever has
-        it now — a file, a link, a link to nothing — makes `create_new` fail,
-        and the new version is thrown away rather than put over it. */
-        let taken = if new_only {
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&resolved)
-            {
-                Ok(file) => Fingerprint::of(&file).ok(),
-                Err(err) => {
-                    let _ = fs::remove_file(&temp);
-                    return Err(if err.kind() == io::ErrorKind::AlreadyExists {
-                        VfsError::Exists(display(&resolved))
-                    } else {
-                        err.into()
-                    });
-                }
-            }
-        } else {
-            None
-        };
-        /* A rename replaces a link in the document's place rather than
-        writing through it, and takes the document away only by putting the
-        new version there. */
-        if let Err(err) = fs::rename(&temp, &resolved) {
+        if new_only {
+            put_new(&temp, &resolved)?;
+        } else if let Err(err) = fs::rename(&temp, &resolved) {
+            /* A rename replaces a link in the document's place rather than
+            writing through it, and takes the document away only by putting
+            the new version there. */
             let _ = fs::remove_file(&temp);
-            /* The empty file that took the name goes too — so long as it is
-            still the one this save made. */
-            if let Some(taken) = &taken {
-                if Fingerprint::at(&resolved).is_some_and(|now| now.same_file(taken)) {
-                    let _ = fs::remove_file(&resolved);
-                }
-            }
             return Err(err.into());
         }
         sweep_leftovers(&resolved);
         Ok(written)
+    }
+}
+
+/// Puts a new version written beside `resolved` into that name, which nothing
+/// may have: whatever has it — a file, a folder, a link, a link to nothing —
+/// is refused (`VfsError::Exists`), and the new version thrown away rather
+/// than put over it (`Workspace::save_new`).
+///
+/// In one step wherever the system has one. Windows renames without
+/// `MOVEFILE_REPLACE_EXISTING`, which fails on a name that is taken. Unix makes
+/// a hard link, which does too, then lets the temporary name go. A file system
+/// that has no hard links — FAT, 9P — has the name taken with `create_new` the
+/// moment before the rename instead, and the moment between is left; the
+/// rename that refuses to replace there (`renameat2`, `renamex_np`) is a
+/// dependency this crate does not have.
+fn put_new(temp: &Path, resolved: &Path) -> Result<(), VfsError> {
+    let refused = |err: io::Error| {
+        let _ = fs::remove_file(temp);
+        /* Asked of the name rather than the error: a folder there is "access
+        denied" to a rename and to `create_new` alike, and is a name taken. */
+        if err.kind() == io::ErrorKind::AlreadyExists || fs::symlink_metadata(resolved).is_ok() {
+            VfsError::Exists(display(resolved))
+        } else {
+            err.into()
+        }
+    };
+
+    #[cfg(windows)]
+    {
+        windows::rename_new(temp, resolved).map_err(refused)
+    }
+    #[cfg(not(windows))]
+    {
+        match fs::hard_link(temp, resolved) {
+            Ok(()) => {
+                let _ = fs::remove_file(temp);
+                return Ok(());
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => return Err(refused(err)),
+            Err(_) => {}
+        }
+        let taken = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(resolved)
+        {
+            Ok(file) => Fingerprint::of(&file).ok(),
+            Err(err) => return Err(refused(err)),
+        };
+        if let Err(err) = fs::rename(temp, resolved) {
+            let _ = fs::remove_file(temp);
+            /* The empty file that took the name goes too — only while it is
+            exactly as this save left it: written into since, it is somebody's,
+            and on a volume that cannot say which file it is, it stays. */
+            if let Some(taken) = &taken {
+                if Fingerprint::at(resolved)
+                    .is_some_and(|now| now == *taken && now.same_file(taken))
+                {
+                    let _ = fs::remove_file(resolved);
+                }
+            }
+            return Err(err.into());
+        }
+        Ok(())
     }
 }
 
@@ -2034,6 +2067,7 @@ pub(crate) mod windows {
     #[link(name = "kernel32")]
     extern "system" {
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
         fn GetFinalPathNameByHandleW(
             file: *mut c_void,
             path: *mut u16,
@@ -2375,6 +2409,28 @@ pub(crate) mod windows {
         // SAFETY: allocated by GetSecurityInfo, freed once.
         unsafe { LocalFree(descriptor) };
         set
+    }
+
+    /// Renames `from` to `to` only if nothing has `to` — `MoveFileExW` without
+    /// `MOVEFILE_REPLACE_EXISTING`, which refuses a name that is taken, by a
+    /// file, a folder or a link (to nothing, too), in the same step that would
+    /// have written it. Like any rename, it moves a link at `from` rather than
+    /// what it points at; `from` here is a temporary file this program made.
+    pub(super) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+        let wide = |path: &Path| {
+            path.as_os_str()
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<u16>>()
+        };
+        let (from, to) = (wide(from), wide(to));
+        // SAFETY: two NUL-terminated paths that outlive the call.
+        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     /// The folder a document is saved into, held until the save is over.
@@ -2834,6 +2890,27 @@ mod tests {
             refused.err()
         );
         assert_eq!(fs::read_to_string(&file).unwrap(), "put there meanwhile");
+        assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
+    }
+
+    /// A folder put there is a name taken too, and said so — not a failure
+    /// of the file system.
+    #[test]
+    fn a_folder_under_the_new_name_is_a_name_taken() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("new-name-folder")).unwrap();
+        let file = root.join("slika.webp");
+        let resolved = workspace.resolve_for_write(&file).unwrap();
+        fs::create_dir(&resolved).unwrap();
+
+        let refused =
+            workspace.write_resolved(&resolved, b"the picture", &Source::Document, None, true);
+        assert!(
+            matches!(refused, Err(VfsError::Exists(_))),
+            "{:?}",
+            refused.err()
+        );
+        assert!(resolved.is_dir());
         assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
     }
 
