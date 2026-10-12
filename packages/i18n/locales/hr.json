@@ -622,5 +622,6 @@
   "The cursor is inside a link or a field — splitting here would cut it in two.": "Pokazivač je unutar poveznice ili polja — dijeljenje ovdje presjeklo bi ga na dva dijela.",
   "This text is drawn by the program that wrote the file, so it cannot be split.": "Ovaj tekst iscrtava program koji je napisao datoteku, pa se ne može podijeliti.",
   "Something stands between these paragraphs — a table, a list, a section or a picture.": "Između ovih odlomaka nešto stoji — tablica, popis, odjeljak ili slika.",
-  "This row stands for several identical rows in the file — a new row cannot go among them.": "Ovaj redak u datoteci predstavlja nekoliko jednakih redaka — novi redak ne može ići među njih."
+  "This row stands for several identical rows in the file — a new row cannot go among them.": "Ovaj redak u datoteci predstavlja nekoliko jednakih redaka — novi redak ne može ići među njih.",
+  "This table is wider than this program follows — a new row cannot be added to it here.": "Ova je tablica šira nego što je program prati — ovdje joj se ne može dodati novi redak."
 }

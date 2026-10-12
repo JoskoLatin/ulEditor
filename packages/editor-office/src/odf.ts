@@ -1307,6 +1307,9 @@ function odtSource(
               if (why === null) return null;
               if (why === 'there is no such row') return t('Put the cursor in a row of a table first.');
               if (why === 'the row has no cells') return t('This row has no cells for a new row to be made from.');
+              if (why === 'the table is wider than this program follows') {
+                return t('This table is wider than this program follows — a new row cannot be added to it here.');
+              }
               if (why === 'the row stands for several rows') {
                 return t('This row stands for several identical rows in the file — a new row cannot go among them.');
               }

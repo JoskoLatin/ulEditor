@@ -536,6 +536,23 @@ const ROW = { header: 0, merged: 1, covered: 2, wide: 3, repeatedCells: 4, repea
   ]);
   check('two new rows after one keep their order', two.indexOf('prvi') < two.indexOf('drugi') && two.indexOf('prvi') > 0);
   readableTables.push(writeOdf(tabled.archive, below));
+
+  /* Somebody else's numbers: two hundred cells each claiming 64 repeats of
+     1024 columns, spanning down, over two thousand rows. */
+  const wideCell = `<table:table-cell table:number-columns-repeated="64" table:number-columns-spanned="1024" table:number-rows-spanned="9"/>`;
+  const hostile =
+    `<office:document-content xmlns:office="o" xmlns:table="t" xmlns:text="x"><office:body><office:text><table:table>` +
+    `<table:table-row>${wideCell.repeat(200)}</table:table-row>` +
+    `<table:table-row><table:table-cell/></table:table-row>`.repeat(2000) +
+    `</table:table></office:text></office:body></office:document-content>`;
+  const started = Date.now();
+  const hostileRows = findOdtRows(hostile);
+  const took = Date.now() - started;
+  check(
+    'a table claiming millions of columns is followed only so far, quickly, and takes no new row',
+    took < 3000 && odtRowRefusal(hostileRows, 0) === 'the table is wider than this program follows',
+    `${took} ms, ${hostileRows.length} rows`,
+  );
 }
 
 /* ── everything at once ──────────────────────────────────────────────── */

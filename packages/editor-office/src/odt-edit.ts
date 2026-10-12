@@ -631,12 +631,17 @@ function rangesBalanced(xml: string, from: number, to: number): boolean {
 
 /** The names every `office:annotation-end` in the part closes. */
 function annotationEnds(xml: string): Set<string> {
+  /* Read once per part: asked for every comment in a range, a file of ten
+     thousand comments would be read ten thousand times. */
+  if (endsRead?.xml === xml) return endsRead.names;
   const names = new Set<string>();
   for (const tag of scanTags(xml)) {
     if (!tag.closing && localName(tag.name) === 'annotation-end') names.add(tagAttr(xml, tag, 'name') ?? '');
   }
+  endsRead = { xml, names };
   return names;
 }
+let endsRead: { xml: string; names: Set<string> } | null = null;
 
 /** Whether a tracked change is recorded anywhere in a range. */
 function tracked(xml: string, from: number, to: number): boolean {
@@ -855,6 +860,9 @@ export interface OdtRow {
   refusal: string | null;
 }
 
+/** How many columns of a table's grid are followed — LibreOffice's own tables stop far short of it. */
+const MOST_COLUMNS = 4096;
+
 /** What may stand between a row and the body: its own table, and a cell of an outer one. */
 const ROW_REGION = new Set(['table', 'table-row', 'table-cell', 'table-rows', 'table-header-rows', 'table-row-group']);
 
@@ -956,7 +964,11 @@ export function findOdtRows(xml: string): OdtRow[] {
     if (!tag.selfClosing) stack.push({ local, start: tag.start });
   }
 
-  /* The cells, against each table's grid, row after row. */
+  /* The cells, against each table's grid, row after row. The grid is
+     followed only so far: the spans and repeats are numbers in somebody
+     else's file, and a row claiming a million columns would otherwise cost a
+     million steps for every row after it. A row past the edge takes no new
+     row after it. */
   const pending = new Map<number, number[]>();
   for (const row of rows) {
     if (row.table === -1) continue;
@@ -967,6 +979,10 @@ export function findOdtRows(xml: string): OdtRow[] {
     for (const tag of childrenOf(xml, row)) {
       const local = localName(tag.name);
       if (local !== 'table-cell' && local !== 'covered-table-cell') continue;
+      if (column >= MOST_COLUMNS) {
+        row.refusal ??= 'the table is wider than this program follows';
+        break;
+      }
       const covered = local === 'covered-table-cell';
       const own = openingOf(xml, tag);
       const repeat = count(tagAttr(xml, own, 'number-columns-repeated'), 64);
@@ -974,8 +990,8 @@ export function findOdtRows(xml: string): OdtRow[] {
       const down = covered ? 1 : count(tagAttr(xml, own, 'number-rows-spanned'), 1 << 20);
       row.cells.push({ tag, covered, fromAbove: covered && fromAbove[column] === true, span, repeat });
       if (covered && fromAbove[column]) row.continued = true;
-      for (let r = 0; r < repeat; r++) {
-        if (down > 1) for (let c = column; c < column + span; c++) below[c] = down;
+      for (let r = 0; r < repeat && column < MOST_COLUMNS; r++) {
+        if (down > 1) for (let c = column; c < Math.min(column + span, MOST_COLUMNS); c++) below[c] = down;
         column += span;
       }
     }
