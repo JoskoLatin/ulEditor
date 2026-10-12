@@ -256,12 +256,12 @@ const DRAW_NS = 'urn:oasis:names:tc:opendocument:xmlns:drawing:1.0';
  * after attribute, so a declaration written inside another attribute's value
  * is not taken for one (the review of card 459). Once per part.
  */
-function rootNamespaces(xml: string): Map<string, string> {
+export function rootNamespaces(xml: string): Map<string, string> {
   if (namespacesRead?.xml === xml) return namespacesRead.map;
   const map = new Map<string, string>();
   const root = scanTags(xml).next().value;
   if (root) {
-    const attribute = /\s([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+    const attribute = /\s([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
     const body = xml.slice(root.start, root.end);
     for (let match = attribute.exec(body); match; match = attribute.exec(body)) {
       const name = match[1]!;
@@ -273,6 +273,13 @@ function rootNamespaces(xml: string): Map<string, string> {
   return map;
 }
 let namespacesRead: { xml: string; map: Map<string, string> } | null = null;
+
+/** The names of every element in the part, as the scan reads them, in order. */
+export function scannedElements(xml: string): string[] {
+  const names: string[] = [];
+  for (const tag of scanTags(xml)) if (!tag.closing) names.push(tag.name);
+  return names;
+}
 
 /** The prefix the root binds a namespace to; `fallback` where it binds none. */
 function prefixFor(xml: string, uri: string, fallback: string): string {
@@ -303,9 +310,10 @@ export function odtIsPlain(xml: string): string | null {
 
   const namespaces = rootNamespaces(xml);
   if (namespaces.has('')) return 'a default namespace';
-  for (const uri of [TEXT_NS, TABLE_NS, OFFICE_NS]) {
-    if ([...namespaces.values()].filter((bound) => bound === uri).length > 1) return 'a namespace bound to two prefixes';
-  }
+  /* Any namespace, not only the three this file names: `draw` bound twice
+     hid a picture from the rule that keeps it (the second review). */
+  const bound = [...namespaces.values()];
+  if (new Set(bound).size !== bound.length) return 'a namespace bound to two prefixes';
 
   let first = true;
   for (const tag of scanTags(xml)) {
@@ -613,18 +621,25 @@ const closing = (spans: OpenSpan[]): string =>
 /** The pieces that are a paragraph's own — not ones in a frame or a note it holds. */
 function piecesOf(pieces: OdtPiece[], paragraphs: OdtParagraph[], paragraph: OdtParagraph): OdtPiece[] {
   /* The paragraphs nested in it — a text box's, a note's — follow it in
-     order; a piece in one of them is not its own. Found once, rather than
-     each piece asking for its paragraph from the top. */
-  const nested: OdtParagraph[] = [];
+     order, and so do the pieces: one walk over both, a piece inside the
+     outermost nested range left out, rather than every piece asked about
+     every range (the second review of card 459). */
+  const nested: { start: number; end: number }[] = [];
   for (let i = paragraph.index + 1; i < paragraphs.length && paragraphs[i]!.start < paragraph.end; i++) {
-    nested.push(paragraphs[i]!);
+    const inner = paragraphs[i]!;
+    const last = nested[nested.length - 1];
+    if (!last || inner.start >= last.end) nested.push({ start: inner.start, end: inner.end });
   }
-  return pieces.filter(
-    (piece) =>
-      piece.start >= paragraph.start &&
-      piece.end <= paragraph.end &&
-      !nested.some((inner) => piece.start >= inner.start && piece.end <= inner.end),
-  );
+  const own: OdtPiece[] = [];
+  let at = 0;
+  for (const piece of pieces) {
+    if (piece.start < paragraph.start || piece.end > paragraph.end) continue;
+    while (at < nested.length && nested[at]!.end <= piece.start) at++;
+    const inner = nested[at];
+    if (inner && piece.start >= inner.start && piece.end <= inner.end) continue;
+    own.push(piece);
+  }
+  return own;
 }
 
 /**
@@ -1026,7 +1041,11 @@ export function findOdtRows(xml: string): OdtRow[] {
   /* The cells of each row, gathered in the same pass: asked of the row
      afterwards, a table nested a thousand deep was scanned a thousand times. */
   const raw = new Map<OdtRow, Tag[]>();
-  const stack: { name: string; start: number; row: OdtRow | null; cell: Tag | null }[] = [];
+  /* Each frame carries the table it is in and the nearest element around it
+     that is not part of a table, from its parent: walked up the stack for
+     every row instead, tables nested a thousand deep cost a thousand steps a
+     row (the second review of card 459). */
+  const stack: { name: string; start: number; row: OdtRow | null; cell: Tag | null; table: number; outside: string }[] = [];
 
   for (const tag of scanTags(xml)) {
     if (tag.closing) {
@@ -1039,15 +1058,8 @@ export function findOdtRows(xml: string): OdtRow[] {
     let cell: Tag | null = null;
     const parent = stack[stack.length - 1];
     if (tag.name === rowName) {
-      let owner = -1;
-      let where = '';
-      for (let i = stack.length - 1; i >= 0; i--) {
-        const frame = stack[i]!;
-        if (owner === -1 && frame.name === `${table}:table`) owner = frame.start;
-        if (region.has(frame.name)) continue;
-        where = frame.name;
-        break;
-      }
+      const owner = parent?.table ?? -1;
+      const where = parent?.outside ?? '';
       row = {
         index: rows.length,
         start: tag.start,
@@ -1070,7 +1082,16 @@ export function findOdtRows(xml: string): OdtRow[] {
       cell = { ...tag };
       raw.get(parent.row)!.push(cell);
     }
-    if (!tag.selfClosing) stack.push({ name: tag.name, start: tag.start, row, cell });
+    if (!tag.selfClosing) {
+      stack.push({
+        name: tag.name,
+        start: tag.start,
+        row,
+        cell,
+        table: tag.name === `${table}:table` ? tag.start : (parent?.table ?? -1),
+        outside: region.has(tag.name) ? (parent?.outside ?? '') : tag.name,
+      });
+    }
   }
 
   /* The cells, against each table's grid, row after row. The grid is

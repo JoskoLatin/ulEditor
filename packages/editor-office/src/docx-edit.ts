@@ -153,7 +153,7 @@ export function ownAttr(xml: string, tag: { start: number; end: number }, local:
     end++;
   }
   const body = xml.slice(tag.start, end);
-  const attribute = /\s([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  const attribute = /\s([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   /* Asked with a prefix, by the whole name; asked without, by the local one. */
   const qualified = local.includes(':');
   for (let match = attribute.exec(body); match; match = attribute.exec(body)) {

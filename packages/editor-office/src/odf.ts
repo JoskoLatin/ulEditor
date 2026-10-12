@@ -61,6 +61,8 @@ import {
   odtAlike,
   odtDivisionRefusal,
   odtIsPlain,
+  rootNamespaces,
+  scannedElements,
   odtJoinRefusal,
   odtRemovalRefusal,
   odtRowRefusal,
@@ -634,6 +636,33 @@ const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
 
 const TEXT_NS = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
 
+/**
+ * Why the scan and the parser did not read this part alike; `null` when they
+ * did. Asked of what the parser actually saw rather than of rules about what
+ * it would see: the root's declarations as the parser bound them, and every
+ * element by its name, in order. Rules alone missed a declaration hidden in a
+ * value the scan's pattern did not end (the second review of card 459).
+ */
+function sameAsParsed(xml: string, content: Document): string | null {
+  const XMLNS = 'http://www.w3.org/2000/xmlns/';
+  const root = content.documentElement;
+  const parsed = new Map<string, string>();
+  for (const attribute of root.attributes) {
+    if (attribute.namespaceURI === XMLNS) parsed.set(attribute.prefix ? attribute.localName : '', attribute.value);
+  }
+  const scanned = rootNamespaces(xml);
+  if (parsed.size !== scanned.size || [...parsed].some(([prefix, uri]) => scanned.get(prefix) !== uri)) {
+    return 'the namespaces are read differently';
+  }
+  const names = scannedElements(xml);
+  /* The document's `*` is every element, the root among them. */
+  const elements = [...content.querySelectorAll('*')];
+  if (names.length !== elements.length || elements.some((element, i) => element.tagName !== names[i])) {
+    return 'the elements are read differently';
+  }
+  return null;
+}
+
 /** Marks the element that shows a paragraph with its ordinal, where the plan may name it. */
 function markParagraph<T extends HTMLElement>(element: T, node: Element, ctx: Context): T {
   const index = ctx.paraIndex.get(node);
@@ -1055,9 +1084,14 @@ export function readOdt(bytes: Uint8Array): Preview {
      edited (`odtIsPlain`); and `styles.xml` is read for the style a new
      paragraph hands on only when it parsed and is as plain — otherwise its
      names would be copied out of a part nobody checked (the review of 459). */
-  const plain = odtIsPlain(xml);
+  const plain = odtIsPlain(xml) ?? sameAsParsed(xml, opened.content);
   const stylesXml = opened.styles ? readText(opened.archive, 'styles.xml') : null;
-  const styles = readOdtStyles(xml, stylesXml !== null && odtIsPlain(stylesXml) === null ? stylesXml : null);
+  const styles = readOdtStyles(
+    xml,
+    stylesXml !== null && opened.styles && odtIsPlain(stylesXml) === null && sameAsParsed(stylesXml, opened.styles) === null
+      ? stylesXml
+      : null,
+  );
 
   /* The paragraphs are counted over the raw part and over the parsed tree, and
      a paragraph is named in the view only when the two counts agree — a new

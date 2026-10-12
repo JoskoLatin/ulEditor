@@ -68,6 +68,8 @@ const {
   odtRowShape,
   odtRowRefusal,
   odtIsPlain,
+  rootNamespaces,
+  scannedElements,
 } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odt-edit.ts')).href);
 const { scanTags } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/docx-edit.ts')).href);
 const { writeOdf } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-office/src/odf-package.ts')).href);
@@ -606,6 +608,28 @@ const part = (body, ns = NS, before = '') =>
     check(`shown and not edited: ${label}`, odtIsPlain(xml) === reason, odtIsPlain(xml) ?? 'taken for plain');
   }
   check('and a part as LibreOffice writes it is plain', odtIsPlain(doc.xml) === null, odtIsPlain(doc.xml) ?? '');
+  check(
+    'shown and not edited: the drawing namespace bound to two prefixes',
+    odtIsPlain(part('<text:p>A</text:p>', `${NS} xmlns:d2="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"`)) ===
+      'a namespace bound to two prefixes',
+  );
+
+  /* The second review: a root attribute whose name is not ASCII, holding
+     "declarations" in its value. The scan must read the root as a parser
+     does — the value is a value — and count the paragraphs a parser counts. */
+  const hidden = part(
+    '<text:p>S0</text:p><t2:p>D0</t2:p><text:p>S1</text:p><t2:p>D1</t2:p>',
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ' +
+      'xmlns:text="urn:evil" xmlns:t2="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+      `čx=' xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:t2="urn:other"'`,
+  );
+  check(
+    'a declaration hidden in a value whose name is not ASCII is not taken for one: the scan counts what a parser counts',
+    JSON.stringify(findOdtParagraphs(hidden).map((one) => textOf(hidden, one))) === '["D0","D1"]',
+    JSON.stringify(findOdtParagraphs(hidden).map((one) => textOf(hidden, one))),
+  );
+  const ownStyle = part(`<text:p čx=" text:style-name='X'" text:style-name="Y">A</text:p>`);
+  check('and an attribute is never read out of another one’s value', findOdtParagraphs(ownStyle)[0].style === 'Y');
 
   const faked = part('<text:p>A</text:p>', `note=' xmlns:fake="urn:oasis:names:tc:opendocument:xmlns:text:1.0"' ${NS}`);
   const fakeDoc = { xml: faked, pieces: findOdtPieces(faked), paragraphs: findOdtParagraphs(faked), styles: readOdtStyles(faked, null) };
@@ -752,6 +776,8 @@ const stats = { files: 0, body: 0, list: 0, elsewhere: 0, inserts: 0, removals: 
 const damaged = [];
 const readable = [];
 const notPlain = [];
+/** The corpus's parts as they were read, for the parser to read again below. */
+const originals = [];
 
 for (const file of files) {
   let one;
@@ -762,6 +788,7 @@ for (const file of files) {
   }
   stats.files++;
   if (odtIsPlain(one.xml) !== null) notPlain.push(`${basename(file)}: ${odtIsPlain(one.xml)}`);
+  originals.push({ name: basename(file), xml: one.xml });
   const body = one.paragraphs.filter((span) => span.refusal === null);
   stats.body += body.length;
   stats.list += one.paragraphs.filter((span) => span.refusal === 'the paragraph is in a list').length;
@@ -889,8 +916,35 @@ check(
     );
     broken = broken.concat(errors.map((error, k) => (error ? `#${at + k}: ${error}` : null)).filter(Boolean));
   }
-  await browser.close();
   check('a real XML parser reads every part the writer wrote', written.length > 0 && broken.length === 0, broken[0] ?? `${written.length} parts`);
+
+  /* And every corpus part reads alike to the scan and to the parser, as the
+     reader asks before it names anything (`sameAsParsed` in odf.ts): the
+     root's declarations, and every element by name, in order. */
+  const unlike = [];
+  for (const one of originals) {
+    const parsed = await page.evaluate((xml) => {
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      const root = doc.documentElement;
+      return {
+        ns: [...root.attributes]
+          .filter((a) => a.namespaceURI === 'http://www.w3.org/2000/xmlns/')
+          .map((a) => [a.prefix ? a.localName : '', a.value]),
+        names: [...doc.querySelectorAll('*')].map((e) => e.tagName),
+      };
+    }, one.xml);
+    const scanned = rootNamespaces(one.xml);
+    const sameNs = parsed.ns.length === scanned.size && parsed.ns.every(([prefix, uri]) => scanned.get(prefix) === uri);
+    const names = scannedElements(one.xml);
+    const sameNames = names.length === parsed.names.length && names.every((name, i) => name === parsed.names[i]);
+    if (!sameNs || !sameNames) unlike.push(one.name);
+  }
+  await browser.close();
+  check(
+    'every corpus part reads alike to the scan and to a parser, so the reader names its paragraphs',
+    originals.length > 0 && unlike.length === 0,
+    unlike.slice(0, 3).join(', ') || `${originals.length} parts`,
+  );
 }
 
 /* ── read back by LibreOffice ────────────────────────────────────────── */
