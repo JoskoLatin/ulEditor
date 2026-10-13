@@ -445,6 +445,8 @@ export interface OdtStyles {
   automatic: Map<string, OdtParagraphStyle>;
   /** The styles of `styles.xml` a person can see by name — `Heading 1`, `Text body`. */
   common: Map<string, OdtParagraphStyle>;
+  /** The names `styles.xml` points to (`odtPointedNames`): a header's or a footer's cross-references. */
+  pointed?: Set<string>;
 }
 
 /** The paragraph styles in one region of a part — `office:automatic-styles` or `office:styles`. */
@@ -758,23 +760,69 @@ function tracked(xml: string, from: number, to: number): boolean {
 const PLACES = new Set(['bookmark', 'reference-mark', 'bookmark-start', 'reference-mark-start']);
 
 /**
- * The names something in the part points to: a cross-reference to a bookmark
- * or a reference mark (`text:bookmark-ref`, `text:reference-ref`, by
- * `text:ref-name`), or a link within the document (`xlink:href="#name"`, up to
- * a `|`, as LibreOffice writes a link to a heading or a table).
+ * Every value an opening tag gives an attribute of this local name, in any
+ * namespace. Asked for the first only, a decoy of another prefix written
+ * before the real one — `draw:name="x" text:name="cilj"` — would answer for
+ * it (the review of 202e7fe); over all of them, a decoy can only add a
+ * refusal.
  */
-function pointedNames(xml: string): Set<string> {
+function valuesNamed(xml: string, tag: { start: number; end: number }, local: string): string[] {
+  const values: string[] = [];
+  const body = xml.slice(tag.start, tag.end);
+  const attribute = /\s([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  for (let match = attribute.exec(body); match; match = attribute.exec(body)) {
+    if (localName(match[1]!) === local) values.push(match[2] ?? match[3] ?? '');
+  }
+  return values;
+}
+
+/**
+ * A name as a parser reads it out of an attribute, which is how LibreOffice
+ * matches one: a line end or a tab written as it is becomes a space, and the
+ * entities are read — `c&#105;lj` is `cilj` (the review of 202e7fe). An
+ * entity no character answers to is left as written.
+ */
+function nameAsRead(raw: string): string {
+  const spaced = raw.replace(/\r\n|[\t\n\r]/g, ' ');
+  try {
+    return unescapeXml(spaced);
+  } catch {
+    return spaced;
+  }
+}
+
+/**
+ * The names something in a part points to: a cross-reference to a bookmark
+ * or a reference mark (`text:bookmark-ref`, `text:reference-ref`, by
+ * `text:ref-name`), or a link within the document (`xlink:href="#name"`) —
+ * taken whole, up to a `|` as LibreOffice writes a link to a heading or a
+ * table, and each of those with its `%XX` read too, as LibreOffice reads them
+ * (measured: `#%63ilj` goes where `#cilj` does). A form too many only refuses
+ * more. `styles.xml` is asked as well (`OdtStyles.pointed`): a footer's "page
+ * X of Y" points into the body from there.
+ */
+export function odtPointedNames(xml: string): Set<string> {
   if (pointedRead?.xml === xml) return pointedRead.names;
   const names = new Set<string>();
   for (const tag of scanTags(xml)) {
     if (tag.closing) continue;
     const local = localName(tag.name);
     if (local === 'bookmark-ref' || local === 'reference-ref') {
-      const name = ownAttr(xml, tag, 'ref-name');
-      if (name !== null) names.add(name);
+      for (const name of valuesNamed(xml, tag, 'ref-name')) names.add(nameAsRead(name));
     }
-    const href = ownAttr(xml, tag, 'href');
-    if (href?.startsWith('#')) names.add(href.slice(1).split('|')[0]!);
+    for (const href of valuesNamed(xml, tag, 'href')) {
+      const read = nameAsRead(href);
+      if (!read.startsWith('#')) continue;
+      const whole = read.slice(1);
+      for (const form of [whole, whole.split('|')[0]!]) {
+        names.add(form);
+        try {
+          names.add(decodeURIComponent(form));
+        } catch {
+          /* Not percent-encoded as a URI is; the form as written is in. */
+        }
+      }
+    }
   }
   pointedRead = { xml, names };
   return names;
@@ -787,21 +835,30 @@ let pointedRead: { xml: string; names: Set<string> } | null = null;
  * source not found" — or half a bookmark whose other half is outside, which
  * would be left closing nothing. A place nothing points to goes: measured over
  * the corpus (card 525), the marks in the paragraphs that may be taken away
- * were all `_GoBack` and `_Hlk…`, which Word writes and drops itself.
+ * were all `_GoBack` and `_Hlk…`, which Word writes and drops itself. A
+ * bookmark's halves are counted in order, so an end before its start is half
+ * of one too.
  */
-function placesRefusal(xml: string, from: number, to: number): string | null {
-  const pointed = pointedNames(xml);
+function placesRefusal(xml: string, from: number, to: number, styles: OdtStyles): string | null {
+  const pointed = odtPointedNames(xml);
+  const elsewhere = styles.pointed ?? new Set<string>();
+  const name = `${textPrefix(xml)}:name`;
   const halves = new Map<string, number>();
   for (const raw of scanTags(xml.slice(from, to))) {
     if (raw.closing) continue;
     const local = localName(raw.name);
     const tag = { start: raw.start + from, end: raw.end + from };
-    if (PLACES.has(local) && pointed.has(ownAttr(xml, tag, 'name') ?? '')) {
-      return 'the paragraph holds a place something else points to';
+    if (PLACES.has(local)) {
+      for (const value of valuesNamed(xml, tag, 'name')) {
+        const read = nameAsRead(value);
+        if (pointed.has(read) || elsewhere.has(read)) return 'the paragraph holds a place something else points to';
+      }
     }
     if (local === 'bookmark-start' || local === 'bookmark-end') {
-      const name = ownAttr(xml, tag, 'name') ?? '';
-      halves.set(name, (halves.get(name) ?? 0) + (local === 'bookmark-start' ? 1 : -1));
+      const read = nameAsRead(ownAttr(xml, tag, name) ?? '');
+      const open = (halves.get(read) ?? 0) + (local === 'bookmark-start' ? 1 : -1);
+      if (open < 0) return 'a bookmark continues outside the paragraph';
+      halves.set(read, open);
     }
   }
   if ([...halves.values()].some((open) => open !== 0)) return 'a bookmark continues outside the paragraph';
@@ -834,7 +891,7 @@ export function odtRemovalRefusal(
   if (startsPage(styles, span.style)) return 'the paragraph starts a page';
   if (tracked(xml, span.start, span.end)) return 'a tracked change is recorded in the paragraph';
   if (!rangesBalanced(xml, span.start, span.end)) return 'a marked stretch continues outside the paragraph';
-  const places = placesRefusal(xml, span.start, span.end);
+  const places = placesRefusal(xml, span.start, span.end, styles);
   if (places) return places;
   /* A text box anchored in it, or a comment, holds paragraphs of its own,
      which the view does not draw: the line looks nearly empty and carries a

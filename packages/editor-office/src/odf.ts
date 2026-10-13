@@ -70,6 +70,7 @@ import {
   odtShowsNothing,
   paragraphOf,
   readOdtStyles,
+  odtPointedNames,
   spacesOf,
   type OdtParagraph,
   type OdtPiece,
@@ -1092,6 +1093,10 @@ export function readOdt(bytes: Uint8Array): Preview {
       ? stylesXml
       : null,
   );
+  /* What styles.xml points into the body — a footer's "page X of Y" — read
+     whether or not that part is plain: it can only refuse more (the review of
+     202e7fe). */
+  if (stylesXml !== null) styles.pointed = odtPointedNames(stylesXml);
 
   /* The paragraphs are counted over the raw part and over the parsed tree, and
      a paragraph is named in the view only when the two counts agree — a new

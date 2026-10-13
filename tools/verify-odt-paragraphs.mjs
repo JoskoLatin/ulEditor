@@ -61,6 +61,7 @@ const {
   odtRemovalRefusal,
   odtDivisionRefusal,
   odtJoinRefusal,
+  odtPointedNames,
   odtShowsNothing,
   lastPieceOf,
   findOdtRows,
@@ -674,6 +675,49 @@ const part = (body, ns = NS, before = '') =>
   check(
     'but a line holding a mark nothing points to still goes',
     judge('<text:p>A</text:p><text:p><text:bookmark text:name="_GoBack"/></text:p><text:p>C</text:p>', 1) === null,
+  );
+
+  /* The ways around it the review of 202e7fe found: a name read as a parser
+     reads it, every attribute of the name and not the first, a link with its
+     %XX, what styles.xml points to, and a bookmark's end before its start. */
+  const POINTED = 'the paragraph holds a place something else points to';
+  const target = '<text:p>A</text:p><text:p><text:bookmark text:name="cilj"/></text:p>';
+  check(
+    'a name written with an entity is the same name',
+    judge(`${target}<text:p><text:bookmark-ref text:ref-name="c&#x69;lj">1</text:bookmark-ref></text:p>`, 1) === POINTED &&
+      judge('<text:p>A</text:p><text:p><text:bookmark text:name="c&#105;lj"/></text:p><text:p><text:bookmark-ref text:ref-name="cilj">1</text:bookmark-ref></text:p>', 1) === POINTED,
+  );
+  check(
+    'a link written with %XX is the same link',
+    judge(`${target}<text:p><text:a xlink:href="#%63ilj">tu</text:a></text:p>`, 1) === POINTED,
+  );
+  check(
+    'a decoy attribute of another prefix does not hide the real one',
+    judge('<text:p>A</text:p><text:p><text:bookmark draw:name="x" text:name="cilj"/></text:p><text:p><text:bookmark-ref draw:ref-name="y" text:ref-name="cilj">1</text:bookmark-ref></text:p>', 1) === POINTED &&
+      judge(`${target}<text:p><text:a draw:href="#x" xlink:href="#cilj">tu</text:a></text:p>`, 1) === POINTED,
+  );
+  check(
+    'a reference mark a reference points to is kept too',
+    judge('<text:p>A</text:p><text:p><text:reference-mark text:name="r1"/></text:p><text:p><text:reference-ref text:ref-name="r1">1</text:reference-ref></text:p>', 1) === POINTED,
+  );
+  {
+    const xml = part(target);
+    const footer = `<office:document-styles ${NS}><office:master-styles><text:p><text:bookmark-ref text:reference-format="page" text:ref-name="cilj">9</text:bookmark-ref></text:p></office:master-styles></office:document-styles>`;
+    const styles = { ...readOdtStyles(xml, null), pointed: odtPointedNames(footer) };
+    check(
+      'what a footer in styles.xml points to is kept',
+      odtRemovalRefusal(xml, findOdtParagraphs(xml), styles, 1) === POINTED,
+    );
+  }
+  check(
+    'the line holding only the end of a bookmark is half of one too',
+    judge('<text:p><text:bookmark-start text:name="r"/>A</text:p><text:p>B<text:bookmark-end text:name="r"/></text:p><text:p>C</text:p>', 1) ===
+      'a bookmark continues outside the paragraph',
+  );
+  check(
+    'and an end before its start is not a whole bookmark',
+    judge('<text:p>A<text:bookmark-start text:name="r"/></text:p><text:p><text:bookmark-end text:name="r"/>B<text:bookmark-start text:name="r"/></text:p><text:p>C<text:bookmark-end text:name="r"/></text:p>', 1) ===
+      'a bookmark continues outside the paragraph',
   );
 
   const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
