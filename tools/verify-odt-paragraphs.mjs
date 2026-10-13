@@ -465,6 +465,8 @@ const pieceOf = (text) => doc.pieces.find((piece) => piece.text === text);
 
 /** Documents with a new row in them, for LibreOffice to read back below. */
 const readableTables = [];
+/** A new row below a merge across and down, for LibreOffice to draw as HTML below. */
+const readableGrids = [];
 /** A merge written by the plan, for LibreOffice to open and write again below. */
 const readableMerges = [];
 /** Lists written by the plan, for LibreOffice to read back below. */
@@ -856,6 +858,57 @@ const part = (body, ns = NS, before = '') =>
     check('and in a table inside a cell of the body, as a new row may be added there', odtMergeRefusal(nested, findOdtRows(nested), { row: 1, from: 0, count: 2 }) === null);
     written.push(two, across, typed);
     readableMerges.push(writeOdf(doc.archive, two));
+  }
+  /* The grid, a column an element (the review of 940a9b0). A cell merged
+     across has its covered places after it, each a column: moved on by the
+     span as well, the cells after it were read a column too far, and a new
+     row went into the middle of a merge down. The shapes the review gave,
+     with which rows continue a merge from above. */
+  {
+    const G = (body) => `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${NS}><office:body><office:text>${body}</office:text></office:body></office:document-content>`;
+    const C = (a = '', t = 'x') => `<table:table-cell${a}><text:p>${t}</text:p></table:table-cell>`;
+    const V = () => '<table:covered-table-cell/>';
+    const Rw = (...c) => `<table:table-row>${c.join('')}</table:table-row>`;
+    const Tb = (...rows) => `<table:table>${rows.join('')}</table:table>`;
+    const down = (n) => ` table:number-rows-spanned="${n}"`;
+    const across = (n) => ` table:number-columns-spanned="${n}"`;
+    const sig = (body) => findOdtRows(G(body)).map((row) => (row.continued ? 'c' : '-')).join('');
+    const shapes = [
+      ['a merge down that ends, and two side by side', Tb(Rw(C(down(2))), Rw(V()), Rw(V())) + Tb(Rw(C(down(3)), C(down(2))), Rw(V(), V()), Rw(V(), V()), Rw(V(), V())), '-c--cc-'],
+      ['one written over before it ends, and a table inside a cell', Tb(Rw(C(down(5))), Rw(V()), Rw(C(down(2))), Rw(V()), Rw(V())) + Tb(Rw(C(down(3)), `<table:table-cell>${Tb(Rw(C(down(2))), Rw(V()), Rw(V()))}</table:table-cell>`), Rw(V(), C()), Rw(V(), C()), Rw(V(), C())), '-c-c---c-cc-'],
+      ['a cell merged across, its own covered place no merge from above', Tb(Rw(C(across(2)), V()), Rw(C(), C())) + Tb(Rw(C(), C(down(2))), Rw(C(), V())), '---c'],
+      ['a cell of its own inside a merge, and merges across and down', Tb(Rw(C(down(3))), Rw(C()), Rw(V())) + Tb(Rw(C(' table:number-columns-repeated="3"' + down(2))), Rw(C(), C(), V())) + Tb(Rw(C(), C(across(2) + down(2))), Rw(C(), C(), V())) + Tb(Rw(C(), C(across(2) + down(2))), Rw(C(), V(), C())), '--c-c-c-c'],
+    ];
+    for (const [label, body, want] of shapes) check(`the grid: ${label}`, sig(body) === want, `${sig(body)}, want ${want}`);
+
+    /* LibreOffice's own shape: A1 merged across two, C1 down two. A new row
+       after the first goes below the merge, with a cell for each column. */
+    const lo = `<table:table table:name="T"><table:table-column table:number-columns-repeated="3"/>${Rw(C(' office:value-type="string"' + across(2), 'A1'), V(), C(' office:value-type="string"' + down(2), 'C1'))}${Rw(C(' office:value-type="string"', 'a2'), C(' office:value-type="string"', 'b2'), V())}${Rw(C(' office:value-type="string"', 'a3'), C(' office:value-type="string"', 'b3'), C(' office:value-type="string"', 'c3'))}</table:table>`;
+    const loXml = G(`<text:p>Prije</text:p>${lo}`);
+    const loRows = findOdtRows(loXml);
+    check(
+      'a new row after a row merged across and down goes below the merge, a cell for each column',
+      anchorOdtRow(loRows, loRows[0]).index === 1 && JSON.stringify(odtRowShape(anchorOdtRow(loRows, loRows[0]))) === '[1,1,1]',
+      `${anchorOdtRow(loRows, loRows[0]).index}, ${JSON.stringify(odtRowShape(anchorOdtRow(loRows, loRows[0])))}`,
+    );
+    const loDoc = { xml: loXml, pieces: findOdtPieces(loXml), paragraphs: findOdtParagraphs(loXml), styles: readOdtStyles(loXml, null) };
+    const loOut = plan(loDoc, { rows: loRows, rowInserts: [{ after: 0, cells: ['NOVI1', 'NOVI2', 'NOVI3'] }] });
+    written.push(loOut);
+    readableGrids.push(writeOdf(doc.archive, loOut));
+
+    /* And the marks all a part's merges make together are bounded: a file of
+       a thousand two hundred tables, each one cell across four thousand
+       columns and two rows down, reaches the bound and its last rows take
+       nothing. */
+    const many = G(Tb(Rw(C(' table:number-columns-spanned="1024" table:number-columns-repeated="4"' + down(2)))).repeat(1200));
+    const at = Date.now();
+    const manyRows = findOdtRows(many);
+    const took = Date.now() - at;
+    check(
+      'the merges of a whole part mark at most four million places',
+      manyRows[0].refusal === null && manyRows.at(-1).refusal === 'the table is wider than this program follows' && took < 3000,
+      `${took} ms`,
+    );
   }
 
   const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
@@ -1274,6 +1327,26 @@ if (SOFFICE) {
     `${opened} of ${readable.length}${unread.length ? `; the originals of ${unread.join(', ')} gave LibreOffice no text either` : ''}`,
   );
   check('the fixture is among them', !unread.includes('fixture.odt'));
+
+  /* The new row below a merge across and down, drawn by LibreOffice: a row
+     of its own after a2|b2, each text in a cell (the review of 940a9b0 saw
+     NOVI2 under C1 before). */
+  if (readableGrids.length) {
+    const grids = join(work, 'grids');
+    mkdirSync(grids);
+    readableGrids.forEach((bytes, i) => writeFileSync(join(grids, `g${i}.odt`), bytes));
+    convert(readableGrids.map((_, i) => join(grids, `g${i}.odt`)), 'html', join(grids, 'html'));
+    const html = existsSync(join(grids, 'html', 'g0.html')) ? readFileSync(join(grids, 'html', 'g0.html'), 'utf8') : '';
+    const trs = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((tr) =>
+      [...tr[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((td) => td[1].replace(/<[^>]+>/g, '').trim()),
+    );
+    const at = trs.findIndex((cells) => cells.includes('NOVI1'));
+    check(
+      'LibreOffice draws the new row below the merge, each text in a cell of its own',
+      at === 2 && JSON.stringify(trs[at]) === '["NOVI1","NOVI2","NOVI3"]' && trs[1]?.includes('a2'),
+      JSON.stringify(trs).slice(0, 160),
+    );
+  }
 
   /* A merge, opened by LibreOffice and written again as OpenDocument: what it
      keeps is a cell spanning two with both texts in it. */

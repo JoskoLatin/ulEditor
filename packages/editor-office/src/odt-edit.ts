@@ -1158,6 +1158,9 @@ export interface OdtRow {
 /** How many columns of a table's grid are followed — LibreOffice's own tables stop far short of it. */
 const MOST_COLUMNS = 4096;
 
+/** How many places of all a part's grids its merges down may mark: four million. */
+const MOST_GRID_MARKS = 1 << 22;
+
 /** What may stand between a row and the body: its own table, and a cell of an outer one. */
 const ROW_REGION = new Set(['table', 'table-row', 'table-cell', 'table-rows', 'table-header-rows', 'table-row-group']);
 
@@ -1289,13 +1292,28 @@ export function findOdtRows(xml: string): OdtRow[] {
      instead, one cell four thousand columns wide merged a million rows down
      cost four thousand steps for each row after it — 1.7 s more to open a
      17 MB table (card 525). */
+  /* Each element is one column of the grid, a repeated one as many: a cell
+     spanning columns has its covered places written after it, each a column
+     of its own. Moved on by the span as well, every cell after a cell merged
+     across was read a column too far — a new row went into the middle of a
+     merge down, and what was typed into it was drawn under the merged cell
+     (the review of 940a9b0; LibreOffice's own tables). And a row's merges
+     down are marked for the rows after it once the row is read, so its own
+     covered places are never taken for ones covered from above.
+
+     All the merges of the part together are marked at most `MOST_GRID_MARKS`
+     times: a file of a hundred thousand tables, each one cell wide across the
+     grid and two rows down, held four gigabytes of marks (measured by that
+     review, a 76 KB .odt). Past it a row takes no new row and no merge. */
   const pending = new Map<number, { read: number; until: number[] }>();
+  let marks = MOST_GRID_MARKS;
   for (const row of rows) {
     if (row.table === -1) continue;
     const grid = pending.get(row.table) ?? { read: 0, until: [] };
     pending.set(row.table, grid);
     const ordinal = grid.read++;
     const fromAbove = (column: number) => (grid.until[column] ?? 0) > ordinal;
+    const below: { column: number; until: number }[] = [];
     let column = 0;
     for (const tag of raw.get(row) ?? []) {
       const local = localName(tag.name);
@@ -1310,10 +1328,19 @@ export function findOdtRows(xml: string): OdtRow[] {
       row.cells.push({ tag, covered, fromAbove: covered && fromAbove(column), span, repeat });
       if (covered && fromAbove(column)) row.continued = true;
       for (let r = 0; r < repeat && column < MOST_COLUMNS; r++) {
-        if (down > 1) for (let c = column; c < Math.min(column + span, MOST_COLUMNS); c++) grid.until[c] = ordinal + down;
-        column += span;
+        if (down > 1) {
+          const reach = Math.min(column + span, MOST_COLUMNS) - column;
+          marks -= reach;
+          if (marks < 0) {
+            row.refusal ??= 'the table is wider than this program follows';
+            break;
+          }
+          for (let c = column; c < column + reach; c++) below.push({ column: c, until: ordinal + down });
+        }
+        column += 1;
       }
     }
+    for (const mark of below) grid.until[mark.column] = mark.until;
   }
 
   return rows;
