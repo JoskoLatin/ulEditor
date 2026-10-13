@@ -1046,6 +1046,11 @@ function buildList(node: Element, ctx: Context, level = 0): HTMLElement {
     if (!/^list-(item|header)$/.test(itemNode.localName)) continue;
 
     const item = document.createElement('li');
+    /* An item of one paragraph is that paragraph's line, and is named for it
+       as a Word list item is (`markParagraph` names only what the core lets
+       be reshaped: an item of a list in the body, holding nothing else). */
+    const lines = [...itemNode.children].filter((inner) => inner.localName === 'p' || inner.localName === 'h');
+    if (lines.length === 1 && itemNode.children.length === 1) markParagraph(item, lines[0]!, ctx);
     for (const inner of [...itemNode.children]) {
       if (inner.localName === 'p' || inner.localName === 'h') {
         item.append(...inlineContent(inner, ctx));
@@ -1225,7 +1230,13 @@ export function readOdt(bytes: Uint8Array): Preview {
 function said(why: string, act: 'add' | 'remove' | 'split' | 'join'): string {
   switch (why) {
     case 'the paragraph is in a list':
-      return t('Paragraphs in a list cannot be added, removed, split or joined in an OpenDocument text yet.');
+      return t('This list item holds more than one paragraph or a list of its own, or its list is not in the body — it cannot be changed here yet.');
+    case 'the last item of a list':
+      return t('The last item of a list cannot be removed here — the list would be left empty.');
+    case 'the list item sets the number its list restarts at':
+      return t('This list item sets the number its list restarts at — removing it would renumber the items after it.');
+    case 'the paragraphs are not in the same list':
+      return t('These paragraphs are not in the same list, so they cannot be joined here.');
     case 'the paragraph starts a page':
       return act === 'join'
         ? t('The next paragraph starts a new page or page style — joining them would lose it.')

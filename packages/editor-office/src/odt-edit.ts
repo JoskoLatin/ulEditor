@@ -353,6 +353,21 @@ export interface OdtParagraph {
   level: string | null;
   /** Why this paragraph is not one the plan may add after, take away, divide or join; `null` when it is. */
   refusal: string | null;
+  /**
+   * The list item it is the whole of, for a paragraph in a list the plan may
+   * reshape: the item's range, and where its list starts — the list it
+   * belongs to. `null` for a paragraph of the body itself.
+   */
+  item: OdtItem | null;
+}
+
+export interface OdtItem {
+  start: number;
+  end: number;
+  /** Where the item's `text:list` starts: two items with the same are in one list. */
+  list: number;
+  /** `text:start-value`: the number it restarts its list at. */
+  restarts: boolean;
 }
 
 /**
@@ -372,21 +387,41 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
   /* The parent by its whole name, in its own namespace: `x:text` in some other
      namespace is not the body, whatever its local name (the review of card 459). */
   const body = `${prefixFor(xml, OFFICE_NS, 'office')}:text`;
-  const lists = new Set([`${prefix}:list-item`, `${prefix}:list-header`]);
+  const list = `${prefix}:list`;
+  const item = `${prefix}:list-item`;
+  const header = `${prefix}:list-header`;
   const paragraphs: OdtParagraph[] = [];
-  const stack: { name: string; paragraph: OdtParagraph | null }[] = [];
+  /* Each frame counts the elements in it, so a list item can say at its end
+     whether its paragraph was all it held. */
+  const stack: { name: string; start: number; paragraph: OdtParagraph | null; children: number; first: OdtParagraph | null }[] = [];
 
   for (const tag of scanTags(xml)) {
     if (tag.closing) {
       const popped = stack.pop();
       if (popped?.paragraph) popped.paragraph.end = tag.end;
+      if (popped?.name === item && popped.first?.item) {
+        if (popped.children === 1) popped.first.item.end = tag.end;
+        else {
+          /* A second paragraph, or a list inside: an item this program does
+             not yet take apart (none in the corpus). */
+          popped.first.item = null;
+          popped.first.refusal = 'the paragraph is in a list';
+        }
+      }
       continue;
     }
     const local = localName(tag.name);
     const own = tag.name === `${prefix}:p` || tag.name === `${prefix}:h`;
+    const parentFrame = stack[stack.length - 1];
+    if (parentFrame) parentFrame.children++;
     let paragraph: OdtParagraph | null = null;
     if (own) {
-      const parent = stack[stack.length - 1]?.name ?? '';
+      const parent = parentFrame?.name ?? '';
+      const listFrame = stack[stack.length - 2];
+      const around = stack[stack.length - 3]?.name ?? '';
+      /* A paragraph that is a list item of a list standing in the body —
+         only what such an item holds is known yet (`children`, at its end). */
+      const inItem = parent === item && listFrame?.name === list && around === body && parentFrame!.children === 1;
       paragraph = {
         index: paragraphs.length,
         start: tag.start,
@@ -398,15 +433,24 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
         style: ownAttr(xml, tag, 'style-name'),
         level: local === 'h' ? ownAttr(xml, tag, 'outline-level') : null,
         refusal:
-          parent === body
+          parent === body || inItem
             ? null
-            : lists.has(parent)
+            : parent === item || parent === header
               ? 'the paragraph is in a list'
               : 'the paragraph is not in the body of the document',
+        item: inItem
+          ? {
+              start: parentFrame!.start,
+              end: parentFrame!.start,
+              list: listFrame!.start,
+              restarts: ownAttr(xml, openingOf(xml, { start: parentFrame!.start }), 'start-value') !== null,
+            }
+          : null,
       };
       paragraphs.push(paragraph);
+      if (inItem) parentFrame!.first = paragraph;
     }
-    if (!tag.selfClosing) stack.push({ name: tag.name, paragraph });
+    if (!tag.selfClosing) stack.push({ name: tag.name, start: tag.start, paragraph, children: 0, first: null });
   }
 
   return paragraphs;
@@ -910,6 +954,17 @@ export function odtRemovalRefusal(
   const alive = survivors ?? new Set(body.map((one) => one.index));
   if (!alive.has(index)) return 'there is no such paragraph';
   if (!body.some((one) => one.index !== index && alive.has(one.index))) return 'the last paragraph of the document';
+  /* An item goes with its paragraph, but not the last of its list — a list
+     of none is a list another can be told to continue (`continue-list`, in
+     12 of the corpus's 61) — and not one that sets the number its list
+     restarts at, which the items after it would lose. */
+  if (span.item) {
+    if (span.item.restarts) return 'the list item sets the number its list restarts at';
+    const list = span.item.list;
+    if (!body.some((one) => one.index !== index && alive.has(one.index) && one.item?.list === list)) {
+      return 'the last item of a list';
+    }
+  }
   return null;
 }
 
@@ -957,8 +1012,13 @@ function partnerOf(
   let from = span.end;
   for (const one of body) {
     if (one.index <= span.index) continue;
+    /* Two items of one list meet across the end of one item and the start of
+       the next, and nothing else. */
+    const sameList = span.item !== null && one.item !== null && span.item.list === one.item.list;
     for (const tag of scanTags(xml.slice(from, one.start))) {
-      if (!tag.closing && !BETWEEN.has(localName(tag.name))) return 'something stands between the two paragraphs';
+      if (tag.closing || BETWEEN.has(localName(tag.name))) continue;
+      if (sameList && localName(tag.name) === 'list-item') continue;
+      return 'something stands between the two paragraphs';
     }
     if (xml.slice(from, one.start).replace(/<[^>]*>/g, '').trim() !== '') return 'something stands between the two paragraphs';
     if (alive.has(one.index)) return one;
@@ -991,6 +1051,9 @@ export function odtJoinRefusal(
   const next = partnerOf(xml, body, span, alive);
   if (typeof next === 'string') return next;
   if (startsPage(styles, next.style)) return 'the paragraph starts a page';
+  /* Only within one list, or within the body: across the end of a list the
+     join would take the list's end with it. */
+  if ((span.item?.list ?? -1) !== (next.item?.list ?? -1)) return 'the paragraphs are not in the same list';
   /* The joined paragraph is the first one's tag, so the next one's `xml:id`
      or `text:id` goes with its tag — a file whose metadata names one would lose that (none in the
      corpus; the review of card 459 asked). */
@@ -1462,10 +1525,15 @@ export function applyOdtEdits(
     const paragraph = paragraphs[insert.after];
     if (!paragraph || paragraph.refusal || insert.text.length === 0) return;
     const end = lineEnd(paragraph.index);
+    const markup = odtParagraphMarkup(xml, styles, headOf(paragraph.index), end.piece, end.in, insert.text);
+    /* After a list item, a new item of its list, of the same paragraph
+       style as LibreOffice gives one (`successorOf`; measured, the same as
+       the item's own in all 239 of the corpus). */
+    const at = paragraph.item?.end ?? paragraph.end;
     operations.push({
-      at: paragraph.end,
-      end: paragraph.end,
-      text: odtParagraphMarkup(xml, styles, headOf(paragraph.index), end.piece, end.in, insert.text),
+      at,
+      end: at,
+      text: paragraph.item ? `<${prefix}:list-item>${markup}</${prefix}:list-item>` : markup,
       order,
     });
   });
@@ -1499,8 +1567,10 @@ export function applyOdtEdits(
       const spans = spansAround(xml, paragraph, piece)!;
       const [first, ...rest] = cutByPiece.get(piece.index)!.parts;
       text += odtTextXml(first!, prefix);
+      /* In a list, each part is an item of its own. */
+      const between = head.item ? `</${prefix}:list-item><${prefix}:list-item>` : '';
       for (const part of rest) {
-        text += `${closing(spans)}</${head.name}>${openingTag(prefix, shape)}${opening(spans, prefix)}${odtTextXml(part, prefix)}`;
+        text += `${closing(spans)}</${head.name}>${between}${openingTag(prefix, shape)}${opening(spans, prefix)}${odtTextXml(part, prefix)}`;
       }
     });
     text += carried(ordered[ordered.length - 1]!.end, end);
@@ -1527,7 +1597,9 @@ export function applyOdtEdits(
 
   for (const span of removed) {
     if (joins.some((join) => span.start >= join.first.end && span.end <= join.next.start)) continue;
-    operations.push({ at: span.start, end: span.end, text: '', order: 0 });
+    /* A list item goes whole: the paragraph was all it held. */
+    const range = span.item ?? span;
+    operations.push({ at: range.start, end: range.end, text: '', order: 0 });
   }
 
   /* A new row, after the row it follows — below the last row a merge

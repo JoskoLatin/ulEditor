@@ -149,8 +149,8 @@ try {
 
   const original = await lines();
   check(
-    'the document is open, a line for every paragraph of its body — the list item not among them',
-    original.length === 7 && original[0] === 'H1:Naslov dokumenta' && original[3] === 'P:' && !original.some((one) => one.includes('Stavka')),
+    'the document is open, a line for every paragraph of its body and the item of its list (card 525)',
+    original.length === 8 && original[0] === 'H1:Naslov dokumenta' && original[3] === 'P:' && original[6] === 'LI:Stavka popisa',
     JSON.stringify(original),
   );
 
@@ -188,6 +188,21 @@ try {
     'of the style the heading hands on — body text, not a second heading',
     file.body[1]?.kind === 'p' && file.body[1]?.style === 'Text_20_body',
     JSON.stringify(file.body[1]),
+  );
+  check('and the page shows exactly what the file holds', await agrees(file), JSON.stringify(await texts()));
+  check('Ctrl+Z takes it back', await undoAll(original), JSON.stringify(await texts()));
+
+  /* ── Enter at the end of a list item (card 525) ────────────────────── */
+
+  await typeIn('Stavka popisa', 'end');
+  await press('Enter');
+  await page.keyboard.type('Druga stavka');
+  file = await saved();
+  check(
+    'Enter at the end of a list item makes a line of the list, and what is typed there is an item of the file',
+    file.xml.includes('Stavka popisa</text:p></text:list-item><text:list-item>') &&
+      findOdtParagraphs(file.xml).some((one) => one.item !== null && file.xml.slice(one.start, one.end).includes('Druga stavka')),
+    JSON.stringify(file.body.slice(5, 9)),
   );
   check('and the page shows exactly what the file holds', await agrees(file), JSON.stringify(await texts()));
   check('Ctrl+Z takes it back', await undoAll(original), JSON.stringify(await texts()));

@@ -164,7 +164,7 @@ check(
   'a paragraph of the body may be reshaped',
   [AT.cover, AT.heading, AT.bold, AT.blank, AT.link, AT.last].every((i) => P[i].refusal === null),
 );
-check('one in a list is told apart, as a list', P[AT.listItem].refusal === 'the paragraph is in a list');
+check('one in a list of the body is an item of it', P[AT.listItem].refusal === null && P[AT.listItem].item !== null);
 check(
   "one in a table cell, a comment or a tracked change's record is not the body's",
   [AT.cell, AT.commentInside, AT.deleted].every((i) => P[i].refusal === 'the paragraph is not in the body of the document'),
@@ -245,8 +245,8 @@ function inserted(after, text = MARKER) {
 
   check('a paragraph nobody typed into is not written', plan(doc, { inserts: [{ after: AT.bold, text: '' }] }) === doc.xml);
   check(
-    'nor one after a list item, a cell or the inside of a comment',
-    [AT.listItem, AT.cell, AT.commentInside].every((after) => plan(doc, { inserts: [{ after, text: MARKER }] }) === doc.xml),
+    'nor one after a cell or the inside of a comment',
+    [AT.cell, AT.commentInside].every((after) => plan(doc, { inserts: [{ after, text: MARKER }] }) === doc.xml),
   );
 
   const two = plan(doc, { inserts: [{ after: AT.bold, text: 'prvi' }, { after: AT.bold, text: 'drugi' }] });
@@ -272,7 +272,7 @@ function inserted(after, text = MARKER) {
   const refusals = [
     ['the paragraph a master page starts on', AT.cover, 'the paragraph starts a page'],
     ['a paragraph with a page break', AT.pageBreak, 'the paragraph starts a page'],
-    ['a list item', AT.listItem, 'the paragraph is in a list'],
+    ['the only item of a list', AT.listItem, 'the last item of a list'],
     ['a table cell', AT.cell, 'the paragraph is not in the body of the document'],
     ["the paragraph a comment's range starts in", AT.commentStart, 'a marked stretch continues outside the paragraph'],
     ['and the one it ends in', AT.commentEnd, 'a marked stretch continues outside the paragraph'],
@@ -370,7 +370,6 @@ const pieceOf = (text) => doc.pieces.find((piece) => piece.text === text);
     ['a paragraph with a page break', pieceOf('Nova stranica počinje ovdje.'), 'the paragraph starts a page'],
     ["before a comment's range that ends in the next paragraph", pieceOf('Komentar '), 'a marked stretch continues outside the paragraph'],
     ['a paragraph a tracked change is recorded in', pieceOf('Promjena '), 'a tracked change is recorded in the paragraph'],
-    ['a list item', pieceOf('stavka popisa'), 'the paragraph is in a list'],
   ];
   for (const [label, piece, reason] of refused) {
     const why = odtDivisionRefusal(doc.xml, P, doc.styles, piece);
@@ -465,6 +464,8 @@ const pieceOf = (text) => doc.pieces.find((piece) => piece.text === text);
 
 /** Documents with a new row in them, for LibreOffice to read back below. */
 const readableTables = [];
+/** Lists written by the plan, for LibreOffice to read back below. */
+const readableLists = [];
 
 const cell = (text, attrs = '') =>
   `<table:table-cell table:style-name="C1" office:value-type="string"${attrs}><text:p text:style-name="Table_20_Contents">${text}</text:p></table:table-cell>`;
@@ -720,6 +721,82 @@ const part = (body, ns = NS, before = '') =>
       'a bookmark continues outside the paragraph',
   );
 
+  /* ── lists (card 525) ──────────────────────────────────────────────────
+     An item of one paragraph, in a list of the body: a new paragraph after it
+     is a new item, a division two items, a removal the item, a join two items
+     made one — and not the last item, not across a list's end. */
+  const listed = (body) => {
+    const xml = part(body);
+    return { xml, pieces: findOdtPieces(xml), paragraphs: findOdtParagraphs(xml), styles: readOdtStyles(xml, null), archive: doc.archive };
+  };
+  const items = (xml) => (xml.match(/<text:list-item>/g) ?? []).length;
+  const list = listed(
+    '<text:p>Prije</text:p><text:list xml:id="l1"><text:list-item><text:p text:style-name="P1">ulJedan</text:p></text:list-item>' +
+      '<text:list-item><text:p text:style-name="P1">ulDva</text:p></text:list-item><text:list-item><text:p text:style-name="P1">ulTri</text:p></text:list-item></text:list><text:p>Poslije</text:p>',
+  );
+  const LP = list.paragraphs;
+  const piece = (text) => list.pieces.find((one) => one.text === text);
+  check(
+    'an item of one paragraph in a list of the body may be reshaped, as an item of that list',
+    [1, 2, 3].every((i) => LP[i].refusal === null && LP[i].item !== null && LP[i].item.list === LP[1].item.list) &&
+      LP[0].item === null && LP[4].item === null,
+  );
+  const added = plan(list, { inserts: [{ after: 2, text: 'ulNova' }] });
+  check(
+    'a new paragraph after an item is a new item of its list, in its style',
+    added.includes('ulDva</text:p></text:list-item><text:list-item><text:p text:style-name="P1">ulNova</text:p></text:list-item>') &&
+      items(added) === 4 && balanced(added),
+  );
+  const cut = plan(list, { cuts: [{ piece: piece('ulTri').index, parts: ['ulTriA', 'ulTriB'] }] });
+  check(
+    'a divided item is two items',
+    cut.includes('ulTriA</text:p></text:list-item><text:list-item><text:p text:style-name="P1">ulTriB</text:p></text:list-item></text:list>') &&
+      items(cut) === 4 && balanced(cut),
+  );
+  const gone = plan(list, { removals: [2] });
+  check('a removed item goes whole', !gone.includes('ulDva') && items(gone) === 2 && balanced(gone));
+  const last = plan(list, { removals: [1, 2, 3] });
+  check('and the last item of a list stays', items(last) === 1 && balanced(last));
+  check(
+    'it is refused as the last item, said so',
+    odtRemovalRefusal(list.xml, LP, list.styles, 3, new Set([0, 3, 4])) === 'the last item of a list',
+  );
+  const joined = plan(list, { joins: [1] });
+  check('two items joined are one item', joined.includes('>ulJedanulDva</text:p></text:list-item>') && items(joined) === 2 && balanced(joined));
+  check(
+    'not joined across the end of a list',
+    odtJoinRefusal(list.xml, LP, list.styles, 3) === 'the paragraphs are not in the same list' && plan(list, { joins: [3] }) === list.xml,
+  );
+  check(
+    'nor from the body into a list',
+    odtJoinRefusal(list.xml, LP, list.styles, 0) === 'something stands between the two paragraphs' && plan(list, { joins: [0] }) === list.xml,
+  );
+  {
+    const nested = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p><text:list><text:list-item><text:p>b</text:p></text:list-item><text:list-item><text:p>c</text:p></text:list-item></text:list></text:list-item></text:list>');
+    const twice = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p><text:p>b</text:p></text:list-item><text:list-item><text:p>c</text:p></text:list-item></text:list>');
+    const restarting = listed('<text:p>A</text:p><text:list><text:list-item text:start-value="5"><text:p>a</text:p></text:list-item><text:list-item><text:p>b</text:p></text:list-item></text:list>');
+    check(
+      'an item holding a list, or a paragraph of a list inside one, is still told apart as a list',
+      nested.paragraphs.slice(1).every((one) => one.refusal === 'the paragraph is in a list' && one.item === null),
+    );
+    check(
+      'and so is an item of two paragraphs',
+      twice.paragraphs.slice(1, 3).every((one) => one.refusal === 'the paragraph is in a list') && twice.paragraphs[3].refusal === null,
+    );
+    check(
+      'an item that sets the number its list restarts at is not removed',
+      odtRemovalRefusal(restarting.xml, restarting.paragraphs, restarting.styles, 1) === 'the list item sets the number its list restarts at' &&
+        odtRemovalRefusal(restarting.xml, restarting.paragraphs, restarting.styles, 2) === null,
+    );
+    const inCell = listed('<text:p>A</text:p><table:table><table:table-row><table:table-cell><text:list><text:list-item><text:p>a</text:p></text:list-item></text:list></table:table-cell></table:table-row></table:table>');
+    check('nor is a list in a table cell reshaped', inCell.paragraphs[1].refusal === 'the paragraph is in a list');
+  }
+  written.push(added, cut, gone, last, joined);
+  readableLists.push(
+    { bytes: writeOdf(doc.archive, plan(list, { inserts: [{ after: 1, text: 'ulNova' }], removals: [2], cuts: [{ piece: piece('ulTri').index, parts: ['ulTriA', 'ulTriB'] }] })), joined: false },
+    { bytes: writeOdf(doc.archive, joined), joined: true },
+  );
+
   const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
   check(
     'what XML cannot hold is left out of what was typed',
@@ -886,7 +963,7 @@ for (const file of files) {
   originals.push({ name: basename(file), xml: one.xml });
   const body = one.paragraphs.filter((span) => span.refusal === null);
   stats.body += body.length;
-  stats.list += one.paragraphs.filter((span) => span.refusal === 'the paragraph is in a list').length;
+  stats.list += one.paragraphs.filter((span) => span.item !== null || span.refusal === 'the paragraph is in a list').length;
   stats.elsewhere += one.paragraphs.length - body.length;
 
   /* One of each step, spread through the document rather than taken from its front. */
@@ -1044,6 +1121,9 @@ check(
 
 /* ── read back by LibreOffice ────────────────────────────────────────── */
 
+/** The start of a line LibreOffice writes for a list item: a bullet or a number, then a space. */
+const ITEM_LINE = /^([•◦▪·*o-]|[0-9]+[.)]|[a-zA-Z][.)]|[ivxlcIVXLC]+[.)]) /;
+
 if (SOFFICE) {
   /* The fixture too, with the join and a division in the paragraph it joins:
      the line LibreOffice shows first runs from the heading into the body
@@ -1062,6 +1142,9 @@ if (SOFFICE) {
   /* The table fixture, its new row typed into: only the row is asked about. */
   for (const bytes of readableTables) {
     readable.push({ file: 'table.odt', bytes, original: makeOdtParagraphs(), rowOnly: true });
+  }
+  for (const one of readableLists) {
+    readable.push({ file: 'list.odt', bytes: one.bytes, original: makeOdtParagraphs(), listOnly: one.joined ? 'joined' : 'reshaped' });
   }
 
   const back = join(work, 'back');
@@ -1100,8 +1183,24 @@ if (SOFFICE) {
       if (!line('nova lijevo') || !line('nova desno')) wrong.push(`${basename(one.file)}: the new row is not shown`);
       return;
     }
+    /* A list: each item a line of its own, the removed one gone, the joined
+       ones one line. */
+    if (one.listOnly === 'reshaped') {
+      const own = ['ulJedan', 'ulNova', 'ulTriA', 'ulTriB'].map(line);
+      if (own.some((text) => !text) || new Set(own).size !== 4) wrong.push('list.odt: the items are not each a line');
+      if (line('ulDva')) wrong.push('list.odt: the removed item is still there');
+      return;
+    }
+    if (one.listOnly === 'joined') {
+      if (!line('ulJedanulDva') || !line('ulTri')) wrong.push('list.odt: the joined items are not one line');
+      return;
+    }
     if (one.row && !line('ulRedak')) wrong.push(`${basename(one.file)}: the new row is not shown`);
-    if (!edited.some((text) => text.trim() === MARKER)) wrong.push(`${basename(one.file)}: no line of its own for the new paragraph`);
+    /* A line of its own — after a list item, an item of its own, which
+       LibreOffice writes with its bullet or its number: measured, "• " and
+       "2. " where the item it follows is "1. ". */
+    const own = (text) => text.trim() === MARKER || ITEM_LINE.test(text.trim()) && text.trim().endsWith(MARKER) && text.trim().length - MARKER.length <= 6;
+    if (!edited.some(own)) wrong.push(`${basename(one.file)}: no line of its own for the new paragraph: ${JSON.stringify(edited.find((text) => text.includes(MARKER)))}`);
     if (!line('ulRezA') || !line('ulRezB') || line('ulRezA') === line('ulRezB')) {
       wrong.push(`${basename(one.file)}: the divided paragraph is not two lines`);
     }
