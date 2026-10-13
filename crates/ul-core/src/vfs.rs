@@ -834,8 +834,18 @@ impl Workspace {
     /// For what a tab changes without holding the bytes — the image editor's
     /// plan, applied in Rust to the picture on disk: applied to another
     /// picture, it would write what nobody saw (card 522). Checked and read
-    /// through one open file, so what was compared is what is read.
-    pub fn read_as_read(&self, path: impl AsRef<Path>, reading: Reading) -> Result<Vec<u8>, VfsError> {
+    /// through one open file, and looked at again once read: on Windows that
+    /// file is held (`open_held`), so nobody writes to it in between, and a
+    /// program that has it open to write makes it one that cannot be looked
+    /// at, which is a change; on Unix nothing holds it, and a write in between
+    /// that the second look sees is a change too. The look is the file's
+    /// fingerprint, so a write that puts its length and time back is not
+    /// seen — as for `save` (the review of d7b1fdb).
+    pub fn read_as_read(
+        &self,
+        path: impl AsRef<Path>,
+        reading: Reading,
+    ) -> Result<Vec<u8>, VfsError> {
         use std::io::Read;
 
         let name = reading_name(path.as_ref());
@@ -844,13 +854,17 @@ impl Workspace {
         if resolved != before.at {
             return Err(VfsError::Changed(display(&before.at)));
         }
-        let mut file = open_regular(&resolved)?;
+        let changed = || VfsError::Changed(display(&resolved));
+        let mut file = open_held(&resolved).map_err(|_| changed())?;
         let now = Fingerprint::of(&file)?;
         if before.print.as_ref() != Some(&now) {
-            return Err(VfsError::Changed(display(&resolved)));
+            return Err(changed());
         }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
+        if Fingerprint::of(&file)? != now {
+            return Err(changed());
+        }
         Ok(bytes)
     }
 
@@ -3000,7 +3014,10 @@ mod tests {
         fs::write(&other, "another picture").unwrap();
 
         let (token, _) = workspace.read_document(&file, None).unwrap();
-        assert_eq!(workspace.read_as_read(&file, token).unwrap(), b"the picture");
+        assert_eq!(
+            workspace.read_as_read(&file, token).unwrap(),
+            b"the picture"
+        );
         workspace
             .save(&file, b"turned", false, Some(token), false)
             .unwrap();
@@ -3017,6 +3034,87 @@ mod tests {
         let refused = workspace.read_as_read(&file, token);
         assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
         // Refused again: the look agreed to nothing.
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+    }
+
+    /// The other ways a picture stops being the one read (the review of
+    /// d7b1fdb): written in place, longer with its time put back, a reading
+    /// that lost sight of its file — each a change, and a closed folder is
+    /// outside, as for any read.
+    #[test]
+    fn a_document_written_in_place_is_not_read_as_read() {
+        use std::io::Write;
+        let mut workspace = Workspace::new();
+        let root = workspace
+            .add_root(scratch("read-as-read-in-place"))
+            .unwrap();
+        let file = root.join("slika.png");
+
+        fs::write(&file, "the picture AAAA").unwrap();
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .write_all(b"the picture BBBB")
+            .unwrap();
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+
+        fs::write(&file, "the picture AAAA").unwrap();
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        let then = fs::metadata(&file).unwrap().modified().unwrap();
+        {
+            let mut more = fs::OpenOptions::new().append(true).open(&file).unwrap();
+            more.write_all(b" and more").unwrap();
+            more.set_times(fs::FileTimes::new().set_modified(then))
+                .unwrap();
+        }
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        workspace.seen.get_mut(&token).unwrap().print = None;
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        workspace.roots.clear();
+        workspace
+            .add_root(scratch("read-as-read-elsewhere"))
+            .unwrap();
+        let refused = workspace.read_as_read(&file, token);
+        assert!(
+            matches!(refused, Err(VfsError::OutsideWorkspace(_))),
+            "{refused:?}"
+        );
+    }
+
+    /// On Windows the name's letters changed on disk are another name: a
+    /// change. And while the picture is read it is held — a program that
+    /// has it open to write meanwhile makes it a change, not a read of
+    /// whatever it is writing.
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_a_document_read_as_read_is_held() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("read-as-read-held")).unwrap();
+        let file = root.join("slika.png");
+        fs::write(&file, "the picture AAAA").unwrap();
+
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        let writer = fs::OpenOptions::new().write(true).open(&file).unwrap();
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        drop(writer);
+        assert_eq!(
+            workspace.read_as_read(&file, token).unwrap(),
+            b"the picture AAAA"
+        );
+
+        fs::rename(&file, root.join("Slika.PNG")).unwrap();
         let refused = workspace.read_as_read(&file, token);
         assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
     }

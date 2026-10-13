@@ -29,7 +29,7 @@
  *   node tools/verify-desktop-save.mjs --no-build (the binary is current)
  */
 
-import { mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -337,6 +337,8 @@ try {
     .catch(() => {});
 } finally {
   await stopDesktop(session);
+  /* The 60 MB log and the rest: each run used to leave its folder behind. */
+  await rm(workspace, { recursive: true, force: true }).catch(() => {});
 }
 
 const failed = checks.filter((c) => !c.passed);

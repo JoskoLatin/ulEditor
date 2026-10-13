@@ -1139,11 +1139,12 @@ fn write_file(
 ) -> Result<Option<Reading>, VfsError> {
     let asked = SaveAsked::from_headers(request.headers())?;
     let contents = save_body(request.body())?;
+    let contents = asked.whole(&contents)?;
     with_workspace(&state, |workspace| {
         save_in(
             workspace,
             &asked.path,
-            &contents,
+            contents,
             asked.overwrite,
             asked.reading,
             asked.begin,
@@ -1155,12 +1156,14 @@ fn write_file(
 /// What a save asks besides its bytes, read from its headers: `ul-path`, the
 /// path percent-encoded as `encodeURIComponent` writes it (a header holds
 /// ASCII only); `ul-overwrite`, `ul-begin` and `ul-fresh`, each `1` or
-/// absent; `ul-reading`, a reading's number or absent. Anything else in them
+/// absent; `ul-reading`, a reading's number or absent; `ul-length`, how many
+/// bytes the body holds (`SaveAsked::whole`). Anything else in them
 /// is refused rather than read some way: these are the page's words, as the
 /// JSON fields were.
 #[derive(Debug, PartialEq)]
 struct SaveAsked {
     path: String,
+    length: u64,
     overwrite: bool,
     reading: Option<Reading>,
     begin: bool,
@@ -1196,28 +1199,48 @@ impl SaveAsked {
                 unpercent(encoded)
                     .ok_or_else(|| bad("a ul-path header that is not a percent-encoded name"))
             })?;
-        let reading = match one("ul-reading")? {
-            None => None,
-            Some(number)
-                if !number.is_empty()
-                    && number.len() <= 20
-                    && number.bytes().all(|b| b.is_ascii_digit()) =>
-            {
-                Some(
-                    number
-                        .parse::<Reading>()
-                        .map_err(|_| bad("a ul-reading header out of range"))?,
-                )
+        let number = |name: &str| -> Result<Option<u64>, VfsError> {
+            match one(name)? {
+                None => Ok(None),
+                Some(digits)
+                    if !digits.is_empty()
+                        && digits.len() <= 20
+                        && digits.bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    digits
+                        .parse::<u64>()
+                        .map(Some)
+                        .map_err(|_| bad(&format!("a {name} header out of range")))
+                }
+                Some(_) => Err(bad(&format!("a {name} header that is not a number"))),
             }
-            Some(_) => return Err(bad("a ul-reading header that is not a number")),
         };
         Ok(Self {
             path,
+            length: number("ul-length")?.ok_or_else(|| bad("no ul-length header"))?,
             overwrite: flag("ul-overwrite")?,
-            reading,
+            reading: number("ul-reading")?,
             begin: flag("ul-begin")?,
             fresh: flag("ul-fresh")?,
         })
+    }
+
+    /// The bytes that arrived, if they are as many as the page sent. A
+    /// request body can arrive short with nothing said: WebView2 hands over
+    /// none when the request's content cannot be read, and WebKitGTK and
+    /// WKWebView stop at the first short read (wry; the review of 3801370).
+    /// Written, a short body would replace the document with part of it, be
+    /// taken as the reading, and the tab say "saved".
+    fn whole<'a>(&self, contents: &'a [u8]) -> Result<&'a [u8], VfsError> {
+        if contents.len() as u64 != self.length {
+            return Err(VfsError::Unsupported(format!(
+                "{} arrived with {} of its {} bytes, so nothing was written",
+                self.path,
+                contents.len(),
+                self.length
+            )));
+        }
+        Ok(contents)
     }
 }
 
@@ -3064,6 +3087,8 @@ mod tests {
         use tauri::http::{HeaderMap, HeaderName, HeaderValue};
         use tauri::ipc::InvokeBody;
 
+        /* Every case carries a length of 3 unless it names one, so that what
+        it refuses is its own point and not the missing length. */
         let headers = |pairs: &[(&str, &str)]| {
             let mut map = HeaderMap::new();
             for (name, value) in pairs {
@@ -3071,6 +3096,9 @@ mod tests {
                     HeaderName::from_bytes(name.as_bytes()).unwrap(),
                     HeaderValue::from_str(value).unwrap(),
                 );
+            }
+            if !pairs.iter().any(|(name, _)| *name == "ul-length") {
+                map.append("ul-length", HeaderValue::from_static("3"));
             }
             map
         };
@@ -3086,6 +3114,7 @@ mod tests {
             .unwrap(),
             SaveAsked {
                 path: r"C:\Users\x\Izvještaj 1 (kopija).md".into(),
+                length: 3,
                 overwrite: true,
                 reading: Some(u64::MAX),
                 begin: false,
@@ -3094,9 +3123,38 @@ mod tests {
         );
         let plain = SaveAsked::from_headers(&headers(&[("ul-path", "a.txt")])).unwrap();
         assert!(!plain.overwrite && !plain.begin && !plain.fresh && plain.reading.is_none());
+        // All encodeURIComponent leaves alone.
+        assert_eq!(
+            SaveAsked::from_headers(&headers(&[("ul-path", "a-b_c.d!e~f*g'h(i)j.txt")]))
+                .unwrap()
+                .path,
+            "a-b_c.d!e~f*g'h(i)j.txt"
+        );
+
+        // A body that arrived short, or not at all, is not written (the
+        // review of 3801370): wry can hand one over with nothing said.
+        let three = SaveAsked::from_headers(&headers(&[("ul-path", "a.txt")])).unwrap();
+        assert!(three.whole(&[1, 2, 3]).is_ok());
+        assert!(three.whole(&[]).is_err());
+        assert!(three.whole(&[1, 2]).is_err());
+        assert!(three.whole(&[1, 2, 3, 4]).is_err());
+        let none =
+            SaveAsked::from_headers(&headers(&[("ul-path", "a.txt"), ("ul-length", "0")])).unwrap();
+        assert!(none.whole(&[]).is_ok());
+        let mut no_length = HeaderMap::new();
+        no_length.insert("ul-path", HeaderValue::from_static("a.txt"));
+        assert!(SaveAsked::from_headers(&no_length).is_err());
 
         for refused in [
             vec![],
+            vec![("ul-path", "a.txt"), ("ul-length", "")],
+            vec![("ul-path", "a.txt"), ("ul-length", "-3")],
+            vec![("ul-path", "a.txt"), ("ul-length", "3.0")],
+            vec![("ul-path", "a.txt"), ("ul-length", "3"), ("ul-length", "3")],
+            vec![("ul-path", "a%+1")],
+            vec![("ul-path", r"a\b")],
+            vec![("ul-path", "a/b")],
+            vec![("ul-path", "a:b")],
             vec![("ul-path", "a.txt"), ("ul-path", "b.txt")],
             vec![("ul-path", "a.txt"), ("ul-overwrite", "true")],
             vec![
@@ -3123,7 +3181,15 @@ mod tests {
         }
         let mut odd = HeaderMap::new();
         odd.insert("ul-path", HeaderValue::from_bytes(b"\xC5\xA1.txt").unwrap());
+        odd.insert("ul-length", HeaderValue::from_static("3"));
         assert!(SaveAsked::from_headers(&odd).is_err());
+        // Not plain text is refused, not read as absent: a reading that went
+        // missing would be a save with no question.
+        for name in ["ul-reading", "ul-overwrite", "ul-length"] {
+            let mut odd = headers(&[("ul-path", "a.txt")]);
+            odd.insert(name, HeaderValue::from_bytes(b"\xC5\xA1").unwrap());
+            assert!(SaveAsked::from_headers(&odd).is_err(), "{name}");
+        }
 
         assert_eq!(unpercent("%00").as_deref(), Some("\u{0}"));
         assert_eq!(unpercent("%e2%80%ae").as_deref(), Some("\u{202E}"));
@@ -3144,6 +3210,7 @@ mod tests {
             serde_json::json!(["1"]),
             serde_json::json!({ "path": "a.txt", "contents": [1, 2, 3] }),
             serde_json::json!(null),
+            serde_json::json!("abc"),
         ] {
             assert!(
                 save_body(&InvokeBody::Json(refused.clone())).is_err(),

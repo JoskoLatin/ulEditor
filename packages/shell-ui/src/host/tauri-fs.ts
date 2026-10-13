@@ -56,7 +56,12 @@ async function save(
   data: Uint8Array,
   asked: { overwrite: boolean; reading?: number; begin?: boolean; fresh?: boolean },
 ): Promise<number | null> {
-  const headers: Record<string, string> = { 'ul-path': encodeURIComponent(uri) };
+  /* The length too: a body can arrive short with nothing said, and the core
+     writes nothing that is not all there (`SaveAsked::whole`). */
+  const headers: Record<string, string> = {
+    'ul-path': encodeURIComponent(uri),
+    'ul-length': String(data.byteLength),
+  };
   if (asked.overwrite) headers['ul-overwrite'] = '1';
   if (asked.reading !== undefined) headers['ul-reading'] = String(asked.reading);
   if (asked.begin) headers['ul-begin'] = '1';

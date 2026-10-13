@@ -153,7 +153,11 @@ with the tab's reading (card 522, point 3).
 editor's plan only to the picture the tab read: the scope sends the reading of
 the source as `sourceReading`, and the core reads it with
 `Workspace::read_as_read` — the same file, by the same name, unchanged since,
-checked and read through one open file, and agreeing to nothing new. A picture
+checked and read through one open file and looked at again once read — held
+on Windows, so nobody writes to it meanwhile; on Unix a write the second look
+sees is a change — and agreeing to nothing new. The look is the fingerprint, so
+a write that puts the length and the time back is not seen, as for `save` (the
+review of d7b1fdb). A picture
 put in its place since is asked about as any changed document when saved over
 itself; "overwrite" then, or a save into another file, is refused, saying the
 changes were made to the picture as it was and are not applied to another — the
@@ -169,7 +173,14 @@ anything else refused. The bytes used to cross as a JSON array of numbers: a
 with the unsaved work in it; a 60 MB save now takes about 4 s
 (`verify-desktop-save`). Android's bridge has no request body and still sends
 the array, with the same headers, and the core reads that as well. What the
-command decides is unchanged.
+command decides is unchanged. `ul-length` says how many bytes the body holds,
+and a body that arrived with any other number is not written: wry can hand
+over a short body with nothing said — none on WebView2 when the request's
+content cannot be read, and on WebKitGTK and WKWebView whatever came before
+the first short read (the review of 3801370). And once a request through
+Tauri's own protocol fails, its bridge sends everything through `postMessage`
+for the rest of the page's life (`ipc-protocol.js`): the bytes go as the array
+again, and the old limit of about 50 MB is back until the page reloads.
 
 **What the token is and is not.** It names a reading. It is not a consent and
 grants nothing: every save still resolves its path through the sandbox

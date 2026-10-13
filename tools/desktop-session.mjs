@@ -447,7 +447,7 @@ export function asCall(command, args) {
   if (command !== 'write_file') return [command, args, undefined];
   const { path, contents, overwrite, reading, begin, fresh, ...rest } = args;
   if (Object.keys(rest).length > 0) throw new Error(`write_file has no ${Object.keys(rest).join(', ')}`);
-  const headers = { 'ul-path': encodeURIComponent(path) };
+  const headers = { 'ul-path': encodeURIComponent(path), 'ul-length': String(contents.length) };
   if (overwrite) headers['ul-overwrite'] = '1';
   if (reading !== undefined && reading !== null) headers['ul-reading'] = String(reading);
   if (begin) headers['ul-begin'] = '1';
