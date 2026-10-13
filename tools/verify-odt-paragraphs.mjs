@@ -68,6 +68,8 @@ const {
   anchorOdtRow,
   odtRowShape,
   odtMergeRefusal,
+  odtCheckOverlap,
+  OdtOverlap,
   odtRowRefusal,
   odtIsPlain,
   rootNamespaces,
@@ -907,7 +909,7 @@ const part = (body, ns = NS, before = '') =>
     );
     check(
       'cells either side of a place covered from above are not one run, and the writer judges so too',
-      underD.why === 'the table is written in a way this program does not follow' && underD.out === underD.x,
+      underD.why === 'a place between them is part of a merge going down' && underD.out === underD.x,
       String(underD.why),
     );
     const trackedCell = one('<table:table-row><table:table-cell><text:p><text:change text:change-id="c1"/>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
@@ -924,6 +926,34 @@ const part = (body, ns = NS, before = '') =>
     );
     const marked = one('<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p><text:bookmark text:name="cilj"/></text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
     check('a cell holding only a bookmark is not empty: the bookmark goes with the merge', marked.out.includes('<text:bookmark text:name="cilj"/>'));
+
+    /* The second review of 3216ac5. */
+    const downDecoy = one('<table:table-row><table:table-cell foo:number-rows-spanned="1" table:number-rows-spanned="2"><text:p>D</text:p></table:table-cell><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row><table:table-row><table:covered-table-cell/><table:table-cell><text:p>y</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('a merge down is read by its whole name too: a decoy before it does not hide it', downDecoy.why === 'a cell already merged down cannot be merged across');
+    const repeatDecoy = findOdtRows(T('<table:table-row><table:table-cell foo:number-columns-repeated="1" table:number-columns-repeated="3"><text:p>r</text:p></table:table-cell></table:table-row>'));
+    check('and a repeat', JSON.stringify(odtRowShape(repeatDecoy[0])) === '[1,1,1]', JSON.stringify(odtRowShape(repeatDecoy[0])));
+    const spanOverAbove = one('<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell table:number-rows-spanned="2"><text:p>b</text:p></table:table-cell><table:table-cell><text:p>c</text:p></table:table-cell></table:table-row><table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>d</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><text:p>e</text:p></table:table-cell></table:table-row>', { row: 1, from: 0, count: 2 });
+    check('a span whose covered place is covered from above is not taken apart', spanOverAbove.why !== null && spanOverAbove.out === spanOverAbove.x, String(spanOverAbove.why));
+    const tooManyCovered = one('<table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>a</text:p></table:table-cell><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('nor one followed by more covered places than it spans', tooManyCovered.why !== null && tooManyCovered.out === tooManyCovered.x, String(tooManyCovered.why));
+    const twoTypes = one('<table:table-row><table:table-cell office:value-type="float" calcext:value-type="float"><text:p>3</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('two value types on the first cell are written as one', (twoTypes.out.match(/value-type=/g) ?? []).length === 1 && balanced(twoTypes.out));
+    const nestedBody = T('<table:table-row><table:table-cell><office:text><text:p>skriveni</text:p></office:text></table:table-cell><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row>');
+    const hidden = findOdtParagraphs(nestedBody).find((paragraph) => nestedBody.slice(paragraph.start, paragraph.end).includes('skriveni'));
+    check('an office:text inside a cell is no body: its paragraphs are not the body\'s', hidden.refusal !== null, String(hidden.refusal));
+    let overlapped = false;
+    try {
+      odtCheckOverlap([{ at: 10, end: 20 }, { at: 5, end: 12 }]);
+    } catch (err) {
+      overlapped = err instanceof OdtOverlap;
+    }
+    let fine = true;
+    try {
+      odtCheckOverlap([{ at: 20, end: 30 }, { at: 20, end: 20 }, { at: 10, end: 20 }, { at: 10, end: 10 }, { at: 10, end: 10 }]);
+    } catch {
+      fine = false;
+    }
+    check('two changes over the same bytes are refused, two insertions at one place and changes that meet are not', overlapped && fine);
     written.push(two, across, typed);
     readableMerges.push(writeOdf(doc.archive, two));
   }

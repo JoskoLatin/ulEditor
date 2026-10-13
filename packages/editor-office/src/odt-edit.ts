@@ -335,6 +335,9 @@ function editable(pieces: OdtPiece[], edits: OdtEdit[]): { piece: OdtPiece; text
 
 /* ── paragraphs ──────────────────────────────────────────────────────── */
 
+/** What the scanners call the body of the document — `office:text` in `office:body` — where they stack it. */
+const BODY = '\u0000office:text in office:body';
+
 export interface OdtParagraph {
   /** The ordinal among every `text:p` and `text:h` in the part, nested ones included. */
   index: number;
@@ -388,7 +391,12 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
   const prefix = textPrefix(xml);
   /* The parent by its whole name, in its own namespace: `x:text` in some other
      namespace is not the body, whatever its local name (the review of card 459). */
-  const body = `${prefixFor(xml, OFFICE_NS, 'office')}:text`;
+  /* And only the one in `office:body`: an `office:text` written inside a
+     table cell is no body, and its paragraphs, which the view does not draw,
+     were taken for the body's (the second review of 3216ac5). */
+  const office = prefixFor(xml, OFFICE_NS, 'office');
+  const text = `${office}:text`;
+  const body = BODY;
   const list = `${prefix}:list`;
   const item = `${prefix}:list-item`;
   const header = `${prefix}:list-header`;
@@ -455,7 +463,10 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
       paragraphs.push(paragraph);
       if (inItem) parentFrame!.first = paragraph;
     }
-    if (!tag.selfClosing) stack.push({ name: tag.name, start: tag.start, paragraph, children: 0, first: null });
+    if (!tag.selfClosing) {
+      const name = tag.name === text && parentFrame?.name === `${office}:body` ? BODY : tag.name;
+      stack.push({ name, start: tag.start, paragraph, children: 0, first: null });
+    }
   }
 
   return paragraphs;
@@ -1237,7 +1248,8 @@ export function findOdtRows(xml: string): OdtRow[] {
   /* Every name in its own namespace: a `table-row` of some other namespace
      is no row of a table (the review of card 459). */
   const table = prefixFor(xml, TABLE_NS, 'table');
-  const body = `${prefixFor(xml, OFFICE_NS, 'office')}:text`;
+  const office = prefixFor(xml, OFFICE_NS, 'office');
+  const body = BODY;
   const region = new Set([...ROW_REGION].map((local) => `${table}:${local}`));
   const rowName = `${table}:table-row`;
   const cellNames = new Set([`${table}:table-cell`, `${table}:covered-table-cell`]);
@@ -1294,7 +1306,11 @@ export function findOdtRows(xml: string): OdtRow[] {
         row,
         cell,
         table: tag.name === `${table}:table` ? tag.start : (parent?.table ?? -1),
-        outside: region.has(tag.name) ? (parent?.outside ?? '') : tag.name,
+        outside: region.has(tag.name)
+          ? (parent?.outside ?? '')
+          : tag.name === `${office}:text` && parent?.name === `${office}:body`
+            ? BODY
+            : tag.name,
       });
     }
   }
@@ -1475,6 +1491,17 @@ export function odtRowMarkup(xml: string, row: OdtRow, texts: readonly string[])
   return `${out}</${table}:table-row>`;
 }
 
+/**
+ * Throws `OdtOverlap` when two of the changes, ordered back to front as
+ * the writer applies them, touch the same bytes. Two insertions at one
+ * place do not: each is written there, in order.
+ */
+export function odtCheckOverlap(operations: readonly { at: number; end: number }[]): void {
+  for (let i = 1; i < operations.length; i++) {
+    if (operations[i]!.end > operations[i - 1]!.at) throw new OdtOverlap();
+  }
+}
+
 /** Two changes of one plan that would write over each other: nothing is written. */
 export class OdtOverlap extends Error {
   constructor() {
@@ -1547,7 +1574,14 @@ export function odtMergeRefusal(xml: string, rows: OdtRow[], merge: OdtMerge): s
   const run = mergeRun(row, merge);
   if (!run) {
     const named = row.cells.filter((cell) => !cell.covered).slice(merge.from, merge.from + merge.count);
-    return named.length === merge.count ? 'the table is written in a way this program does not follow' : 'the row has no such cells';
+    if (named.length !== merge.count) return 'the row has no such cells';
+    /* A place covered from above between them is LibreOffice's own shape —
+       a cell merged down — and said as such. */
+    const from = row.cells.indexOf(named[0]!);
+    const to = row.cells.indexOf(named[named.length - 1]!);
+    return row.cells.slice(from, to).some((cell) => cell.covered && cell.fromAbove)
+      ? 'a place between them is part of a merge going down'
+      : 'the table is written in a way this program does not follow';
   }
   if (run.named.some((cell) => cell.repeat > 1)) return 'a cell stands for several cells';
   const table = prefixFor(xml, TABLE_NS, 'table');
@@ -1599,6 +1633,7 @@ function odtMergeMarkup(
   const attribute = /\s([^\s=/>"']+)\s*=\s*("[^"]*"|'[^']*')/g;
   const tagText = xml.slice(opening.start, opening.end);
   const office = prefixFor(xml, OFFICE_NS, 'office');
+  let typed = false;
   for (let match = attribute.exec(tagText); match; match = attribute.exec(tagText)) {
     const local = localName(match[1]!);
     if (local === 'number-columns-spanned' || CELL_VALUES.has(local)) continue;
@@ -1606,11 +1641,14 @@ function odtMergeMarkup(
        a formula — would be shown instead of the paragraphs merged into it
        (the review of 3216ac5), as `odtRowMarkup` builds a new row's. */
     if (local === 'value-type') {
-      attributes.push(`${office}:value-type="string"`);
+      typed = true;
       continue;
     }
     attributes.push(`${match[1]}=${match[2]}`);
   }
+  /* Once, whatever the first cell carried — two of them, in two namespaces,
+     were written as two of the same name (the second review of 3216ac5). */
+  if (typed) attributes.push(`${office}:value-type="string"`);
   attributes.push(`${table}:number-columns-spanned="${span}"`);
 
   const contents = run.named.map((cell) => {
@@ -1881,13 +1919,7 @@ export function applyOdtEdits(
      another's range wrote into what the other had replaced, and the part
      came out well-formed and wrong (the review of 3216ac5). Refused whole —
      the save says so and writes nothing. */
-  for (let i = 1; i < operations.length; i++) {
-    const later = operations[i - 1]!;
-    const earlier = operations[i]!;
-    if (earlier.end > later.at && !(earlier.at === earlier.end && earlier.at === later.at)) {
-      throw new OdtOverlap();
-    }
-  }
+  odtCheckOverlap(operations);
   let out = xml;
   for (const operation of operations) {
     out = out.slice(0, operation.at) + operation.text + out.slice(operation.end);

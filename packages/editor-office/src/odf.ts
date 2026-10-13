@@ -1439,6 +1439,9 @@ function odtSource(
               if (why === null) return null;
               if (why === 'a merge takes two cells at least') return t('Select two cells or more of one row to merge them.');
               if (why === 'the row has no such cells') return t('This row does not have those cells.');
+              if (why === 'a place between them is part of a merge going down') {
+                return t('These cells are not next to each other in the file — one between them is part of a merge going down.');
+              }
               if (why === 'a cell holds a table') {
                 return t('One of these cells holds a table of its own — cells holding a table are not merged here.');
               }
