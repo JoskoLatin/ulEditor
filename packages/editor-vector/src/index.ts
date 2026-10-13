@@ -58,7 +58,7 @@ import {
   type SaveResult,
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
-import { gunzipSync } from 'fflate';
+import { unpack } from './unpack.js';
 
 import { conversionOffer } from './conversion.js';
 import { dscFields, isDosEps, isPostscript } from './eps.js';
@@ -88,11 +88,6 @@ function humanBytes(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** `.svgz` is gzipped SVG and nothing else — the same markup, one layer down. */
-function unpack(bytes: Uint8Array, extension: string): Uint8Array {
-  const gzipped = extension === 'svgz' || (bytes[0] === 0x1f && bytes[1] === 0x8b);
-  return gzipped ? gunzipSync(bytes) : bytes;
-}
 
 class VectorViewer implements EditorInstance {
   #root: HTMLElement | null = null;

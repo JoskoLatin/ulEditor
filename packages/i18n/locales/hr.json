@@ -308,6 +308,7 @@
   "Filters and frozen panes are not applied.": "Filtri i zamrznuta zaglavlja nisu primijenjeni.",
   "Formulas are worked out again only where a cell they read has been retyped, and only SUM, SUMIFS, COUNTIFS and plain arithmetic; every other formula is marked as out of date rather than recalculated. Untouched formulas show the value stored in the file.": "Formule se računaju iznova samo ondje gdje je pretipkana ćelija koju čitaju, i to samo SUM, SUMIFS, COUNTIFS i obična aritmetika; svaka druga formula označi se kao zastarjela umjesto da se preračuna. Formule koje nitko nije dirao prikazuju vrijednost spremljenu u datoteci.",
   "This is not a valid Office archive — it is probably damaged or incompletely downloaded.": "Datoteka nije ispravna Office arhiva — vjerojatno je oštećena ili nepotpuno preuzeta.",
+  "This file would unpack to more than this program opens at once, so it is not opened.": "Ova bi se datoteka raspakirala u više nego što ovaj program odjednom otvara, pa se ne otvara.",
   "The file has no `word/document.xml` — this is not a Word document.": "Datoteka nema `word/document.xml` — ovo nije Wordov dokument.",
   "The file has no Word document inside — it may be an old Excel or PowerPoint file.": "U datoteci nema Wordovog dokumenta — možda je stara Excel ili PowerPoint datoteka.",
   "This is a Word 6 or 95 document, older still than Word 97 — it is not supported yet.": "Ovo je dokument iz Worda 6 ili 95, još stariji od Worda 97 — još nije podržan.",

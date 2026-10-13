@@ -16,10 +16,51 @@ import { t } from '@uleditor/i18n';
 
 export type Archive = Record<string, Uint8Array>;
 
+/**
+ * What an archive may unpack to: a part, all of them, and how many. The
+ * largest part among Čovik's 74 Office files is 10.4 MB and the largest
+ * whole 11.1 MB, with 35 parts at most; a ZIP of a few kilobytes can claim
+ * gigabytes, and unpacked whole in the page it takes the page down with
+ * whatever else is unsaved in it (card 528).
+ *
+ * Asked of the size each part declares, before it is unpacked: measured,
+ * fflate unpacks a part only as far as it declares — one claiming 100 bytes
+ * of fifty megabytes came out 100 bytes — so the declared size is a bound,
+ * not a promise.
+ */
+export const MOST_PART_BYTES = 256 * 1024 * 1024;
+export const MOST_ARCHIVE_BYTES = 512 * 1024 * 1024;
+export const MOST_PARTS = 10_000;
+
+/** A ZIP unpacked within those bounds, or refused, saying so. */
+export function boundedUnzip(bytes: Uint8Array): Archive {
+  let total = 0;
+  let parts = 0;
+  let over = false;
+  const files = unzipSync(bytes, {
+    filter: (file) => {
+      parts += 1;
+      total += file.originalSize;
+      if (file.originalSize > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || parts > MOST_PARTS) over = true;
+      return !over;
+    },
+  });
+  if (over) throw new ArchiveTooLarge();
+  return files;
+}
+
+/** An archive that would unpack to more than `boundedUnzip` takes. */
+export class ArchiveTooLarge extends Error {
+  constructor() {
+    super(t('This file would unpack to more than this program opens at once, so it is not opened.'));
+  }
+}
+
 export function openArchive(bytes: Uint8Array): Archive {
   try {
-    return unzipSync(bytes);
-  } catch {
+    return boundedUnzip(bytes);
+  } catch (err) {
+    if (err instanceof ArchiveTooLarge) throw err;
     // The message from fflate ("invalid zip data") means nothing to a user.
     throw new Error(
       t('This is not a valid Office archive — it is probably damaged or incompletely downloaded.'),
