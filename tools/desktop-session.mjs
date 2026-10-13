@@ -83,6 +83,45 @@ export function alreadyRunning() {
   return /uleditor-desktop\.exe/i.test(listed.stdout ?? '');
 }
 
+/** The prefix of every scratch profile `startDesktop` makes, and only of those. */
+const PROFILE_PREFIX = 'ul-profile-';
+
+/**
+ * The ulEditors built in this checkout that run in a scratch profile — that a
+ * check started, then — with the profile each runs in.
+ *
+ * Found through WebView2: the host starts its browser process with
+ * `--user-data-dir` inside `WEBVIEW2_USER_DATA_FOLDER`, which `startDesktop`
+ * points at a fresh `ul-profile-*` folder, and a person's own copy never runs
+ * in one. So the person's ulEditor, installed or their own `tauri dev`, is
+ * never among them, whatever its path.
+ *
+ * @param {string} [profile] only the one running in this profile
+ * @returns {{ pid: number, profile: string }[]}
+ */
+export function checkCopies(profile) {
+  if (process.platform !== 'win32') return [];
+  const want = (profile ?? join(tmpdir(), PROFILE_PREFIX)).replaceAll("'", "''");
+  const script = `$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine)
+$hosts = @{}
+foreach ($p in $all) { if ($p.Name -eq 'uleditor-desktop.exe' -and $p.ExecutablePath -and $p.ExecutablePath.StartsWith('${OWN_BUILDS}', 'OrdinalIgnoreCase')) { $hosts[[uint32]$p.ProcessId] = $true } }
+foreach ($p in $all) {
+  if ($p.Name -ne 'msedgewebview2.exe' -or -not $hosts.ContainsKey([uint32]$p.ParentProcessId)) { continue }
+  if ($p.CommandLine -match '--user-data-dir="?([^"]+)') {
+    $dir = $Matches[1]
+    if ($dir.StartsWith('${want}', 'OrdinalIgnoreCase')) { "$($p.ParentProcessId)|$dir" }
+  }
+}`;
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8' });
+  const seen = new Map();
+  /* `|` between the two, since no Windows path can hold one. */
+  for (const line of (out.stdout ?? '').split(/\r?\n/)) {
+    const [pid, dir] = line.split('|');
+    if (pid && dir && !seen.has(pid)) seen.set(pid, { pid: Number(pid), profile: dir.replace(/\\EBWebView\\?$/i, '') });
+  }
+  return [...seen.values()];
+}
+
 export const ALREADY_RUNNING =
   'ulEditor is already open, and a second copy hands over to the first and exits — ' +
   'close it and run this again';
@@ -135,7 +174,22 @@ export async function startDesktop(opts = {}) {
      would swallow this one. */
   if (!opts.identifier && alreadyRunning()) throw new Error(ALREADY_RUNNING);
 
-  const profile = opts.profile ?? (await mkdtemp(join(tmpdir(), 'ul-profile-')));
+  /* A copy an earlier check left running — measured 2026-10-12 after a run
+     that ended some other way than through `stopDesktop` — takes the new one's
+     arguments under the same identifier, and the check then waits out a
+     timeout that reads like a fault in the code (card 524). Said, and not
+     ended here: it could as well be a check another session is running from
+     this checkout right now. */
+  const left = checkCopies();
+  if (left.length > 0) {
+    throw new Error(
+      `an ulEditor a check started is still running (${left.map((c) => `pid ${c.pid} in ${c.profile}`).join(', ')}), ` +
+        `and a new one would hand over to it and exit — if no check is running, end it: ` +
+        left.map((c) => `taskkill /PID ${c.pid} /T /F`).join('; '),
+    );
+  }
+
+  const profile = opts.profile ?? (await mkdtemp(join(tmpdir(), PROFILE_PREFIX)));
   /* Silent, unless somebody is trying to find out why a check fails.
      `UL_DESKTOP_LOG=1` lets the application's own output through, which is
      the only way to read `UL_LSP_TRACE` — a check that swallows the program's
@@ -383,6 +437,15 @@ export async function stopDesktop(session) {
   if (session?.app?.pid === started) started = null;
   killTree(session?.app);
   await new Promise((r) => setTimeout(r, 1500));
+  /* And whatever the tree did not take: the program found by the profile only
+     this session ran it in, so nothing else can be ended by mistake. */
+  if (!session?.profile) return;
+  const left = checkCopies(session.profile);
+  for (const copy of left) {
+    console.warn(`  (the process tree left ulEditor ${copy.pid} running; ended by its profile)`);
+    spawnSync('taskkill', ['/F', '/T', '/PID', String(copy.pid)], { stdio: 'ignore' });
+  }
+  if (left.length > 0) await new Promise((r) => setTimeout(r, 1000));
 }
 
 /**
