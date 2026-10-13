@@ -16,7 +16,7 @@
  *   node tools/verify-archive-limits.mjs
  */
 
-import { zipSync, gzipSync, strToU8, unzipSync } from 'fflate';
+import { deflateSync, zipSync, gzipSync, strToU8, unzipSync } from 'fflate';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -84,13 +84,95 @@ for (let i = 0; i <= MOST_PARTS; i++) many[`p${i}.xml`] = strToU8('x');
 const tooMany = opened(openArchive, zipSync(many, { level: 0 }));
 check(`refused: more than ${MOST_PARTS} parts`, tooMany.refused === SAID, tooMany.refused ?? 'opened');
 
+/* ── ZIPs built by hand (the review of 6f5e284) ──────────────────────────
+   Every field under control, so the directory and a local header can
+   disagree, parts can share bytes, and zip64 can claim what it likes. */
+
+const join = (parts) => {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+const header = (size, fields) => {
+  const bytes = new Uint8Array(size);
+  const view = new DataView(bytes.buffer);
+  for (const [at, width, value] of fields) {
+    if (width === 2) view.setUint16(at, value, true);
+    else if (width === 4) view.setUint32(at, value, true);
+    else view.setBigUint64(at, BigInt(value), true);
+  }
+  return bytes;
+};
+const named = (bytes, at, name) => {
+  const text = strToU8(name);
+  const out = new Uint8Array(bytes.length + text.length);
+  out.set(bytes);
+  out.set(text, at);
+  new DataView(out.buffer).setUint16(at === 30 ? 26 : 28, text.length, true);
+  return out;
+};
+const localHeader = ({ name, method, csize, usize }) =>
+  named(header(30, [[0, 4, 0x04034b50], [4, 2, 20], [8, 2, method], [18, 4, csize], [22, 4, usize]]), 30, name);
+const centralEntry = ({ name, method, csize, usize, offset }) =>
+  named(header(46, [[0, 4, 0x02014b50], [4, 2, 20], [6, 2, 20], [10, 2, method], [20, 4, csize], [24, 4, usize], [42, 4, offset]]), 46, name);
+const directoryEnd = ({ count, size, offset }) =>
+  header(22, [[0, 4, 0x06054b50], [8, 2, Math.min(count, 0xffff)], [10, 2, Math.min(count, 0xffff)], [12, 4, size], [16, 4, offset]]);
+
+{
+  /* (a) Stored parts are copied whole, at their packed size, whatever they
+     declare: a hundred entries pointing at one stored stretch of 1 MiB come
+     to 100 MiB from a file of 1 MiB — within the bound on the whole, so
+     only this asks it: their packed sizes together exceed the file, which an
+     honest ZIP's never do (the review measured 2 GiB from 20 MiB). */
+  const data = new Uint8Array(1024 * 1024).fill(0x41);
+  const body = join([localHeader({ name: 'x', method: 0, csize: data.length, usize: 0 }), data]);
+  const entries = join(Array.from({ length: 100 }, (_, i) => centralEntry({ name: `p${i}.xml`, method: 0, csize: data.length, usize: 0, offset: 0 })));
+  const shared = join([body, entries, directoryEnd({ count: 100, size: entries.length, offset: body.length })]);
+  const got = opened(openArchive, shared);
+  check('refused: stored parts sharing one stretch of the file, at once', got.refused === SAID && got.took < 1000, `${got.refused ?? 'opened'}, ${got.took} ms`);
+  const bookGot = opened(openEpub, shared);
+  check('and as a book', bookGot.refused === SAID, bookGot.refused ?? 'opened');
+
+  /* (b) A directory end claiming four billion entries, in a file of a few
+     hundred bytes: the walk ends at the bound, not at the claim. */
+  const one = join([localHeader({ name: 'a.xml', method: 0, csize: 1, usize: 1 }), strToU8('a')]);
+  const entry = centralEntry({ name: 'a.xml', method: 0, csize: 1, usize: 1, offset: 0 });
+  const at = one.length + entry.length;
+  const zip64 = header(56, [[0, 4, 0x06064b50], [4, 8, 44], [12, 2, 45], [14, 2, 45], [24, 8, 2 ** 32 - 2], [32, 8, 2 ** 32 - 2], [40, 8, entry.length], [48, 8, one.length]]);
+  const locator = header(20, [[0, 4, 0x07064b50], [8, 8, at], [16, 4, 1]]);
+  const endless = join([one, entry, zip64, locator, directoryEnd({ count: 0xffff, size: entry.length, offset: one.length })]);
+  const walked = opened(openArchive, endless);
+  check(`refused: a directory claiming four billion entries, in ${endless.length} bytes, at once`, walked.refused === SAID && walked.took < 1000, `${walked.refused ?? 'opened'}, ${walked.took} ms`);
+
+  /* (c) A deflated part declaring less than it holds comes out as long as it
+     declares, and no longer — the property the bounds stand on, kept here
+     against an update of fflate that let the buffer grow. */
+  const fifty = deflateSync(new Uint8Array(50 * 1024 * 1024));
+  const lying = join([localHeader({ name: 'a.xml', method: 8, csize: fifty.length, usize: 100 }), fifty]);
+  const lyingEntry = centralEntry({ name: 'a.xml', method: 8, csize: fifty.length, usize: 100, offset: 0 });
+  const less = opened(openArchive, join([lying, lyingEntry, directoryEnd({ count: 1, size: lyingEntry.length, offset: lying.length })]));
+  check('a part declaring 100 bytes of fifty megabytes comes out 100 bytes', !less.refused && less.result['a.xml']?.length === 100, less.refused ?? `${less.result['a.xml']?.length} bytes`);
+
+  /* (d) Sizes are the directory's: a local header claiming two gigabytes
+     beside a directory entry of 600 000 bytes gives 600 000. */
+  const small = deflateSync(new Uint8Array(600000));
+  const loud = join([localHeader({ name: 'a.xml', method: 8, csize: small.length, usize: 2 ** 31 }), small]);
+  const quiet = centralEntry({ name: 'a.xml', method: 8, csize: small.length, usize: 600000, offset: 0 });
+  const directory = opened(openArchive, join([loud, quiet, directoryEnd({ count: 1, size: quiet.length, offset: loud.length })]));
+  check('the directory\'s sizes count, not a local header\'s', !directory.refused && directory.result['a.xml']?.length === 600000, directory.refused ?? `${directory.result['a.xml']?.length} bytes`);
+}
+
 /* ── a book ──────────────────────────────────────────────────────────── */
 
 const book = opened(openEpub, makeEpub());
 /* Past the unpacking it needs a DOM, which Node has not: what is asked here is only that the bound lets it through. */
 check('an honest book is unpacked, not refused for its size', book.refused !== SAID, book.refused ?? 'opened');
 const bookFiles = unzipSync(makeEpub());
-const bigBook = claiming(zipSync(bookFiles, { level: 0 }), Object.keys(bookFiles).map(() => MOST_PART_BYTES + 1));
+const bigBook = claiming(zipSync(bookFiles), Object.keys(bookFiles).map(() => MOST_PART_BYTES + 1));
 const refusedBook = opened(openEpub, bigBook);
 check('refused: a book whose parts claim too much, said so, at once', refusedBook.refused === SAID && refusedBook.took < 1000, `${refusedBook.refused ?? 'opened'}, ${refusedBook.took} ms`);
 

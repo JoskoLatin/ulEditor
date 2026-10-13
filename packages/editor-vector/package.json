@@ -16,7 +16,7 @@
   "dependencies": {
     "@uleditor/i18n": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
-    "fflate": "^0.8.2"
+    "fflate": "0.8.3"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

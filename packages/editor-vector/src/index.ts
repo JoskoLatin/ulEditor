@@ -58,7 +58,7 @@ import {
   type SaveResult,
 } from '@uleditor/plugin-sdk';
 import { t } from '@uleditor/i18n';
-import { unpack } from './unpack.js';
+import { DrawingTooLarge, unpack } from './unpack.js';
 
 import { conversionOffer } from './conversion.js';
 import { dscFields, isDosEps, isPostscript } from './eps.js';
@@ -154,8 +154,9 @@ class VectorViewer implements EditorInstance {
     let markup: Uint8Array;
     try {
       markup = unpack(this.bytes, extension);
-    } catch {
-      this.#fail(stage, t('{name} is not a valid compressed SVG.', { name: this.doc.name }));
+    } catch (err) {
+      /* Too large is said as such, not as damaged (the review of 6f5e284). */
+      this.#fail(stage, err instanceof DrawingTooLarge ? err.message : t('{name} is not a valid compressed SVG.', { name: this.doc.name }));
       return;
     }
 

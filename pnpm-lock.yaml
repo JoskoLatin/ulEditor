@@ -65,7 +65,7 @@ importers:
         specifier: ^3.4.16
         version: 3.4.16
       fflate:
-        specifier: ^0.8.2
+        specifier: 0.8.3
         version: 0.8.3
     devDependencies:
       typescript:
@@ -225,7 +225,7 @@ importers:
         specifier: workspace:*
         version: link:../reader-core
       fflate:
-        specifier: ^0.8.2
+        specifier: 0.8.3
         version: 0.8.3
     devDependencies:
       typescript:
@@ -266,7 +266,7 @@ importers:
         specifier: workspace:*
         version: link:../plugin-sdk
       fflate:
-        specifier: ^0.8.2
+        specifier: 0.8.3
         version: 0.8.3
     devDependencies:
       typescript:

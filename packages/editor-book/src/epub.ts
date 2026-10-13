@@ -264,28 +264,42 @@ function titleOf(body: HTMLElement, fallback: string): string {
 /* ── opening ─────────────────────────────────────────────────────────── */
 
 /**
- * The bounds an archive is unpacked within — the same as an Office file's
- * (`boundedUnzip` in editor-office, card 528): a part, all of them, and how
- * many, asked of the size each declares before it is unpacked, which fflate
- * keeps to.
+ * The bounds an archive is unpacked within, and how — the same as an Office
+ * file's (`boundedUnzip` in editor-office, which this package does not
+ * depend on; card 528): the directory first, alone; a stored part at its
+ * packed size, a deflated one at the size it declares; the packed sizes
+ * together no more than the file; refused by a throw, which ends the walk.
  */
-const MOST_PART_BYTES = 256 * 1024 * 1024;
-const MOST_ARCHIVE_BYTES = 512 * 1024 * 1024;
+const MOST_PART_BYTES = 64 * 1024 * 1024;
+const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MOST_PARTS = 10_000;
+
+class BookTooLarge extends Error {}
 
 export function openEpub(bytes: Uint8Array): Book {
   let total = 0;
+  let packed = 0;
   let parts = 0;
-  let over = false;
-  const files = unzipSync(bytes, {
-    filter: (file) => {
-      parts += 1;
-      total += file.originalSize;
-      if (file.originalSize > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || parts > MOST_PARTS) over = true;
-      return !over;
-    },
-  });
-  if (over) throw new Error(t('This file would unpack to more than this program opens at once, so it is not opened.'));
+  try {
+    unzipSync(bytes, {
+      filter: (file) => {
+        parts += 1;
+        packed += file.size;
+        const out = file.compression === 0 ? file.size : file.originalSize;
+        total += out;
+        if (parts > MOST_PARTS || out > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || packed > bytes.length) {
+          throw new BookTooLarge();
+        }
+        return false;
+      },
+    });
+  } catch (err) {
+    if (err instanceof BookTooLarge) {
+      throw new Error(t('This file would unpack to more than this program opens at once, so it is not opened.'));
+    }
+    throw err;
+  }
+  const files = unzipSync(bytes);
 
   // DRM is not circumvented. Better to say so at once than to display mush.
   if (files['META-INF/encryption.xml']) {

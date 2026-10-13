@@ -21,32 +21,47 @@ export type Archive = Record<string, Uint8Array>;
  * largest part among Čovik's 74 Office files is 10.4 MB and the largest
  * whole 11.1 MB, with 35 parts at most; a ZIP of a few kilobytes can claim
  * gigabytes, and unpacked whole in the page it takes the page down with
- * whatever else is unsaved in it (card 528).
- *
- * Asked of the size each part declares, before it is unpacked: measured,
- * fflate unpacks a part only as far as it declares — one claiming 100 bytes
- * of fifty megabytes came out 100 bytes — so the declared size is a bound,
- * not a promise.
+ * whatever else is unsaved in it (card 528). Held well below what the page
+ * holds: a part's XML takes some eighteen times its size as a DOM (measured
+ * by the review of 6f5e284: 64 MiB of XML, 1.16 GiB), so 64 MiB a part and
+ * 128 MiB in all.
  */
-export const MOST_PART_BYTES = 256 * 1024 * 1024;
-export const MOST_ARCHIVE_BYTES = 512 * 1024 * 1024;
+export const MOST_PART_BYTES = 64 * 1024 * 1024;
+export const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
 export const MOST_PARTS = 10_000;
 
-/** A ZIP unpacked within those bounds, or refused, saying so. */
+/**
+ * A ZIP unpacked within those bounds, or refused, saying so.
+ *
+ * The directory is read first, alone, and nothing is unpacked until all of
+ * it is within bounds. What a part comes to is what fflate would make of
+ * it: a stored part is copied whole, at its packed size, whatever it
+ * declares; a deflated one is made into a buffer of the size it declares,
+ * and anything past that is dropped (measured: 100 bytes declared of fifty
+ * megabytes gave 100 bytes). The packed sizes together may not exceed the
+ * file: an honest ZIP never shares bytes between parts, and stored parts
+ * pointing at one stretch had come to 2 GiB out of a file of 20 MiB (the
+ * review of 6f5e284). Refused by a throw, which also ends the walk: a
+ * directory end claiming four billion entries, in 185 bytes, kept the walk
+ * going for minutes when a part was only left out.
+ */
 export function boundedUnzip(bytes: Uint8Array): Archive {
   let total = 0;
+  let packed = 0;
   let parts = 0;
-  let over = false;
-  const files = unzipSync(bytes, {
+  unzipSync(bytes, {
     filter: (file) => {
       parts += 1;
-      total += file.originalSize;
-      if (file.originalSize > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || parts > MOST_PARTS) over = true;
-      return !over;
+      packed += file.size;
+      const out = file.compression === 0 ? file.size : file.originalSize;
+      total += out;
+      if (parts > MOST_PARTS || out > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || packed > bytes.length) {
+        throw new ArchiveTooLarge();
+      }
+      return false;
     },
   });
-  if (over) throw new ArchiveTooLarge();
-  return files;
+  return unzipSync(bytes);
 }
 
 /** An archive that would unpack to more than `boundedUnzip` takes. */
