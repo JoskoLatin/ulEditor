@@ -397,6 +397,7 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
   const office = prefixFor(xml, OFFICE_NS, 'office');
   const text = `${office}:text`;
   const body = BODY;
+  let bodied = false;
   const list = `${prefix}:list`;
   const item = `${prefix}:list-item`;
   const header = `${prefix}:list-header`;
@@ -464,7 +465,12 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
       if (inItem) parentFrame!.first = paragraph;
     }
     if (!tag.selfClosing) {
-      const name = tag.name === text && parentFrame?.name === `${office}:body` ? BODY : tag.name;
+      /* The first, and only in an `office:body` the root holds: one inside a
+         cell, or a second at the top, which the view does not draw, is no
+         body either (the third review of 3216ac5). */
+      const isBody = !bodied && tag.name === text && parentFrame?.name === `${office}:body` && stack.length === 2;
+      if (isBody) bodied = true;
+      const name = isBody ? BODY : tag.name;
       stack.push({ name, start: tag.start, paragraph, children: 0, first: null });
     }
   }
@@ -1250,6 +1256,7 @@ export function findOdtRows(xml: string): OdtRow[] {
   const table = prefixFor(xml, TABLE_NS, 'table');
   const office = prefixFor(xml, OFFICE_NS, 'office');
   const body = BODY;
+  let bodied = false;
   const region = new Set([...ROW_REGION].map((local) => `${table}:${local}`));
   const rowName = `${table}:table-row`;
   const cellNames = new Set([`${table}:table-cell`, `${table}:covered-table-cell`]);
@@ -1308,8 +1315,8 @@ export function findOdtRows(xml: string): OdtRow[] {
         table: tag.name === `${table}:table` ? tag.start : (parent?.table ?? -1),
         outside: region.has(tag.name)
           ? (parent?.outside ?? '')
-          : tag.name === `${office}:text` && parent?.name === `${office}:body`
-            ? BODY
+          : !bodied && tag.name === `${office}:text` && parent?.name === `${office}:body` && stack.length === 2
+            ? ((bodied = true), BODY)
             : tag.name,
       });
     }

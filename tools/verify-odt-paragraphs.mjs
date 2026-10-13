@@ -941,6 +941,41 @@ const part = (body, ns = NS, before = '') =>
     const nestedBody = T('<table:table-row><table:table-cell><office:text><text:p>skriveni</text:p></office:text></table:table-cell><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row>');
     const hidden = findOdtParagraphs(nestedBody).find((paragraph) => nestedBody.slice(paragraph.start, paragraph.end).includes('skriveni'));
     check('an office:text inside a cell is no body: its paragraphs are not the body\'s', hidden.refusal !== null, String(hidden.refusal));
+    /* The third review of 3216ac5: an office:body inside a cell, a second
+       one at the top, and the rows of a table in such a place. */
+    const G2 = (inside, after = '') => `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${NS}><office:body><office:text>${inside}</office:text></office:body>${after}</office:document-content>`;
+    const cellBody = G2('<text:p>A</text:p><table:table><table:table-row><table:table-cell><office:body><office:text><text:p>skriveni</text:p><table:table><table:table-row><table:table-cell><text:p>r</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></table:table-cell></table:table-row></table:table>');
+    const cellParagraphs = findOdtParagraphs(cellBody);
+    const cellRows = findOdtRows(cellBody);
+    check(
+      'an office:body inside a cell is no body either, for paragraphs and for rows',
+      cellParagraphs.find((paragraph) => cellBody.slice(paragraph.start, paragraph.end).includes('skriveni')).refusal !== null &&
+        cellRows[1].refusal === 'the table is not in the body of the document',
+      JSON.stringify(cellRows.map((row) => row.refusal)),
+    );
+    const secondBody = G2('<text:p>A</text:p>', '<office:body><office:text><text:p>drugi</text:p></office:text></office:body>');
+    check(
+      'nor a second office:body at the top',
+      findOdtParagraphs(secondBody).find((paragraph) => secondBody.slice(paragraph.start, paragraph.end).includes('drugi')).refusal !== null,
+    );
+    /* And the writer asks the overlap check itself: a plan whose paragraphs
+       are given wrongly — one in a cell called the body's — removing it and
+       merging its cell overlaps, and nothing is written. */
+    const overXml = T('<table:table-row><table:table-cell><text:p>u</text:p></table:table-cell><table:table-cell><text:p>v</text:p></table:table-cell></table:table-row>');
+    const overParagraphs = findOdtParagraphs(overXml).map((paragraph) => ({ ...paragraph, refusal: null }));
+    let wrote = 'written';
+    try {
+      applyOdtEdits(overXml, findOdtPieces(overXml), [], {
+        paragraphs: overParagraphs,
+        styles: readOdtStyles(overXml, null),
+        rows: findOdtRows(overXml),
+        removals: [overParagraphs.find((paragraph) => overXml.slice(paragraph.start, paragraph.end).includes('>u<')).index],
+        merges: [{ row: 0, from: 0, count: 2 }],
+      });
+    } catch (err) {
+      wrote = err instanceof OdtOverlap ? 'refused' : String(err);
+    }
+    check('the writer refuses a plan whose changes overlap, and writes nothing', wrote === 'refused', wrote);
     let overlapped = false;
     try {
       odtCheckOverlap([{ at: 10, end: 20 }, { at: 5, end: 12 }]);
