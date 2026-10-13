@@ -149,6 +149,17 @@ does not borrow another tab's reading's protection the way a save-as does
 (card 495); and `image_write` reads its source plainly, without comparing it
 with the tab's reading (card 522, point 3).
 
+*Note, 2026-10-13 (card 522, point 3):* `image_write` applies the image
+editor's plan only to the picture the tab read: the scope sends the reading of
+the source as `sourceReading`, and the core reads it with
+`Workspace::read_as_read` — the same file, by the same name, unchanged since,
+checked and read through one open file, and agreeing to nothing new. A picture
+put in its place since is asked about as any changed document when saved over
+itself; "overwrite" then, or a save into another file, is refused, saying the
+changes were made to the picture as it was and are not applied to another — the
+plan made on one picture is not turned onto one nobody saw. A save without a
+source reading (no tab read the source) reads it as before.
+
 *Note, 2026-10-13 (card 521):* `write_file` takes the document as the request's
 body and the rest in headers — `ul-path` (percent-encoded as
 `encodeURIComponent` writes it), `ul-reading`, and `ul-overwrite`, `ul-begin`,

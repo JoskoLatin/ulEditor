@@ -19,7 +19,7 @@
  *   node tools/verify-desktop-image.mjs
  */
 
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -204,7 +204,7 @@ try {
     if (!/\/image_write(\?|$)/.test(request.url())) return;
     try {
       const args = JSON.parse(request.postData() ?? '{}');
-      imageWrites.push({ target: args.target, fresh: args.fresh });
+      imageWrites.push({ target: args.target, fresh: args.fresh, sourceReading: args.sourceReading });
     } catch {
       imageWrites.push({ unreadable: request.postData()?.slice(0, 80) });
     }
@@ -308,6 +308,50 @@ try {
       (await readdir(workspace)).sort().join(',') === 'slika.jpg,slika.png',
       (await readdir(workspace)).join(', '),
     );
+
+    /* ── a plan is applied to the picture it was made on (card 522) ──
+       A turn made on what the tab shows, then another picture put in its
+       place: written into another format, or "overwrite" over itself, the
+       turn would have gone onto a picture nobody saw. Both are refused, and
+       nothing is written. */
+    await pane.locator('.ul-img-rotate-right').click();
+    const put = join(workspace, 'put.jpg');
+    await writeFile(put, pngAfter);
+    await rename(put, jpeg);
+    const replaced = await readFile(jpeg);
+    const writesBefore = imageWrites.length;
+    await pane.locator('.ul-img-format').selectOption('webp');
+    await page.keyboard.press('Control+S');
+    const intoWebp = await until(async () =>
+      /changed outside ulEditor after it was opened/.test((await page.locator('.toast').allInnerTexts()).join(' | ')),
+    );
+    check(
+      'into another format, a turn made on a picture since replaced is refused, saying why',
+      intoWebp,
+      (await page.locator('.toast').allInnerTexts()).join(' | ').slice(0, 160),
+    );
+    check(
+      'the editor named the picture it read',
+      imageWrites.length > writesBefore && Number.isInteger(imageWrites[imageWrites.length - 1].sourceReading),
+      JSON.stringify(imageWrites.slice(writesBefore)),
+    );
+    check('and no WebP was written', !(await readdir(workspace)).includes('slika.webp'), (await readdir(workspace)).join(', '));
+    /* Its message dismissed, so that the next one is the next save's. */
+    const refusal = page.locator('.toast', { hasText: 'changed outside ulEditor after it was opened' });
+    await refusal.locator('.toast-btn', { hasText: 'OK' }).first().click().catch(() => {});
+    await until(async () => (await refusal.count()) === 0);
+
+    await pane.locator('.ul-img-format').selectOption('');
+    await page.keyboard.press('Control+S');
+    const overwrite = page.locator('.toast .toast-btn', { hasText: 'Overwrite' });
+    const askedAbout = await until(async () => (await overwrite.count()) > 0);
+    check('over itself, the replaced picture is asked about first', askedAbout);
+    if (askedAbout) await overwrite.first().click();
+    const refusedOver = await until(async () =>
+      /changed outside ulEditor after it was opened/.test((await page.locator('.toast').allInnerTexts()).join(' | ')),
+    );
+    check('and "overwrite" does not put the turn on the new picture', refusedOver);
+    check('the picture put there is untouched', (await readFile(jpeg)).equals(replaced));
   }
 
   check(

@@ -55,6 +55,7 @@ export interface ReadingImages {
     options: WriteOptions | undefined,
     reading: number | undefined,
     begin: boolean,
+    sourceReading?: number,
   ): Promise<{ written: ImageWritten; reading: number | null }>;
 }
 
@@ -167,6 +168,8 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
         write: async (source: Uri, target: Uri, ops: ImageOps, options?: WriteOptions) => {
           const reading = readings.get(target);
           if (target === doc.uri && reading === undefined) throw unread(target);
+          /* And the picture the plan was made on, if this tab read it: the
+             plan is applied to that one only (card 522). */
           const { written, reading: made } = await images.writeDocument(
             source,
             target,
@@ -174,6 +177,7 @@ export function documentScope(host: EditorHost, doc: DocumentHandle): DocumentSc
             options,
             reading,
             reading === undefined,
+            readings.get(source),
           );
           if (made !== null) readings.set(target, made);
           return written;

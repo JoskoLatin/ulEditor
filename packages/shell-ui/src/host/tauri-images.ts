@@ -53,6 +53,7 @@ export class TauriImages implements ImageService {
     options: WriteOptions | undefined,
     reading: number | undefined,
     begin: boolean,
+    sourceReading?: number,
   ): Promise<{ written: ImageWritten; reading: number | null }> {
     const { reading: made, ...written } = await writeInvoke<ImageWritten & { reading: number | null }>(
       target,
@@ -65,6 +66,7 @@ export class TauriImages implements ImageService {
         reading: reading ?? null,
         begin,
         fresh: options?.fresh === true,
+        sourceReading: sourceReading ?? null,
       },
     );
     return { written, reading: made };

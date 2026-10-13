@@ -397,13 +397,9 @@ async fn pick_save_target(
         )));
     }
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let offered = offered_name(&suggested_name);
+    let (offered, kind) = dialog_offer(&suggested_name);
     let mut dialog = app.dialog().file().set_file_name(&offered);
-    /* The type, said where the name box cannot hide it: a long name is
-    scrolled to its end and shows the extension, or to its start and shows
-    only what it pretends to be (card 517). Taken from the name as offered,
-    never from the page. */
-    if let Some((label, extension)) = offered_type(&offered) {
+    if let Some((label, extension)) = kind {
         dialog = dialog.add_filter(label, &[extension.as_str()]);
     }
     dialog.save_file(move |picked| {
@@ -429,6 +425,31 @@ async fn pick_save_target(
     })?;
 
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// The types "Save as" offers a name as: the scratch panel's text, Markdown,
+/// Word and PDF, an `.xls` converted to `.xlsx`, pages taken out of a PDF —
+/// never anything else. What the person sees of a long name is its end and
+/// the type, or its start and what it pretends to be, never both, and no list
+/// of the letters drawn as a line can be finished (card 517); so neither can
+/// a list of the types Windows runs, or hands to something that does (`.vbs`,
+/// `.reg`, `.chm`, `.msc`, `.appref-ms`, …: the review of fdf7df7, which found
+/// that one shaped the way the `.exe` was went through). A type the program
+/// starts to save here is added on purpose, here and in the test that names
+/// these five.
+const SAVED_THROUGH_THE_DIALOG: [&str; 5] = ["txt", "md", "docx", "pdf", "xlsx"];
+
+/// What a "Save as" dialog is opened with: the name it offers, and the one
+/// type it lists — the type of that name, so that what will be saved is said
+/// where the name box cannot hide it (a long name is scrolled to its end and
+/// shows the extension, or to its start and shows only what it pretends to
+/// be). Both from the name as offered, never from the page: a type taken
+/// from the suggestion would be set as the dialog's default extension too,
+/// and added to whatever name the person types (the review of fdf7df7).
+fn dialog_offer(suggested: &str) -> (String, Option<(String, String)>) {
+    let offered = offered_name(suggested);
+    let kind = offered_type(&offered);
+    (offered, kind)
 }
 
 /// The name a "Save as" dialog offers: the last part of what the page
@@ -529,19 +550,10 @@ fn offered_name(suggested: &str) -> String {
         && !DEVICES
             .iter()
             .any(|device| stem.eq_ignore_ascii_case(device));
-    /* And only as one of the types this program saves through the dialog —
-    the scratch panel's text, Markdown, Word and PDF, an `.xls` converted to
-    `.xlsx`, pages taken out of a PDF — never as anything else. What the
-    person sees of a long name is its end and the type, or its start and what
-    it pretends to be, never both, and no list of the letters drawn as a line
-    can be finished (card 517); so neither can a list of the types Windows
-    runs, or hands to something that does (`.vbs`, `.reg`, `.chm`, `.msc`,
-    `.appref-ms`, …: the review of fdf7df7, which found that one shaped the
-    way the `.exe` was went through). A type the program starts to save here
-    is added on purpose. */
-    const SAVES: [&str; 5] = ["txt", "md", "docx", "pdf", "xlsx"];
+    /* And only as one of the types this program saves through the dialog
+    (`SAVED_THROUGH_THE_DIALOG`). */
     let saves = last.rsplit_once('.').is_some_and(|(_, extension)| {
-        SAVES
+        SAVED_THROUGH_THE_DIALOG
             .iter()
             .any(|kind| extension.eq_ignore_ascii_case(kind))
     });
@@ -1368,6 +1380,14 @@ async fn image_preview(
 /// webview has no business holding it. What comes back is what the file now
 /// holds — the new size, the format, and whether the encoding itself lost
 /// anything, which the editor says before it says "saved".
+///
+/// The plan was made on the picture the tab read, and with `source_reading`
+/// it is applied to that picture only (`Workspace::read_as_read`): one put in
+/// its place since would be turned, cropped and written as if somebody had
+/// seen it (card 522). Saved over itself, a changed picture is asked about
+/// as any changed document is; but "overwrite" cannot mean the plan on the
+/// new one, and neither can a save into another file, so those are refused,
+/// saying why.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn image_write(
@@ -1379,15 +1399,29 @@ fn image_write(
     reading: Option<Reading>,
     begin: Option<bool>,
     fresh: Option<bool>,
+    source_reading: Option<Reading>,
 ) -> Result<WithReading<Written>, ImageCommandError> {
-    let bytes = with_workspace(&state, |workspace| workspace.read(&source))?;
+    let overwrite = overwrite.unwrap_or(false);
+    let bytes = with_workspace(&state, |workspace| match source_reading {
+        None => workspace.read(&source),
+        Some(token) => match workspace.read_as_read(&source, token) {
+            Err(VfsError::Changed(at)) if overwrite || source != target => {
+                Err(VfsError::Unsupported(format!(
+                    "{at} was changed outside ulEditor after it was opened. The changes were made \
+                     to the picture as it was then, so they are not applied to the one there now; \
+                     close it and open it again"
+                )))
+            }
+            read => read,
+        },
+    })?;
     let (out, written) = ul_image::apply(&bytes, &ops)?;
     let reading = with_workspace(&state, |workspace| {
         save_in(
             workspace,
             &target,
             &out,
-            overwrite.unwrap_or(false),
+            overwrite,
             reading,
             begin.unwrap_or(false),
             fresh.unwrap_or(false),
@@ -2921,7 +2955,22 @@ mod tests {
     /// (card 517).
     #[test]
     fn a_save_target_is_offered_only_as_a_type_the_program_saves() {
-        use super::{offered_name, offered_type};
+        use super::{dialog_offer, offered_name, offered_type, SAVED_THROUGH_THE_DIALOG};
+        // A type is added here on purpose, or this fails.
+        assert_eq!(
+            SAVED_THROUGH_THE_DIALOG,
+            ["txt", "md", "docx", "pdf", "xlsx"]
+        );
+        // The dialog's type is the offered name's: never the suggestion's,
+        // which would be its default extension too.
+        assert_eq!(dialog_offer("setup.exe"), ("untitled".to_string(), None));
+        assert_eq!(
+            dialog_offer("../Izvještaj.final.PDF"),
+            (
+                "Izvještaj.final.PDF".to_string(),
+                Some(("PDF (*.pdf)".to_string(), "pdf".to_string()))
+            )
+        );
         // Measured 12.10.: this passed, and the box showed only its end.
         let long = format!("invoice.pdf{}.exe", "\u{30FC}".repeat(50));
         assert_eq!(offered_name(&long), "untitled");

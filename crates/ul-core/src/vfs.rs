@@ -825,6 +825,35 @@ impl Workspace {
         Ok(bytes)
     }
 
+    /// Reads a document only as the reading named saw it: the same file, by
+    /// the same name, not changed since — `VfsError::Changed` if anything
+    /// else is there, `VfsError::NotRead` for a reading this program did not
+    /// make of it. Nothing is remembered: unlike `read_document`, this agrees
+    /// to nothing new.
+    ///
+    /// For what a tab changes without holding the bytes — the image editor's
+    /// plan, applied in Rust to the picture on disk: applied to another
+    /// picture, it would write what nobody saw (card 522). Checked and read
+    /// through one open file, so what was compared is what is read.
+    pub fn read_as_read(&self, path: impl AsRef<Path>, reading: Reading) -> Result<Vec<u8>, VfsError> {
+        use std::io::Read;
+
+        let name = reading_name(path.as_ref());
+        let before = self.reading_of(reading, &name)?;
+        let resolved = self.resolve(path)?;
+        if resolved != before.at {
+            return Err(VfsError::Changed(display(&before.at)));
+        }
+        let mut file = open_regular(&resolved)?;
+        let now = Fingerprint::of(&file)?;
+        if before.print.as_ref() != Some(&now) {
+            return Err(VfsError::Changed(display(&resolved)));
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
     /// Reads a document to edit it, and remembers it as it was — which file,
     /// when it was written, how long — so that a save can tell whether
     /// somebody else changed it in the meantime (`save`). Every other read
@@ -2957,6 +2986,39 @@ mod tests {
         let refused = workspace.save(&file, b"turned again", false, Some(token), false);
         assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
         assert_eq!(alone_in_its_folder(&file), Vec::<String>::new());
+    }
+
+    /// A document is read as a reading saw it, or not at all: after a save,
+    /// what the save wrote; after somebody else's, nothing (card 522).
+    #[test]
+    fn a_document_is_read_only_as_its_reading_saw_it() {
+        let mut workspace = Workspace::new();
+        let root = workspace.add_root(scratch("read-as-read")).unwrap();
+        let file = root.join("slika.png");
+        let other = root.join("druga.png");
+        fs::write(&file, "the picture").unwrap();
+        fs::write(&other, "another picture").unwrap();
+
+        let (token, _) = workspace.read_document(&file, None).unwrap();
+        assert_eq!(workspace.read_as_read(&file, token).unwrap(), b"the picture");
+        workspace
+            .save(&file, b"turned", false, Some(token), false)
+            .unwrap();
+        assert_eq!(workspace.read_as_read(&file, token).unwrap(), b"turned");
+
+        let refused = workspace.read_as_read(&other, token);
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+        let refused = workspace.read_as_read(&file, token + 1000);
+        assert!(matches!(refused, Err(VfsError::NotRead(_))), "{refused:?}");
+
+        let put = root.join("put.png");
+        fs::write(&put, "somebody else's picture").unwrap();
+        fs::rename(&put, &file).unwrap();
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
+        // Refused again: the look agreed to nothing.
+        let refused = workspace.read_as_read(&file, token);
+        assert!(matches!(refused, Err(VfsError::Changed(_))), "{refused:?}");
     }
 
     /// A reading continues only under the name it was made under: sent with
