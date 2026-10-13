@@ -1215,12 +1215,19 @@ export function findOdtRows(xml: string): OdtRow[] {
      else's file, and a row claiming a million columns would otherwise cost a
      million steps for every row after it. A row past the edge takes no new
      row after it. */
-  const pending = new Map<number, number[]>();
+  /* For each table, how many of its rows have been read, and for each column
+     the row a cell merged down from above reaches before: a place is covered
+     from above while that row is still ahead. Counted down after every row
+     instead, one cell four thousand columns wide merged a million rows down
+     cost four thousand steps for each row after it — 1.7 s more to open a
+     17 MB table (card 525). */
+  const pending = new Map<number, { read: number; until: number[] }>();
   for (const row of rows) {
     if (row.table === -1) continue;
-    const below = pending.get(row.table) ?? [];
-    pending.set(row.table, below);
-    const fromAbove = below.map((left) => left > 0);
+    const grid = pending.get(row.table) ?? { read: 0, until: [] };
+    pending.set(row.table, grid);
+    const ordinal = grid.read++;
+    const fromAbove = (column: number) => (grid.until[column] ?? 0) > ordinal;
     let column = 0;
     for (const tag of raw.get(row) ?? []) {
       const local = localName(tag.name);
@@ -1232,14 +1239,13 @@ export function findOdtRows(xml: string): OdtRow[] {
       const repeat = count(ownAttr(xml, tag, 'number-columns-repeated'), 64);
       const span = covered ? 1 : count(ownAttr(xml, tag, 'number-columns-spanned'), 1024);
       const down = covered ? 1 : count(ownAttr(xml, tag, 'number-rows-spanned'), 1 << 20);
-      row.cells.push({ tag, covered, fromAbove: covered && fromAbove[column] === true, span, repeat });
-      if (covered && fromAbove[column]) row.continued = true;
+      row.cells.push({ tag, covered, fromAbove: covered && fromAbove(column), span, repeat });
+      if (covered && fromAbove(column)) row.continued = true;
       for (let r = 0; r < repeat && column < MOST_COLUMNS; r++) {
-        if (down > 1) for (let c = column; c < Math.min(column + span, MOST_COLUMNS); c++) below[c] = down;
+        if (down > 1) for (let c = column; c < Math.min(column + span, MOST_COLUMNS); c++) grid.until[c] = ordinal + down;
         column += span;
       }
     }
-    for (let c = 0; c < below.length; c++) if (below[c]! > 0) below[c]! -= 1;
   }
 
   return rows;

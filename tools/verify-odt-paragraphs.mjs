@@ -748,6 +748,28 @@ const part = (body, ns = NS, before = '') =>
   const deepTook = Date.now() - started;
   check('tables nested a thousand deep are read in one pass', deepTook < 1500, `${deepTook} ms`);
 
+  /* A cell four thousand columns wide merged a million rows down, then a
+     hundred thousand rows: the grid used to be counted down across its whole
+     width after every one of them (card 525). */
+  const wide = part(
+    `<table:table><table:table-row><table:table-cell table:number-columns-spanned="1024" table:number-rows-spanned="1000000" table:number-columns-repeated="4"/></table:table-row>${'<table:table-row><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row>'.repeat(100000)}</table:table>`,
+  );
+  /* Against the same rows with nothing merged: the measure is the ratio, not
+     a time this machine happens to take. Counted down, the merged one took
+     four times as long. */
+  const flat = part(`<table:table>${'<table:table-row><table:table-cell><text:p>x</text:p></table:table-cell></table:table-row>'.repeat(100001)}</table:table>`);
+  let at = Date.now();
+  findOdtRows(flat);
+  const flatTook = Date.now() - at;
+  at = Date.now();
+  const wideRows = findOdtRows(wide);
+  const wideTook = Date.now() - at;
+  check(
+    'a cell merged down across the whole width costs nothing for the rows after it',
+    wideRows.length === 100001 && wideTook < 2 * flatTook + 100,
+    `${wideTook} ms, against ${flatTook} ms with nothing merged`,
+  );
+
   const comments = part(
     `<text:p>${'<office:annotation office:name="c"><text:p>k</text:p></office:annotation>'.repeat(20000)}</text:p><text:p>B</text:p>`,
   );
