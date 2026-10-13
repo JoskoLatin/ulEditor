@@ -796,6 +796,31 @@ const part = (body, ns = NS, before = '') =>
     );
     const inCell = listed('<text:p>A</text:p><table:table><table:table-row><table:table-cell><text:list><text:list-item><text:p>a</text:p></text:list-item></text:list></table:table-cell></table:table-row></table:table>');
     check('nor is a list in a table cell reshaped', inCell.paragraphs[1].refusal === 'the paragraph is in a list');
+
+    /* The review of ee345d6. */
+    const restartsAt = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p></text:list-item><text:list-item text:start-value="5"><text:p>b</text:p></text:list-item><text:list-item><text:p>c</text:p></text:list-item></text:list>');
+    check(
+      'not joined onto an item with settings of its own — its restart would go, and the numbers after it',
+      odtJoinRefusal(restartsAt.xml, restartsAt.paragraphs, restartsAt.styles, 1) === 'the next list item has settings of its own' &&
+        plan(restartsAt, { joins: [1] }) === restartsAt.xml,
+    );
+    const hiddenBetween = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p></text:list-item><text:list-item/><foo:list-item xmlns:foo="urn:x" foo:secret="s"/><text:list-item><text:p>c</text:p></text:list-item></text:list>');
+    check(
+      'nor across an empty item or one of another namespace between, which the join would take unseen',
+      odtJoinRefusal(hiddenBetween.xml, hiddenBetween.paragraphs, hiddenBetween.styles, 1) === 'something stands between the two paragraphs',
+    );
+    const pictured = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p></text:list-item><text:list-item><text:p/><text:p>slika</text:p></text:list-item><text:list-item><text:p>c</text:p></text:list-item></text:list>');
+    check(
+      'nor across an item of two paragraphs',
+      odtJoinRefusal(pictured.xml, pictured.paragraphs, pictured.styles, 1) === 'something stands between the two paragraphs',
+    );
+    const continued = listed('<text:p>A</text:p><text:list xml:id="l1"><text:list-item><text:p>a</text:p></text:list-item></text:list><text:list text:continue-list="l1"><text:list-item><text:p>b</text:p></text:list-item><text:list-item><text:p>c</text:p></text:list-item></text:list>');
+    check(
+      'the only item of a list another continues is its list\'s last, whatever the other holds',
+      odtRemovalRefusal(continued.xml, continued.paragraphs, continued.styles, 1) === 'the last item of a list',
+    );
+    const loose = listed('<text:p>A</text:p><text:section><text:list-item><text:p>a</text:p></text:list-item></text:section>');
+    check('an item outside a list is not one', loose.paragraphs[1].item === null && loose.paragraphs[1].refusal === 'the paragraph is in a list');
   }
   written.push(added, cut, gone, last, joined);
   readableLists.push(

@@ -368,6 +368,8 @@ export interface OdtItem {
   list: number;
   /** `text:start-value`: the number it restarts its list at. */
   restarts: boolean;
+  /** Any attribute of its own — a number it restarts at, an id, a style override — which a join would drop. */
+  attributed: boolean;
 }
 
 /**
@@ -444,6 +446,9 @@ export function findOdtParagraphs(xml: string): OdtParagraph[] {
               end: parentFrame!.start,
               list: listFrame!.start,
               restarts: ownAttr(xml, openingOf(xml, { start: parentFrame!.start }), 'start-value') !== null,
+              attributed: /\s[^\s=/>"']+\s*=/.test(
+                xml.slice(parentFrame!.start, openingOf(xml, { start: parentFrame!.start }).end),
+              ),
             }
           : null,
       };
@@ -1017,7 +1022,11 @@ function partnerOf(
     const sameList = span.item !== null && one.item !== null && span.item.list === one.item.list;
     for (const tag of scanTags(xml.slice(from, one.start))) {
       if (tag.closing || BETWEEN.has(localName(tag.name))) continue;
-      if (sameList && localName(tag.name) === 'list-item') continue;
+      /* The opening of the very item the next paragraph is the whole of —
+         not any element of that local name: an empty item between, or one
+         of another namespace, would go with the join unseen (the review of
+         ee345d6). */
+      if (sameList && from + tag.start === one.item!.start) continue;
       return 'something stands between the two paragraphs';
     }
     if (xml.slice(from, one.start).replace(/<[^>]*>/g, '').trim() !== '') return 'something stands between the two paragraphs';
@@ -1054,6 +1063,11 @@ export function odtJoinRefusal(
   /* Only within one list, or within the body: across the end of a list the
      join would take the list's end with it. */
   if ((span.item?.list ?? -1) !== (next.item?.list ?? -1)) return 'the paragraphs are not in the same list';
+  /* The joined line is the first item's: the next one's own attributes —
+     the number its list restarts at, an id, a style override — would go,
+     and with a restart every item after it renumbered (measured in
+     LibreOffice: 1. 5. 6. became 1. 2.; the review of ee345d6). */
+  if (next.item?.attributed) return 'the next list item has settings of its own';
   /* The joined paragraph is the first one's tag, so the next one's `xml:id`
      or `text:id` goes with its tag — a file whose metadata names one would lose that (none in the
      corpus; the review of card 459 asked). */

@@ -619,6 +619,7 @@
   "The last item of a list cannot be removed here — the list would be left empty.": "Zadnja stavka popisa ovdje se ne može ukloniti — popis bi ostao prazan.",
   "This list item sets the number its list restarts at — removing it would renumber the items after it.": "Ova stavka određuje broj od kojeg popis ponovno kreće — njezino uklanjanje prenumeriralo bi stavke iza nje.",
   "These paragraphs are not in the same list, so they cannot be joined here.": "Ovi odlomci nisu u istom popisu, pa se ovdje ne mogu spojiti.",
+  "The next list item has settings of its own — where its numbering restarts, or its own style — which joining would lose.": "Sljedeća stavka popisa ima vlastite postavke — gdje joj numeracija ponovno kreće ili vlastiti stil — koje bi se spajanjem izgubile.",
   "The next paragraph starts a new page or page style — joining them would lose it.": "Sljedeći odlomak počinje novu stranicu ili stil stranice — spajanjem bi se to izgubilo.",
   "This paragraph starts a new page or page style — splitting it would start a second one.": "Ovaj odlomak počinje novu stranicu ili stil stranice — dijeljenjem bi počela još jedna.",
   "This paragraph starts a new page or page style — removing it would change the pages after it.": "Ovaj odlomak počinje novu stranicu ili stil stranice — uklanjanjem bi se promijenile stranice iza njega.",

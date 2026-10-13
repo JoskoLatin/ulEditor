@@ -1247,6 +1247,8 @@ function said(why: string, act: 'add' | 'remove' | 'split' | 'join'): string {
       return t('The last item of a list cannot be removed here — the list would be left empty.');
     case 'the list item sets the number its list restarts at':
       return t('This list item sets the number its list restarts at — removing it would renumber the items after it.');
+    case 'the next list item has settings of its own':
+      return t('The next list item has settings of its own — where its numbering restarts, or its own style — which joining would lose.');
     case 'the paragraphs are not in the same list':
       return t('These paragraphs are not in the same list, so they cannot be joined here.');
     case 'the paragraph starts a page':
