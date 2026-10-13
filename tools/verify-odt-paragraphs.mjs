@@ -804,6 +804,11 @@ const part = (body, ns = NS, before = '') =>
       odtJoinRefusal(restartsAt.xml, restartsAt.paragraphs, restartsAt.styles, 1) === 'the next list item has settings of its own' &&
         plan(restartsAt, { joins: [1] }) === restartsAt.xml,
     );
+    const identified = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p></text:list-item><text:list-item xml:id="i2"><text:p>b</text:p></text:list-item></text:list>');
+    check(
+      'nor onto one with an id of its own, which the join would drop',
+      odtJoinRefusal(identified.xml, identified.paragraphs, identified.styles, 1) === 'the next list item has settings of its own',
+    );
     const hiddenBetween = listed('<text:p>A</text:p><text:list><text:list-item><text:p>a</text:p></text:list-item><text:list-item/><foo:list-item xmlns:foo="urn:x" foo:secret="s"/><text:list-item><text:p>c</text:p></text:list-item></text:list>');
     check(
       'nor across an empty item or one of another namespace between, which the join would take unseen',
