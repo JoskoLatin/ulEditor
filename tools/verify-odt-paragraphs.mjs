@@ -647,6 +647,35 @@ const part = (body, ns = NS, before = '') =>
     odtRemovalRefusal(pictured, pic.paragraphs, pic.styles, 1) === 'the paragraph holds a picture or an object',
   );
 
+  /* Places something points to (card 525, N4). Measured over the corpus, the
+     marks in paragraphs that may go were all `_GoBack` and `_Hlk…`, pointed
+     to by nothing — those still go. */
+  const judge = (body, index, join = false) => {
+    const xml = part(body);
+    const paragraphs = findOdtParagraphs(xml);
+    const styles = readOdtStyles(xml, null);
+    return join ? odtJoinRefusal(xml, paragraphs, styles, index) : odtRemovalRefusal(xml, paragraphs, styles, index);
+  };
+  check(
+    'not removed: a line a cross-reference points to',
+    judge('<text:p>A</text:p><text:p><text:bookmark text:name="cilj"/></text:p><text:p>Vidi <text:bookmark-ref text:ref-name="cilj">1</text:bookmark-ref></text:p>', 1) ===
+      'the paragraph holds a place something else points to',
+  );
+  check(
+    'nor one a link within the document points to',
+    judge('<text:p>A</text:p><text:p><text:bookmark-start text:name="cilj"/>x<text:bookmark-end text:name="cilj"/></text:p><text:p><text:a xlink:href="#cilj|outline">tu</text:a></text:p>', 1) ===
+      'the paragraph holds a place something else points to',
+  );
+  check(
+    'nor one holding half of a bookmark that runs on',
+    judge('<text:p><text:bookmark-start text:name="r"/>A</text:p><text:p>B<text:bookmark-end text:name="r"/></text:p><text:p>C</text:p>', 0) ===
+      'a bookmark continues outside the paragraph',
+  );
+  check(
+    'but a line holding a mark nothing points to still goes',
+    judge('<text:p>A</text:p><text:p><text:bookmark text:name="_GoBack"/></text:p><text:p>C</text:p>', 1) === null,
+  );
+
   const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
   check(
     'what XML cannot hold is left out of what was typed',

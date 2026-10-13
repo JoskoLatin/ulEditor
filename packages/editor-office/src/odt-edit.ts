@@ -754,6 +754,60 @@ function tracked(xml: string, from: number, to: number): boolean {
   return false;
 }
 
+/** Marks that name a place: what a cross-reference, a link or an index points to. */
+const PLACES = new Set(['bookmark', 'reference-mark', 'bookmark-start', 'reference-mark-start']);
+
+/**
+ * The names something in the part points to: a cross-reference to a bookmark
+ * or a reference mark (`text:bookmark-ref`, `text:reference-ref`, by
+ * `text:ref-name`), or a link within the document (`xlink:href="#name"`, up to
+ * a `|`, as LibreOffice writes a link to a heading or a table).
+ */
+function pointedNames(xml: string): Set<string> {
+  if (pointedRead?.xml === xml) return pointedRead.names;
+  const names = new Set<string>();
+  for (const tag of scanTags(xml)) {
+    if (tag.closing) continue;
+    const local = localName(tag.name);
+    if (local === 'bookmark-ref' || local === 'reference-ref') {
+      const name = ownAttr(xml, tag, 'ref-name');
+      if (name !== null) names.add(name);
+    }
+    const href = ownAttr(xml, tag, 'href');
+    if (href?.startsWith('#')) names.add(href.slice(1).split('|')[0]!);
+  }
+  pointedRead = { xml, names };
+  return names;
+}
+let pointedRead: { xml: string; names: Set<string> } | null = null;
+
+/**
+ * Why the places named in a range may not go with it, if any: one something
+ * else points to — a cross-reference would be left reading "Error: Reference
+ * source not found" — or half a bookmark whose other half is outside, which
+ * would be left closing nothing. A place nothing points to goes: measured over
+ * the corpus (card 525), the marks in the paragraphs that may be taken away
+ * were all `_GoBack` and `_Hlk…`, which Word writes and drops itself.
+ */
+function placesRefusal(xml: string, from: number, to: number): string | null {
+  const pointed = pointedNames(xml);
+  const halves = new Map<string, number>();
+  for (const raw of scanTags(xml.slice(from, to))) {
+    if (raw.closing) continue;
+    const local = localName(raw.name);
+    const tag = { start: raw.start + from, end: raw.end + from };
+    if (PLACES.has(local) && pointed.has(ownAttr(xml, tag, 'name') ?? '')) {
+      return 'the paragraph holds a place something else points to';
+    }
+    if (local === 'bookmark-start' || local === 'bookmark-end') {
+      const name = ownAttr(xml, tag, 'name') ?? '';
+      halves.set(name, (halves.get(name) ?? 0) + (local === 'bookmark-start' ? 1 : -1));
+    }
+  }
+  if ([...halves.values()].some((open) => open !== 0)) return 'a bookmark continues outside the paragraph';
+  return null;
+}
+
 /* ── the rules ───────────────────────────────────────────────────────── */
 
 /**
@@ -780,6 +834,8 @@ export function odtRemovalRefusal(
   if (startsPage(styles, span.style)) return 'the paragraph starts a page';
   if (tracked(xml, span.start, span.end)) return 'a tracked change is recorded in the paragraph';
   if (!rangesBalanced(xml, span.start, span.end)) return 'a marked stretch continues outside the paragraph';
+  const places = placesRefusal(xml, span.start, span.end);
+  if (places) return places;
   /* A text box anchored in it, or a comment, holds paragraphs of its own,
      which the view does not draw: the line looks nearly empty and carries a
      page of text. Measured: one such paragraph in the corpus held forty. */
@@ -878,6 +934,9 @@ export function odtJoinRefusal(
   const next = partnerOf(xml, body, span, alive);
   if (typeof next === 'string') return next;
   if (startsPage(styles, next.style)) return 'the paragraph starts a page';
+  /* The joined paragraph is the first one's tag, so the next one's `xml:id`
+     or `text:id` goes with its tag — a file whose metadata names one would lose that (none in the
+     corpus; the review of card 459 asked). */
   if (tracked(xml, span.start, span.end) || tracked(xml, next.start, next.end)) {
     return 'a tracked change is recorded where the paragraphs meet';
   }

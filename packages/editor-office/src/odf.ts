@@ -1239,6 +1239,10 @@ function said(why: string, act: 'add' | 'remove' | 'split' | 'join'): string {
       return act === 'split'
         ? t('A comment or a reference mark runs through this spot — splitting here would cut it in two.')
         : t('A comment or a reference mark continues outside this paragraph.');
+    case 'the paragraph holds a place something else points to':
+      return t('A cross-reference or a link points to a bookmark in this paragraph — removing it would leave that pointing nowhere.');
+    case 'a bookmark continues outside the paragraph':
+      return t('A bookmark starts or ends in this paragraph and continues outside it.');
     case 'the text is inside an element a cut would tear in two':
       return t('The cursor is inside a link or a field — splitting here would cut it in two.');
     case 'the text cannot be retyped':
