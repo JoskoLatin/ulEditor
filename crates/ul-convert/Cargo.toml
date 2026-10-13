@@ -10,3 +10,10 @@ description = "LibreOffice, run headless, for the formats nobody else implements
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+# A CorelDRAW X6+ drawing is a ZIP, made again from the parts libcdr reads
+# before LibreOffice sees it (ADR 0008). Deflate through flate2 only: the
+# default features would bring bzip2, zstd, lzma and AES for nothing.
+zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
+# Named only to pick its pure-Rust backend, which the desktop build already
+# compiles: without one this crate does not build on its own.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }

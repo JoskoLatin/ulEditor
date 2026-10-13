@@ -427,7 +427,15 @@ pub fn detect(name: &str, bytes: &[u8]) -> Detection {
     }
 
     if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
-        return Detection::new(classify_zip(bytes), DetectedVia::Magic);
+        /* CorelDRAW X6 and later save a drawing as a ZIP of its own, with
+        nothing in its first bytes to tell it from any other: named `.cdr`
+        and none of the formats above, it goes to the drawing viewer, whose
+        conversion decides what it really is (ul-convert, ADR 0008). */
+        let kind = classify_zip(bytes);
+        if kind == FormatId::Archive && extension_of(&name.to_ascii_lowercase()) == Some("cdr") {
+            return Detection::new(FormatId::Vector, DetectedVia::Magic);
+        }
+        return Detection::new(kind, DetectedVia::Magic);
     }
 
     let is_image = bytes.starts_with(&[0x89, b'P', b'N', b'G'])
@@ -719,6 +727,21 @@ endsolid cube
         let mut mislabelled = b"PK\x03\x04".to_vec();
         mislabelled.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.spreadsheet");
         assert_eq!(detect("tablica.odt", &mislabelled).format, FormatId::Ods);
+    }
+
+    /// A CorelDRAW X6+ drawing is a ZIP with nothing to say so but its name:
+    /// that goes to the drawing viewer, and an OpenDocument or Word file
+    /// wearing the name is still what it is (ADR 0008).
+    #[test]
+    fn a_zip_named_cdr_is_a_drawing_unless_it_is_a_known_document() {
+        let mut corel = b"PK\x03\x04".to_vec();
+        corel.extend_from_slice(b"\x14\0\x08\0\x08\0content/data/data1.dat");
+        assert_eq!(detect("grb mko.cdr", &corel).format, FormatId::Vector);
+        assert_eq!(detect("GRB.CDR", &corel).format, FormatId::Vector);
+        assert_eq!(detect("grb.zip", &corel).format, FormatId::Archive);
+        let mut odt = b"PK\x03\x04".to_vec();
+        odt.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.text");
+        assert_eq!(detect("grb.cdr", &odt).format, FormatId::Odt);
     }
 
     #[test]

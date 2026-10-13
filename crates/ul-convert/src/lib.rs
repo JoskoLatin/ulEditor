@@ -68,6 +68,8 @@ pub enum ConvertError {
         "PostScript is not converted on this system: LibreOffice would hand it to Ghostscript, which runs it as the program it is"
     )]
     PostscriptNotRun,
+    #[error("this CorelDRAW file is not laid out the way this program converts: {0}")]
+    CorelLayout(String),
     #[error("this file is larger than the {0} MiB LibreOffice is given here")]
     TooLarge(u64),
     #[error("another file is being converted — try again when it is done")]
@@ -150,12 +152,184 @@ fn is_postscript(head: &[u8]) -> bool {
     head.starts_with(b"%!PS") || head.starts_with(&DOS_EPS)
 }
 
-/// CorelDRAW: a RIFF container whose form type begins "CDR" (a drawing) or
-/// "CDT" (a template), in either case.
+/// CorelDRAW as libcdr reads it (`getCDRVersion` in its `CDRDocument.cpp`):
+/// a RIFF container whose form type is "CDR", in either case, followed by a
+/// version byte libcdr knows — a space, `1` to `9`, or `A` and above. A
+/// template ("CDT") or any other byte libcdr turns away, and LibreOffice then
+/// tries its other imports on the file: one took a RIFF "CDT" for Writer text
+/// (measured 2026-10-12, card 510). So only what libcdr will take is let in.
 fn is_coreldraw(head: &[u8]) -> bool {
-    head.starts_with(b"RIFF")
-        && head.len() >= 11
-        && (head[8..11].eq_ignore_ascii_case(b"cdr") || head[8..11].eq_ignore_ascii_case(b"cdt"))
+    head.len() >= 12
+        && head.starts_with(b"RIFF")
+        && head[8..11].eq_ignore_ascii_case(b"cdr")
+        && matches!(head[11], 0x20 | 0x31..=0x39 | 0x41..=0xFF)
+}
+
+/// A ZIP: what CorelDRAW X6 and later save a drawing as. Never handed to
+/// LibreOffice as it is — see `rebuild_coreldraw`.
+fn is_zip(head: &[u8]) -> bool {
+    head.starts_with(b"PK\x03\x04")
+}
+
+/// What `admit` lets through, and how.
+#[derive(Debug, PartialEq)]
+enum Admitted {
+    /// The file as it is.
+    AsIs,
+    /// A ZIP, to be rebuilt from the parts libcdr reads before LibreOffice
+    /// sees anything (`rebuild_coreldraw`).
+    CorelZip,
+}
+
+/// The most names a CorelDRAW ZIP's list of drawing parts is taken with:
+/// the real one has three.
+const MOST_PARTS: usize = 1024;
+
+/// The longest that list is read: three names are 34 bytes.
+const MOST_LIST_BYTES: u64 = 64 * 1024;
+
+/// Whether a name in that list is one this program writes back: a plain
+/// file name — letters, digits, `.`, `_`, `-`, not starting with a dot, at
+/// most 128 bytes. The real ones are `data1.dat`, `masterPage.dat`,
+/// `page1.dat`; nothing that could name a path, or need escaping, is taken.
+fn is_part_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name[0] != b'.'
+        && name
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(b))
+}
+
+/// A CorelDRAW ZIP made again from the parts libcdr reads, and only those:
+/// `content/root.dat` — itself a CorelDRAW RIFF libcdr takes —, the list
+/// `content/dataFileList.dat`, and `content/data/<name>` for each name in it,
+/// stored, into `to`, a new file. LibreOffice is given that, never the ZIP
+/// the page wrote (ADR 0008).
+///
+/// A ZIP is a container LibreOffice opens as whatever its members say: one
+/// named `.cdr` holding OpenDocument members was imported as a Writer
+/// document (measured 2026-10-12, card 510), and two ZIP readers need not
+/// agree on what one holds. Rebuilt, there is one reading of it — this one —
+/// and nothing in it but what libcdr asks for by name. Split as libcdr splits
+/// the list: at every `\n`, and a last name with none after it.
+///
+/// Everything read is bounded: each part and all of them together by
+/// `MOST_BYTES`, the list by `MOST_LIST_BYTES` and `MOST_PARTS`; a part is
+/// read to its end, so its checksum is checked, or not used at all. A layout
+/// not measured here — `content/riffData.cdr` alone, say — is refused.
+fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
+    use std::io::{Read, Write};
+    use zip::result::ZipError;
+
+    let layout = |why: &str| ConvertError::CorelLayout(why.to_string());
+    let mut archive = zip::ZipArchive::new(open_regular(from)?)
+        .map_err(|_| layout("it is not a ZIP this program can read"))?;
+    let mut budget = MOST_BYTES;
+
+    let mut out = zip::ZipWriter::new(std::fs::File::create_new(to)?);
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    /* A part, opened by its exact name, a folder or anything unreadable
+    refused. */
+    fn open<'a>(
+        archive: &'a mut zip::ZipArchive<std::fs::File>,
+        name: &str,
+    ) -> Result<Option<zip::read::ZipFile<'a, std::fs::File>>, ConvertError> {
+        match archive.by_name(name) {
+            Ok(part) if part.is_file() => Ok(Some(part)),
+            Ok(_) => Err(ConvertError::CorelLayout(format!("{name} is not a file"))),
+            Err(ZipError::FileNotFound) => Ok(None),
+            Err(err) => Err(ConvertError::CorelLayout(format!(
+                "{name} could not be read: {err}"
+            ))),
+        }
+    }
+    /* Copied into the new ZIP, to its end and within what is left of the
+    budget. */
+    fn copy(
+        part: &mut zip::read::ZipFile<'_, std::fs::File>,
+        name: &str,
+        into: &mut zip::ZipWriter<std::fs::File>,
+        budget: &mut u64,
+    ) -> Result<(), ConvertError> {
+        let copied = std::io::copy(&mut part.take(*budget + 1), into)
+            .map_err(|err| ConvertError::CorelLayout(format!("{name} could not be read: {err}")))?;
+        if copied > *budget {
+            return Err(ConvertError::TooLarge(MOST_BYTES / (1024 * 1024)));
+        }
+        *budget -= copied;
+        Ok(())
+    }
+
+    {
+        let name = "content/root.dat";
+        let Some(mut root) = open(&mut archive, name)? else {
+            return Err(layout("it has no content/root.dat"));
+        };
+        let mut head = [0u8; 12];
+        root.read_exact(&mut head)
+            .map_err(|_| layout("its content/root.dat is not a CorelDRAW drawing"))?;
+        if !is_coreldraw(&head) {
+            return Err(layout("its content/root.dat is not a CorelDRAW drawing"));
+        }
+        out.start_file(name, stored)
+            .map_err(|err| ConvertError::Io(err.into()))?;
+        out.write_all(&head)?;
+        budget -= head.len() as u64;
+        copy(&mut root, name, &mut out, &mut budget)?;
+    }
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    if let Some(list) = open(&mut archive, "content/dataFileList.dat")? {
+        let mut bytes = Vec::new();
+        list.take(MOST_LIST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| layout("its list of drawing parts could not be read"))?;
+        if bytes.len() as u64 > MOST_LIST_BYTES {
+            return Err(layout("its list of drawing parts is too long"));
+        }
+        let mut name = Vec::new();
+        for byte in bytes {
+            if byte == b'\n' {
+                names.push(std::mem::take(&mut name));
+            } else {
+                name.push(byte);
+            }
+        }
+        if !name.is_empty() {
+            names.push(name);
+        }
+        if names.len() > MOST_PARTS || !names.iter().all(|n| is_part_name(n)) {
+            return Err(layout(
+                "its list of drawing parts names something other than a part",
+            ));
+        }
+    }
+    let joined = names.join(&b'\n');
+    out.start_file("content/dataFileList.dat", stored)
+        .map_err(|err| ConvertError::Io(err.into()))?;
+    out.write_all(&joined)?;
+
+    let mut written = HashSet::new();
+    for name in &names {
+        if !written.insert(name.clone()) {
+            continue;
+        }
+        let path = format!(
+            "content/data/{}",
+            std::str::from_utf8(name).expect("checked by is_part_name")
+        );
+        let Some(mut part) = open(&mut archive, &path)? else {
+            return Err(layout("a drawing part its list names is missing"));
+        };
+        out.start_file(path.as_str(), stored)
+            .map_err(|err| ConvertError::Io(err.into()))?;
+        copy(&mut part, &path, &mut out, &mut budget)?;
+    }
+    out.finish().map_err(|err| ConvertError::Io(err.into()))?;
+    Ok(())
 }
 
 /// Whether LibreOffice may be given a file that begins with `head`, here: a
@@ -180,13 +354,19 @@ fn is_coreldraw(head: &[u8]) -> bool {
 /// A PDF is not one of them. A modern `.ai` is a PDF and opens in the PDF
 /// viewer, so nothing sends one here, and LibreOffice's PDF import would only
 /// be one more parser over bytes a page wrote (the review of 0f215cf).
-fn admit(head: &[u8]) -> Result<(), ConvertError> {
+///
+/// A ZIP is let through only to be made again (`Admitted::CorelZip`): what
+/// LibreOffice then sees is `rebuild_coreldraw`'s, or nothing.
+fn admit(head: &[u8]) -> Result<Admitted, ConvertError> {
     if is_coreldraw(head) {
-        return Ok(());
+        return Ok(Admitted::AsIs);
+    }
+    if is_zip(head) {
+        return Ok(Admitted::CorelZip);
     }
     if is_postscript(head) {
         return if POSTSCRIPT_IS_CONVERTED {
-            Ok(())
+            Ok(Admitted::AsIs)
         } else {
             Err(ConvertError::PostscriptNotRun)
         };
@@ -687,7 +867,24 @@ pub fn to_pdf(
     // really is, and a web page reaches the network as it loads (card 505).
     // And PostScript only where what LibreOffice would hand it to is kept out
     // of its reach (card 512).
-    admit(&head_of(&staged)?)?;
+    let staged = match admit(&head_of(&staged)?)? {
+        Admitted::AsIs => staged,
+        /* Rebuilt beside it, under the drawing's own name with `.cdr` — the
+        extension LibreOffice tries libcdr on first — and the page's ZIP gone
+        before LibreOffice is started. */
+        Admitted::CorelZip => {
+            let rebuilt_dir = staging.0.join("cdr");
+            std::fs::create_dir(&rebuilt_dir)?;
+            let stem = Path::new(name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "drawing".to_string());
+            let rebuilt = rebuilt_dir.join(format!("{stem}.cdr"));
+            rebuild_coreldraw(&staged, &rebuilt)?;
+            std::fs::remove_file(&staged)?;
+            rebuilt
+        }
+    };
     std::fs::create_dir_all(outdir)?;
 
     let expected = outdir.join(output_name(&staged));
@@ -1450,7 +1647,16 @@ showpage
         assert!(content_is_supported(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0])); // EPS with a preview
         assert!(content_is_supported(b"RIFFxxxxCDRA")); // CorelDRAW
         assert!(content_is_supported(b"RIFFxxxxcdrA")); // and in lower case
-        assert!(content_is_supported(b"RIFFxxxxCDTA")); // a template
+        assert!(content_is_supported(b"RIFFxxxxCDR9")); // version 9
+        assert!(content_is_supported(b"RIFFxxxxCDR ")); // version 3
+        assert!(content_is_supported(b"RIFFxxxxCDR\xFF")); // libcdr takes any byte from A up
+                                                           // What libcdr turns away, and LibreOffice then tries as something
+                                                           // else (card 510): a template, a version byte it does not know, none.
+        assert!(!content_is_supported(b"RIFFxxxxCDTA"));
+        assert!(!content_is_supported(b"RIFFxxxxCDR\x05"));
+        assert!(!content_is_supported(b"RIFFxxxxCDR0"));
+        assert!(!content_is_supported(b"RIFFxxxxCDR@"));
+        assert!(!content_is_supported(b"RIFFxxxxCDR"));
 
         // What a document would be wearing one of those four names: each is
         // sniffed by LibreOffice for what it is, and each reaches out.
@@ -1469,6 +1675,302 @@ showpage
         assert!(!content_is_supported(b"%!ps-adobe-3.0\n")); // LibreOffice would take it; not here
         assert!(!content_is_supported(b"%PDF-1.5\n")); // a modern .ai: the PDF viewer's
         assert!(!content_is_supported(b""));
+    }
+
+    /// A ZIP written here, of `members` in order, deflated as CorelDRAW
+    /// writes them.
+    fn zip_of(members: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let deflated = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in members {
+            out.start_file(*name, deflated).unwrap();
+            out.write_all(bytes).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    /// The members of a ZIP, in order, with how each is stored.
+    fn members_of(path: &Path) -> Vec<(String, zip::CompressionMethod, Vec<u8>)> {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        (0..archive.len())
+            .map(|i| {
+                let mut part = archive.by_index(i).unwrap();
+                let mut bytes = Vec::new();
+                part.read_to_end(&mut bytes).unwrap();
+                (part.name().to_string(), part.compression(), bytes)
+            })
+            .collect()
+    }
+
+    const ROOT: &[u8] = b"RIFF\x10\0\0\0CDRGfver\x04\0\0\0abcd";
+
+    /// The layout of the one real CorelDRAW ZIP (X6, card 510), and what
+    /// libcdr does not read beside it: thumbnails, styles — and OpenDocument
+    /// members, which LibreOffice would open as a Writer document.
+    fn a_coreldraw_zip() -> Vec<u8> {
+        zip_of(&[
+            ("mimetype", b"application/vnd.oasis.opendocument.text"),
+            ("content/data/data1.dat", b"first part"),
+            ("content/data/page1.dat", b"the page"),
+            ("content/dataFileList.dat", b"data1.dat\npage1.dat"),
+            ("content/root.dat", ROOT),
+            ("metadata/thumbnails/thumbnail.bmp", b"BM a picture"),
+            ("content.xml", b"<office:document-content/>"),
+            ("styles/document.cdss", b"styles"),
+        ])
+    }
+
+    fn rebuilt(name: &str, zip: &[u8]) -> (PathBuf, Result<(), ConvertError>) {
+        let dir =
+            std::env::temp_dir().join(format!("ul-convert-zip-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("drawing.cdr");
+        std::fs::write(&from, zip).unwrap();
+        let to = dir.join("rebuilt.cdr");
+        let made = rebuild_coreldraw(&from, &to);
+        (to, made)
+    }
+
+    /// A CorelDRAW ZIP is made again of the parts libcdr reads and nothing
+    /// else, stored, the bytes of each as they were (ADR 0008).
+    #[test]
+    fn a_coreldraw_zip_is_made_again_of_what_libcdr_reads() {
+        let (to, made) = rebuilt("whole", &a_coreldraw_zip());
+        made.unwrap();
+        let members = members_of(&to);
+        let names: Vec<&str> = members.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "content/root.dat",
+                "content/dataFileList.dat",
+                "content/data/data1.dat",
+                "content/data/page1.dat"
+            ]
+        );
+        assert!(members
+            .iter()
+            .all(|(_, how, _)| *how == zip::CompressionMethod::Stored));
+        assert_eq!(members[0].2, ROOT);
+        assert_eq!(members[1].2, b"data1.dat\npage1.dat");
+        assert_eq!(members[2].2, b"first part");
+        assert_eq!(members[3].2, b"the page");
+
+        // Split as libcdr splits it: a last newline ends nothing more, and a
+        // name named twice is one part.
+        let (to, made) = rebuilt(
+            "twice",
+            &zip_of(&[
+                ("content/root.dat", ROOT),
+                ("content/dataFileList.dat", b"page1.dat\npage1.dat\n"),
+                ("content/data/page1.dat", b"the page"),
+            ]),
+        );
+        made.unwrap();
+        let members = members_of(&to);
+        assert_eq!(members.len(), 3);
+        assert_eq!(members[1].2, b"page1.dat\npage1.dat");
+
+        // No list: the drawing alone, and an empty list beside it.
+        let (to, made) = rebuilt("alone", &zip_of(&[("content/root.dat", ROOT)]));
+        made.unwrap();
+        assert_eq!(members_of(&to).len(), 2);
+    }
+
+    /// What is not that layout is refused, and no ZIP is left to hand on.
+    #[test]
+    fn a_zip_that_is_not_a_coreldraw_drawing_is_refused() {
+        let refusals: [(&str, Vec<u8>); 10] = [
+            (
+                "odf",
+                zip_of(&[
+                    ("mimetype", b"application/vnd.oasis.opendocument.text"),
+                    ("content.xml", b"<x/>"),
+                ]),
+            ),
+            (
+                "no-root",
+                zip_of(&[
+                    ("content/dataFileList.dat", b""),
+                    ("content/riffData.cdr", ROOT),
+                ]),
+            ),
+            (
+                "template",
+                zip_of(&[("content/root.dat", b"RIFF\x10\0\0\0CDTGfver")]),
+            ),
+            (
+                "version",
+                zip_of(&[("content/root.dat", b"RIFF\x10\0\0\0CDR\x05fver")]),
+            ),
+            ("short", zip_of(&[("content/root.dat", b"RIFF")])),
+            (
+                "climb",
+                zip_of(&[
+                    ("content/root.dat", ROOT),
+                    ("content/dataFileList.dat", b"../../x.dat"),
+                    ("x.dat", b"x"),
+                ]),
+            ),
+            (
+                "crlf",
+                zip_of(&[
+                    ("content/root.dat", ROOT),
+                    ("content/dataFileList.dat", b"page1.dat\r\n"),
+                    ("content/data/page1.dat", b"p"),
+                ]),
+            ),
+            (
+                "gap",
+                zip_of(&[
+                    ("content/root.dat", ROOT),
+                    ("content/dataFileList.dat", b"page1.dat\n\npage2.dat"),
+                    ("content/data/page1.dat", b"p"),
+                ]),
+            ),
+            (
+                "missing",
+                zip_of(&[
+                    ("content/root.dat", ROOT),
+                    ("content/dataFileList.dat", b"page1.dat"),
+                ]),
+            ),
+            (
+                "not-a-zip",
+                b"PK\x03\x04 and then nothing a ZIP reader can follow".to_vec(),
+            ),
+        ];
+        for (name, zip) in refusals {
+            let (to, made) = rebuilt(name, &zip);
+            assert!(
+                matches!(made, Err(ConvertError::CorelLayout(_))),
+                "{name}: {made:?}"
+            );
+            let _ = to;
+        }
+        assert!(!is_part_name(b".hidden"));
+        assert!(!is_part_name(b"a/b"));
+        assert!(!is_part_name(b"a\\b"));
+        assert!(!is_part_name(&[b'a'; 129]));
+        assert!(is_part_name(b"masterPage.dat"));
+    }
+
+    /// Through `to_pdf`, a ZIP that is not CorelDRAW is refused before
+    /// LibreOffice: the backend here is a name nothing answers to.
+    #[test]
+    fn an_opendocument_wearing_a_coreldraw_name_is_refused_before_libreoffice() {
+        let backend = Backend {
+            path: "no-such-soffice".into(),
+            formats: FORMATS.iter().map(|f| (*f).to_string()).collect(),
+        };
+        let dir = std::env::temp_dir().join(format!("ul-convert-odf-cdr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("drawing.cdr");
+        std::fs::write(
+            &source,
+            zip_of(&[
+                ("mimetype", b"application/vnd.oasis.opendocument.text"),
+                ("content.xml", b"<x/>"),
+            ]),
+        )
+        .unwrap();
+        let refused = to_pdf(
+            &backend,
+            &source,
+            &dir.join("out"),
+            &dir.join("profile"),
+            &dir.join("in"),
+            Duration::from_secs(5),
+        );
+        assert!(
+            matches!(refused, Err(ConvertError::CorelLayout(_))),
+            "{refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /**
+     * The real drawing, through a real LibreOffice: what it draws from the
+     * ZIP made again is what it draws from the one CorelDRAW wrote, pixel for
+     * pixel — as a PNG, which LibreOffice writes the same for the same page,
+     * where a PDF carries a time (ADR 0008, measured 2026-10-12).
+     *
+     * The drawing is Čovik's and stays out of the repository: its path is
+     * `UL_CDR_SAMPLE`. Without it, or without LibreOffice, this fails rather
+     * than passing on nothing.
+     */
+    #[test]
+    #[ignore = "needs LibreOffice and UL_CDR_SAMPLE; run with: cargo test -p ul-convert -- --ignored"]
+    fn a_real_coreldraw_zip_made_again_draws_what_the_original_draws() {
+        let sample = PathBuf::from(
+            std::env::var_os("UL_CDR_SAMPLE")
+                .expect("UL_CDR_SAMPLE names a CorelDRAW X6+ drawing (a ZIP)"),
+        );
+        let backend = backend().expect("LibreOffice was not found");
+        let dir = std::env::temp_dir().join(format!("ul-convert-live-cdr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let original = dir.join("original.cdr");
+        std::fs::copy(&sample, &original).unwrap();
+        assert!(
+            is_zip(&head_of(&original).unwrap()),
+            "UL_CDR_SAMPLE is not a ZIP"
+        );
+        let again = dir.join("again.cdr");
+        rebuild_coreldraw(&original, &again).unwrap();
+
+        let png = |source: &Path, tag: &str| -> Vec<u8> {
+            let out = dir.join(format!("out-{tag}"));
+            let mut args = arguments(source, &out, &dir.join(format!("profile-{tag}")));
+            let to = args.iter().position(|a| a == "pdf").unwrap();
+            args[to] = "png".to_string();
+            let mut command = Command::new(&backend.path);
+            harden(&mut command);
+            let status = command
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{tag}: {status}");
+            let made = out.join(format!(
+                "{}.png",
+                source.file_stem().unwrap().to_string_lossy()
+            ));
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !made.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            std::fs::read(&made).unwrap_or_else(|err| panic!("{tag}: no PNG ({err})"))
+        };
+        let drawn = png(&original, "original");
+        let redrawn = png(&again, "again");
+        assert!(drawn.starts_with(b"\x89PNG"), "the original drew no PNG");
+        assert!(
+            drawn == redrawn,
+            "the ZIP made again draws something else: {} and {} bytes",
+            drawn.len(),
+            redrawn.len()
+        );
+
+        // And through `to_pdf`, the way the program asks for it.
+        let pdf = to_pdf(
+            &backend,
+            &original,
+            &dir.join("out-pdf"),
+            &dir.join("profile-pdf"),
+            &dir.join("in"),
+            Duration::from_secs(180),
+        )
+        .unwrap();
+        assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

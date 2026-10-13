@@ -22,7 +22,7 @@
  *   node tools/verify-desktop-convert.mjs
  */
 
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -177,6 +177,53 @@ try {
       'and the drawing is still open in its own tab',
       (await page.locator('.tab').allInnerTexts()).some((t) => /crtez\.eps/i.test(t)),
     );
+
+    /* ── a CorelDRAW X6+ drawing, which is a ZIP (ADR 0008) ───────────────
+       Made again of the parts libcdr reads before LibreOffice sees it. The
+       one real one is Čovik's and stays out of the repository: its path is
+       UL_CDR_SAMPLE, copied into the scratch folder. Without it this part is
+       said not to have run, rather than passing on nothing. */
+    const sample = process.env.UL_CDR_SAMPLE;
+    if (!sample) {
+      console.log('[ not run ] a CorelDRAW ZIP: UL_CDR_SAMPLE names none');
+    } else {
+      await copyFile(sample, join(workspace, 'grb.cdr'));
+      const beside = (await readdir(workspace)).sort();
+      await page.keyboard.press('Control+P');
+      await page.waitForSelector('.palette-input input', { timeout: 10000 });
+      await page.locator('.palette-input input').fill('grb.cdr');
+      await page.waitForSelector('.palette-item', { timeout: 15000 });
+      await page.locator('.palette-item', { hasText: 'grb.cdr' }).first().click();
+      const viewer = await until(
+        async () => (await page.locator('.tab.active, .tab[data-active="true"]').innerText().catch(() => '')).includes('grb.cdr'),
+        30000,
+      );
+      check('a CorelDRAW ZIP opens in the vector viewer, not as an archive', viewer && (await page.locator('.ul-vec-convert:visible').count()) > 0);
+      const tabsBefore = (await page.locator('.tab').allInnerTexts()).length;
+      await page.locator('.ul-vec-convert:visible').first().click();
+      const converted = await until(
+        async () => (await page.locator('.tab').allInnerTexts()).some((t) => /grb\.pdf/i.test(t)),
+        180000,
+      );
+      check(
+        'and LibreOffice draws it, from the ZIP made again',
+        converted,
+        (await page.locator('.tab').allInnerTexts()).slice(tabsBefore - 1).join(' | ') ||
+          (await page.locator('.toast').allInnerTexts()).join(' | ').slice(0, 160),
+      );
+      if (converted) {
+        const drawn = await until(
+          async () => (await page.locator('.ul-pdf-page[data-rendered="true"]:visible').count()) > 0,
+          60000,
+        );
+        check('its page is drawn', drawn);
+      }
+      check(
+        'nothing was written beside it',
+        (await readdir(workspace)).sort().join(',') === beside.join(','),
+        (await readdir(workspace)).join(', '),
+      );
+    }
   }
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-convert.png') });

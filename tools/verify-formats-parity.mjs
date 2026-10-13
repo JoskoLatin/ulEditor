@@ -63,6 +63,7 @@ function compare(name, bytes) {
 /* ── the specimens ───────────────────────────────────────────────────── */
 
 const bytes = (value) => (value instanceof Uint8Array ? value : new TextEncoder().encode(String(value)));
+const COREL_ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...new TextEncoder().encode('content/data/data1.dat')]);
 const specimens = [
   ['dokument.pdf', fixtures.makePdf()],
   ['izvjestaj.docx', fixtures.makeDocx()],
@@ -89,6 +90,13 @@ const specimens = [
   ['prazno.txt', ''],
   ['bez-nastavka', 'just text'],
   ['nepoznato.xyz', new Uint8Array([0, 1, 2, 3, 0xff])],
+  /* CorelDRAW X6+ is a ZIP with nothing but its name to say so (ADR 0008);
+     the same ZIP under another name is an archive, and a known document
+     wearing the name is still that document. */
+  ['crtez.cdr', COREL_ZIP],
+  ['CRTEZ.CDR', COREL_ZIP],
+  ['crtez.zip', COREL_ZIP],
+  ['tekst-kao.cdr', fixtures.makeOdt()],
 ];
 
 const differ = [];
@@ -101,6 +109,11 @@ check(
   differ.length === 0,
   differ.join(' | ') || 'every one the same',
 );
+{
+  const said = (name, content) => [detect(name, content).format, glue.detectFormat(name, content).format].join('/');
+  check('a ZIP named .cdr goes to the drawing viewer in both', said('crtez.cdr', COREL_ZIP) === 'vector/vector', said('crtez.cdr', COREL_ZIP));
+  check('and an OpenDocument wearing the name is still one', said('tekst-kao.cdr', fixtures.makeOdt()) === 'odt/odt', said('tekst-kao.cdr', fixtures.makeOdt()));
+}
 
 /* ── and any real folder named ───────────────────────────────────────── */
 

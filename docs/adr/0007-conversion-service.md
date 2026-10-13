@@ -153,6 +153,14 @@ PostScript on the server.
   (name, version, LibreOffice's version, the three signatures, data class
   `privatno`, network: none), `POST /api/convert/v1/pdf`, and a `MODUL.md`.
 
+*Note, 2026-10-13 (card 510, ADR 0008):* the triggers are read as the
+architect read them on 2026-10-12 — trigger 2 is necessary for a format, and 1
+or 3 is what is sufficient to build. With ADR 0008 a CorelDRAW X6+ drawing is
+drawn on the desktop (the live test and `verify-desktop-convert`), so trigger 2
+has fired for CorelDRAW. Neither 1 nor 3 has: the service is still not built.
+If it is, its gate takes ADR 0008's: a ZIP is made again of the parts libcdr
+reads, and the RIFF is held to libcdr's own predicate.
+
 ## Rejected
 
 | Option | A hostile file gets | A device on the LAN gets | Cost for one person | Verdict |

@@ -260,7 +260,13 @@ tf` — and it is checked here, before anything reads the extension,
   if (startsWith(bytes, [0x7b, 0x5c, 0x72, 0x74, 0x66])) return { format: 'rtf', via: 'magic' };
 
   if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]) || startsWith(bytes, [0x50, 0x4b, 0x05, 0x06])) {
-    return { format: classifyZip(bytes), via: 'magic' };
+    /* CorelDRAW X6 and later save a drawing as a ZIP of its own, with
+       nothing in its first bytes to tell it from any other: named `.cdr` and
+       none of the formats above, it goes to the drawing viewer, whose
+       conversion decides what it really is (ul-convert, ADR 0008). */
+    const kind = classifyZip(bytes);
+    if (kind === 'archive' && extensionOf(name.toLowerCase()) === 'cdr') return { format: 'vector', via: 'magic' };
+    return { format: kind, via: 'magic' };
   }
 
   if (
