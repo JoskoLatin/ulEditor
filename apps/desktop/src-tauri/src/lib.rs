@@ -1549,14 +1549,22 @@ async fn convert_to_pdf(
     /* Two minutes. LibreOffice takes a few seconds for a drawing and can take
     twenty on a cold start, since the first run of a fresh profile builds it;
     a minute would time out on exactly the machine where it was slowest. */
-    let output = ul_convert::to_pdf(
-        &backend,
-        &source,
-        &outdir,
-        &profile,
-        &workdir,
-        std::time::Duration::from_secs(120),
-    )?;
+    /* Off the threads the commands run on: the copy, a CorelDRAW ZIP made
+    again and LibreOffice itself take seconds at best, and held there they
+    held every other command behind them (the review of d561273). The lock
+    above is held across it, so one conversion still runs at a time. */
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        ul_convert::to_pdf(
+            &backend,
+            &source,
+            &outdir,
+            &profile,
+            &workdir,
+            std::time::Duration::from_secs(120),
+        )
+    })
+    .await
+    .map_err(|err| ConvertError::Start(err.to_string()))??;
     let output = output.to_string_lossy().into_owned();
     /* The PDF alone is offered, to be read: it is a copy in the program's own
     cache, and that folder has no business in the tree or a search. */

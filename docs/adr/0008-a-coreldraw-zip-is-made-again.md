@@ -62,6 +62,18 @@ took such a file for Writer text.
    `Cargo.lock`: no package was added (540 before and after), only three
    edges.
 
+6. **Bounded in time and size before LibreOffice is (the review of
+   d561273).** The ZIP is read as one that starts at the file's first byte
+   (`ArchiveOffset::Known(0)`, which a CorelDRAW ZIP is): asked to find where
+   an archive starts, `zip` tried every end-of-directory record against the
+   whole file, and 2 MB of them took 64 s, four times as long for twice the
+   size — now 0.24 s. A ZIP is taken only under a `.cdr` name and only up to
+   64 MiB (`MOST_ZIP_BYTES`; the real one is 113 KiB), its parts made again
+   up to 256 MiB, and the conversion's one time limit (120 s) covers the copy,
+   the rebuild and LibreOffice together, the rebuild checking it as it reads.
+   The desktop runs the whole conversion off the threads its commands run on
+   (`spawn_blocking`).
+
 ## Rejected
 
 | Alternative | Why not |
@@ -99,6 +111,9 @@ took such a file for Writer text.
 ## How we will know this was right
 
 - The real drawing draws on the desktop, and the live test stays green.
+- A ZIP built to make the reader search for its start is turned away at
+  once: `a_zip_full_of_directory_ends_is_turned_away_at_once` takes 0.24 s,
+  and 354 s with the archive's start left to be found.
 - No ZIP that is not this layout reaches LibreOffice: the unit tests refuse
   an OpenDocument, a template, an unknown version, a climbing name, a CRLF
   list, a gap in the list, a missing part, and a file that is not a ZIP.

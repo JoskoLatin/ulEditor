@@ -188,6 +188,26 @@ const MOST_PARTS: usize = 1024;
 /// The longest that list is read: three names are 34 bytes.
 const MOST_LIST_BYTES: u64 = 64 * 1024;
 
+/// The largest CorelDRAW ZIP taken: the real one is 113 KiB, and the largest
+/// drawing among Čovik's files is under 15 MB. A ZIP is read by a parser over
+/// bytes a page can write, before LibreOffice's time limit starts, so it is
+/// held far below `MOST_BYTES` (the review of d561273).
+pub const MOST_ZIP_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The most a CorelDRAW ZIP's parts may come to, made again: the real one's
+/// come to eight times its size.
+const MOST_REBUILT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// What `rebuild_coreldraw` is held to: the program's own bounds, smaller in
+/// the tests that check each one holds.
+struct Limits {
+    bytes: u64,
+    parts: usize,
+    list: u64,
+    /// When reading gives up: the same time the conversion is given.
+    until: Instant,
+}
+
 /// Whether a name in that list is one this program writes back: a plain
 /// file name — letters, digits, `.`, `_`, `-`, not starting with a dot, at
 /// most 128 bytes. The real ones are `data1.dat`, `masterPage.dat`,
@@ -214,18 +234,31 @@ fn is_part_name(name: &[u8]) -> bool {
 /// and nothing in it but what libcdr asks for by name. Split as libcdr splits
 /// the list: at every `\n`, and a last name with none after it.
 ///
-/// Everything read is bounded: each part and all of them together by
-/// `MOST_BYTES`, the list by `MOST_LIST_BYTES` and `MOST_PARTS`; a part is
-/// read to its end, so its checksum is checked, or not used at all. A layout
-/// not measured here — `content/riffData.cdr` alone, say — is refused.
-fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
+/// Everything read is bounded (`Limits`): the parts together by bytes, the
+/// list by its length and how many names it holds, and all of it by time; a
+/// part is read to its end, so its checksum is checked, or not used at all.
+/// The archive is read as one that starts at the file's first byte, as a
+/// CorelDRAW ZIP does: asked to find where an archive starts, the reader
+/// tries every end-of-directory record it finds against the whole file, and a
+/// file of them took 64 s at 2 MB, four times as long for twice the size (the
+/// review of d561273). A layout not measured here — `content/riffData.cdr`
+/// alone, say — is refused.
+fn rebuild_coreldraw(from: &Path, to: &Path, limits: &Limits) -> Result<(), ConvertError> {
     use std::io::{Read, Write};
     use zip::result::ZipError;
 
     let layout = |why: &str| ConvertError::CorelLayout(why.to_string());
-    let mut archive = zip::ZipArchive::new(open_regular(from)?)
+    let config = zip::read::Config {
+        archive_offset: zip::read::ArchiveOffset::Known(0),
+    };
+    let mut archive = zip::ZipArchive::with_config(config, open_regular(from)?)
         .map_err(|_| layout("it is not a ZIP this program can read"))?;
-    let mut budget = MOST_BYTES;
+    if Instant::now() > limits.until {
+        return Err(layout(
+            "reading it took longer than the conversion is given",
+        ));
+    }
+    let mut budget = limits.bytes;
 
     let mut out = zip::ZipWriter::new(std::fs::File::create_new(to)?);
     let stored =
@@ -246,21 +279,34 @@ fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
             ))),
         }
     }
-    /* Copied into the new ZIP, to its end and within what is left of the
-    budget. */
+    /* Copied into the new ZIP, to its end, within what is left of the
+    budget and before the time is up. */
     fn copy(
         part: &mut zip::read::ZipFile<'_, std::fs::File>,
         name: &str,
         into: &mut zip::ZipWriter<std::fs::File>,
         budget: &mut u64,
+        limits: &Limits,
     ) -> Result<(), ConvertError> {
-        let copied = std::io::copy(&mut part.take(*budget + 1), into)
-            .map_err(|err| ConvertError::CorelLayout(format!("{name} could not be read: {err}")))?;
-        if copied > *budget {
-            return Err(ConvertError::TooLarge(MOST_BYTES / (1024 * 1024)));
+        let mut chunk = vec![0u8; 64 * 1024];
+        loop {
+            if Instant::now() > limits.until {
+                return Err(ConvertError::CorelLayout(
+                    "reading it took longer than the conversion is given".into(),
+                ));
+            }
+            let read = part.read(&mut chunk).map_err(|err| {
+                ConvertError::CorelLayout(format!("{name} could not be read: {err}"))
+            })?;
+            if read == 0 {
+                return Ok(());
+            }
+            if read as u64 > *budget {
+                return Err(ConvertError::TooLarge(limits.bytes / (1024 * 1024)));
+            }
+            *budget -= read as u64;
+            into.write_all(&chunk[..read])?;
         }
-        *budget -= copied;
-        Ok(())
     }
 
     {
@@ -277,17 +323,19 @@ fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
         out.start_file(name, stored)
             .map_err(|err| ConvertError::Io(err.into()))?;
         out.write_all(&head)?;
-        budget -= head.len() as u64;
-        copy(&mut root, name, &mut out, &mut budget)?;
+        budget = budget
+            .checked_sub(head.len() as u64)
+            .ok_or(ConvertError::TooLarge(limits.bytes / (1024 * 1024)))?;
+        copy(&mut root, name, &mut out, &mut budget, limits)?;
     }
 
     let mut names: Vec<Vec<u8>> = Vec::new();
     if let Some(list) = open(&mut archive, "content/dataFileList.dat")? {
         let mut bytes = Vec::new();
-        list.take(MOST_LIST_BYTES + 1)
+        list.take(limits.list + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| layout("its list of drawing parts could not be read"))?;
-        if bytes.len() as u64 > MOST_LIST_BYTES {
+        if bytes.len() as u64 > limits.list {
             return Err(layout("its list of drawing parts is too long"));
         }
         let mut name = Vec::new();
@@ -301,7 +349,7 @@ fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
         if !name.is_empty() {
             names.push(name);
         }
-        if names.len() > MOST_PARTS || !names.iter().all(|n| is_part_name(n)) {
+        if names.len() > limits.parts || !names.iter().all(|n| is_part_name(n)) {
             return Err(layout(
                 "its list of drawing parts names something other than a part",
             ));
@@ -326,7 +374,7 @@ fn rebuild_coreldraw(from: &Path, to: &Path) -> Result<(), ConvertError> {
         };
         out.start_file(path.as_str(), stored)
             .map_err(|err| ConvertError::Io(err.into()))?;
-        copy(&mut part, &path, &mut out, &mut budget)?;
+        copy(&mut part, &path, &mut out, &mut budget, limits)?;
     }
     out.finish().map_err(|err| ConvertError::Io(err.into()))?;
     Ok(())
@@ -858,6 +906,9 @@ pub fn to_pdf(
     network (card 505) would run on bytes that were never checked. Copied once
     here, into a directory of this conversion's own (`Staging`), there is
     nothing left for the page to swap. */
+    /* One time limit for all of it — the copy, a ZIP made again, and
+    LibreOffice — not for LibreOffice alone (the review of d561273). */
+    let started = Instant::now();
     let staging = Staging::new(workdir)?;
     let staged = staging.0.join(name);
     copy_at_most(source, &staged, MOST_BYTES)?;
@@ -872,7 +923,18 @@ pub fn to_pdf(
         /* Rebuilt beside it, under the drawing's own name with `.cdr` — the
         extension LibreOffice tries libcdr on first — and the page's ZIP gone
         before LibreOffice is started. */
+        /* Only under the name it is: a ZIP named anything else is not a
+        CorelDRAW drawing, and is not told it is laid out wrongly as one. */
         Admitted::CorelZip => {
+            let named_cdr = Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("cdr"));
+            if !named_cdr {
+                return Err(ConvertError::UnsupportedContent);
+            }
+            if std::fs::metadata(&staged)?.len() > MOST_ZIP_BYTES {
+                return Err(ConvertError::TooLarge(MOST_ZIP_BYTES / (1024 * 1024)));
+            }
             let rebuilt_dir = staging.0.join("cdr");
             std::fs::create_dir(&rebuilt_dir)?;
             let stem = Path::new(name)
@@ -880,7 +942,13 @@ pub fn to_pdf(
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "drawing".to_string());
             let rebuilt = rebuilt_dir.join(format!("{stem}.cdr"));
-            rebuild_coreldraw(&staged, &rebuilt)?;
+            let limits = Limits {
+                bytes: MOST_REBUILT_BYTES,
+                parts: MOST_PARTS,
+                list: MOST_LIST_BYTES,
+                until: started + timeout,
+            };
+            rebuild_coreldraw(&staged, &rebuilt, &limits)?;
             std::fs::remove_file(&staged)?;
             rebuilt
         }
@@ -897,7 +965,7 @@ pub fn to_pdf(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| ConvertError::Start(err.to_string()))?;
-    watch(child, &expected, timeout)
+    watch(child, &expected, timeout.saturating_sub(started.elapsed()))
 }
 
 /// `source` copied to `to`, a new file, so long as it is no larger than
@@ -1722,7 +1790,24 @@ showpage
         ])
     }
 
-    fn rebuilt(name: &str, zip: &[u8]) -> (PathBuf, Result<(), ConvertError>) {
+    /// The program's own bounds, with a minute to do it in.
+    fn usual() -> Limits {
+        Limits {
+            bytes: MOST_REBUILT_BYTES,
+            parts: MOST_PARTS,
+            list: MOST_LIST_BYTES,
+            until: Instant::now() + Duration::from_secs(60),
+        }
+    }
+
+    /// A ZIP made again under `limits`, and what is in it — its folder gone
+    /// once it has been read, as each test's should be.
+    #[allow(clippy::type_complexity)]
+    fn rebuilt_within(
+        name: &str,
+        zip: &[u8],
+        limits: &Limits,
+    ) -> Result<Vec<(String, zip::CompressionMethod, Vec<u8>)>, ConvertError> {
         let dir =
             std::env::temp_dir().join(format!("ul-convert-zip-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1730,17 +1815,24 @@ showpage
         let from = dir.join("drawing.cdr");
         std::fs::write(&from, zip).unwrap();
         let to = dir.join("rebuilt.cdr");
-        let made = rebuild_coreldraw(&from, &to);
-        (to, made)
+        let made = rebuild_coreldraw(&from, &to, limits).map(|()| members_of(&to));
+        let _ = std::fs::remove_dir_all(&dir);
+        made
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn rebuilt(
+        name: &str,
+        zip: &[u8],
+    ) -> Result<Vec<(String, zip::CompressionMethod, Vec<u8>)>, ConvertError> {
+        rebuilt_within(name, zip, &usual())
     }
 
     /// A CorelDRAW ZIP is made again of the parts libcdr reads and nothing
     /// else, stored, the bytes of each as they were (ADR 0008).
     #[test]
     fn a_coreldraw_zip_is_made_again_of_what_libcdr_reads() {
-        let (to, made) = rebuilt("whole", &a_coreldraw_zip());
-        made.unwrap();
-        let members = members_of(&to);
+        let members = rebuilt("whole", &a_coreldraw_zip()).unwrap();
         let names: Vec<&str> = members.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(
             names,
@@ -1761,23 +1853,21 @@ showpage
 
         // Split as libcdr splits it: a last newline ends nothing more, and a
         // name named twice is one part.
-        let (to, made) = rebuilt(
+        let members = rebuilt(
             "twice",
             &zip_of(&[
                 ("content/root.dat", ROOT),
                 ("content/dataFileList.dat", b"page1.dat\npage1.dat\n"),
                 ("content/data/page1.dat", b"the page"),
             ]),
-        );
-        made.unwrap();
-        let members = members_of(&to);
+        )
+        .unwrap();
         assert_eq!(members.len(), 3);
         assert_eq!(members[1].2, b"page1.dat\npage1.dat");
 
         // No list: the drawing alone, and an empty list beside it.
-        let (to, made) = rebuilt("alone", &zip_of(&[("content/root.dat", ROOT)]));
-        made.unwrap();
-        assert_eq!(members_of(&to).len(), 2);
+        let members = rebuilt("alone", &zip_of(&[("content/root.dat", ROOT)])).unwrap();
+        assert_eq!(members.len(), 2);
     }
 
     /// What is not that layout is refused, and no ZIP is left to hand on.
@@ -1844,18 +1934,165 @@ showpage
             ),
         ];
         for (name, zip) in refusals {
-            let (to, made) = rebuilt(name, &zip);
+            let made = rebuilt(name, &zip);
             assert!(
                 matches!(made, Err(ConvertError::CorelLayout(_))),
                 "{name}: {made:?}"
             );
-            let _ = to;
         }
         assert!(!is_part_name(b".hidden"));
         assert!(!is_part_name(b"a/b"));
         assert!(!is_part_name(b"a\\b"));
         assert!(!is_part_name(&[b'a'; 129]));
         assert!(is_part_name(b"masterPage.dat"));
+    }
+
+    /// Each bound holds (the review of d561273): the names in the list, its
+    /// length, the bytes of the parts, and the time.
+    #[test]
+    fn a_coreldraw_zip_is_made_again_within_its_bounds() {
+        let list = |names: usize| {
+            let listed: Vec<String> = (0..names).map(|i| format!("p{i}.dat")).collect();
+            let mut members: Vec<(String, Vec<u8>)> = vec![
+                ("content/root.dat".into(), ROOT.to_vec()),
+                (
+                    "content/dataFileList.dat".into(),
+                    listed.join("\n").into_bytes(),
+                ),
+            ];
+            members.extend(
+                listed
+                    .iter()
+                    .map(|n| (format!("content/data/{n}"), b"x".to_vec())),
+            );
+            let borrowed: Vec<(&str, &[u8])> = members
+                .iter()
+                .map(|(n, b)| (n.as_str(), b.as_slice()))
+                .collect();
+            zip_of(&borrowed)
+        };
+        let within = |parts, list, bytes| Limits {
+            bytes,
+            parts,
+            list,
+            until: Instant::now() + Duration::from_secs(60),
+        };
+
+        assert!(rebuilt_within("parts-ok", &list(4), &within(4, 1024, 1 << 20)).is_ok());
+        let made = rebuilt_within("parts", &list(5), &within(4, 1024, 1 << 20));
+        assert!(
+            matches!(made, Err(ConvertError::CorelLayout(_))),
+            "{made:?}"
+        );
+        // Five names of six bytes and the four newlines between: 34 bytes.
+        assert!(rebuilt_within("list-ok", &list(5), &within(16, 34, 1 << 20)).is_ok());
+        let made = rebuilt_within("list", &list(5), &within(16, 33, 1 << 20));
+        assert!(
+            matches!(made, Err(ConvertError::CorelLayout(_))),
+            "{made:?}"
+        );
+        // The root's 24 bytes and five parts of one: 29 in all.
+        assert!(rebuilt_within("bytes-ok", &list(5), &within(16, 1024, 29)).is_ok());
+        let made = rebuilt_within("bytes", &list(5), &within(16, 1024, 28));
+        assert!(matches!(made, Err(ConvertError::TooLarge(_))), "{made:?}");
+        let made = rebuilt_within("tiny", &list(1), &within(16, 1024, 11));
+        assert!(matches!(made, Err(ConvertError::TooLarge(_))), "{made:?}");
+
+        let late = Limits {
+            until: Instant::now() - Duration::from_secs(1),
+            ..usual()
+        };
+        let made = rebuilt_within("late", &a_coreldraw_zip(), &late);
+        assert!(
+            matches!(made, Err(ConvertError::CorelLayout(_))),
+            "{made:?}"
+        );
+    }
+
+    /// A file of end-of-directory records behind a ZIP's first bytes is read
+    /// in one pass: asked to find where the archive starts, the reader tried
+    /// each record against the whole file, and 2 MB of them took 64 s (the
+    /// review of d561273).
+    #[test]
+    fn a_zip_full_of_directory_ends_is_turned_away_at_once() {
+        /* The shape the review measured: a ZIP's first bytes, a megabyte of
+        nothing, then records each claiming one entry in a 46-byte directory
+        at offset 0 — which is never there, so each is looked for again. */
+        let mut hostile = b"PK\x03\x04".to_vec();
+        hostile.resize(1024 * 1024, 0);
+        let mut end = b"PK\x05\x06".to_vec();
+        end.extend_from_slice(&[0, 0, 0, 0, 1, 0, 1, 0, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        while hostile.len() < 2 * 1024 * 1024 {
+            hostile.extend_from_slice(&end);
+        }
+        let started = Instant::now();
+        let made = rebuilt("directory-ends", &hostile);
+        let took = started.elapsed();
+        assert!(
+            matches!(made, Err(ConvertError::CorelLayout(_))),
+            "{made:?}"
+        );
+        assert!(took < Duration::from_secs(3), "{took:?}");
+    }
+
+    /// Through `to_pdf`: a ZIP is made again only under a `.cdr` name, and
+    /// only one no larger than `MOST_ZIP_BYTES`. The backend is a name
+    /// nothing answers to, so a refusal here is before LibreOffice.
+    #[test]
+    fn only_a_zip_named_cdr_and_not_too_large_is_made_again() {
+        use std::io::Write;
+        let backend = Backend {
+            path: "no-such-soffice".into(),
+            formats: FORMATS.iter().map(|f| (*f).to_string()).collect(),
+        };
+        let dir = std::env::temp_dir().join(format!("ul-convert-zip-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let convert = |source: &Path| {
+            to_pdf(
+                &backend,
+                source,
+                &dir.join("out"),
+                &dir.join("profile"),
+                &dir.join("in"),
+                Duration::from_secs(5),
+            )
+        };
+
+        let eps = dir.join("drawing.eps");
+        std::fs::write(&eps, a_coreldraw_zip()).unwrap();
+        let refused = convert(&eps);
+        assert!(
+            matches!(refused, Err(ConvertError::UnsupportedContent)),
+            "{refused:?}"
+        );
+
+        let large = dir.join("large.cdr");
+        let file = std::fs::File::create(&large).unwrap();
+        file.set_len(MOST_ZIP_BYTES + 1).unwrap();
+        drop(file);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&large)
+            .unwrap()
+            .write_all(b"PK\x03\x04")
+            .unwrap();
+        let refused = convert(&large);
+        assert!(
+            matches!(refused, Err(ConvertError::TooLarge(64))),
+            "{refused:?}"
+        );
+
+        // Named so, and small: made again, and only then is LibreOffice
+        // asked for — which here is not there.
+        let cdr = dir.join("drawing.cdr");
+        std::fs::write(&cdr, a_coreldraw_zip()).unwrap();
+        let started = convert(&cdr);
+        assert!(
+            matches!(started, Err(ConvertError::Start(_))),
+            "{started:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Through `to_pdf`, a ZIP that is not CorelDRAW is refused before
@@ -1922,7 +2159,7 @@ showpage
             "UL_CDR_SAMPLE is not a ZIP"
         );
         let again = dir.join("again.cdr");
-        rebuild_coreldraw(&original, &again).unwrap();
+        rebuild_coreldraw(&original, &again, &usual()).unwrap();
 
         let png = |source: &Path, tag: &str| -> Vec<u8> {
             let out = dir.join(format!("out-{tag}"));
