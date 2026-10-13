@@ -397,12 +397,18 @@ async fn pick_save_target(
         )));
     }
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_file_name(offered_name(&suggested_name))
-        .save_file(move |picked| {
-            let _ = tx.send(picked);
-        });
+    let offered = offered_name(&suggested_name);
+    let mut dialog = app.dialog().file().set_file_name(&offered);
+    /* The type, said where the name box cannot hide it: a long name is
+    scrolled to its end and shows the extension, or to its start and shows
+    only what it pretends to be (card 517). Taken from the name as offered,
+    never from the page. */
+    if let Some((label, extension)) = offered_type(&offered) {
+        dialog = dialog.add_filter(label, &[extension.as_str()]);
+    }
+    dialog.save_file(move |picked| {
+        let _ = tx.send(picked);
+    });
 
     let Some(path) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
         dialogs().declined(std::time::Instant::now());
@@ -523,11 +529,63 @@ fn offered_name(suggested: &str) -> String {
         && !DEVICES
             .iter()
             .any(|device| stem.eq_ignore_ascii_case(device));
-    if fits {
+    /* A type Windows runs, or hands to something that runs it, rather than
+    opens to be read — none of which this program writes — only under a short
+    name with no other dot: what the person sees of a long one is its end
+    and the type, or its start and what it pretends to be, never both, and
+    no list of the letters drawn as a line can be finished (card 517). The
+    scripts this program does edit — `.bat`, `.cmd`, `.ps1`, `.js`, `.vbs` —
+    are not here: offering one is what editing one is for. */
+    const RUNS: [&str; 22] = [
+        "exe",
+        "scr",
+        "com",
+        "pif",
+        "cpl",
+        "msi",
+        "msp",
+        "mst",
+        "lnk",
+        "url",
+        "scf",
+        "hta",
+        "jar",
+        "dll",
+        "ocx",
+        "sys",
+        "appx",
+        "msix",
+        "appxbundle",
+        "msixbundle",
+        "appinstaller",
+        "application",
+    ];
+    const SHORTEST_SEEN: usize = 32;
+    let runs = last.rsplit_once('.').is_some_and(|(before, extension)| {
+        RUNS.iter().any(|kind| extension.eq_ignore_ascii_case(kind))
+            && (before.contains('.') || last.chars().count() > SHORTEST_SEEN)
+    });
+    if fits && !runs {
         last.to_string()
     } else {
         "untitled".to_string()
     }
+}
+
+/// The one type a "Save as" dialog lists: the extension of the name it
+/// offers, as `EXE (*.exe)`, so that what will be saved is said beside the
+/// name as well as at its end. Nothing for a name without one (`untitled`),
+/// which leaves the system's "All files".
+fn offered_type(offered: &str) -> Option<(String, String)> {
+    let (_, extension) = offered.rsplit_once('.')?;
+    if extension.is_empty() || !extension.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let extension = extension.to_ascii_lowercase();
+    Some((
+        format!("{} (*.{extension})", extension.to_ascii_uppercase()),
+        extension,
+    ))
 }
 
 /// Opens a web link in the system browser, and says whether it did.
@@ -2756,6 +2814,44 @@ mod tests {
         );
         assert_eq!(offered_name("Plan - stranice.pdf"), "Plan - stranice.pdf");
         assert_eq!(offered_name("console.log.txt"), "console.log.txt");
+    }
+
+    /// A type Windows runs is offered only under a short name with no other
+    /// dot, and the dialog lists the type of the name it offers (card 517).
+    #[test]
+    fn a_runnable_type_is_offered_only_under_a_short_plain_name() {
+        use super::{offered_name, offered_type};
+        // Measured 12.10.: this passed, and the box showed only its end.
+        let long = format!("invoice.pdf{}.exe", "\u{30FC}".repeat(50));
+        assert_eq!(offered_name(&long), "untitled");
+        assert_eq!(offered_name("invoice.pdf.exe"), "untitled");
+        assert_eq!(offered_name("invoice.pdf.EXE"), "untitled");
+        assert_eq!(offered_name("ugovor.pdf.lnk"), "untitled");
+        assert_eq!(offered_name("x.y.msixbundle"), "untitled");
+        assert_eq!(
+            offered_name("a very long installer name here.exe"),
+            "untitled"
+        );
+        assert_eq!(offered_name("setup.exe"), "setup.exe");
+        assert_eq!(offered_name("ulEditor setup 0.6.5.msi"), "untitled");
+        assert_eq!(offered_name("ulEditor setup.msi"), "ulEditor setup.msi");
+        // The scripts this program edits keep their names, dots and all.
+        assert_eq!(offered_name("build.release.ps1"), "build.release.ps1");
+        assert_eq!(offered_name("deploy.prod.bat"), "deploy.prod.bat");
+        assert_eq!(offered_name("app.min.js"), "app.min.js");
+        assert_eq!(offered_name("report.final.pdf"), "report.final.pdf");
+
+        assert_eq!(
+            offered_type("setup.exe"),
+            Some(("EXE (*.exe)".to_string(), "exe".to_string()))
+        );
+        assert_eq!(
+            offered_type("Izvještaj.PDF"),
+            Some(("PDF (*.pdf)".to_string(), "pdf".to_string()))
+        );
+        assert_eq!(offered_type("untitled"), None);
+        assert_eq!(offered_type("notes."), None);
+        assert_eq!(offered_type("a.b\u{30FC}"), None);
     }
 
     /// A gesture in one of the program's own folders grants nothing and
