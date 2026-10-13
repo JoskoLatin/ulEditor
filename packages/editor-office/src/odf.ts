@@ -71,6 +71,7 @@ import {
   paragraphOf,
   readOdtStyles,
   odtMergeRefusal,
+  OdtOverlap,
   odtPointedNames,
   spacesOf,
   type OdtParagraph,
@@ -632,6 +633,8 @@ interface Context {
   rowIndex: Map<Element, number>;
   /** The rows the view names — all of them, or none when the two counts disagree. */
   markedRows: Set<number>;
+  /** How many cells of its own each row has, as the core counts them — a cell another covers not one. */
+  rowCells: Map<number, number>;
 }
 
 const TABLE_NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
@@ -1005,8 +1008,16 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
 
     /* The row's own cells counted as the core counts them for a merge — a
        place another cell covers is not one (`OdtMerge`). */
+    /* Only cells of the table namespace, as the core reads them: a
+       `foo:table-cell` before the row's own was counted here and not there,
+       and a merge took the cells next to the ones selected (the review of
+       3216ac5). And a row is named for a merge only where both count its
+       cells alike. */
     let at = -1;
+    const own = [...rowNode.children].filter((cell) => cell.namespaceURI === TABLE_NS && cell.localName === 'table-cell');
+    const counted = index !== undefined && ctx.rowCells.get(index) === own.length;
     for (const cellNode of [...rowNode.children]) {
+      if (cellNode.namespaceURI !== TABLE_NS) continue;
       if (!/^(covered-)?table-cell$/.test(cellNode.localName)) continue;
       if (cellNode.localName === 'covered-table-cell') continue;
       at++;
@@ -1022,7 +1033,7 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
         /* Named for a merge only in a row the core named, and only a cell
            written once for itself: a merge names what the file holds. The
            span goes with it, for the editor to draw a merge and undo it. */
-        if (row.dataset.row !== undefined && repeat === 1) {
+        if (row.dataset.row !== undefined && counted && repeat === 1) {
           cell.dataset.tc = String(at);
           cell.dataset.span = String(spanCols);
         }
@@ -1144,6 +1155,7 @@ export function readOdt(bytes: Uint8Array): Preview {
         : new Set(),
     rowIndex,
     markedRows: plain === null && rowIndex.size === rows.length ? new Set(rows.map((one) => one.index)) : new Set(),
+    rowCells: new Map(rows.map((one) => [one.index, one.cells.filter((cell) => !cell.covered).length])),
   };
 
   const body = document.createElement('div');
@@ -1323,8 +1335,10 @@ function odtSource(
        the ranges, never the order. */
     textOf: (index) => pieces[index]?.text ?? '',
     write: (edits, added, removed, divided, joined, newRows, merged) => {
-      const written = applyOdtEdits(xml, pieces, edits, {
-        paragraphs,
+      let written: string;
+      try {
+        written = applyOdtEdits(xml, pieces, edits, {
+          paragraphs,
         styles,
         inserts: (added ?? []).map((one) => ({ after: one.after, text: one.text })),
         removals: removed,
@@ -1332,8 +1346,16 @@ function odtSource(
         joins: joined,
         rows,
         rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
-        merges: (merged ?? []).map((one) => ({ row: one.row, from: one.from, count: one.count })),
-      });
+          merges: (merged ?? []).map((one) => ({ row: one.row, from: one.from, count: one.count })),
+        });
+      } catch (err) {
+        /* Two changes that would write over each other: nothing is written,
+           as for a part the parser would refuse (the review of 3216ac5). */
+        if (err instanceof OdtOverlap) {
+          throw new Error(t('This change could not be written as a well-formed document, so nothing was saved.'));
+        }
+        throw err;
+      }
       /* Read back by a real parser before it goes anywhere: the writer works
          on byte ranges, and a part it got wrong is a document nobody opens
          again — refused here, the file on disk stays as it was (the review
@@ -1417,6 +1439,9 @@ function odtSource(
               if (why === null) return null;
               if (why === 'a merge takes two cells at least') return t('Select two cells or more of one row to merge them.');
               if (why === 'the row has no such cells') return t('This row does not have those cells.');
+              if (why === 'a cell holds a table') {
+                return t('One of these cells holds a table of its own — cells holding a table are not merged here.');
+              }
               if (why === 'a cell stands for several cells') {
                 return t('One of these cells stands for several identical cells in the file, which does not say which of them is meant.');
               }

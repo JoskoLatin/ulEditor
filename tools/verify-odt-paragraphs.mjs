@@ -886,6 +886,44 @@ const part = (body, ns = NS, before = '') =>
     );
     const nested = part('<text:p>A</text:p><table:table><table:table-row><table:table-cell><table:table><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table></table:table-cell></table:table-row></table:table>');
     check('and in a table inside a cell of the body, as a new row may be added there', odtMergeRefusal(nested, findOdtRows(nested), { row: 1, from: 0, count: 2 }) === null);
+
+    /* The review of 3216ac5. */
+    const one = (rowsXml, merge, edits = []) => {
+      const x = T(rowsXml);
+      const d = { xml: x, pieces: findOdtPieces(x), paragraphs: findOdtParagraphs(x), styles: readOdtStyles(x, null) };
+      const r = findOdtRows(x);
+      return { x, why: odtMergeRefusal(x, r, merge), out: plan(d, { rows: r, merges: [merge] }, edits) };
+    };
+    const decoy = one('<table:table-row><table:table-cell foo:number-columns-spanned="7" table:number-columns-spanned="1"><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check(
+      'a span is read by its whole name: a decoy of another prefix is not a span',
+      decoy.out.includes('table:number-columns-spanned="2"') && !decoy.out.includes('="9"') && (decoy.out.match(/number-columns-spanned/g) ?? []).length === 1,
+      decoy.out.slice(decoy.out.indexOf('<table:table-row>'), decoy.out.indexOf('</table:table-row>')),
+    );
+    const underD = one(
+      '<table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>AB</text:p></table:table-cell><table:covered-table-cell/><table:table-cell table:number-rows-spanned="2"><text:p>D</text:p></table:table-cell><table:table-cell><text:p>H</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell><text:p>E</text:p></table:table-cell><table:table-cell><text:p>F</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><text:p>G</text:p></table:table-cell></table:table-row>',
+      { row: 1, from: 0, count: 3 },
+    );
+    check(
+      'cells either side of a place covered from above are not one run, and the writer judges so too',
+      underD.why === 'the table is written in a way this program does not follow' && underD.out === underD.x,
+      String(underD.why),
+    );
+    const trackedCell = one('<table:table-row><table:table-cell><text:p><text:change text:change-id="c1"/>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('not where a tracked change is recorded', trackedCell.why === 'a tracked change is recorded on a cell' && trackedCell.out === trackedCell.x);
+    const repeatedRow = one('<table:table-row table:number-rows-repeated="2"><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('nor in a row written for several', repeatedRow.why === 'the row stands for several rows');
+    const tabled = one('<table:table-row><table:table-cell><table:table><table:table-row><table:table-cell><text:p>u</text:p></table:table-cell></table:table-row></table:table></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('nor cells holding a table of their own', tabled.why === 'a cell holds a table' && tabled.out === tabled.x);
+    const valued = one('<table:table-row><table:table-cell office:value-type="float" office:value="3" table:formula="of:=1+2"><text:p>3</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check(
+      'a value the first cell carried is not shown instead of the merged text',
+      valued.out.includes('<table:table-cell office:value-type="string" table:number-columns-spanned="2">') && !/office:value=|table:formula=/.test(valued.out),
+      valued.out.slice(valued.out.indexOf('<table:table-row>'), valued.out.indexOf('<text:p>')),
+    );
+    const marked = one('<table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p><text:bookmark text:name="cilj"/></text:p></table:table-cell></table:table-row>', { row: 0, from: 0, count: 2 });
+    check('a cell holding only a bookmark is not empty: the bookmark goes with the merge', marked.out.includes('<text:bookmark text:name="cilj"/>'));
     written.push(two, across, typed);
     readableMerges.push(writeOdf(doc.archive, two));
   }

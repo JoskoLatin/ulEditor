@@ -1077,8 +1077,12 @@ export function odtJoinRefusal(
   return null;
 }
 
-/** A cell's own paragraphs, which show nothing themselves: a cell holding only empty ones is empty. */
-const CELL_LINES = new Set(['p', 'h']);
+/**
+ * What a cell may hold and still be empty: its paragraphs, spans and soft
+ * page breaks — not a bookmark or a reference mark, which show nothing and
+ * are still somebody's place (the review of 3216ac5).
+ */
+const CELL_NOTHING = new Set(['p', 'h', 'span', 'soft-page-break'])
 
 /** Marks that show nothing on the page — a line holding only these is an empty line. */
 const SHOWS_NOTHING = new Set([
@@ -1106,8 +1110,8 @@ function showsNothingIn(
   to: number,
   pieces: OdtPiece[],
   typed: ReadonlyMap<number, string>,
-  /** Elements that show nothing here besides — a cell's own paragraphs, asked of a cell. */
-  also: ReadonlySet<string> = new Set(),
+  /** What shows nothing here: the marks of a line, or, asked of a cell, `CELL_NOTHING`. */
+  nothing: ReadonlySet<string> = SHOWS_NOTHING,
 ): boolean {
   const retyped = pieces.filter((piece) => typed.has(piece.index) && piece.start >= from && piece.end <= to);
   if (retyped.some((piece) => typed.get(piece.index)!.length > 0)) return false;
@@ -1119,7 +1123,7 @@ function showsNothingIn(
     if (start > after && !skipped(after) && xml.slice(after, start).trim() !== '') return false;
     after = raw.end + from;
     if (raw.closing || skipped(start)) continue;
-    if (!SHOWS_NOTHING.has(localName(raw.name)) && !also.has(localName(raw.name))) return false;
+    if (!nothing.has(localName(raw.name))) return false;
   }
   return !(to > after && !skipped(after) && xml.slice(after, to).trim() !== '');
 }
@@ -1347,9 +1351,12 @@ export function findOdtRows(xml: string): OdtRow[] {
         break;
       }
       const covered = local === 'covered-table-cell';
-      const repeat = count(ownAttr(xml, tag, 'number-columns-repeated'), 64);
-      const span = covered ? 1 : count(ownAttr(xml, tag, 'number-columns-spanned'), 1024);
-      const down = covered ? 1 : count(ownAttr(xml, tag, 'number-rows-spanned'), 1 << 20);
+      /* By their whole names: a decoy of another prefix written first,
+         `foo:number-columns-spanned="7"`, became a real span of the merged
+         cell (the review of 3216ac5). */
+      const repeat = count(ownAttr(xml, tag, `${table}:number-columns-repeated`), 64);
+      const span = covered ? 1 : count(ownAttr(xml, tag, `${table}:number-columns-spanned`), 1024);
+      const down = covered ? 1 : count(ownAttr(xml, tag, `${table}:number-rows-spanned`), 1 << 20);
       /* Covered places written together are asked each: some covered from
          above and some from the left in one element is no grid this program
          can follow — LibreOffice drew a new row into the merge (measured by
@@ -1468,6 +1475,13 @@ export function odtRowMarkup(xml: string, row: OdtRow, texts: readonly string[])
   return `${out}</${table}:table-row>`;
 }
 
+/** Two changes of one plan that would write over each other: nothing is written. */
+export class OdtOverlap extends Error {
+  constructor() {
+    super('two changes of the plan overlap');
+  }
+}
+
 /* ── cells merged across ─────────────────────────────────────────────── */
 
 /**
@@ -1491,10 +1505,25 @@ function mergeRun(row: OdtRow, merge: OdtMerge): { named: OdtCell[]; all: OdtCel
   if (merge.from < 0 || merge.count < 1) return null;
   const named = row.cells.filter((cell) => !cell.covered).slice(merge.from, merge.from + merge.count);
   if (named.length !== merge.count) return null;
+  /* Laid out exactly as the spans say: each named cell, then the places it
+     covers to its right, as many as its span less one, and the next named
+     cell straight after. Anything else — a place covered from above among
+     them, too few covered places or too many — is not a run this program
+     takes apart (the review of 3216ac5). */
   const first = row.cells.indexOf(named[0]!);
-  let last = row.cells.indexOf(named[named.length - 1]!);
-  while (row.cells[last + 1]?.covered && !row.cells[last + 1]!.fromAbove) last++;
-  return { named, all: row.cells.slice(first, last + 1) };
+  let at = first;
+  for (const cell of named) {
+    if (row.cells[at] !== cell) return null;
+    at++;
+    let covers = cell.span - 1;
+    while (covers > 0) {
+      const place = row.cells[at];
+      if (!place?.covered || place.fromAbove || place.repeat > covers) return null;
+      covers -= place.repeat;
+      at++;
+    }
+  }
+  return { named, all: row.cells.slice(first, at) };
 }
 
 /**
@@ -1516,15 +1545,28 @@ export function odtMergeRefusal(xml: string, rows: OdtRow[], merge: OdtMerge): s
   if (row.refusal) return row.refusal;
   if (merge.count < 2) return 'a merge takes two cells at least';
   const run = mergeRun(row, merge);
-  if (!run) return 'the row has no such cells';
-  if (run.named.some((cell) => cell.repeat > 1)) return 'a cell stands for several cells';
-  const down = (cell: OdtCell) => count(ownAttr(xml, openingOf(xml, cell.tag), 'number-rows-spanned'), 2) > 1;
-  if (run.all.some((cell) => cell.covered && cell.fromAbove) || run.named.some(down)) {
-    return 'a cell already merged down cannot be merged across';
+  if (!run) {
+    const named = row.cells.filter((cell) => !cell.covered).slice(merge.from, merge.from + merge.count);
+    return named.length === merge.count ? 'the table is written in a way this program does not follow' : 'the row has no such cells';
   }
-  if (tracked(xml, run.all[0]!.tag.start, run.all[run.all.length - 1]!.tag.end)) return 'a tracked change is recorded on a cell';
+  if (run.named.some((cell) => cell.repeat > 1)) return 'a cell stands for several cells';
+  const table = prefixFor(xml, TABLE_NS, 'table');
+  const down = (cell: OdtCell) => count(ownAttr(xml, openingOf(xml, cell.tag), `${table}:number-rows-spanned`), 2) > 1;
+  if (run.named.some(down)) return 'a cell already merged down cannot be merged across';
+  const from = run.all[0]!.tag.start;
+  const to = run.all[run.all.length - 1]!.tag.end;
+  if (tracked(xml, from, to)) return 'a tracked change is recorded on a cell';
+  /* A table in one of them: its rows are a grid of their own, which a new
+     row or a merge of its own would be written into while this merge
+     rewrites the cell around it (the review of 3216ac5). */
+  for (const tag of scanTags(xml.slice(from, to))) {
+    if (!tag.closing && tag.name === `${table}:table`) return 'a cell holds a table';
+  }
   return null;
 }
+
+/** The attributes that give a cell a value of its own, shown instead of its paragraphs. */
+const CELL_VALUES = new Set(['value', 'string-value', 'date-value', 'time-value', 'boolean-value', 'currency', 'formula']);
 
 /** Where a cell's content lies, between its tags; nothing for one that closes itself. */
 function cellInside(xml: string, cell: OdtCell): { start: number; end: number } {
@@ -1556,8 +1598,17 @@ function odtMergeMarkup(
   const attributes: string[] = [];
   const attribute = /\s([^\s=/>"']+)\s*=\s*("[^"]*"|'[^']*')/g;
   const tagText = xml.slice(opening.start, opening.end);
+  const office = prefixFor(xml, OFFICE_NS, 'office');
   for (let match = attribute.exec(tagText); match; match = attribute.exec(tagText)) {
-    if (localName(match[1]!) === 'number-columns-spanned') continue;
+    const local = localName(match[1]!);
+    if (local === 'number-columns-spanned' || CELL_VALUES.has(local)) continue;
+    /* A cell of text: a value the first cell carried — a string, a number,
+       a formula — would be shown instead of the paragraphs merged into it
+       (the review of 3216ac5), as `odtRowMarkup` builds a new row's. */
+    if (local === 'value-type') {
+      attributes.push(`${office}:value-type="string"`);
+      continue;
+    }
     attributes.push(`${match[1]}=${match[2]}`);
   }
   attributes.push(`${table}:number-columns-spanned="${span}"`);
@@ -1757,7 +1808,7 @@ export function applyOdtEdits(
   for (const one of merged) {
     /* A cell shows nothing when its paragraphs show nothing. */
     const text = odtMergeMarkup(xml, mergeRows[one.merge.row]!, one.merge, carried, (from, to) =>
-      showsNothingIn(xml, from, to, pieces, typed, CELL_LINES),
+      showsNothingIn(xml, from, to, pieces, typed, CELL_NOTHING),
     );
     operations.push({ at: one.from, end: one.to, text, order: 0 });
   }
@@ -1826,6 +1877,17 @@ export function applyOdtEdits(
   });
 
   operations.sort((a, b) => b.at - a.at || b.end - b.at - (a.end - a.at) || b.order - a.order);
+  /* No two may touch the same bytes: written back to front, one inside
+     another's range wrote into what the other had replaced, and the part
+     came out well-formed and wrong (the review of 3216ac5). Refused whole —
+     the save says so and writes nothing. */
+  for (let i = 1; i < operations.length; i++) {
+    const later = operations[i - 1]!;
+    const earlier = operations[i]!;
+    if (earlier.end > later.at && !(earlier.at === earlier.end && earlier.at === later.at)) {
+      throw new OdtOverlap();
+    }
+  }
   let out = xml;
   for (const operation of operations) {
     out = out.slice(0, operation.at) + operation.text + out.slice(operation.end);

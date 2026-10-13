@@ -348,6 +348,37 @@ try {
     (await shown.innerText()).slice(0, 160),
   );
 
+  /* ── a cell of another namespace in a row (the review of 3216ac5) ───── */
+
+  const foreign = zipSync({
+    mimetype: [base.mimetype, { level: 0 }],
+    'META-INF/manifest.xml': base['META-INF/manifest.xml'],
+    'content.xml': strToU8(
+      content
+        .replace('<office:document-content ', '<office:document-content xmlns:foo="urn:x" ')
+        .replace(
+          '<table:table-row><table:table-cell office:value-type="string"><text:p>Lijevo gore',
+          '<table:table-row><foo:table-cell><text:p>Strano</text:p></foo:table-cell><table:table-cell office:value-type="string"><text:p>Lijevo gore',
+        ),
+    ),
+    'styles.xml': strToU8(styles),
+  });
+  await page.evaluate((bytes) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'strano.odt'));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  }, Array.from(foreign));
+  await page.waitForFunction(() => document.querySelectorAll('.ul-office').length >= 3, null, { timeout: 20000 });
+  const cells = await page.evaluate(() => {
+    const office = [...document.querySelectorAll('.ul-office')].find((one) => one.offsetParent !== null);
+    return [...(office?.querySelector('table')?.rows[0]?.cells ?? [])].map((cell) => `${cell.dataset.tc ?? '-'}:${cell.textContent}`);
+  });
+  check(
+    'a cell of another namespace is neither drawn nor counted: the cells of the row are named as the core counts them',
+    JSON.stringify(cells) === JSON.stringify(['0:Lijevo gore', '1:Desno gore']),
+    JSON.stringify(cells),
+  );
+
   check('nothing threw in the page', errors.length === 0, errors.slice(0, 3).join(' | '));
 } catch (err) {
   check('ran without an exception', false, err instanceof Error ? err.message : String(err));
