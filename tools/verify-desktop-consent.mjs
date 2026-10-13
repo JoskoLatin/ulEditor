@@ -22,7 +22,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startDesktop, stopDesktop, openFromOutside, pressDialog } from './desktop-session.mjs';
+import { asCall, startDesktop, stopDesktop, openFromOutside, pressDialog } from './desktop-session.mjs';
 
 /** The first of the three buttons in the core's questions: the safe answer. */
 const NOT_NOW = 1004;
@@ -47,11 +47,11 @@ await writeFile(join(project, 'notes.txt'), 'Prvi redak.\n');
 await writeFile(join(never, 'secret.txt'), 'nobody consented to this\n');
 
 const attach = (page) => ({
-  invoke: (cmd, args) => page.evaluate(([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a), [cmd, args]),
+  invoke: (cmd, args) => page.evaluate(([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o), asCall(cmd, args)),
   refused: (cmd, args) =>
     page.evaluate(
-      ([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a).then(() => false, () => true),
-      [cmd, args],
+      ([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o).then(() => false, () => true),
+      asCall(cmd, args),
     ),
 });
 

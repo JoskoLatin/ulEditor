@@ -431,6 +431,30 @@ $said`;
   return (out.stdout ?? '').trim().split(/\r?\n/).pop() || (out.stderr ?? '').trim();
 }
 
+/**
+ * A command as the page sends it, for `page.evaluate`: `[command, body,
+ * options]`, passed on as `invoke(command, body, options)` once the page
+ * has turned a marked `{ bytes }` back into a `Uint8Array`.
+ *
+ * `write_file` takes the document as its body and the rest in headers since
+ * card 521, so a check still names a save the way it reads best —
+ * `{ path, contents, overwrite, reading, begin, fresh }` — and this turns it
+ * into what the shell sends (`save` in tauri-fs.ts). The bytes cross
+ * `page.evaluate` as an array, marked, and become a `Uint8Array` in the
+ * page. Every other command goes as it was.
+ */
+export function asCall(command, args) {
+  if (command !== 'write_file') return [command, args, undefined];
+  const { path, contents, overwrite, reading, begin, fresh, ...rest } = args;
+  if (Object.keys(rest).length > 0) throw new Error(`write_file has no ${Object.keys(rest).join(', ')}`);
+  const headers = { 'ul-path': encodeURIComponent(path) };
+  if (overwrite) headers['ul-overwrite'] = '1';
+  if (reading !== undefined && reading !== null) headers['ul-reading'] = String(reading);
+  if (begin) headers['ul-begin'] = '1';
+  if (fresh) headers['ul-fresh'] = '1';
+  return [command, { bytes: Array.from(contents) }, { headers }];
+}
+
 /** Closes the application and frees the ports for the next run. */
 export async function stopDesktop(session) {
   await session?.browser?.close().catch(() => {});

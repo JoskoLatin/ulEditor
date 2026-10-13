@@ -39,7 +39,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
-import { buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { asCall, buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
 
 const IDENTIFIER = 'org.uleditor.app.check';
 
@@ -100,11 +100,11 @@ try {
   session = await startDesktop({ port: 9359, identifier: IDENTIFIER, built: true, profile });
   const { page } = session;
   const invoke = (cmd, args) =>
-    page.evaluate(([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a), [cmd, args]);
+    page.evaluate(([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o), asCall(cmd, args));
   const refusal = (cmd, args) =>
     page.evaluate(
-      ([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a).then(() => null, (err) => JSON.stringify(err)),
-      [cmd, args],
+      ([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o).then(() => null, (err) => JSON.stringify(err)),
+      asCall(cmd, args),
     );
   const reports = async () => (await listing(logs)).filter((n) => n.startsWith('crash-'));
   check('attached to the program as it ships', true);

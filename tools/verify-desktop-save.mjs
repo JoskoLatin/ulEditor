@@ -16,7 +16,11 @@
  *   the write moved nobody's reading;
  * - a save naming a reading nobody made is refused, and is not the
  *   question: nothing would be offered to write over;
- * - a reading taken, the page reloaded: the reading is gone with the page.
+ * - a reading taken, the page reloaded: the reading is gone with the page;
+ * - a 60 MB log, one letter typed, Ctrl+S: saved, byte for byte, with the
+ *   page still alive. The bytes went as a JSON array of numbers until card
+ *   521, and from about 50 MB the page died on that Ctrl+S with the unsaved
+ *   work in it.
  *
  * Windows only, against the program as it ships, under an identifier of its
  * own (an ulEditor the person has open is left alone).
@@ -32,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { makeDocx, makeOds, makePdf, makeXlsx } from './fixtures.mjs';
-import { buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { asCall, buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const IDENTIFIER = 'org.uleditor.app.check';
@@ -98,17 +102,28 @@ const files = {
  *  program compares what it read with what is there; it does not parse it. */
 const another = (bytes) => Buffer.concat([Buffer.from(bytes), Buffer.from([0])]);
 for (const [name, content] of Object.entries(files)) await writeFile(join(workspace, name), content);
+/* A log of about a hundred bytes a line, as the measurement for card 521 used. */
+const BIG = 60 * 1024 * 1024;
+const line = (n) => `2026-10-13 12:00:00.${String(n % 1000).padStart(3, '0')} INFO request ${n} served in ${n % 97} ms by worker ${n % 8}\n`;
+const bigParts = [];
+for (let n = 0, size = 0; size < BIG; n++) {
+  const one = line(n);
+  bigParts.push(one);
+  size += one.length;
+}
+const bigText = bigParts.join('');
+await writeFile(join(workspace, 'big.log'), bigText);
 
 let session;
 try {
   session = await startDesktop({ port: 9357, identifier: IDENTIFIER, built: true });
   const { page } = session;
   const invoke = (cmd, args) =>
-    page.evaluate(([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a), [cmd, args]);
+    page.evaluate(([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o), asCall(cmd, args));
   const refusal = (cmd, args) =>
     page.evaluate(
-      ([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a).then(() => null, (err) => String(err)),
-      [cmd, args],
+      ([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o).then(() => null, (err) => String(err)),
+      asCall(cmd, args),
     );
   await openFromOutside(page, [workspace]);
   check('attached to the program as it ships', true);
@@ -281,6 +296,38 @@ try {
   });
   check('after the page reloads it is unknown', gone !== null && /not read here/.test(gone), gone ?? 'written');
   check('and nothing is written', Buffer.compare(await readFile(target), before) === 0);
+
+  /* ── a big file is saved, and the page lives through it ──────────── */
+
+  await openFromOutside(page, [workspace]);
+  await open('big.log');
+  /* After the reload the session brings its tabs back while this one opens,
+     and the last of them took the focus: the letter went into untouched.md.
+     So the tab is chosen once the restoring is over, and the title says so
+     before anything is typed. */
+  await page.waitForTimeout(3000);
+  await page.locator('.tab', { hasText: 'big.log' }).first().click();
+  await page.waitForFunction(() => document.querySelector('.titlebar-title b')?.textContent === 'big.log', null, {
+    timeout: 30000,
+  });
+  await page.waitForTimeout(1000);
+  await page.locator('.cm-content:visible').first().click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.type('X');
+  check(
+    'the letter went into the big log',
+    (await page.evaluate(() => document.querySelector('.titlebar-title')?.textContent ?? '')).startsWith('big.log'),
+  );
+  const started = Date.now();
+  await page.keyboard.press('Control+s');
+  const saved = await until(async () => (await readFile(join(workspace, 'big.log'))).length === bigText.length + 1, 120000);
+  const took = ((Date.now() - started) / 1000).toFixed(1);
+  check(`a ${Math.round(bigText.length / 1048576)} MB log is saved after one letter`, saved, `${took} s`);
+  check(
+    'byte for byte',
+    saved && (await readFile(join(workspace, 'big.log'), 'utf8')) === `X${bigText}`,
+  );
+  check('and the page lives through it', await page.evaluate(() => document.querySelector('.shell') !== null).catch(() => false));
 
   await page.screenshot({ path: resolve(ROOT, 'tools/screenshots/desktop-save.png') });
 } catch (err) {

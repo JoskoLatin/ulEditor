@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isLocal, startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
+import { asCall, isLocal, startDesktop, stopDesktop, openFromOutside } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -282,15 +282,19 @@ try {
        the editor uses, with `fresh`, over a file that is there. */
     const jpegNow = await readFile(jpeg);
     const refusals = await page.evaluate(
-      async ({ source, target }) => {
+      async ({ source, target, save }) => {
         const invoke = window.__TAURI_INTERNALS__.invoke;
         const refusal = (call) => call.then(() => 'written', (err) => String(err));
         return {
           image: await refusal(invoke('image_write', { source, target, ops: { rotate: 90 }, begin: true, fresh: true })),
-          file: await refusal(invoke('write_file', { path: target, contents: [1, 2, 3], begin: true, fresh: true })),
+          file: await refusal(invoke('write_file', new Uint8Array(save[1].bytes), save[2])),
         };
       },
-      { source: file, target: jpeg },
+      {
+        source: file,
+        target: jpeg,
+        save: asCall('write_file', { path: jpeg, contents: [1, 2, 3], begin: true, fresh: true }),
+      },
     );
     check(
       'the core refuses a fresh picture over a file that is there',

@@ -23,17 +23,51 @@ import { getLocale } from '@uleditor/i18n';
 
 import { detectByName } from './detect.js';
 
-type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+type Invoke = <T>(
+  command: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+) => Promise<T>;
 
 let invokeFn: Invoke | null = null;
 
 /** A dynamic import: the web build must not pull the Tauri API into the bundle. */
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return (await loadInvoke())<T>(command, args);
+}
+
+async function loadInvoke(): Promise<Invoke> {
   if (!invokeFn) {
     const core = await import('@tauri-apps/api/core');
     invokeFn = core.invoke as Invoke;
   }
-  return invokeFn<T>(command, args);
+  return invokeFn;
+}
+
+/**
+ * A save: the bytes as the request's body, the rest in its headers, as
+ * `write_file` reads them (`SaveAsked` in lib.rs). The body crosses as it is;
+ * the array of numbers it used to be took 8 s and 1.2 GB for 25 MB, and from
+ * about 50 MB the page died on Ctrl+S (card 521). Android's bridge still
+ * sends an array — Tauri's choice there, read by Rust all the same.
+ */
+async function save(
+  uri: Uri,
+  data: Uint8Array,
+  asked: { overwrite: boolean; reading?: number; begin?: boolean; fresh?: boolean },
+): Promise<number | null> {
+  const headers: Record<string, string> = { 'ul-path': encodeURIComponent(uri) };
+  if (asked.overwrite) headers['ul-overwrite'] = '1';
+  if (asked.reading !== undefined) headers['ul-reading'] = String(asked.reading);
+  if (asked.begin) headers['ul-begin'] = '1';
+  if (asked.fresh) headers['ul-fresh'] = '1';
+  const call = await loadInvoke();
+  try {
+    return await call<number | null>('write_file', data, { headers });
+  } catch (err) {
+    if (typeof err === 'string' && err.startsWith(CHANGED_OUTSIDE)) throw new ChangedOutsideError(uri);
+    throw err;
+  }
 }
 
 /**
@@ -141,11 +175,9 @@ export class TauriFileSystem implements VirtualFileSystem {
     reading: number | undefined,
     begin: boolean,
   ): Promise<number | null> {
-    return writeInvoke<number | null>(uri, 'write_file', {
-      path: uri,
-      contents: Array.from(data),
+    return save(uri, data, {
       overwrite: opts?.overwriteChanged === true,
-      reading: reading ?? null,
+      reading,
       begin,
       fresh: opts?.fresh === true,
     });
@@ -199,11 +231,7 @@ export class TauriFileSystem implements VirtualFileSystem {
   }
 
   async writeBytes(uri: Uri, data: Uint8Array, opts?: WriteOptions): Promise<void> {
-    await writeInvoke(uri, 'write_file', {
-      path: uri,
-      contents: Array.from(data),
-      overwrite: opts?.overwriteChanged === true,
-    });
+    await save(uri, data, { overwrite: opts?.overwriteChanged === true });
   }
 
   async writeText(uri: Uri, data: string, opts?: WriteOptions): Promise<void> {

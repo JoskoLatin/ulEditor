@@ -529,43 +529,23 @@ fn offered_name(suggested: &str) -> String {
         && !DEVICES
             .iter()
             .any(|device| stem.eq_ignore_ascii_case(device));
-    /* A type Windows runs, or hands to something that runs it, rather than
-    opens to be read — none of which this program writes — only under a short
-    name with no other dot: what the person sees of a long one is its end
-    and the type, or its start and what it pretends to be, never both, and
-    no list of the letters drawn as a line can be finished (card 517). The
-    scripts this program does edit — `.bat`, `.cmd`, `.ps1`, `.js`, `.vbs` —
-    are not here: offering one is what editing one is for. */
-    const RUNS: [&str; 22] = [
-        "exe",
-        "scr",
-        "com",
-        "pif",
-        "cpl",
-        "msi",
-        "msp",
-        "mst",
-        "lnk",
-        "url",
-        "scf",
-        "hta",
-        "jar",
-        "dll",
-        "ocx",
-        "sys",
-        "appx",
-        "msix",
-        "appxbundle",
-        "msixbundle",
-        "appinstaller",
-        "application",
-    ];
-    const SHORTEST_SEEN: usize = 32;
-    let runs = last.rsplit_once('.').is_some_and(|(before, extension)| {
-        RUNS.iter().any(|kind| extension.eq_ignore_ascii_case(kind))
-            && (before.contains('.') || last.chars().count() > SHORTEST_SEEN)
+    /* And only as one of the types this program saves through the dialog —
+    the scratch panel's text, Markdown, Word and PDF, an `.xls` converted to
+    `.xlsx`, pages taken out of a PDF — never as anything else. What the
+    person sees of a long name is its end and the type, or its start and what
+    it pretends to be, never both, and no list of the letters drawn as a line
+    can be finished (card 517); so neither can a list of the types Windows
+    runs, or hands to something that does (`.vbs`, `.reg`, `.chm`, `.msc`,
+    `.appref-ms`, …: the review of fdf7df7, which found that one shaped the
+    way the `.exe` was went through). A type the program starts to save here
+    is added on purpose. */
+    const SAVES: [&str; 5] = ["txt", "md", "docx", "pdf", "xlsx"];
+    let saves = last.rsplit_once('.').is_some_and(|(_, extension)| {
+        SAVES
+            .iter()
+            .any(|kind| extension.eq_ignore_ascii_case(kind))
     });
-    if fits && !runs {
+    if fits && saves {
         last.to_string()
     } else {
         "untitled".to_string()
@@ -1132,27 +1112,147 @@ fn forget_readings(state: State<'_, AppState>, readings: Vec<Reading>) -> Result
 /// reading, and its token is what comes back (ADR 0006). With `fresh`, the
 /// name is one the page worked out itself, and nothing there is replaced
 /// (`Workspace::save_new`).
+///
+/// The document is the request's body, as it is, and the rest rides in its
+/// headers (`SaveAsked`). It used to be a JSON array of numbers, one element
+/// per byte: measured (card 521), a 25 MB save took 8 s and 1.2 GB, and from
+/// about 50 MB the page died on Ctrl+S with the unsaved work in it. On
+/// Android the bridge has no request body and still sends the bytes as that
+/// array (Tauri's `ipc-protocol.js`), so the array is read as well — the
+/// same bytes, the same headers.
 #[tauri::command]
 fn write_file(
     state: State<'_, AppState>,
-    path: String,
-    contents: Vec<u8>,
-    overwrite: Option<bool>,
-    reading: Option<Reading>,
-    begin: Option<bool>,
-    fresh: Option<bool>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<Option<Reading>, VfsError> {
+    let asked = SaveAsked::from_headers(request.headers())?;
+    let contents = save_body(request.body())?;
     with_workspace(&state, |workspace| {
         save_in(
             workspace,
-            &path,
+            &asked.path,
             &contents,
-            overwrite.unwrap_or(false),
-            reading,
-            begin.unwrap_or(false),
-            fresh.unwrap_or(false),
+            asked.overwrite,
+            asked.reading,
+            asked.begin,
+            asked.fresh,
         )
     })
+}
+
+/// What a save asks besides its bytes, read from its headers: `ul-path`, the
+/// path percent-encoded as `encodeURIComponent` writes it (a header holds
+/// ASCII only); `ul-overwrite`, `ul-begin` and `ul-fresh`, each `1` or
+/// absent; `ul-reading`, a reading's number or absent. Anything else in them
+/// is refused rather than read some way: these are the page's words, as the
+/// JSON fields were.
+#[derive(Debug, PartialEq)]
+struct SaveAsked {
+    path: String,
+    overwrite: bool,
+    reading: Option<Reading>,
+    begin: bool,
+    fresh: bool,
+}
+
+impl SaveAsked {
+    fn from_headers(headers: &tauri::http::HeaderMap) -> Result<Self, VfsError> {
+        let bad = |what: &str| VfsError::Unsupported(format!("A save was asked for with {what}."));
+        let one = |name: &str| -> Result<Option<&str>, VfsError> {
+            let mut all = headers.get_all(name).iter();
+            let Some(first) = all.next() else {
+                return Ok(None);
+            };
+            if all.next().is_some() {
+                return Err(bad(&format!("two {name} headers")));
+            }
+            first
+                .to_str()
+                .map(Some)
+                .map_err(|_| bad(&format!("a {name} header that is not plain text")))
+        };
+        let flag = |name: &str| -> Result<bool, VfsError> {
+            match one(name)? {
+                None => Ok(false),
+                Some("1") => Ok(true),
+                Some(_) => Err(bad(&format!("a {name} header other than 1"))),
+            }
+        };
+        let path = one("ul-path")?
+            .ok_or_else(|| bad("no ul-path header"))
+            .and_then(|encoded| {
+                unpercent(encoded)
+                    .ok_or_else(|| bad("a ul-path header that is not a percent-encoded name"))
+            })?;
+        let reading = match one("ul-reading")? {
+            None => None,
+            Some(number)
+                if !number.is_empty()
+                    && number.len() <= 20
+                    && number.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                Some(
+                    number
+                        .parse::<Reading>()
+                        .map_err(|_| bad("a ul-reading header out of range"))?,
+                )
+            }
+            Some(_) => return Err(bad("a ul-reading header that is not a number")),
+        };
+        Ok(Self {
+            path,
+            overwrite: flag("ul-overwrite")?,
+            reading,
+            begin: flag("ul-begin")?,
+            fresh: flag("ul-fresh")?,
+        })
+    }
+}
+
+/// A path as `encodeURIComponent` wrote it, back: `%XX` for every byte of its
+/// UTF-8 but the few characters it leaves alone. Nothing else is taken — not
+/// a `+` for a space, not a lone `%`, not a byte it would have escaped — and
+/// not bytes that are not UTF-8.
+fn unpercent(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'%' => {
+                let hex = encoded.get(at + 1..at + 3)?;
+                if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return None;
+                }
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                at += 3;
+            }
+            b if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) => {
+                out.push(b);
+                at += 1;
+            }
+            _ => return None,
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// A save's bytes: the body as it came, or — from Android's bridge — a JSON
+/// array of numbers, each a byte. Anything else, the JSON object the command
+/// once took included, is refused.
+fn save_body(body: &tauri::ipc::InvokeBody) -> Result<std::borrow::Cow<'_, [u8]>, VfsError> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
+        tauri::ipc::InvokeBody::Json(serde_json::Value::Array(numbers)) => numbers
+            .iter()
+            .map(|n| n.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .map(std::borrow::Cow::Owned)
+            .ok_or_else(|| VfsError::Unsupported("A save's bytes were not bytes.".into())),
+        tauri::ipc::InvokeBody::Json(_) => Err(VfsError::Unsupported(
+            "A save carries the document as its body and the rest in its headers.".into(),
+        )),
+    }
 }
 
 /// A save as the page asked for it: over a reading, or, `fresh`, of a file
@@ -2749,11 +2849,11 @@ mod tests {
         assert_eq!(offered_name("Izvještaj.pdf"), "Izvještaj.pdf");
         assert_eq!(
             offered_name(
-                r"C:\Users\x\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\x.bat"
+                r"C:\Users\x\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\x.txt"
             ),
-            "x.bat"
+            "x.txt"
         );
-        assert_eq!(offered_name("../../x.bat"), "x.bat");
+        assert_eq!(offered_name("../../x.txt"), "x.txt");
         assert_eq!(offered_name("notes.txt:stream"), "untitled");
         assert_eq!(offered_name("C:x.bat"), "untitled");
         assert_eq!(offered_name(".."), "untitled");
@@ -2816,31 +2916,84 @@ mod tests {
         assert_eq!(offered_name("console.log.txt"), "console.log.txt");
     }
 
-    /// A type Windows runs is offered only under a short name with no other
-    /// dot, and the dialog lists the type of the name it offers (card 517).
+    /// "Save as" offers a name only as one of the types the program saves
+    /// through it, and the dialog lists the type of the name it offers
+    /// (card 517).
     #[test]
-    fn a_runnable_type_is_offered_only_under_a_short_plain_name() {
+    fn a_save_target_is_offered_only_as_a_type_the_program_saves() {
         use super::{offered_name, offered_type};
         // Measured 12.10.: this passed, and the box showed only its end.
         let long = format!("invoice.pdf{}.exe", "\u{30FC}".repeat(50));
         assert_eq!(offered_name(&long), "untitled");
-        assert_eq!(offered_name("invoice.pdf.exe"), "untitled");
-        assert_eq!(offered_name("invoice.pdf.EXE"), "untitled");
-        assert_eq!(offered_name("ugovor.pdf.lnk"), "untitled");
-        assert_eq!(offered_name("x.y.msixbundle"), "untitled");
-        assert_eq!(
-            offered_name("a very long installer name here.exe"),
-            "untitled"
-        );
-        assert_eq!(offered_name("setup.exe"), "setup.exe");
-        assert_eq!(offered_name("ulEditor setup 0.6.5.msi"), "untitled");
-        assert_eq!(offered_name("ulEditor setup.msi"), "ulEditor setup.msi");
-        // The scripts this program edits keep their names, dots and all.
-        assert_eq!(offered_name("build.release.ps1"), "build.release.ps1");
-        assert_eq!(offered_name("deploy.prod.bat"), "deploy.prod.bat");
-        assert_eq!(offered_name("app.min.js"), "app.min.js");
-        assert_eq!(offered_name("report.final.pdf"), "report.final.pdf");
+        // The review of fdf7df7: the same shape, with what a list of the
+        // types that run had missed, and a dot drawn by another letter.
+        for kind in [
+            "exe",
+            "EXE",
+            "vbs",
+            "vbe",
+            "jse",
+            "wsf",
+            "wsh",
+            "bat",
+            "cmd",
+            "js",
+            "ps1",
+            "py",
+            "msc",
+            "chm",
+            "reg",
+            "xll",
+            "xlam",
+            "msu",
+            "diagcab",
+            "theme",
+            "rdp",
+            "website",
+            "iso",
+            "img",
+            "vhd",
+            "vhdx",
+            "lnk",
+            "url",
+            "scf",
+            "cpl",
+            "msi",
+            "appref-ms",
+            "library-ms",
+            "settingcontent-ms",
+            "html",
+            "svg",
+        ] {
+            assert_eq!(
+                offered_name(&format!("invoice.pdf.{kind}")),
+                "untitled",
+                "{kind}"
+            );
+            assert_eq!(offered_name(&format!("setup.{kind}")), "untitled", "{kind}");
+            let long = format!("invoice.pdf{}.{kind}", "\u{30FC}".repeat(50));
+            assert_eq!(offered_name(&long), "untitled", "{kind}");
+        }
+        assert_eq!(offered_name("invoice\u{A4F8}pdf.exe"), "untitled");
+        assert_eq!(offered_name("invoice.m\u{17F}i"), "untitled");
+        assert_eq!(offered_name("invoice.\u{FF45}\u{FF58}\u{FF45}"), "untitled");
+        // What the program does save through it, dots and all.
+        for name in [
+            "Bilješke.txt",
+            "Bilješke.md",
+            "Bilješke.docx",
+            "report.final.pdf",
+            "Plan - stranice.pdf",
+            "tablica.xls.xlsx",
+            "Tablica.XLSX",
+        ] {
+            assert_eq!(offered_name(name), name);
+        }
 
+        assert_eq!(
+            offered_type("report.final.pdf"),
+            Some(("PDF (*.pdf)".to_string(), "pdf".to_string()))
+        );
         assert_eq!(
             offered_type("setup.exe"),
             Some(("EXE (*.exe)".to_string(), "exe".to_string()))
@@ -2852,6 +3005,102 @@ mod tests {
         assert_eq!(offered_type("untitled"), None);
         assert_eq!(offered_type("notes."), None);
         assert_eq!(offered_type("a.b\u{30FC}"), None);
+    }
+
+    /// A save's words come from its headers, read one way only, and its bytes
+    /// from its body — raw, or an array of numbers from Android (card 521).
+    #[test]
+    fn a_save_is_read_from_its_headers_and_its_body() {
+        use super::{save_body, unpercent, SaveAsked};
+        use tauri::http::{HeaderMap, HeaderName, HeaderValue};
+        use tauri::ipc::InvokeBody;
+
+        let headers = |pairs: &[(&str, &str)]| {
+            let mut map = HeaderMap::new();
+            for (name, value) in pairs {
+                map.append(
+                    HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    HeaderValue::from_str(value).unwrap(),
+                );
+            }
+            map
+        };
+        // encodeURIComponent("C:\\Users\\x\\Izvještaj 1 (kopija).md")
+        let path = "C%3A%5CUsers%5Cx%5CIzvje%C5%A1taj%201%20(kopija).md";
+        assert_eq!(
+            SaveAsked::from_headers(&headers(&[
+                ("ul-path", path),
+                ("ul-overwrite", "1"),
+                ("ul-reading", "18446744073709551615"),
+                ("ul-fresh", "1"),
+            ]))
+            .unwrap(),
+            SaveAsked {
+                path: r"C:\Users\x\Izvještaj 1 (kopija).md".into(),
+                overwrite: true,
+                reading: Some(u64::MAX),
+                begin: false,
+                fresh: true,
+            }
+        );
+        let plain = SaveAsked::from_headers(&headers(&[("ul-path", "a.txt")])).unwrap();
+        assert!(!plain.overwrite && !plain.begin && !plain.fresh && plain.reading.is_none());
+
+        for refused in [
+            vec![],
+            vec![("ul-path", "a.txt"), ("ul-path", "b.txt")],
+            vec![("ul-path", "a.txt"), ("ul-overwrite", "true")],
+            vec![
+                ("ul-path", "a.txt"),
+                ("ul-overwrite", "1"),
+                ("ul-overwrite", "1"),
+            ],
+            vec![("ul-path", "a.txt"), ("ul-begin", "0")],
+            vec![("ul-path", "a.txt"), ("ul-reading", "")],
+            vec![("ul-path", "a.txt"), ("ul-reading", "-1")],
+            vec![("ul-path", "a.txt"), ("ul-reading", "+1")],
+            vec![("ul-path", "a.txt"), ("ul-reading", "18446744073709551616")],
+            vec![("ul-path", "a b.txt")],
+            vec![("ul-path", "a+b.txt")],
+            vec![("ul-path", "a%2")],
+            vec![("ul-path", "a%zz")],
+            vec![("ul-path", "%FF.txt")],
+            vec![("ul-path", "C:/x.txt")],
+        ] {
+            assert!(
+                SaveAsked::from_headers(&headers(&refused)).is_err(),
+                "{refused:?}"
+            );
+        }
+        let mut odd = HeaderMap::new();
+        odd.insert("ul-path", HeaderValue::from_bytes(b"\xC5\xA1.txt").unwrap());
+        assert!(SaveAsked::from_headers(&odd).is_err());
+
+        assert_eq!(unpercent("%00").as_deref(), Some("\u{0}"));
+        assert_eq!(unpercent("%e2%80%ae").as_deref(), Some("\u{202E}"));
+        assert_eq!(unpercent(""), Some(String::new()));
+
+        assert_eq!(
+            &*save_body(&InvokeBody::Raw(vec![0, 255, 7])).unwrap(),
+            &[0, 255, 7]
+        );
+        assert_eq!(
+            &*save_body(&InvokeBody::Json(serde_json::json!([0, 255, 7]))).unwrap(),
+            &[0, 255, 7]
+        );
+        for refused in [
+            serde_json::json!([256]),
+            serde_json::json!([-1]),
+            serde_json::json!([1.5]),
+            serde_json::json!(["1"]),
+            serde_json::json!({ "path": "a.txt", "contents": [1, 2, 3] }),
+            serde_json::json!(null),
+        ] {
+            assert!(
+                save_body(&InvokeBody::Json(refused.clone())).is_err(),
+                "{refused}"
+            );
+        }
     }
 
     /// A gesture in one of the program's own folders grants nothing and

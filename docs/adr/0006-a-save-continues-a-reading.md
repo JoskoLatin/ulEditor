@@ -149,6 +149,17 @@ does not borrow another tab's reading's protection the way a save-as does
 (card 495); and `image_write` reads its source plainly, without comparing it
 with the tab's reading (card 522, point 3).
 
+*Note, 2026-10-13 (card 521):* `write_file` takes the document as the request's
+body and the rest in headers — `ul-path` (percent-encoded as
+`encodeURIComponent` writes it), `ul-reading`, and `ul-overwrite`, `ul-begin`,
+`ul-fresh` as `1` or absent (`SaveAsked` in `lib.rs`), each read one way only and
+anything else refused. The bytes used to cross as a JSON array of numbers: a
+25 MB save took 8 s and 1.2 GB, and from about 50 MB the page died on Ctrl+S
+with the unsaved work in it; a 60 MB save now takes about 4 s
+(`verify-desktop-save`). Android's bridge has no request body and still sends
+the array, with the same headers, and the core reads that as well. What the
+command decides is unchanged.
+
 **What the token is and is not.** It names a reading. It is not a consent and
 grants nothing: every save still resolves its path through the sandbox
 (`resolve_for_write`, `where_it_was`). A token sent with another name is

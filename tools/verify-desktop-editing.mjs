@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { answerFileDialog, buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
+import { asCall, answerFileDialog, buildDesktop, openFromOutside, startDesktop, stopDesktop } from './desktop-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -71,11 +71,11 @@ try {
   session = await startDesktop({ port: 9355, identifier: IDENTIFIER, built: true });
   const { page } = session;
   const invoke = (cmd, args) =>
-    page.evaluate(([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a), [cmd, args]);
+    page.evaluate(([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o), asCall(cmd, args));
   const refused = (cmd, args) =>
     page.evaluate(
-      ([c, a]) => window.__TAURI_INTERNALS__.invoke(c, a).then(() => false, () => true),
-      [cmd, args],
+      ([c, a, o]) => window.__TAURI_INTERNALS__.invoke(c, a && Array.isArray(a.bytes) ? new Uint8Array(a.bytes) : a, o).then(() => false, () => true),
+      asCall(cmd, args),
     );
   check('attached to the desktop application', true);
 
