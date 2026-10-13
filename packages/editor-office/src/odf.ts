@@ -1399,6 +1399,9 @@ function odtSource(
               if (why === 'the row stands for several rows') {
                 return t('This row stands for several identical rows in the file — a new row cannot go among them.');
               }
+              if (why === 'the table is written in a way this program does not follow') {
+                return t('This table is written in a way this program does not follow — a new row cannot be added to it here.');
+              }
               return t('A new row can only go into a table in the body of the document — not into one in a header, a text box or a content control.');
             },
             anchorAt: (row) => {
@@ -1429,6 +1432,9 @@ function odtSource(
               }
               if (why === 'the row stands for several rows') {
                 return t('This row stands for several identical rows in the file — its cells cannot be merged here.');
+              }
+              if (why === 'the table is written in a way this program does not follow') {
+                return t('This table is written in a way this program does not follow — its cells cannot be merged here.');
               }
               return t('Cells can only be merged in a table in the body of the document — not in one in a header, a text box or a content control.');
             },

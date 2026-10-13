@@ -909,7 +909,19 @@ const part = (body, ns = NS, before = '') =>
       ['a cell merged across, its own covered place no merge from above', Tb(Rw(C(across(2)), V()), Rw(C(), C())) + Tb(Rw(C(), C(down(2))), Rw(C(), V())), '---c'],
       ['a cell of its own inside a merge, and merges across and down', Tb(Rw(C(down(3))), Rw(C()), Rw(V())) + Tb(Rw(C(' table:number-columns-repeated="3"' + down(2))), Rw(C(), C(), V())) + Tb(Rw(C(), C(across(2) + down(2))), Rw(C(), C(), V())) + Tb(Rw(C(), C(across(2) + down(2))), Rw(C(), V(), C())), '--c-c-c-c'],
     ];
+    /* The second review of 940a9b0: a merge across and down whose own
+       covered places in its first row are not from above — marked for the
+       rows after it only once the row is read. */
+    shapes.push(['a merge across and down, its first row\'s own covered place', Tb(Rw(C(across(2) + down(2)), V(), C()), Rw(V(), V(), C()), Rw(C(), C(), C())), '-c-']);
     for (const [label, body, want] of shapes) check(`the grid: ${label}`, sig(body) === want, `${sig(body)}, want ${want}`);
+    const mixedRows = findOdtRows(G(Tb(Rw(C(), C(), C(down(2))), Rw(C(across(2)), '<table:covered-table-cell table:number-columns-repeated="2"/>'))));
+    check(
+      'covered places written together, one from the left and one from above, are refused, not guessed',
+      mixedRows[1].refusal === 'the table is written in a way this program does not follow',
+      String(mixedRows[1].refusal),
+    );
+    const doubled = findOdtRows(G(Tb(Rw(C(' table:number-columns-repeated="2"' + across(2))))));
+    check('and so is a cell written for several that spans columns', doubled[0].refusal === 'the table is written in a way this program does not follow');
 
     /* LibreOffice's own shape: A1 merged across two, C1 down two. A new row
        after the first goes below the merge, with a cell for each column. */
@@ -930,7 +942,7 @@ const part = (body, ns = NS, before = '') =>
        a thousand two hundred tables, each one cell across four thousand
        columns and two rows down, reaches the bound and its last rows take
        nothing. */
-    const many = G(Tb(Rw(C(' table:number-columns-spanned="1024" table:number-columns-repeated="4"' + down(2)))).repeat(1200));
+    const many = G(Tb(Rw(...[0, 1, 2, 3].map(() => C(across(1024) + down(2))))).repeat(1200));
     const at = Date.now();
     const manyRows = findOdtRows(many);
     const took = Date.now() - at;
@@ -938,6 +950,14 @@ const part = (body, ns = NS, before = '') =>
       'the merges of a whole part mark at most four million places',
       manyRows[0].refusal === null && manyRows.at(-1).refusal === 'the table is wider than this program follows' && took < 3000,
       `${took} ms`,
+    );
+    /* Past the bound, every later row — a merge after it included, whose rows
+       would otherwise not be known to continue it. */
+    const after = findOdtRows(G(Tb(Rw(...[0, 1, 2, 3].map(() => C(across(1024) + down(2))))).repeat(1200) + Tb(Rw(C(down(2)), C()), Rw(V(), C()))));
+    check(
+      'and past it every row of the part is refused, the rows of a merge after it too',
+      after.slice(-2).every((row) => row.refusal === 'the table is wider than this program follows'),
+      JSON.stringify(after.slice(-2).map((row) => [row.refusal, row.continued])),
     );
   }
 

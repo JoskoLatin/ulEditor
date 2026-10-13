@@ -1321,15 +1321,26 @@ export function findOdtRows(xml: string): OdtRow[] {
      review, a 76 KB .odt). Past it a row takes no new row and no merge. */
   const pending = new Map<number, { read: number; until: number[] }>();
   let marks = MOST_GRID_MARKS;
+  let exhausted = false;
   for (const row of rows) {
     if (row.table === -1) continue;
+    /* Past the bound nothing more is known of any grid: every later row is
+       refused, a row inside a merge cut off by it included (the second
+       review of 940a9b0). */
+    if (exhausted) {
+      row.refusal ??= 'the table is wider than this program follows';
+      continue;
+    }
     const grid = pending.get(row.table) ?? { read: 0, until: [] };
     pending.set(row.table, grid);
     const ordinal = grid.read++;
     const fromAbove = (column: number) => (grid.until[column] ?? 0) > ordinal;
-    const below: { column: number; until: number }[] = [];
+    /* Ranges, not a mark for each column: a row of four million marks held a
+       third of a gigabyte of them. */
+    const below: { column: number; reach: number; until: number }[] = [];
     let column = 0;
-    for (const tag of raw.get(row) ?? []) {
+    let ambiguous = false;
+    cells: for (const tag of raw.get(row) ?? []) {
       const local = localName(tag.name);
       if (column >= MOST_COLUMNS) {
         row.refusal ??= 'the table is wider than this program follows';
@@ -1339,22 +1350,44 @@ export function findOdtRows(xml: string): OdtRow[] {
       const repeat = count(ownAttr(xml, tag, 'number-columns-repeated'), 64);
       const span = covered ? 1 : count(ownAttr(xml, tag, 'number-columns-spanned'), 1024);
       const down = covered ? 1 : count(ownAttr(xml, tag, 'number-rows-spanned'), 1 << 20);
-      row.cells.push({ tag, covered, fromAbove: covered && fromAbove(column), span, repeat });
-      if (covered && fromAbove(column)) row.continued = true;
+      /* Covered places written together are asked each: some covered from
+         above and some from the left in one element is no grid this program
+         can follow — LibreOffice drew a new row into the merge (measured by
+         the second review of 940a9b0). A cell both written for several and
+         spanning columns leaves its grid ambiguous as well. */
+      let above = false;
+      if (covered) {
+        let some = false;
+        let every = true;
+        for (let c = column; c < Math.min(column + repeat, MOST_COLUMNS); c++) {
+          if (fromAbove(c)) some = true;
+          else every = false;
+        }
+        if (some && !every) ambiguous = true;
+        above = some;
+      } else if (repeat > 1 && span > 1) {
+        ambiguous = true;
+      }
+      row.cells.push({ tag, covered, fromAbove: above, span, repeat });
+      if (above) row.continued = true;
       for (let r = 0; r < repeat && column < MOST_COLUMNS; r++) {
         if (down > 1) {
           const reach = Math.min(column + span, MOST_COLUMNS) - column;
           marks -= reach;
           if (marks < 0) {
+            exhausted = true;
             row.refusal ??= 'the table is wider than this program follows';
-            break;
+            break cells;
           }
-          for (let c = column; c < column + reach; c++) below.push({ column: c, until: ordinal + down });
+          below.push({ column, reach, until: ordinal + down });
         }
         column += 1;
       }
     }
-    for (const mark of below) grid.until[mark.column] = mark.until;
+    if (ambiguous) row.refusal ??= 'the table is written in a way this program does not follow';
+    for (const mark of below) {
+      for (let c = mark.column; c < mark.column + mark.reach; c++) grid.until[c] = mark.until;
+    }
   }
 
   return rows;
