@@ -70,6 +70,7 @@ import {
   odtShowsNothing,
   paragraphOf,
   readOdtStyles,
+  odtMergeRefusal,
   odtPointedNames,
   spacesOf,
   type OdtParagraph,
@@ -1002,9 +1003,13 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
     if (index !== undefined && ctx.markedRows.has(index)) row.dataset.row = String(index);
     const header = isHeaderWrapper && headerRows.has(rowNode);
 
+    /* The row's own cells counted as the core counts them for a merge — a
+       place another cell covers is not one (`OdtMerge`). */
+    let at = -1;
     for (const cellNode of [...rowNode.children]) {
       if (!/^(covered-)?table-cell$/.test(cellNode.localName)) continue;
       if (cellNode.localName === 'covered-table-cell') continue;
+      at++;
 
       const repeat = Math.min(Math.max(1, attrNum(cellNode, 'number-columns-repeated') ?? 1), 64);
       const spanCols = Math.max(1, attrNum(cellNode, 'number-columns-spanned') ?? 1);
@@ -1014,6 +1019,13 @@ function buildTable(node: Element, ctx: Context): HTMLElement {
         const cell = document.createElement(header ? 'th' : 'td');
         if (spanCols > 1) cell.colSpan = spanCols;
         if (spanRows > 1) cell.rowSpan = spanRows;
+        /* Named for a merge only in a row the core named, and only a cell
+           written once for itself: a merge names what the file holds. The
+           span goes with it, for the editor to draw a merge and undo it. */
+        if (row.dataset.row !== undefined && repeat === 1) {
+          cell.dataset.tc = String(at);
+          cell.dataset.span = String(spanCols);
+        }
 
         for (const inner of [...cellNode.children]) {
           if (inner.localName === 'p' || inner.localName === 'h') {
@@ -1308,7 +1320,7 @@ function odtSource(
     /* A piece's ordinal is its place in the list, and stays so: a rewrite moves
        the ranges, never the order. */
     textOf: (index) => pieces[index]?.text ?? '',
-    write: (edits, added, removed, divided, joined, newRows) => {
+    write: (edits, added, removed, divided, joined, newRows, merged) => {
       const written = applyOdtEdits(xml, pieces, edits, {
         paragraphs,
         styles,
@@ -1318,6 +1330,7 @@ function odtSource(
         joins: joined,
         rows,
         rowInserts: (newRows ?? []).map((one) => ({ after: one.after, cells: one.cells })),
+        merges: (merged ?? []).map((one) => ({ row: one.row, from: one.from, count: one.count })),
       });
       /* Read back by a real parser before it goes anywhere: the writer works
          on byte ranges, and a part it got wrong is a document nobody opens
@@ -1369,9 +1382,7 @@ function odtSource(
           }
         : undefined,
 
-    /* Rows, by the same guard. No `mergeRefusalAt`: the cells of an
-       OpenDocument table cannot be merged here yet, and the editor offers no
-       merge where the seam has none. */
+    /* Rows, by the same guard; and cells merged across (card 525). */
     rows:
       markedRows.size > 0
         ? {
@@ -1395,6 +1406,29 @@ function odtSource(
             shapeAt: (row) => {
               const span = rows[row];
               return span ? odtRowShape(anchorOdtRow(rows, span)) : [];
+            },
+            mergeRefusalAt: (row, from, count) => {
+              const why = odtMergeRefusal(xml, rows, { row, from, count });
+              if (why === null) return null;
+              if (why === 'a merge takes two cells at least') return t('Select two cells or more of one row to merge them.');
+              if (why === 'the row has no such cells') return t('This row does not have those cells.');
+              if (why === 'a cell stands for several cells') {
+                return t('One of these cells stands for several identical cells in the file, which does not say which of them is meant.');
+              }
+              if (why === 'a cell already merged down cannot be merged across') {
+                return t('One of these cells is merged down the table already — merging it across is not done here.');
+              }
+              if (why === 'a tracked change is recorded on a cell') {
+                return t('A tracked change is recorded on one of these cells — merging them would claim the same reviewer did it.');
+              }
+              if (why === 'there is no such row') return t('Select cells in a row of a table first.');
+              if (why === 'the table is wider than this program follows') {
+                return t('This table is wider than this program follows — its cells cannot be merged here.');
+              }
+              if (why === 'the row stands for several rows') {
+                return t('This row stands for several identical rows in the file — its cells cannot be merged here.');
+              }
+              return t('Cells can only be merged in a table in the body of the document — not in one in a header, a text box or a content control.');
             },
           }
         : undefined,

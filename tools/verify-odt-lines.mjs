@@ -274,12 +274,35 @@ try {
     rows.length === 2 && rows[1].includes('<text:p>Novi redak</text:p>') && rows[1].includes('<text:p>čćž</text:p>'),
     rows[1] ?? 'no second row',
   );
-  check('and no merge is offered for these cells', !(await page.evaluate(async () => {
+  check('and a merge is offered for these cells (card 525)', await page.evaluate(async () => {
     const { activeInstance } = await import('/src/state/workspace.ts');
     return activeInstance().canMergeCells?.() ?? false;
-  })));
+  }));
   for (let i = 0; i < 6 && (await planned.count()) > 0; i++) await press('Control+Z');
   check('Ctrl+Z takes the row back', (await planned.count()) === 0 && (await saved()).xml.match(/<table:table-row[\s>]/g).length === 1);
+
+  /* ── two cells merged (card 525) ────────────────────────────────────── */
+
+  await page.evaluate(() => {
+    const cells = [...document.querySelector('.ul-office-doc table').rows[0].cells];
+    const range = document.createRange();
+    range.setStart(cells[0], 0);
+    range.setEnd(cells[1], cells[1].childNodes.length);
+    document.getSelection().removeAllRanges();
+    document.getSelection().addRange(range);
+  });
+  await press('Control+m');
+  const drawn = await page.evaluate(() => [...document.querySelector('.ul-office-doc table').rows[0].cells].filter((cell) => !cell.hidden).map((cell) => `${cell.colSpan}:${cell.textContent}`));
+  check('two cells selected and Ctrl+M are one cell on the page', drawn.length === 1 && drawn[0] === '2:Lijevo goreDesno gore', JSON.stringify(drawn));
+  file = await saved();
+  const row = /<table:table-row[\s>][\s\S]*?<\/table:table-row>/.exec(file.xml)?.[0] ?? '';
+  check(
+    'and one cell in the file, spanning two, with both texts, and a covered place',
+    /<table:table-cell office:value-type="string" table:number-columns-spanned="2"><text:p>Lijevo gore<\/text:p><text:p>Desno gore<\/text:p><\/table:table-cell><table:covered-table-cell\/>/.test(row),
+    row,
+  );
+  await press('Control+Z');
+  check('Ctrl+Z takes the merge back', !(await saved()).xml.includes('number-columns-spanned'));
 
   /* ── a boundary the seam refuses ────────────────────────────────────── */
 
@@ -294,8 +317,8 @@ try {
   await done();
 
   check(
-    'the bar names the keys this document has, and no merge',
-    !(await page.locator('.ul-office').first().innerText()).includes('Ctrl+M'),
+    'the bar names the keys this document has, the merge among them (card 525)',
+    (await page.locator('.ul-office').first().innerText()).includes('Ctrl+M merges the cells you select'),
   );
 
   /* ── a part the scanner and the parser could read differently ───────── */

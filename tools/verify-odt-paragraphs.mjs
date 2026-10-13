@@ -67,6 +67,7 @@ const {
   findOdtRows,
   anchorOdtRow,
   odtRowShape,
+  odtMergeRefusal,
   odtRowRefusal,
   odtIsPlain,
   rootNamespaces,
@@ -464,6 +465,8 @@ const pieceOf = (text) => doc.pieces.find((piece) => piece.text === text);
 
 /** Documents with a new row in them, for LibreOffice to read back below. */
 const readableTables = [];
+/** A merge written by the plan, for LibreOffice to open and write again below. */
+const readableMerges = [];
 /** Lists written by the plan, for LibreOffice to read back below. */
 const readableLists = [];
 
@@ -541,6 +544,7 @@ const ROW = { header: 0, merged: 1, covered: 2, wide: 3, repeatedCells: 4, repea
   ]);
   check('two new rows after one keep their order', two.indexOf('prvi') < two.indexOf('drugi') && two.indexOf('prvi') > 0);
   readableTables.push(writeOdf(tabled.archive, below));
+
 
   /* Somebody else's numbers: two hundred cells each claiming 64 repeats of
      1024 columns, spanning down, over two thousand rows. */
@@ -796,6 +800,63 @@ const part = (body, ns = NS, before = '') =>
     { bytes: writeOdf(doc.archive, plan(list, { inserts: [{ after: 1, text: 'ulNova' }], removals: [2], cuts: [{ piece: piece('ulTri').index, parts: ['ulTriA', 'ulTriB'] }] })), joined: false },
     { bytes: writeOdf(doc.archive, joined), joined: true },
   );
+
+  /* ── cells merged across (card 525) ───────────────────────────────────
+     The first cell's attributes and every cell's content, spanning what they
+     spanned together, and a covered place for each column after the first. */
+  {
+    const T = (rows) => part(`<text:p>Prije</text:p><table:table><table:table-column table:number-columns-repeated="6"/>${rows}</table:table>`);
+    const row0 =
+      '<table:table-row><table:table-cell table:style-name="A1"><text:p>ulA</text:p></table:table-cell><table:table-cell><text:p>ulB</text:p></table:table-cell>' +
+      '<table:table-cell><text:p/></table:table-cell><table:table-cell table:number-columns-spanned="2"><text:p>ulD</text:p></table:table-cell><table:covered-table-cell/>' +
+      '<table:table-cell><text:p>ulE</text:p></table:table-cell></table:table-row>';
+    const row1 =
+      '<table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>g</text:p></table:table-cell><table:table-cell><text:p>h</text:p></table:table-cell>' +
+      '<table:table-cell table:number-columns-repeated="2"><text:p/></table:table-cell><table:table-cell><text:p>i</text:p></table:table-cell><table:table-cell><text:p>j</text:p></table:table-cell></table:table-row>' +
+      '<table:table-row><table:covered-table-cell/><table:table-cell><text:p>k</text:p></table:table-cell><table:table-cell><text:p>l</text:p></table:table-cell>' +
+      '<table:table-cell><text:p>m</text:p></table:table-cell><table:table-cell><text:p>n</text:p></table:table-cell><table:table-cell><text:p>o</text:p></table:table-cell></table:table-row>';
+    const xml = T(row0 + row1);
+    const merging = { xml, pieces: findOdtPieces(xml), paragraphs: findOdtParagraphs(xml), styles: readOdtStyles(xml, null), archive: doc.archive };
+    const rowsOf = findOdtRows(xml);
+    const withMerges = (merges, edits = []) => plan(merging, { rows: rowsOf, merges }, edits);
+    const elements = (out, index) => {
+      const row = findOdtRows(out)[index];
+      return out.slice(row.start, row.end).match(/<table:(table-cell|covered-table-cell)\b/g)?.length ?? 0;
+    };
+
+    const two = withMerges([{ row: 0, from: 0, count: 2 }]);
+    check(
+      'two cells merged: the first one\'s attributes, both contents, spanning two, and a covered place',
+      two.includes('<table:table-cell table:style-name="A1" table:number-columns-spanned="2"><text:p>ulA</text:p><text:p>ulB</text:p></table:table-cell><table:covered-table-cell/>') &&
+        elements(two, 0) === 6 && balanced(two),
+      /<table:table-row>[\s\S]*?<\/table:table-row>/.exec(two)?.[0].slice(0, 220),
+    );
+    const across = withMerges([{ row: 0, from: 1, count: 3 }]);
+    check(
+      'a cell already spanning two merged with the cells before it spans four, an empty cell bringing nothing',
+      across.includes('table:number-columns-spanned="4"><text:p>ulB</text:p><text:p>ulD</text:p></table:table-cell>' + '<table:covered-table-cell/>'.repeat(3) + '<table:table-cell><text:p>ulE') &&
+        elements(across, 0) === 6 && balanced(across),
+    );
+    const piece = (text) => merging.pieces.find((one) => one.text === text);
+    const typed = withMerges([{ row: 0, from: 0, count: 2 }], [{ index: piece('ulB').index, text: 'ulBe' }]);
+    check('what was typed into a merged cell goes with it', typed.includes('<text:p>ulA</text:p><text:p>ulBe</text:p>') && !typed.includes('>ulB<'));
+    const overlapping = withMerges([{ row: 0, from: 0, count: 2 }, { row: 0, from: 1, count: 2 }]);
+    check('a merge over cells another took is dropped', overlapping === two);
+    const refuse = (merge) => odtMergeRefusal(xml, rowsOf, merge);
+    check(
+      'and refused, each said why: one cell, cells the row has not, a cell merged down, a cell written for two — not the cells after a place covered from above',
+      refuse({ row: 0, from: 0, count: 1 }) === 'a merge takes two cells at least' &&
+        refuse({ row: 0, from: 4, count: 2 }) === 'the row has no such cells' &&
+        refuse({ row: 1, from: 0, count: 2 }) === 'a cell already merged down cannot be merged across' &&
+        refuse({ row: 2, from: 0, count: 2 }) === null &&
+        refuse({ row: 1, from: 1, count: 2 }) === 'a cell stands for several cells',
+      JSON.stringify([refuse({ row: 0, from: 0, count: 1 }), refuse({ row: 0, from: 4, count: 2 }), refuse({ row: 1, from: 0, count: 2 }), refuse({ row: 2, from: 0, count: 2 }), refuse({ row: 1, from: 1, count: 2 })]),
+    );
+    const nested = part('<text:p>A</text:p><table:table><table:table-row><table:table-cell><table:table><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table></table:table-cell></table:table-row></table:table>');
+    check('and in a table inside a cell of the body, as a new row may be added there', odtMergeRefusal(nested, findOdtRows(nested), { row: 1, from: 0, count: 2 }) === null);
+    written.push(two, across, typed);
+    readableMerges.push(writeOdf(doc.archive, two));
+  }
 
   const controls = plan(doc, { inserts: [{ after: AT.bold, text: 'a\u000Bb\u000Cc\u0001d\uD800e' }] });
   check(
@@ -1213,6 +1274,28 @@ if (SOFFICE) {
     `${opened} of ${readable.length}${unread.length ? `; the originals of ${unread.join(', ')} gave LibreOffice no text either` : ''}`,
   );
   check('the fixture is among them', !unread.includes('fixture.odt'));
+
+  /* A merge, opened by LibreOffice and written again as OpenDocument: what it
+     keeps is a cell spanning two with both texts in it. */
+  if (readableMerges.length) {
+    const merges = join(work, 'merge');
+    mkdirSync(merges);
+    readableMerges.forEach((bytes, i) => writeFileSync(join(merges, `m${i}.odt`), bytes));
+    convert(readableMerges.map((_, i) => join(merges, `m${i}.odt`)), 'odt', join(merges, 'again'));
+    const again = join(merges, 'again', 'm0.odt');
+    const kept = existsSync(again) ? strFromU8(unzipSync(readFileSync(again))['content.xml']) : '';
+    /* LibreOffice writes the table again in its own way — a column merged
+       in every row becomes one column, so the span itself may go (measured:
+       six columns, two merged, came back as four). What it must keep is the
+       merge: both texts in one cell, the others in cells of their own. */
+    const cells = [...kept.matchAll(/<table:table-cell\b[^>]*>([\s\S]*?)<\/table:table-cell>/g)].map((m) => m[1]);
+    const both = cells.filter((one) => one.includes('ulA') && one.includes('ulB'));
+    check(
+      'LibreOffice keeps a merged cell as one, with both texts in it and the others apart',
+      both.length === 1 && cells.some((one) => one.includes('ulD') && !one.includes('ulA')) && cells.some((one) => one.includes('ulE') && !one.includes('ulD')),
+      kept ? cells.map((one) => one.replace(/<[^>]+>/g, ' ').trim()).join(' | ').slice(0, 120) : 'LibreOffice wrote nothing',
+    );
+  }
   check(
     'and shows the lines the plan made: a new one, a divided one as two, two joined as one, a new row',
     opened > 0 && wrong.length === 0,

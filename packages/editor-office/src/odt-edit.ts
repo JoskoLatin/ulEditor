@@ -1063,6 +1063,9 @@ export function odtJoinRefusal(
   return null;
 }
 
+/** A cell's own paragraphs, which show nothing themselves: a cell holding only empty ones is empty. */
+const CELL_LINES = new Set(['p', 'h']);
+
 /** Marks that show nothing on the page — a line holding only these is an empty line. */
 const SHOWS_NOTHING = new Set([
   'span',
@@ -1089,6 +1092,8 @@ function showsNothingIn(
   to: number,
   pieces: OdtPiece[],
   typed: ReadonlyMap<number, string>,
+  /** Elements that show nothing here besides — a cell's own paragraphs, asked of a cell. */
+  also: ReadonlySet<string> = new Set(),
 ): boolean {
   const retyped = pieces.filter((piece) => typed.has(piece.index) && piece.start >= from && piece.end <= to);
   if (retyped.some((piece) => typed.get(piece.index)!.length > 0)) return false;
@@ -1100,7 +1105,7 @@ function showsNothingIn(
     if (start > after && !skipped(after) && xml.slice(after, start).trim() !== '') return false;
     after = raw.end + from;
     if (raw.closing || skipped(start)) continue;
-    if (!SHOWS_NOTHING.has(localName(raw.name))) return false;
+    if (!SHOWS_NOTHING.has(localName(raw.name)) && !also.has(localName(raw.name))) return false;
   }
   return !(to > after && !skipped(after) && xml.slice(after, to).trim() !== '');
 }
@@ -1389,6 +1394,113 @@ export function odtRowMarkup(xml: string, row: OdtRow, texts: readonly string[])
   return `${out}</${table}:table-row>`;
 }
 
+/* ── cells merged across ─────────────────────────────────────────────── */
+
+/**
+ * A run of cells of one row merged across into one. `from` and `count` count
+ * the row's own cells as the view draws them — a place another cell covers
+ * is not one — and `row` is a row of the original part, so the three stay
+ * valid for the life of the document, as a Word merge's do.
+ */
+export interface OdtMerge {
+  row: number;
+  from: number;
+  count: number;
+}
+
+/**
+ * The cells a merge names, and every element of the row from the first of
+ * them to the last place covered from the left after the last — the stretch
+ * the merged cell and its covered places replace.
+ */
+function mergeRun(row: OdtRow, merge: OdtMerge): { named: OdtCell[]; all: OdtCell[] } | null {
+  if (merge.from < 0 || merge.count < 1) return null;
+  const named = row.cells.filter((cell) => !cell.covered).slice(merge.from, merge.from + merge.count);
+  if (named.length !== merge.count) return null;
+  const first = row.cells.indexOf(named[0]!);
+  let last = row.cells.indexOf(named[named.length - 1]!);
+  while (row.cells[last + 1]?.covered && !row.cells[last + 1]!.fromAbove) last++;
+  return { named, all: row.cells.slice(first, last + 1) };
+}
+
+/**
+ * Why these cells may not be merged; `null` when they may.
+ *
+ * - **Two cells at least**, all of them cells the row has, in a row a new
+ *   row could follow (`OdtRow.refusal`: a table in the body, a row written
+ *   once).
+ * - **Not a cell written once for several** (`number-columns-repeated`):
+ *   which of them is meant, the file does not say.
+ * - **Not a cell merged down, nor a place covered from above among them** —
+ *   as for Word, where merging such a cell across was never asked.
+ * - **Not where a tracked change is recorded**, which a merge would sign
+ *   somebody else's name to.
+ */
+export function odtMergeRefusal(xml: string, rows: OdtRow[], merge: OdtMerge): string | null {
+  const row = rows[merge.row];
+  if (!row) return 'there is no such row';
+  if (row.refusal) return row.refusal;
+  if (merge.count < 2) return 'a merge takes two cells at least';
+  const run = mergeRun(row, merge);
+  if (!run) return 'the row has no such cells';
+  if (run.named.some((cell) => cell.repeat > 1)) return 'a cell stands for several cells';
+  const down = (cell: OdtCell) => count(ownAttr(xml, openingOf(xml, cell.tag), 'number-rows-spanned'), 2) > 1;
+  if (run.all.some((cell) => cell.covered && cell.fromAbove) || run.named.some(down)) {
+    return 'a cell already merged down cannot be merged across';
+  }
+  if (tracked(xml, run.all[0]!.tag.start, run.all[run.all.length - 1]!.tag.end)) return 'a tracked change is recorded on a cell';
+  return null;
+}
+
+/** Where a cell's content lies, between its tags; nothing for one that closes itself. */
+function cellInside(xml: string, cell: OdtCell): { start: number; end: number } {
+  const opening = openingOf(xml, cell.tag);
+  if (opening.end >= cell.tag.end) return { start: opening.end, end: opening.end };
+  return { start: opening.end, end: xml.lastIndexOf('<', cell.tag.end - 1) };
+}
+
+/**
+ * The merged cell: **the first cell's attributes and every cell's content**,
+ * as LibreOffice merges and as Word does — the content in the order the cells
+ * stood in, a cell showing nothing bringing nothing — spanning the columns
+ * the cells spanned together, and after it a covered place for each column
+ * but its first, which is how OpenDocument draws a cell across several.
+ */
+function odtMergeMarkup(
+  xml: string,
+  row: OdtRow,
+  merge: OdtMerge,
+  carried: (from: number, to: number) => string,
+  empty: (from: number, to: number) => boolean,
+): string {
+  const table = prefixFor(xml, TABLE_NS, 'table');
+  const run = mergeRun(row, merge)!;
+  const first = run.named[0]!;
+  const span = run.named.reduce((total, cell) => total + cell.span, 0);
+
+  const opening = openingOf(xml, first.tag);
+  const attributes: string[] = [];
+  const attribute = /\s([^\s=/>"']+)\s*=\s*("[^"]*"|'[^']*')/g;
+  const tagText = xml.slice(opening.start, opening.end);
+  for (let match = attribute.exec(tagText); match; match = attribute.exec(tagText)) {
+    if (localName(match[1]!) === 'number-columns-spanned') continue;
+    attributes.push(`${match[1]}=${match[2]}`);
+  }
+  attributes.push(`${table}:number-columns-spanned="${span}"`);
+
+  const contents = run.named.map((cell) => {
+    const inside = cellInside(xml, cell);
+    return empty(inside.start, inside.end) ? '' : carried(inside.start, inside.end);
+  });
+  const own = cellInside(xml, first);
+  const body = contents.join('') || carried(own.start, own.end);
+
+  return (
+    `<${first.tag.name} ${attributes.join(' ')}>${body}</${first.tag.name}>` +
+    `<${table}:covered-table-cell/>`.repeat(span - 1)
+  );
+}
+
 /* ── writing the plan ────────────────────────────────────────────────── */
 
 /** A piece of text divided by Enter: the first part stays, every later one begins a paragraph. */
@@ -1411,6 +1523,8 @@ export interface OdtReshaping {
   rows?: OdtRow[];
   /** New rows, each after a row of the original part, with what was typed into each cell. */
   rowInserts?: { after: number; cells: string[] }[];
+  /** Runs of cells of rows of the original part, each merged across into one. */
+  merges?: OdtMerge[];
 }
 
 /**
@@ -1514,6 +1628,21 @@ export function applyOdtEdits(
     return { piece: null, in: paragraphs[index]! };
   };
 
+  /* The merges, each judged, and none over a run an earlier one took: a
+     merged cell is written whole, its typed text with it, so nothing else
+     may touch its range. */
+  const mergeRows = reshaping?.rows ?? [];
+  const merged: { merge: OdtMerge; from: number; to: number }[] = [];
+  for (const merge of reshaping?.merges ?? []) {
+    if (odtMergeRefusal(xml, mergeRows, merge) !== null) continue;
+    const run = mergeRun(mergeRows[merge.row]!, merge)!;
+    const from = run.all[0]!.tag.start;
+    const to = run.all[run.all.length - 1]!.tag.end;
+    if (merged.some((one) => from < one.to && one.from < to)) continue;
+    merged.push({ merge, from, to });
+  }
+  claimed.push(...merged.map((one) => ({ from: one.from, to: one.to })));
+
   for (const [index, text] of typed) {
     const piece = byIndex.get(index)!;
     if (inRemoved(piece)) continue;
@@ -1550,6 +1679,14 @@ export function applyOdtEdits(
     }
     return text;
   };
+
+  for (const one of merged) {
+    /* A cell shows nothing when its paragraphs show nothing. */
+    const text = odtMergeMarkup(xml, mergeRows[one.merge.row]!, one.merge, carried, (from, to) =>
+      showsNothingIn(xml, from, to, pieces, typed, CELL_LINES),
+    );
+    operations.push({ at: one.from, end: one.to, text, order: 0 });
+  }
 
   /* A divided paragraph, written whole: each cut closes the spans around it
      and the line, and opens a paragraph of the line's own shape — both halves
