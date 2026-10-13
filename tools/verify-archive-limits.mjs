@@ -166,6 +166,56 @@ const directoryEnd = ({ count, size, offset }) =>
   check('the directory\'s sizes count, not a local header\'s', !directory.refused && directory.result['a.xml']?.length === 600000, directory.refused ?? `${directory.result['a.xml']?.length} bytes`);
 }
 
+/* Every bound asked of both openers — the book's is a copy of the Office
+   one's, and must be held to the same (the second review of 6f5e284). */
+{
+  const deflatedPart = (name, declared, data = new Uint8Array(16)) => {
+    const packed = deflateSync(data);
+    return { name, method: 8, packed, usize: declared };
+  };
+  const storedPart = (name, data, declared = data.length) => ({ name, method: 0, packed: data, usize: declared });
+  const build = (parts) => {
+    const locals = [];
+    const entries = [];
+    let at = 0;
+    for (const part of parts) {
+      const local = join([localHeader({ name: part.name, method: part.method, csize: part.packed.length, usize: part.usize }), part.packed]);
+      entries.push(centralEntry({ name: part.name, method: part.method, csize: part.packed.length, usize: part.usize, offset: part.at ?? at }));
+      if (part.at === undefined) {
+        locals.push(local);
+        at += local.length;
+      }
+    }
+    const directory = join(entries);
+    return join([...locals, directory, directoryEnd({ count: parts.length, size: directory.length, offset: at })]);
+  };
+  const MiB = 1024 * 1024;
+  const cases = [
+    ['three parts of 50 MiB each, within a part, past the whole', build([0, 1, 2].map((i) => deflatedPart(`p${i}.xml`, 50 * MiB)))],
+    ['two stored parts at one place', (() => {
+      const data = new Uint8Array(MiB).fill(0x41);
+      return build([storedPart('a.xml', data), { ...storedPart('b.xml', data), at: 0 }]);
+    })()],
+    ['a stored part counted at its size, whatever it declares', build([storedPart('s.xml', new Uint8Array(MiB).fill(0x42), 0), deflatedPart('a.xml', 63.75 * MiB), deflatedPart('b.xml', 63.75 * MiB)])],
+    ['a part past the bound after a broken one: the directory is read first', build([{ name: 'bad.xml', method: 8, packed: new Uint8Array([0xff, 0xff, 0xff, 0xff]), usize: 100 }, deflatedPart('big.xml', MOST_PART_BYTES + 1)])],
+    ['10 001 parts', build(Array.from({ length: MOST_PARTS + 1 }, (_, i) => storedPart(`p${i}.xml`, strToU8('x'))))],
+  ];
+  for (const [opener, open] of [['Office', openArchive], ['book', openEpub]]) {
+    for (const [label, bytes] of cases) {
+      const got = opened(open, bytes);
+      check(`refused as ${opener === 'Office' ? 'an Office file' : 'a book'}: ${label}`, got.refused === SAID && got.took < 1000, `${got.refused ?? 'opened'}, ${got.took} ms`);
+    }
+  }
+  /* And the book walks no further than the Office file: four billion entries claimed. */
+  const one = join([localHeader({ name: 'a.xml', method: 0, csize: 1, usize: 1 }), strToU8('a')]);
+  const entry = centralEntry({ name: 'a.xml', method: 0, csize: 1, usize: 1, offset: 0 });
+  const zip64 = header(56, [[0, 4, 0x06064b50], [4, 8, 44], [12, 2, 45], [14, 2, 45], [24, 8, 2 ** 32 - 2], [32, 8, 2 ** 32 - 2], [40, 8, entry.length], [48, 8, one.length]]);
+  const locator = header(20, [[0, 4, 0x07064b50], [8, 8, one.length + entry.length], [16, 4, 1]]);
+  const endless = join([one, entry, zip64, locator, directoryEnd({ count: 0xffff, size: entry.length, offset: one.length })]);
+  const walked = opened(openEpub, endless);
+  check('refused as a book: four billion claimed entries, at once', walked.refused === SAID && walked.took < 1000, `${walked.refused ?? 'opened'}, ${walked.took} ms`);
+}
+
 /* ── a book ──────────────────────────────────────────────────────────── */
 
 const book = opened(openEpub, makeEpub());
