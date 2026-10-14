@@ -1387,4 +1387,38 @@ mod tests {
         let names: Vec<&str> = listed.iter().map(|s| s.name.as_str()).collect();
         assert!(names.is_empty(), "listed from outside the root: {names:?}");
     }
+
+    /// Files just written from Windows onto WSL's 9P are found (card 488,
+    /// point 7b). A look and the open file once gave two different times
+    /// there, and such files were left out of the search with nothing said.
+    /// Now a file is known by its index, which 9P gives the same both ways.
+    /// GitHub's Windows runner has no WSL, so this runs here: `UL_9P_DIR`
+    /// names a folder on `\\wsl.localhost\<distribution>\…`, and
+    /// whatever this test writes there it removes again.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs WSL and UL_9P_DIR; run with: cargo test -p ul-core -- --ignored written_on_9p"]
+    fn files_just_written_on_9p_are_found() {
+        let base = PathBuf::from(
+            env::var_os("UL_9P_DIR").expect("UL_9P_DIR names a folder on WSL's 9P share"),
+        );
+        let root = base.join(format!("ul-search-9p-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let written = many_files(&root, 40);
+
+        let mut ws = Workspace::new();
+        ws.add_root(&root).unwrap();
+        let out = ws.search(&query("needle"));
+        let _ = fs::remove_dir_all(&root);
+
+        let out = out.unwrap();
+        assert_eq!(
+            out.hits.len(),
+            written.len(),
+            "found {} of {} files on 9P",
+            out.hits.len(),
+            written.len()
+        );
+    }
 }
