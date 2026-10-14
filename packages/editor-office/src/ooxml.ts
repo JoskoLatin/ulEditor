@@ -11,7 +11,8 @@
  * were not taken.
  */
 
-import { unzipSync, strFromU8 } from 'fflate';
+import { strFromU8 } from 'fflate';
+import { unzipWithin, ArchiveTooLarge as TooLarge, ArchiveTooSlow as TooSlow } from '@uleditor/archive';
 import { t } from '@uleditor/i18n';
 
 export type Archive = Record<string, Uint8Array>;
@@ -31,37 +32,24 @@ export const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
 export const MOST_PARTS = 10_000;
 
 /**
- * A ZIP unpacked within those bounds, or refused, saying so.
- *
- * The directory is read first, alone, and nothing is unpacked until all of
- * it is within bounds. What a part comes to is what fflate would make of
- * it: a stored part is copied whole, at its packed size, whatever it
- * declares; a deflated one is made into a buffer of the size it declares,
- * and anything past that is dropped (measured: 100 bytes declared of fifty
- * megabytes gave 100 bytes). The packed sizes together may not exceed the
- * file: an honest ZIP never shares bytes between parts, and stored parts
- * pointing at one stretch had come to 2 GiB out of a file of 20 MiB (the
- * review of 6f5e284). Refused by a throw, which also ends the walk: a
- * directory end claiming four billion entries, in 185 bytes, kept the walk
- * going for minutes when a part was only left out.
+ * A ZIP unpacked within those bounds, or refused, saying so — by
+ * `unzipWithin` (`@uleditor/archive`): the directory first and alone, a
+ * stored part at its packed size, the packed sizes together no more than
+ * the file (an honest ZIP never shares bytes between parts; stored parts
+ * pointing at one stretch had come to 2 GiB out of 20 MiB, the review of
+ * 6f5e284), and a deflated part given up as soon as it unpacks to more than
+ * it says, so a lie costs a slice of decoding, not the whole of it (card
+ * 529: a megabyte holding a gigabyte had taken six seconds); and all of it
+ * within `MOST_SECONDS`.
  */
 export function boundedUnzip(bytes: Uint8Array): Archive {
-  let total = 0;
-  let packed = 0;
-  let parts = 0;
-  unzipSync(bytes, {
-    filter: (file) => {
-      parts += 1;
-      packed += file.size;
-      const out = file.compression === 0 ? file.size : file.originalSize;
-      total += out;
-      if (parts > MOST_PARTS || out > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || packed > bytes.length) {
-        throw new ArchiveTooLarge();
-      }
-      return false;
-    },
-  });
-  return unzipSync(bytes);
+  try {
+    return unzipWithin(bytes, { part: MOST_PART_BYTES, archive: MOST_ARCHIVE_BYTES, parts: MOST_PARTS });
+  } catch (err) {
+    if (err instanceof TooLarge) throw new ArchiveTooLarge();
+    if (err instanceof TooSlow) throw new ArchiveTooSlow();
+    throw err;
+  }
 }
 
 /** An archive that would unpack to more than `boundedUnzip` takes. */
@@ -71,11 +59,18 @@ export class ArchiveTooLarge extends Error {
   }
 }
 
+/** An archive that took longer to unpack than `boundedUnzip` waits. */
+export class ArchiveTooSlow extends Error {
+  constructor() {
+    super(t('This file takes too long to unpack, so it is not opened.'));
+  }
+}
+
 export function openArchive(bytes: Uint8Array): Archive {
   try {
     return boundedUnzip(bytes);
   } catch (err) {
-    if (err instanceof ArchiveTooLarge) throw err;
+    if (err instanceof ArchiveTooLarge || err instanceof ArchiveTooSlow) throw err;
     // The message from fflate ("invalid zip data") means nothing to a user.
     throw new Error(
       t('This is not a valid Office archive — it is probably damaged or incompletely downloaded.'),

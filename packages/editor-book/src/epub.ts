@@ -16,7 +16,8 @@
  *    would be XSS in your own application.
  */
 
-import { unzipSync, strFromU8 } from 'fflate';
+import { strFromU8 } from 'fflate';
+import { unzipWithin, ArchiveTooLarge, ArchiveTooSlow } from '@uleditor/archive';
 import DOMPurify from 'dompurify';
 import { t } from '@uleditor/i18n';
 
@@ -264,42 +265,26 @@ function titleOf(body: HTMLElement, fallback: string): string {
 /* ── opening ─────────────────────────────────────────────────────────── */
 
 /**
- * The bounds an archive is unpacked within, and how — the same as an Office
- * file's (`boundedUnzip` in editor-office, which this package does not
- * depend on; card 528): the directory first, alone; a stored part at its
- * packed size, a deflated one at the size it declares; the packed sizes
- * together no more than the file; refused by a throw, which ends the walk.
+ * The bounds an archive is unpacked within — the same as an Office file's,
+ * and by the same walk (`unzipWithin`, `@uleditor/archive`; cards 528, 529).
  */
 const MOST_PART_BYTES = 64 * 1024 * 1024;
 const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MOST_PARTS = 10_000;
 
-class BookTooLarge extends Error {}
-
 export function openEpub(bytes: Uint8Array): Book {
-  let total = 0;
-  let packed = 0;
-  let parts = 0;
+  let files: Record<string, Uint8Array>;
   try {
-    unzipSync(bytes, {
-      filter: (file) => {
-        parts += 1;
-        packed += file.size;
-        const out = file.compression === 0 ? file.size : file.originalSize;
-        total += out;
-        if (parts > MOST_PARTS || out > MOST_PART_BYTES || total > MOST_ARCHIVE_BYTES || packed > bytes.length) {
-          throw new BookTooLarge();
-        }
-        return false;
-      },
-    });
+    files = unzipWithin(bytes, { part: MOST_PART_BYTES, archive: MOST_ARCHIVE_BYTES, parts: MOST_PARTS });
   } catch (err) {
-    if (err instanceof BookTooLarge) {
+    if (err instanceof ArchiveTooLarge) {
       throw new Error(t('This file would unpack to more than this program opens at once, so it is not opened.'));
     }
-    throw err;
+    if (err instanceof ArchiveTooSlow) throw new Error(t('This file takes too long to unpack, so it is not opened.'));
+    /* Whatever else: fflate's own words ("invalid block type") mean
+       nothing to a reader. */
+    throw new Error(t('This is not a valid book — it is probably damaged or incompletely downloaded.'));
   }
-  const files = unzipSync(bytes);
 
   // DRM is not circumvented. Better to say so at once than to display mush.
   if (files['META-INF/encryption.xml']) {

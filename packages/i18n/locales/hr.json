@@ -280,6 +280,8 @@
   "Audio and video content is not shown.": "Audio i video sadržaj nije prikazan.",
   "E-books are read-only for now — editing EPUB is not supported.": "E-knjige se za sada samo čitaju — uređivanje EPUB-a nije podržano.",
   "The archive has no OPF file — this is not an EPUB book.": "Arhiva nema OPF datoteku — ovo nije EPUB knjiga.",
+  "This is not a valid book — it is probably damaged or incompletely downloaded.": "Ovo nije valjana knjiga — vjerojatno je oštećena ili nepotpuno preuzeta.",
+  "This file takes too long to unpack, so it is not opened.": "Ova se datoteka predugo raspakirava, pa se ne otvara.",
   "Invalid XML inside the archive.": "Neispravan XML u arhivi.",
   "The book is DRM-protected, so its content cannot be read. ulEditor deliberately does not circumvent protection.": "Knjiga je zaštićena DRM-om, pa se sadržaj ne može pročitati. ulEditor namjerno ne zaobilazi zaštitu.",
   "The OPF file {path} is missing from the archive.": "OPF datoteka {path} nedostaje u arhivi.",

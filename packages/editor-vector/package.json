@@ -14,9 +14,9 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@uleditor/archive": "workspace:*",
     "@uleditor/i18n": "workspace:*",
-    "@uleditor/plugin-sdk": "workspace:*",
-    "fflate": "0.8.3"
+    "@uleditor/plugin-sdk": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"
