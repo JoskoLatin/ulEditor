@@ -265,11 +265,13 @@ function titleOf(body: HTMLElement, fallback: string): string {
 /* ── opening ─────────────────────────────────────────────────────────── */
 
 /**
- * The bounds an archive is unpacked within — the same as an Office file's,
- * and by the same walk (`unzipWithin`, `@uleditor/archive`; cards 528, 529).
+ * The bounds an archive is unpacked within, by the same walk as an Office
+ * file's (`unzipWithin`, `@uleditor/archive`; cards 528, 529). Not its sizes:
+ * every chapter of a book goes to the DOM, so a part stays at what the DOM
+ * may take, where a worksheet's need not (card 530).
  */
-const MOST_PART_BYTES = 64 * 1024 * 1024;
-const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
+export const MOST_PART_BYTES = 64 * 1024 * 1024;
+export const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MOST_PARTS = 10_000;
 
 export function openEpub(bytes: Uint8Array): Book {

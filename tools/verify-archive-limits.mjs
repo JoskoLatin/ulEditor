@@ -26,10 +26,10 @@ import { makeDocx, makeEpub } from './fixtures.mjs';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { openArchive, MOST_PART_BYTES, MOST_ARCHIVE_BYTES, MOST_PARTS } = await import(
+const { openArchive, readXml, MOST_PART_BYTES, MOST_SHEET_PART_BYTES, MOST_ARCHIVE_BYTES, MOST_PARTS, MOST_DOM_PART_BYTES, MOST_DOM_ARCHIVE_BYTES } = await import(
   pathToFileURL(resolve(ROOT, 'packages/editor-office/src/ooxml.ts')).href
 );
-const { openEpub } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-book/src/epub.ts')).href);
+const { openEpub, MOST_PART_BYTES: MOST_BOOK_PART_BYTES, MOST_ARCHIVE_BYTES: MOST_BOOK_ARCHIVE_BYTES } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-book/src/epub.ts')).href);
 const { unpack, MOST_SVG_BYTES } = await import(pathToFileURL(resolve(ROOT, 'packages/editor-vector/src/unpack.ts')).href);
 const { unzipWithin, gunzipWithin, ArchiveTooSlow } = await import(pathToFileURL(resolve(ROOT, 'packages/archive/src/index.ts')).href);
 
@@ -74,14 +74,26 @@ const honest = opened(openArchive, makeDocx());
 check('an honest Word document opens', !honest.refused && 'word/document.xml' in honest.result, honest.refused ?? '');
 
 const small = zipSync({ 'a.xml': strToU8('<a/>'), 'b.xml': strToU8('<b/>'), 'c.xml': strToU8('<c/>') });
-for (const [label, sizes] of [
-  ['a part claiming more than a part may hold', [MOST_PART_BYTES + 1, 4, 4]],
-  ['parts claiming more than an archive may hold together', [200 * 1024 * 1024, 200 * 1024 * 1024, 200 * 1024 * 1024]],
+/* Worksheets, which a scanner reads and may be larger than a part the DOM
+   reads (card 530). */
+const sheets = zipSync({
+  'xl/worksheets/sheet1.xml': strToU8('<a/>'),
+  'xl/worksheets/sheet2.xml': strToU8('<b/>'),
+  'xl/sharedStrings.xml': strToU8('<c/>'),
+});
+for (const [label, zip, sizes] of [
+  ['a part claiming more than a part may hold', small, [MOST_PART_BYTES + 1, 4, 4]],
+  ['a worksheet claiming more than a sheet may hold', sheets, [MOST_SHEET_PART_BYTES + 1, 4, 4]],
+  ['the shared strings claiming more than a sheet may hold', sheets, [4, 4, MOST_SHEET_PART_BYTES + 1]],
+  ['a part named like a sheet somewhere else, claiming more than a part', zipSync({ 'xl/worksheets/sub/sheet1.xml': strToU8('<a/>') }), [MOST_PART_BYTES + 1]],
+  ['parts claiming more than an archive may hold together', sheets, Array(3).fill(Math.floor(MOST_ARCHIVE_BYTES / 2) + 1)],
 ]) {
-  const got = opened(openArchive, claiming(small, sizes));
+  const got = opened(openArchive, claiming(zip, sizes));
   check(`refused: ${label}, said so, at once`, got.refused === SAID && got.took < 1000, `${got.refused ?? 'opened'}, ${got.took} ms`);
 }
-const exactly = opened(openArchive, claiming(small, [MOST_ARCHIVE_BYTES / 2, MOST_ARCHIVE_BYTES / 2, 0]));
+const sheetBound = opened(openArchive, claiming(sheets, [MOST_PART_BYTES + 1, 4, 4]));
+check('a worksheet may claim more than a part the DOM reads', sheetBound.refused !== SAID, sheetBound.refused ?? 'opened');
+const exactly = opened(openArchive, claiming(sheets, [MOST_ARCHIVE_BYTES / 2, MOST_ARCHIVE_BYTES / 2, 0]));
 check('parts adding up to the limit exactly are not refused for it', exactly.refused !== SAID, exactly.refused ?? 'opened');
 
 const many = {};
@@ -195,18 +207,20 @@ const directoryEnd = ({ count, size, offset }) =>
     return join([...locals, directory, directoryEnd({ count: parts.length, size: directory.length, offset: at })]);
   };
   const MiB = 1024 * 1024;
-  const cases = [
-    ['three parts of 50 MiB each, within a part, past the whole', build([0, 1, 2].map((i) => deflatedPart(`p${i}.xml`, 50 * MiB)))],
+  /* Sized after each opener's own bounds: four parts within a part of either,
+     past that opener's whole. */
+  const casesFor = (archiveMost) => [
+    ['four parts each within a part, past the whole', build([0, 1, 2, 3].map((i) => deflatedPart(`p${i}.xml`, Math.floor(archiveMost / 4) + MiB)))],
     ['two stored parts at one place', (() => {
       const data = new Uint8Array(MiB).fill(0x41);
       return build([storedPart('a.xml', data), { ...storedPart('b.xml', data), at: 0 }]);
     })()],
-    ['a stored part counted at its size, whatever it declares', build([storedPart('s.xml', new Uint8Array(MiB).fill(0x42), 0), deflatedPart('a.xml', 63.75 * MiB), deflatedPart('b.xml', 63.75 * MiB)])],
+    ['a stored part counted at its size, whatever it declares', build([storedPart('s.xml', new Uint8Array(MiB).fill(0x42), 0), ...[0, 1, 2, 3].map((i) => deflatedPart(`p${i}.xml`, archiveMost / 4 - MiB / 8))])],
     ['a part past the bound after a broken one: the directory is read first', build([{ name: 'bad.xml', method: 8, packed: new Uint8Array([0xff, 0xff, 0xff, 0xff]), usize: 100 }, deflatedPart('big.xml', MOST_PART_BYTES + 1)])],
     ['10 001 parts', build(Array.from({ length: MOST_PARTS + 1 }, (_, i) => storedPart(`p${i}.xml`, strToU8('x'))))],
   ];
-  for (const [opener, open] of [['Office', openArchive], ['book', openEpub]]) {
-    for (const [label, bytes] of cases) {
+  for (const [opener, open, archiveMost] of [['Office', openArchive, MOST_ARCHIVE_BYTES], ['book', openEpub, MOST_BOOK_ARCHIVE_BYTES]]) {
+    for (const [label, bytes] of casesFor(archiveMost)) {
       const got = opened(open, bytes);
       check(`refused as ${opener === 'Office' ? 'an Office file' : 'a book'}: ${label}`, got.refused === SAID && got.took < 1000, `${got.refused ?? 'opened'}, ${got.took} ms`);
     }
@@ -244,18 +258,26 @@ function zeros(times) {
     return back.length === 32 * 1024 * 1024 && back.every((byte) => byte === 0);
   })());
   const bomb = zeros(64);
-  const zipOf = (declared) => {
-    const local = join([localHeader({ name: 'word/document.xml', method: 8, csize: bomb.length, usize: declared }), bomb]);
-    const entry = centralEntry({ name: 'word/document.xml', method: 8, csize: bomb.length, usize: declared, offset: 0 });
+  const zipOf = (declared, name) => {
+    const local = join([localHeader({ name, method: 8, csize: bomb.length, usize: declared }), bomb]);
+    const entry = centralEntry({ name, method: 8, csize: bomb.length, usize: declared, offset: 0 });
     return join([local, entry, directoryEnd({ count: 1, size: entry.length, offset: local.length })]);
   };
-  for (const [label, declared] of [['100 bytes', 100], ['a megabyte', 1024 * 1024], ['the most a part may', MOST_PART_BYTES]]) {
-    const bytes = zipOf(declared);
-    for (const [opener, open, said] of [['an Office file', openArchive, DAMAGED], ['a book', openEpub, BOOK_DAMAGED]]) {
+  for (const [opener, open, said, most, name] of [
+    ['an Office file', openArchive, DAMAGED, MOST_PART_BYTES, 'word/document.xml'],
+    ['a worksheet', openArchive, DAMAGED, MOST_SHEET_PART_BYTES, 'xl/worksheets/sheet1.xml'],
+    ['a book', openEpub, BOOK_DAMAGED, MOST_BOOK_PART_BYTES, 'word/document.xml'],
+  ]) {
+    for (const [label, declared] of [['100 bytes', 100], ['a megabyte', 1024 * 1024], ['the most a part may', most]]) {
+      const bytes = zipOf(declared, name);
       const got = opened(open, bytes);
+      /* A lie costs decoding up to what it declares, so "at once" grows with
+         the bound: a second for every 64 MiB a part may hold (card 530 let a
+         worksheet be 128 MiB). */
+      const soon = 1000 * Math.max(1, declared / (64 * 1024 * 1024));
       check(
         `refused as ${opener}, at once: ${(bytes.length / 1024 / 1024).toFixed(2)} MiB holding a gigabyte, declaring ${label}`,
-        got.refused === said && got.took < 1000,
+        got.refused === said && got.took < soon,
         `${got.refused ?? 'opened'}, ${got.took} ms`,
       );
     }
@@ -485,6 +507,45 @@ const claimingSvgz = svgz.slice();
 new DataView(claimingSvgz.buffer).setUint32(claimingSvgz.length - 4, MOST_SVG_BYTES + 1, true);
 const refusedSvg = opened((bytes) => unpack(bytes, 'svgz'), claimingSvgz);
 check('refused: an .svgz claiming more than a drawing, said so, at once', refusedSvg.refused === SAID && refusedSvg.took < 1000, `${refusedSvg.refused ?? 'unpacked'}, ${refusedSvg.took} ms`);
+
+/* ── what goes to the DOM (card 530) ────────────────────────────────────
+   A part may be larger than the DOM may take: a worksheet is read by a
+   scanner, so 100 000 rows (83 MB of sheet) open, while the same size handed
+   to `readXml` is refused, said so. Node has no DOMParser; a stand-in counts
+   what reaches it, which is the point. */
+{
+  let reached = 0;
+  globalThis.DOMParser = class {
+    parseFromString() {
+      reached++;
+      return { querySelector: () => null };
+    }
+  };
+  check('a worksheet may hold more than the DOM may take', MOST_SHEET_PART_BYTES > MOST_DOM_PART_BYTES && MOST_ARCHIVE_BYTES > MOST_DOM_ARCHIVE_BYTES);
+  check('and 100 000 rows of a sheet are within it', MOST_SHEET_PART_BYTES > 83 * 1000 * 1000);
+  check('a part the DOM reads may hold no more than the DOM may take', MOST_PART_BYTES <= MOST_DOM_PART_BYTES);
+
+  const part = (n) => new Uint8Array(n).fill(0x20);
+  const refusedBy = (archive, path) => {
+    try {
+      readXml(archive, path);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  const one = { 'big.xml': part(MOST_DOM_PART_BYTES + 1) };
+  check('refused: a part past what the DOM may take, said so', refusedBy(one, 'big.xml') === SAID && reached === 0, `${reached} parsed`);
+
+  const half = Math.floor(MOST_DOM_ARCHIVE_BYTES / 2);
+  const three = { 'a.xml': part(half), 'b.xml': part(half), 'c.xml': part(1) };
+  check('two parts up to what the DOM may take together are read', refusedBy(three, 'a.xml') === null && refusedBy(three, 'b.xml') === null && reached === 2);
+  check('refused: a third past it, said so', refusedBy(three, 'c.xml') === SAID && reached === 2);
+  check('a part read again counts once', refusedBy(three, 'a.xml') === null && reached === 3);
+  check('and another archive starts again', refusedBy({ 'c.xml': part(1) }, 'c.xml') === null && reached === 4);
+  delete globalThis.DOMParser;
+}
 
 const failed = checks.filter((c) => !c.passed);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

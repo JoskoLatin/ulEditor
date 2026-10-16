@@ -50,8 +50,9 @@ export class ArchiveTooSlow extends Error {
 }
 
 export interface ZipBounds {
-  /** The most one part may unpack to. */
-  part: number;
+  /** The most one part may unpack to — the same for every part, or asked
+   *  by its name, for a format whose parts cost differently (card 530). */
+  part: number | ((name: string) => number);
   /** The most all of them may unpack to together. */
   archive: number;
   /** The most parts. */
@@ -235,7 +236,8 @@ export function unzipWithin(bytes: Uint8Array, bounds: ZipBounds): Record<string
     packed += part.size;
     const out = part.compression === 0 ? part.size : part.originalSize;
     total += out;
-    if (count > bounds.parts || out > bounds.part || total > bounds.archive || packed > bytes.length) {
+    const most = typeof bounds.part === 'number' ? bounds.part : bounds.part(part.name);
+    if (count > bounds.parts || out > most || total > bounds.archive || packed > bytes.length) {
       throw new ArchiveTooLarge();
     }
   }

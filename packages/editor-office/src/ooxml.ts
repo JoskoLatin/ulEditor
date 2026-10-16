@@ -22,14 +22,37 @@ export type Archive = Record<string, Uint8Array>;
  * largest part among Čovik's 74 Office files is 10.4 MB and the largest
  * whole 11.1 MB, with 35 parts at most; a ZIP of a few kilobytes can claim
  * gigabytes, and unpacked whole in the page it takes the page down with
- * whatever else is unsaved in it (card 528). Held well below what the page
- * holds: a part's XML takes some eighteen times its size as a DOM (measured
- * by the review of 6f5e284: 64 MiB of XML, 1.16 GiB), so 64 MiB a part and
- * 128 MiB in all.
+ * whatever else is unsaved in it (card 528).
+ *
+ * A part goes to the DOM, which costs some eighteen times its size (the
+ * review of 6f5e284: 64 MiB of XML, 1.16 GiB) — so 64 MiB a part — unless it
+ * is a worksheet or the shared strings, which a scanner reads (card 530). A
+ * sheet holds some 3.5 times its size read, and saving one changed cell
+ * about 8 (the review of card 530: 384 MiB unpacked came to 2.6 GiB of a
+ * 4 GiB heap, saved). 100 000 rows of 27 columns are an 83 MB sheet, so a
+ * sheet may be 128 MiB and all of it 192 MiB. `readXml` holds the DOM to 64
+ * MiB a part and 128 MiB an archive besides, whatever a part is called.
  */
 export const MOST_PART_BYTES = 64 * 1024 * 1024;
-export const MOST_ARCHIVE_BYTES = 128 * 1024 * 1024;
+export const MOST_SHEET_PART_BYTES = 128 * 1024 * 1024;
+export const MOST_ARCHIVE_BYTES = 192 * 1024 * 1024;
 export const MOST_PARTS = 10_000;
+export const MOST_DOM_PART_BYTES = 64 * 1024 * 1024;
+export const MOST_DOM_ARCHIVE_BYTES = 128 * 1024 * 1024;
+
+/** The parts the scanner reads rather than the DOM, where Excel writes them. */
+const SCANNED = /^xl\/(worksheets\/[^/]+\.xml|sharedStrings\.xml)$/;
+
+export function mostBytesOfPart(name: string): number {
+  return SCANNED.test(name) ? MOST_SHEET_PART_BYTES : MOST_PART_BYTES;
+}
+
+/**
+ * The parts `readXml` has handed to the DOM, per archive, and their size.
+ * Each part counts once: a part read again replaces its DOM rather than adding
+ * one, and an editor reads the same archive for as long as it is open.
+ */
+const parsed = new WeakMap<Archive, { paths: Set<string>; bytes: number }>();
 
 /**
  * A ZIP unpacked within those bounds, or refused, saying so — by
@@ -44,7 +67,7 @@ export const MOST_PARTS = 10_000;
  */
 export function boundedUnzip(bytes: Uint8Array): Archive {
   try {
-    return unzipWithin(bytes, { part: MOST_PART_BYTES, archive: MOST_ARCHIVE_BYTES, parts: MOST_PARTS });
+    return unzipWithin(bytes, { part: mostBytesOfPart, archive: MOST_ARCHIVE_BYTES, parts: MOST_PARTS });
   } catch (err) {
     if (err instanceof TooLarge) throw new ArchiveTooLarge();
     if (err instanceof TooSlow) throw new ArchiveTooSlow();
@@ -87,6 +110,15 @@ export function readText(archive: Archive, path: string): string | null {
 export function readXml(archive: Archive, path: string): Document | null {
   const data = archive[path];
   if (!data) return null;
+  let seen = parsed.get(archive);
+  if (!seen) parsed.set(archive, (seen = { paths: new Set(), bytes: 0 }));
+  if (!seen.paths.has(path)) {
+    if (data.length > MOST_DOM_PART_BYTES || seen.bytes + data.length > MOST_DOM_ARCHIVE_BYTES) {
+      throw new ArchiveTooLarge();
+    }
+    seen.paths.add(path);
+    seen.bytes += data.length;
+  }
   const doc = new DOMParser().parseFromString(strFromU8(data), 'application/xml');
   return doc.querySelector('parsererror') ? null : doc;
 }
