@@ -38,7 +38,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 
-import { makeBigXlsx, makeFormulaXlsx } from './fixtures.mjs';
+import { makeBigXlsx, makeFormulaXlsx, makeHostileXlsx } from './fixtures.mjs';
 import './ts-resolve.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -173,6 +173,49 @@ try {
      under a regression: the DOM reader took 13.7 s here and kept 5 000 rows. */
   check('in less than half the time the old reader took to keep 5 000 of them', read.ms < 6850, `${read.ms} ms`);
   check('and no note says anything was left out', !read.notes.some((n) => /first/i.test(n)), read.notes.join(' | ').slice(0, 80));
+
+  /* ── a workbook that costs more than it weighs (card 530) ─────────── */
+
+  const hostile = (opts) =>
+    page.evaluate(
+      async ({ module, b64 }) => {
+        const { readXlsx, MAX_FORMULA_CHARS, MOST_SHIFTED_FORMULA_CHARS } = await import(module);
+        const book = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+        const cells = book.sheets[0].cells;
+        const formulas = [...cells.values()].map((cell) => cell.formula ?? null);
+        return {
+          sheets: book.sheets.length,
+          master: formulas[0]?.length ?? 0,
+          shifted: formulas.slice(1).filter((f) => f && f !== '…').length,
+          refused: formulas.slice(1).filter((f) => f === '…').length,
+          second: cells.get('1,0')?.formula?.slice(0, 6) ?? null,
+          chars: formulas.slice(1).reduce((sum, f) => sum + (f && f !== '…' ? f.length : 0), 0),
+          budget: MOST_SHIFTED_FORMULA_CHARS,
+          most: MAX_FORMULA_CHARS,
+        };
+      },
+      { module: MODULE, b64: Buffer.from(makeHostileXlsx(opts)).toString('base64') },
+    );
+
+  const short = await hostile({ masterLength: 40, dependents: 3 });
+  check('a shared formula of an ordinary length is shifted into its dependents', short.shifted === 3 && short.second === 'B2+B2+', JSON.stringify(short));
+
+  const long = await hostile({ masterLength: 9000, dependents: 3 });
+  check(
+    'a master longer than Excel allows stays whole, and is not repeated into its dependents',
+    long.master === 9000 && long.shifted === 0 && long.refused === 3,
+    JSON.stringify(long),
+  );
+
+  const many = await hostile({ masterLength: 8000, dependents: 9000 });
+  check(
+    'the copies of a workbook stop at their budget, and the rest are still formulas',
+    many.chars <= many.budget && many.chars > many.budget - 2 * 8000 && many.refused > 0 && many.refused === 9000 - many.shifted,
+    `${many.shifted} shifted, ${(many.chars / 1048576).toFixed(1)} of ${many.budget / 1048576} M characters · ${many.refused} not`,
+  );
+
+  const twice = await hostile({ twice: true });
+  check('a sheet named twice is read once', twice.sheets === 1, `${twice.sheets} sheets`);
 
   /* ── the grid ─────────────────────────────────────────────────────── */
 

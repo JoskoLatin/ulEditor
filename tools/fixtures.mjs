@@ -804,6 +804,40 @@ export function makeFormulaXlsx() {
 }
 
 /**
+ * A workbook built to cost more than it weighs (the review of card 530): a
+ * shared formula whose master is `masterLength` characters, in A1, with
+ * `dependents` one-tag dependents below it — and with `twice`, the sheet named
+ * twice in the workbook.
+ *
+ * @param {{ masterLength?: number, dependents?: number, twice?: boolean }} [opts]
+ */
+export function makeHostileXlsx({ masterLength = 16, dependents = 3, twice = false } = {}) {
+  const term = 'B1+';
+  const master = term.repeat(Math.ceil(masterLength / term.length)).slice(0, masterLength - 2) + 'B1';
+  const workbook =
+    `<?xml version="1.0"?>
+<workbook xmlns="${SHEET_NS}" xmlns:r="${REL_NS}"><sheets>` +
+    `<sheet name="Jedan" sheetId="1" r:id="rId1"/>` +
+    (twice ? `<sheet name="Opet" sheetId="2" r:id="rId2"/>` : '') +
+    `</sheets></workbook>`;
+  const rels =
+    `<?xml version="1.0"?>
+<Relationships xmlns="${PKG_REL_NS}">` +
+    `<Relationship Id="rId1" Type="${WORKSHEET_REL}" Target="worksheets/sheet1.xml"/>` +
+    (twice ? `<Relationship Id="rId2" Type="${WORKSHEET_REL}" Target="worksheets/sheet1.xml"/>` : '') +
+    `</Relationships>`;
+  let rows = `<row r="1"><c r="A1"><f t="shared" ref="A1:A${dependents + 1}" si="0">${master}</f><v>0</v></c></row>`;
+  for (let r = 2; r <= dependents + 1; r++) rows += `<row r="${r}"><c r="A${r}"><f t="shared" si="0"/></c></row>`;
+  return zipSync({
+    '[Content_Types].xml': strToU8(CONTENT_TYPES),
+    'xl/workbook.xml': strToU8(workbook),
+    'xl/_rels/workbook.xml.rels': strToU8(rels),
+    'xl/worksheets/sheet1.xml': strToU8(`<?xml version="1.0"?>
+<worksheet xmlns="${SHEET_NS}"><sheetData>${rows}</sheetData></worksheet>`),
+  });
+}
+
+/**
  * An old binary Excel file — `.xls`, Excel 97–2003 — assembled by hand.
  *
  * Two layers, both spelled out: an OLE2 compound file whose FAT, directory and

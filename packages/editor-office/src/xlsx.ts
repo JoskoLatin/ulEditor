@@ -98,6 +98,19 @@ export const MAX_ROWS = 1_048_576;
 /** Columns are still all drawn, so they are still bounded. */
 export const MAX_COLS = 256;
 
+/**
+ * What a shared formula's dependents may be given. Each dependent holds its
+ * own copy of the master, shifted, and the master is the file's to choose: a
+ * 13 KB workbook with a megabyte-long master and 4 400 one-tag dependents took
+ * the page down (the review of card 530). A master longer than Excel's own
+ * bound on a formula is not repeated, and all the copies of a workbook come to
+ * no more than 64 M characters — V8 keeps such text at a byte a character, and
+ * 100 000 rows of 27 shifted columns come to about 54 M. Past either, a
+ * dependent is still a formula, refused for retyping as one, shown as `…`.
+ */
+export const MAX_FORMULA_CHARS = 8192;
+export const MOST_SHIFTED_FORMULA_CHARS = 64 * 1024 * 1024;
+
 /** The note for a sheet that reached past what is shown — one sentence for every reader. */
 export function truncationNote(): string {
   return t('Only the first {cols} columns of each sheet are shown.', { cols: MAX_COLS });
@@ -622,7 +635,7 @@ interface ReadSheet {
  * skips it, rather than placed where it probably is: a value the writer cannot
  * find is a value that can be typed over and never saved.
  */
-function readSheet(xml: string, shared: string[], styles: StyleBook): ReadSheet {
+function readSheet(xml: string, shared: string[], styles: StyleBook, budget: { chars: number }): ReadSheet {
   const reader = new TagReader(xml);
   const cells = new Map<string, Cell>();
   const merges: Merge[] = [];
@@ -720,8 +733,14 @@ function readSheet(xml: string, shared: string[], styles: StyleBook): ReadSheet 
           } else {
             const master = masters.get(si);
             /* A dependent whose master was never written is malformed, and is
-               still a formula: refused, with nothing better to show. */
-            formula = master ? shiftFormula(master.text, row - master.row, col - master.col) : '…';
+               still a formula: refused, with nothing better to show. So is one
+               past what the copies may come to — see `MAX_FORMULA_CHARS`. */
+            if (!master || master.text.length > MAX_FORMULA_CHARS || master.text.length > budget.chars) {
+              formula = '…';
+            } else {
+              formula = shiftFormula(master.text, row - master.row, col - master.col);
+              budget.chars -= formula.length;
+            }
           }
         } else {
           formula = text || '…';
@@ -884,15 +903,22 @@ export function readXlsx(bytes: Uint8Array): Workbook {
 
   const sheets: Sheet[] = [];
   const tables = new Map<string, TableRange>();
+  const budget = { chars: MOST_SHIFTED_FORMULA_CHARS };
+  /* One sheet, read once. Excel never names a part twice; a workbook that
+     does would have it read, and held, once for every time (the review of
+     card 530: one 16 MiB sheet named twenty times, 664 MiB). */
+  const seen = new Set<string>();
 
   for (const node of tags(workbook, 'sheet')) {
     const name = attr(node, 'name') ?? `List ${sheets.length + 1}`;
     const relId = attr(node, 'id');
     const path = relId ? rels.get(relId)?.target : undefined;
-    const xml = path ? readText(archive, path) : null;
-    if (!path || xml === null) continue;
+    if (!path || seen.has(path)) continue;
+    const xml = readText(archive, path);
+    if (xml === null) continue;
+    seen.add(path);
 
-    const read = readSheet(xml, shared, styles);
+    const read = readSheet(xml, shared, styles, budget);
     if (read.truncated) notes.add(truncationNote());
     readTables(archive, path, name, tables);
 
