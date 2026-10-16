@@ -4510,7 +4510,7 @@ dependencies = [
 
 [[package]]
 name = "ul-convert"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "flate2",
  "serde",
@@ -4520,7 +4520,7 @@ dependencies = [
 
 [[package]]
 name = "ul-core"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -4530,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "ul-formats"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -4539,7 +4539,7 @@ dependencies = [
 
 [[package]]
 name = "ul-image"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "image",
  "serde",
@@ -4550,7 +4550,7 @@ dependencies = [
 
 [[package]]
 name = "ul-lsp"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -4559,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "uleditor-desktop"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "serde",
  "serde_json",
