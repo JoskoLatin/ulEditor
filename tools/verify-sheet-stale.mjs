@@ -637,6 +637,10 @@ if (!reachable) {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    /* The interface in Croatian, as the totals below are written: since
+       5ba873a a sheet writes its numbers the way the interface does, and a
+       fresh page's interface is English. */
+    await page.addInitScript(() => localStorage.setItem('uleditor.settings', JSON.stringify({ locale: 'hr' })));
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForSelector('.shell', { timeout: 20000 });
 
