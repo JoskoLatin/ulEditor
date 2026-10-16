@@ -32,7 +32,9 @@ tokio = { version = "1", features = ["sync"] }
 # follows an install is the core's own (`app.restart()` in `install_update`),
 # so the process plugin, which would hand it to the page, is not here.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-updater = "2"
+# Without `zip`: a Windows update is the -setup.exe itself (latest.json), and
+# the zip crate it would unpack with has every 4.x yanked.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 
 # Windows and Linux start a second copy of the program for every file
 # double-clicked. macOS does not: it hands the file to the running application
