@@ -59,6 +59,7 @@ export function menuDefinitions(): MenuDefinition[] {
         { command: 'file.quickOpen' },
         'rule',
         { command: 'file.save' },
+        { command: 'file.print' },
         { command: 'file.close' },
         'rule',
         { command: 'file.forgetRecent' },

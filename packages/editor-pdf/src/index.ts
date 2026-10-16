@@ -25,6 +25,7 @@ import {
   type EditorProvider,
   type FindQuery,
   type FindResult,
+  type PrintPage,
   type ReadingOptions,
   type ReadingOutlineItem,
   type ReadingProgress,
@@ -94,6 +95,9 @@ const INK_MIN_LENGTH = 4;
 /** The on-screen size of a note icon — independent of zoom. */
 const NOTE_ICON_PX = 20;
 const THUMB_WIDTH = 108;
+/** The resolution a page is printed at, and the canvas it may not outgrow. */
+const PRINT_DPI = 150;
+const PRINT_MAX_PIXELS = 16_000_000;
 
 type ZoomMode = 'fit-width' | 'fit-page' | 'custom';
 type Tool = 'select' | 'highlight' | 'note' | 'ink' | 'text' | 'edit' | 'redact';
@@ -2808,15 +2812,7 @@ class PdfEditor implements EditorInstance {
     const annotations = this.#annotationState();
     const redactions = this.#redactions;
     const source = this.source;
-    const { bytes, lost } = await saveDocument(
-      this.source,
-      [...this.#plan],
-      this.#annotations,
-      this.pdf.numPages,
-      loadFontBytes,
-      this.#redactions,
-      [...this.#dropped],
-    );
+    const { bytes, lost } = await this.#compose();
     const losses = [...lost, ...fidelityGaps(this.#annotations)];
 
     return {
@@ -2850,6 +2846,65 @@ class PdfEditor implements EditorInstance {
 
   async save(target?: SaveTarget, options?: WriteOptions): Promise<SaveResult> {
     return (await this.prepareSave(target)).commit(options);
+  }
+
+  /** The file as a save would write it now. */
+  #compose(): ReturnType<typeof saveDocument> {
+    return saveDocument(
+      this.source,
+      [...this.#plan],
+      this.#annotations,
+      this.pdf.numPages,
+      loadFontBytes,
+      this.#redactions,
+      [...this.#dropped],
+    );
+  }
+
+  /**
+   * Every page, drawn for paper.
+   *
+   * From the bytes a save would write, not from the screen: those already hold
+   * the page plan, the rotations, the notes and the redactions, and none of the
+   * marks that exist only to be seen here. Always composed, even with nothing
+   * unsaved — every save starts again from the bytes as opened, so `source`
+   * alone would print the file without what an earlier save put into it.
+   */
+  async printPages(): Promise<PrintPage[]> {
+    this.#finishTextEdit();
+    await this.#committing;
+    const { bytes } = await this.#compose();
+
+    const doc = await getDocument({ data: bytes }).promise;
+    const out: PrintPage[] = [];
+    try {
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n);
+        const size = page.getViewport({ scale: 1 });
+        /* 150 dots to the inch, as pdf.js prints, and fewer for a page so large
+           its canvas would pass what the browser will allocate. */
+        const scale = Math.min(PRINT_DPI / 72, Math.sqrt(PRINT_MAX_PIXELS / (size.width * size.height)));
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const context = canvas.getContext('2d', { alpha: false });
+        if (!context) throw new Error('no 2d context for printing');
+        context.fillStyle = '#fff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: context, viewport, intent: 'print' }).promise;
+
+        const image = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!image) throw new Error(`page ${n} could not be drawn for printing`);
+        out.push({ image, width: size.width, height: size.height });
+        page.cleanup();
+        canvas.width = canvas.height = 0;
+      }
+    } finally {
+      void doc.destroy();
+    }
+    return out;
   }
 
   undo(): void {

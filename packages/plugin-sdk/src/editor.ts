@@ -88,6 +88,20 @@ export interface SaveTarget {
   format?: string;
 }
 
+/**
+ * One sheet of a printout: a picture of the page and the size it was drawn for.
+ *
+ * A picture rather than markup, because the screen is the wrong thing to print
+ * — a PDF draws only the pages in view, at the zoom in front of the reader, and
+ * the next page down is a canvas nobody has filled yet.
+ */
+export interface PrintPage {
+  image: Blob;
+  /** In points, 1/72 of an inch — the page as the document sizes it. */
+  width: number;
+  height: number;
+}
+
 export interface EditorInstance {
   mount(container: HTMLElement): void | Promise<void>;
   unmount(): void;
@@ -219,6 +233,16 @@ export interface EditorInstance {
    */
   mergeCells?(): void;
   canMergeCells?(): boolean;
+
+  /**
+   * The document as the sheets of paper it should come out on.
+   *
+   * The shell prints them and nothing else: without it the browser's own print
+   * takes the whole window — title bar, tabs and side panel — and only as much
+   * of the document as is on the screen. Optional; for an editor without it the
+   * shell prints the editor's area as it stands.
+   */
+  printPages?(): Promise<PrintPage[]>;
 
   readonly onDirtyChange: Event<boolean>;
   /** A message for the status bar, e.g. "Ln 12, Col 4" or "Page 3 of 18". */

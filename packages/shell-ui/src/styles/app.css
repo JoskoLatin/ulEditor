@@ -2708,3 +2708,79 @@ button.status-item:hover {
   display: flex;
   gap: 8px;
 }
+
+/* ── print ──────────────────────────────────────────────────────────── */
+
+/*
+ * Paper gets the document, never the program around it — see `shell/print.ts`.
+ * The sheets an editor drew for printing exist only while a print is under way
+ * and are never shown on screen.
+ */
+.print-sheets {
+  display: none;
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  /* Sheets drawn for paper: those and nothing else. */
+  body[data-printing="true"] > :not(.print-sheets) {
+    display: none !important;
+  }
+
+  body[data-printing="true"] > .print-sheets {
+    display: block;
+  }
+
+  .print-sheet {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    break-after: page;
+    overflow: hidden;
+  }
+
+  .print-sheet:last-child {
+    break-after: auto;
+  }
+
+  .print-sheet img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  /* An editor that drew none: its own area, without the frame around it. */
+  .titlebar,
+  .activitybar,
+  .sidebar,
+  .sidebar-scrim,
+  .resizer,
+  .tabbar,
+  .statusbar,
+  .findpanel,
+  .reader,
+  .split,
+  .group-resizer,
+  .group[data-focused="false"],
+  .toasts {
+    display: none !important;
+  }
+
+  .shell,
+  .shell-body,
+  .main,
+  .groups {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+}

@@ -24,6 +24,7 @@ import { chooseLocale, requestExit } from './lifecycle.js';
 import { canRead, exitReading, readerPage, toggleReading, useReading } from './reading.js';
 import { closeScratch, openScratch, saveScratch, useScratch } from './scratch.js';
 import { canZoom, resetZoom, stepZoom, watchZoomGesture } from './zoom.js';
+import { canPrint, printActive } from './print.js';
 import { clearRecent, hasRecent } from './recent.js';
 import { previousSession, restorePreviousSession } from './session.js';
 import { devtoolsAvailable, openDevtools, watchDevtools } from './devtools.js';
@@ -104,6 +105,15 @@ export function registerCommands(shell: Shell): () => void {
       keybinding: ['Ctrl', 'S'],
       when: () => activeTabId() !== null,
       run: () => saveActive(shell),
+    }),
+    /* No key of its own: Ctrl+P has long been "open file by name" here, as in
+       every code editor, and taking it would break one habit to make another. */
+    shell.commands.register({
+      id: 'file.print',
+      title: t('Print…'),
+      category: t('File'),
+      when: canPrint,
+      run: () => printActive(shell),
     }),
     shell.commands.register({
       id: 'file.openForEditing',
