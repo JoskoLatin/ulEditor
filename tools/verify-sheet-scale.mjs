@@ -77,6 +77,42 @@ const formulaBook = makeFormulaXlsx();
   );
   check('and still writes the cell beside them', written.includes('<c r="A4"><v>4</v></c>'));
 }
+{
+  /* The writer with many array formulas: asked per edit, not walked per cell
+     (the second review of card 530). */
+  const sheetOf = (opts) => strFromU8(unzipSync(makeHostileXlsx({ dependents: 0, ...opts }))['xl/worksheets/sheet1.xml']);
+  const many = sheetOf({ arrays: 2000, arrayRef: 'A1:IV1000000' });
+  const t0 = Date.now();
+  const spans = findCells(many);
+  const into = applyCellEdits(many, spans, [{ ref: 'IV5', value: '9' }, { ref: 'A1', value: '9' }]);
+  const ms = Date.now() - t0;
+  check('the writer reads two thousand array formulas quickly', ms < 2000, `${ms} ms`);
+  check('and writes nothing into their range, a cell of the file or not', into === many);
+  const past = sheetOf({ arrays: 100_001, arrayRef: 'A1:B2' });
+  const refusal = (() => {
+    try {
+      applyCellEdits(past, findCells(past), [{ ref: 'Z9', value: '9' }]);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  })();
+  check('past a hundred thousand of them it writes nothing, and says so rather than seem to save', refusal !== null && /array formulas/.test(refusal), refusal ?? 'returned');
+  /* A column of single-cell array formulas is no range at all, to the reader
+     and to the writer alike: past the bound, still written. */
+  const single = sheetOf({ arrays: 100_001, arrayRef: 'single' });
+  let wrote;
+  try {
+    wrote = applyCellEdits(single, findCells(single), [{ ref: 'B1', value: '77' }]);
+  } catch (err) {
+    wrote = `refused: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  check(
+    'a hundred thousand single-cell array formulas do not stop a cell beside them being written',
+    wrote.includes('<c r="B1"><v>77</v></c>'),
+    wrote.startsWith('refused') ? wrote : '',
+  );
+}
 
 /* ── the browser ─────────────────────────────────────────────────────── */
 
@@ -216,6 +252,57 @@ try {
 
   const twice = await hostile({ twice: true });
   check('a sheet named twice is read once', twice.sheets === 1, `${twice.sheets} sheets`);
+
+  const arrayed = (opts) =>
+    page.evaluate(
+      async ({ module, b64 }) => {
+        const { readXlsx, arrayAt, MOST_ARRAY_CELLS } = await import(module);
+        const t0 = performance.now();
+        const book = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+        const ms = Math.round(performance.now() - t0);
+        const sheet = book.sheets[0];
+        let marked = 0;
+        for (const cell of sheet.cells.values()) if (cell.formula === '1') marked++;
+        return {
+          ms,
+          marked,
+          ranges: sheet.arrays?.length ?? 0,
+          locked: sheet.locked === true,
+          guarded: arrayAt(sheet, 999, 99)?.text ?? null,
+          notes: book.notes.filter((n) => /array/i.test(n)).length,
+          budget: MOST_ARRAY_CELLS,
+        };
+      },
+      { module: MODULE, b64: Buffer.from(makeHostileXlsx({ dependents: 0, ...opts })).toString('base64') },
+    );
+
+  /* Forty ranges of a hundred thousand cells each, apart, 4 M to mark: 3 KB
+     of file. The budget marks half of them; the ranges guard the rest. */
+  const filled = await arrayed({ arrays: 40, arrayRef: 'distinct' });
+  check(
+    'array formulas mark their cells only within the budget',
+    filled.marked >= filled.budget / 2 && filled.marked <= filled.budget + 40,
+    `${filled.marked} marked of 4 000 000, ${filled.ms} ms`,
+  );
+  check('and every range is kept, so an unmarked cell is still guarded', filled.ranges === 40 && filled.guarded === '1', JSON.stringify({ ...filled, guarded: filled.guarded }));
+  const unmarked = await page.evaluate(
+    async ({ module, b64 }) => {
+      const { readXlsx, arrayAt } = await import(module);
+      const sheet = readXlsx(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))).sheets[0];
+      // The last range's corner, past the budget.
+      return { cell: sheet.cells.get('39999,99')?.formula ?? null, range: arrayAt(sheet, 39999, 99)?.text ?? null };
+    },
+    { module: MODULE, b64: Buffer.from(makeHostileXlsx({ dependents: 0, arrays: 40, arrayRef: 'distinct' })).toString('base64') },
+  );
+  check('a cell past the budget is in no map, and its range still answers for it', unmarked.cell === null && unmarked.range === '1', JSON.stringify(unmarked));
+
+  const walked = await arrayed({ arrays: 2000, arrayRef: 'A1:A1000000' });
+  check('two thousand ranges too large to fill do not walk the sheet two thousand times', walked.ms < 5000 && walked.ranges === 2000, `${walked.ms} ms`);
+
+  const locked = await arrayed({ arrays: 100_001, arrayRef: 'A1:B2' });
+  check('past a hundred thousand array formulas the sheet is shown and not edited, said so', locked.locked && locked.notes === 1 && locked.ranges === 0, JSON.stringify(locked));
+  const singles = await arrayed({ arrays: 100_001, arrayRef: 'single' });
+  check('and single-cell array formulas, which are no range, do not count towards it', !singles.locked && singles.ranges === 0 && singles.notes === 0, JSON.stringify(singles));
 
   /* ── the grid ─────────────────────────────────────────────────────── */
 

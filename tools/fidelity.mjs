@@ -52,7 +52,7 @@ const { openArchive, readText } = await load('packages/editor-office/src/ooxml.t
 const { findRuns, applyRunEdits, runText, writeDocx, escapeXml } = await load(
   'packages/editor-office/src/docx-edit.ts',
 );
-const { findCells, applyCellEdits, cellXml, writeXlsx } = await load(
+const { findCells, applyCellEdits, cellXml, inArray, writeXlsx } = await load(
   'packages/editor-office/src/xlsx-edit.ts',
 );
 const { findOdsCells, applyOdsEdits } = await load('packages/editor-office/src/ods-edit.ts');
@@ -258,7 +258,7 @@ function checkXlsx(bytes) {
     const text = readText(archive, candidate);
     if (text === null) continue;
     const found = findCells(text);
-    const editable = found.rows.flatMap((row) => row.cells).filter((cell) => !cell.formula);
+    const editable = found.rows.flatMap((row) => row.cells).filter((cell) => !cell.formula && !inArray(found, cell));
     if (editable.length === 0) continue;
     path = candidate;
     xml = text;

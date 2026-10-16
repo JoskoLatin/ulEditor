@@ -807,11 +807,13 @@ export function makeFormulaXlsx() {
  * A workbook built to cost more than it weighs (the review of card 530): a
  * shared formula whose master is `masterLength` characters, in A1, with
  * `dependents` one-tag dependents below it — and with `twice`, the sheet named
- * twice in the workbook.
+ * twice in the workbook; with `arrays`, that many array formulas in column IV
+ * below, each filling `arrayRef` — or, `'distinct'`, a block of a thousand
+ * rows of its own, a hundred columns wide; `'single'`, its own cell alone.
  *
- * @param {{ masterLength?: number, dependents?: number, twice?: boolean }} [opts]
+ * @param {{ masterLength?: number, dependents?: number, twice?: boolean, arrays?: number, arrayRef?: string }} [opts]
  */
-export function makeHostileXlsx({ masterLength = 16, dependents = 3, twice = false } = {}) {
+export function makeHostileXlsx({ masterLength = 16, dependents = 3, twice = false, arrays = 0, arrayRef = 'A1:CV1000' } = {}) {
   const term = 'B1+';
   const master = term.repeat(Math.ceil(masterLength / term.length)).slice(0, masterLength - 2) + 'B1';
   const workbook =
@@ -828,6 +830,13 @@ export function makeHostileXlsx({ masterLength = 16, dependents = 3, twice = fal
     `</Relationships>`;
   let rows = `<row r="1"><c r="A1"><f t="shared" ref="A1:A${dependents + 1}" si="0">${master}</f><v>0</v></c></row>`;
   for (let r = 2; r <= dependents + 1; r++) rows += `<row r="${r}"><c r="A${r}"><f t="shared" si="0"/></c></row>`;
+  const parts = [rows];
+  for (let i = 0; i < arrays; i++) {
+    const r = dependents + 2 + i;
+    const ref = arrayRef === 'distinct' ? `A${i * 1000 + 1}:CV${(i + 1) * 1000}` : arrayRef === 'single' ? `IV${r}` : arrayRef;
+    parts.push(`<row r="${r}"><c r="IV${r}"><f t="array" ref="${ref}">1</f><v>1</v></c></row>`);
+  }
+  rows = parts.join('');
   return zipSync({
     '[Content_Types].xml': strToU8(CONTENT_TYPES),
     'xl/workbook.xml': strToU8(workbook),

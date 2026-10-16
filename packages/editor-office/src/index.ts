@@ -64,7 +64,7 @@ import { readDoc } from './doc.js';
 import { readRtf } from './rtf.js';
 import { readXls } from './xls.js';
 import { buildXlsx, convertedName } from './xlsx-write.js';
-import { columnName, readXlsx, type Sheet, type Workbook } from './xlsx.js';
+import { arrayAt, columnName, readXlsx, type Sheet, type Workbook } from './xlsx.js';
 import { recalculateBook, type Recalculation } from './formula.js';
 import { SheetGrid, shownFormula, type GridCell } from './sheet-grid.js';
 
@@ -2527,16 +2527,25 @@ class XlsxPreviewEditor implements EditorInstance {
 
     const cell = sheet.cells.get(ref);
 
+    if (sheet.locked) {
+      this.host.notify.show(
+        'info',
+        t('A sheet with more array formulas than this program keeps track of is shown, and not edited.'),
+      );
+      return;
+    }
+
     /* The old format keeps no formula text — only the number it last worked
        out. Retyping that number is allowed, and it is the conversion warning
        that says the formula itself will not survive; refusing here would
-       forbid editing a column of totals for a formula nobody can see. */
-    if (cell?.formula) {
+       forbid editing a column of totals for a formula nobody can see. A cell
+       an array formula fills is one too, marked or not (`Sheet.arrays`). */
+    const [row, col] = ref.split(',').map(Number) as [number, number];
+    const formula = cell?.formula ?? arrayAt(sheet, row, col)?.text;
+    if (formula) {
       this.host.notify.show(
         'info',
-        t('The cell holds a formula (={formula}) — formulas are not edited yet.', {
-          formula: cell.formula,
-        }),
+        t('The cell holds a formula (={formula}) — formulas are not edited yet.', { formula }),
       );
       return;
     }

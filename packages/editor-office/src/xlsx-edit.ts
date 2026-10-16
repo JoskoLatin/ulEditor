@@ -21,6 +21,9 @@ import { strToU8, zipSync } from 'fflate';
 
 import type { Archive } from './ooxml.js';
 import { escapeXml, localName, scanTags } from './docx-edit.js';
+import { t } from '@uleditor/i18n';
+
+import { MOST_ARRAYS } from './xlsx.js';
 
 /* ── references ──────────────────────────────────────────────────────── */
 
@@ -137,25 +140,27 @@ export function findCells(xml: string): SheetSpans {
         const [from, to] = (attrIn(xml, tag, 'ref') ?? '').split(':');
         const a = from ? parseCellRef(from) : null;
         const b = to ? parseCellRef(to) : a;
-        if (a && b) arrays.push({ row: a.row, col: a.col, rows: b.row - a.row + 1, cols: b.col - a.col + 1 });
+        /* Counted as the reader counts them: an array formula of one cell is
+           that cell's own `<f>`, already refused, and no range. Counted
+           otherwise, a column of single-cell CSE formulas passed the bound
+           here and not there — edited, then silently not written (the third
+           review of card 530). */
+        if (a && b && (b.row > a.row || b.col > a.col)) {
+          arrays.push({ row: a.row, col: a.col, rows: b.row - a.row + 1, cols: b.col - a.col + 1 });
+        }
       }
     }
   }
 
-  for (const array of arrays) {
-    for (const row of rows) {
-      if (row.r - 1 < array.row || row.r - 1 >= array.row + array.rows) continue;
-      for (const cell of row.cells) {
-        if (cell.col >= array.col && cell.col < array.col + array.cols) cell.formula = true;
-      }
-    }
-  }
-
+  /* The cells of an array formula's range are not marked here: walking every
+     cell of the sheet for every range is a product a small file can make
+     enormous (the second review of card 530). `inArray` is asked of each
+     edit instead, and edits are few. */
   return { rows, sheetDataEnd, arrays };
 }
 
 /** Whether a position lies inside a range an array formula fills. */
-function inArray(spans: SheetSpans, position: { row: number; col: number }): boolean {
+export function inArray(spans: SheetSpans, position: { row: number; col: number }): boolean {
   return spans.arrays.some(
     (a) =>
       position.row >= a.row && position.row < a.row + a.rows && position.col >= a.col && position.col < a.col + a.cols,
@@ -248,6 +253,12 @@ export function applyCellEdits(xml: string, spans: SheetSpans, edits: CellEdit[]
     insert: string;
   }
   const changes: Change[] = [];
+  /* As the reader decides it: such a sheet is shown, and not edited. Out
+     loud should an edit reach here anyway — handing the bytes back unchanged
+     would be a save that says it saved. */
+  if (spans.arrays.length > MOST_ARRAYS && edits.length > 0) {
+    throw new Error(t('A sheet with more array formulas than this program keeps track of is shown, and not edited.'));
+  }
 
   for (const edit of edits) {
     const position = parseCellRef(edit.ref);
@@ -257,7 +268,8 @@ export function applyCellEdits(xml: string, spans: SheetSpans, edits: CellEdit[]
     const existing = row?.cells.find((c) => c.ref === edit.ref);
 
     if (existing) {
-      if (existing.formula) continue; // Refused upstream; never overwritten here.
+      // Refused upstream; never overwritten here.
+      if (existing.formula || inArray(spans, position)) continue;
       changes.push({
         at: existing.start,
         remove: existing.end - existing.start,

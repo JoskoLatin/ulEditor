@@ -52,6 +52,27 @@ export interface Sheet {
    * are not empty just because they are not here.
    */
   readTo?: number;
+  /**
+   * The ranges array formulas fill. Their cells may not be retyped, and this
+   * is what says so — the cells themselves are marked only within a budget
+   * (`MOST_ARRAY_CELLS`), and an empty one inside a large range is in no map.
+   */
+  arrays?: ArrayRange[];
+  /** Too many array formulas to keep track of: shown, and not edited. */
+  locked?: true;
+}
+
+export interface ArrayRange {
+  row: number;
+  col: number;
+  rows: number;
+  cols: number;
+  text: string;
+}
+
+/** The array formula whose range holds a cell, if any. */
+export function arrayAt(sheet: Sheet, row: number, col: number): ArrayRange | undefined {
+  return sheet.arrays?.find((a) => row >= a.row && row < a.row + a.rows && col >= a.col && col < a.col + a.cols);
 }
 
 export interface Workbook {
@@ -110,6 +131,25 @@ export const MAX_COLS = 256;
  */
 export const MAX_FORMULA_CHARS = 8192;
 export const MOST_SHIFTED_FORMULA_CHARS = 64 * 1024 * 1024;
+
+/**
+ * What array formulas may cost a workbook. Each fills a range, and its cells
+ * are marked as formulas — up to a hundred thousand by the range, or by
+ * walking every cell of the sheet once for a larger one. A file of 12 KB with
+ * a few hundred such tags filled the page past what it holds (the second
+ * review of card 530). So the marking stops at two million cells' worth of
+ * work a workbook, and the ranges themselves, kept on the sheet, guard every
+ * cell either way. Past a hundred thousand array formulas on one sheet, which
+ * no workbook has, the sheet is shown and not edited.
+ */
+export const MOST_ARRAY_CELLS = 2_000_000;
+export const MOST_ARRAYS = 100_000;
+
+/** What reading a workbook may still spend, shared by its sheets. */
+interface Budget {
+  chars: number;
+  arrayCells: number;
+}
 
 /** The note for a sheet that reached past what is shown — one sentence for every reader. */
 export function truncationNote(): string {
@@ -621,6 +661,8 @@ interface ReadSheet {
   merges: Merge[];
   widths: Map<number, number>;
   truncated: boolean;
+  arrays: ArrayRange[];
+  locked: boolean;
 }
 
 /**
@@ -635,13 +677,13 @@ interface ReadSheet {
  * skips it, rather than placed where it probably is: a value the writer cannot
  * find is a value that can be typed over and never saved.
  */
-function readSheet(xml: string, shared: string[], styles: StyleBook, budget: { chars: number }): ReadSheet {
+function readSheet(xml: string, shared: string[], styles: StyleBook, budget: Budget): ReadSheet {
   const reader = new TagReader(xml);
   const cells = new Map<string, Cell>();
   const merges: Merge[] = [];
   const widths = new Map<number, number>();
   const masters = new Map<string, { text: string; row: number; col: number }>();
-  const arrays: { row: number; col: number; rows: number; cols: number; text: string }[] = [];
+  const arrays: ArrayRange[] = [];
   /* Zero, not minus one: an empty sheet is still drawn as one cell, which is
      where somebody types the first value into it. */
   let maxRow = 0;
@@ -797,12 +839,20 @@ function readSheet(xml: string, shared: string[], styles: StyleBook, budget: { c
    * The other cells of an array formula carry its results and no `<f>` of their
    * own; Excel will not let one of them be changed on its own, and neither may
    * this. Walked by range when the range is small, by the cells when it is not
-   * — an array over a whole column is legal.
+   * — an array over a whole column is legal — and only within the budget: the
+   * ranges, returned, are what guards an unmarked cell (`arrayAt`).
    */
+  if (arrays.length > MOST_ARRAYS) {
+    return { cells, rows: maxRow + 1, cols: maxCol + 1, merges, widths, truncated, arrays: [], locked: true };
+  }
   for (const array of arrays) {
     const inside = (r: number, c: number) =>
       r >= array.row && r < array.row + array.rows && c >= array.col && c < array.col + array.cols;
-    if (array.rows * array.cols <= 100_000) {
+    const small = array.rows * array.cols <= 100_000;
+    const cost = small ? array.rows * array.cols : cells.size;
+    if (cost > budget.arrayCells) continue;
+    budget.arrayCells -= cost;
+    if (small) {
       for (let r = array.row; r < array.row + array.rows; r++) {
         for (let c = array.col; c < array.col + array.cols; c++) {
           if (r >= MAX_ROWS || c >= MAX_COLS) continue;
@@ -821,7 +871,7 @@ function readSheet(xml: string, shared: string[], styles: StyleBook, budget: { c
     }
   }
 
-  return { cells, rows: maxRow + 1, cols: maxCol + 1, merges, widths, truncated };
+  return { cells, rows: maxRow + 1, cols: maxCol + 1, merges, widths, truncated, arrays, locked: false };
 }
 
 /**
@@ -903,7 +953,7 @@ export function readXlsx(bytes: Uint8Array): Workbook {
 
   const sheets: Sheet[] = [];
   const tables = new Map<string, TableRange>();
-  const budget = { chars: MOST_SHIFTED_FORMULA_CHARS };
+  const budget: Budget = { chars: MOST_SHIFTED_FORMULA_CHARS, arrayCells: MOST_ARRAY_CELLS };
   /* One sheet, read once. Excel never names a part twice; a workbook that
      does would have it read, and held, once for every time (the review of
      card 530: one 16 MiB sheet named twenty times, 664 MiB). */
@@ -930,8 +980,11 @@ export function readXlsx(bytes: Uint8Array): Workbook {
       cells: read.cells,
       merges: read.merges,
       widths: read.widths,
+      arrays: read.arrays,
       ...(read.truncated ? { readTo: MAX_COLS } : {}),
+      ...(read.locked ? { locked: true as const } : {}),
     });
+    if (read.locked) notes.add('A sheet with more array formulas than this program keeps track of is shown, and not edited.');
   }
 
   if (sheets.length === 0) throw new Error(t('The workbook has no readable sheet.'));
