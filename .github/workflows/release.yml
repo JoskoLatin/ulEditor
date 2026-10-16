@@ -246,7 +246,7 @@ jobs:
           fi
         shell: bash
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-desktop-${{ matrix.slug }}
           path: dist/
@@ -319,7 +319,7 @@ jobs:
           echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so nothing was signed and no latest.json will be written. The installers in this release are complete; they simply will not be offered as an update. See docs/RELEASE.md."
         shell: bash
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-signed
           path: dist/
@@ -446,7 +446,7 @@ jobs:
           ls -l dist-android
         shell: bash
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-android
           path: dist-android/
@@ -558,7 +558,7 @@ jobs:
           ls -l signed
         shell: bash
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-signed
           path: signed/

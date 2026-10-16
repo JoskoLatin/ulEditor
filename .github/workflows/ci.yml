@@ -282,7 +282,7 @@ jobs:
           node tools/verify-docx-table.mjs --url http://localhost:5274
         shell: bash
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: screenshots-${{ matrix.os }}
@@ -435,7 +435,7 @@ jobs:
       # A picture turned in the browser build, and its pixels read where they
       # landed; a header claiming too much refused before it is allocated.
       - run: node tools/verify-wasm.mjs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wasm
           path: packages/shell-ui/public/wasm/
