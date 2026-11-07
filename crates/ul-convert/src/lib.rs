@@ -1767,7 +1767,7 @@ showpage
                 let mut part = archive.by_index(i).unwrap();
                 let mut bytes = Vec::new();
                 part.read_to_end(&mut bytes).unwrap();
-                (part.name().to_string(), part.compression(), bytes)
+                (part.name().unwrap().to_string(), part.compression(), bytes)
             })
             .collect()
     }
