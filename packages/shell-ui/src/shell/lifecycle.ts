@@ -174,7 +174,7 @@ export async function requestExit(shell: Shell): Promise<void> {
           ? t('{name} has unsaved changes.', { name: dirty[0]?.name ?? '' })
           : t('Some documents have unsaved changes.'),
         [
-          { label: t('Cancel'), run: () => (handle.dispose(), resolve(true)) },
+          { label: t('Cancel'), cancel: true, run: () => (handle.dispose(), resolve(true)) },
           { label: t('Close anyway'), run: () => (handle.dispose(), resolve(false)) },
         ],
       );

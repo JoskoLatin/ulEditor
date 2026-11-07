@@ -241,6 +241,7 @@ export class Notifications implements NotificationService {
         actions: [
           {
             label: t('Cancel'),
+            cancel: true,
             run: () => {
               this.dismiss(record.id);
               resolve('cancel');

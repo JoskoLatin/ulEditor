@@ -170,7 +170,9 @@ function offer(shell: Shell, update: Available): void {
     }),
     [
       {
+        /* The Cancel of this question: it leaves the program as it is. */
         label: t('Not now'),
+        cancel: true,
         run: () => notice.dispose(),
       },
       {

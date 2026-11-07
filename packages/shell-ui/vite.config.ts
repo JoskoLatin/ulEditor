@@ -24,10 +24,25 @@ declare const process: { env: Record<string, string | undefined> };
 
 const mobileHost = process.env.TAURI_DEV_HOST;
 
+/**
+ * Whether Tauri is building a debug build: `tauri build --debug` and `tauri
+ * android build --debug` run `beforeBuildCommand` with `TAURI_ENV_DEBUG=true`,
+ * a release build without it (tauri-cli 2.11.4, measured on `tauri build`).
+ *
+ * The phone's own shell starts in a debug build only until Arak passes K6
+ * (ADR 0009), and this is how the page knows. Vite builds the interface in its
+ * production mode either way, so `import.meta.env.DEV` is `false` in a debug
+ * APK too and cannot tell. Written into the bundle as a constant rather than
+ * exposed through `envPrefix`: one boolean is all the page needs, and with
+ * `false` written in, a release build drops the mobile shell's code entirely.
+ */
+const tauriDebug = process.env.TAURI_ENV_DEBUG === 'true';
+
 export default defineConfig({
   plugins: [react(), serviceWorker()],
   define: {
     __APP_VERSION__: JSON.stringify(version),
+    __TAURI_DEBUG__: JSON.stringify(tauriDebug),
   },
   server: {
     port: 5273,

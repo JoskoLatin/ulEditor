@@ -152,7 +152,7 @@ function confirmDiscard(shell: Shell): Promise<boolean> {
   return new Promise((resolve) => {
     const name = useScratch.getState().name;
     const handle = shell.notify.show('warning', t('{name} has unsaved changes.', { name }), [
-      { label: t('Cancel'), run: () => (handle.dispose(), resolve(true)) },
+      { label: t('Cancel'), cancel: true, run: () => (handle.dispose(), resolve(true)) },
       { label: t('Discard'), run: () => (handle.dispose(), resolve(false)) },
     ]);
   });

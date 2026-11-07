@@ -13,13 +13,15 @@ import '@uleditor/editor-pdf/style.css';
 import '@uleditor/editor-vector/style.css';
 import '@uleditor/editor-3d/style.css';
 
+import { isInterface, type InterfaceId } from '@uleditor/mobile-core';
+
 import { App } from './App.js';
-import { createShell } from './host/index.js';
+import { createShell, isHandheld, isTauri } from './host/index.js';
 import { keepForOffline } from './host/offline.js';
 import { lazyProvider } from './shell/lazy.js';
 import { isTreeSort } from './shell/tree-sort.js';
 import { watchClipboard } from './shell/clipboard.js';
-import { watchForCrashes } from './shell/crash.js';
+import { record, watchForCrashes } from './shell/crash.js';
 import { checkOnStart } from './shell/updates.js';
 import { restoreZoom } from './shell/zoom.js';
 import { SIDEBAR_WIDTH, useWorkspace } from './state/workspace.js';
@@ -316,11 +318,88 @@ watchForCrashes();
 const container = document.getElementById('root');
 if (!container) throw new Error('The #root element is missing.');
 
-createRoot(container).render(
-  <StrictMode>
-    <App shell={shell} />
-  </StrictMode>,
-);
+const root = createRoot(container);
+
+/**
+ * Whether this window starts the phone's own shell, and which interface it was
+ * asked for (ADR 0009, "Entering the mobile shell").
+ *
+ * - The app on Android, a tablet included: `isTauri() && isHandheld()`, in a
+ *   debug build only until Arak passes K6. The release keeps the old narrow
+ *   layout until then.
+ * - `?ui=arak`, `?ui=palac` or `?ui=boje` in Vite's development mode, over the
+ *   web host, so a browser check can drive the mobile shell.
+ *
+ * A narrow window on a computer, a computer with a touch screen and the web
+ * build on a phone all stay on the desktop shell, and so does a debug build
+ * told to for this run (`DESKTOP_SHELL_KEY`).
+ */
+function mobileShell(): { requested: InterfaceId | null } | null {
+  if (import.meta.env.DEV) {
+    const ui = new URLSearchParams(window.location.search).get('ui');
+    if (isInterface(ui)) return { requested: ui };
+  }
+  if (__TAURI_DEBUG__ && isTauri() && isHandheld() && !keptOnDesktop()) return { requested: null };
+  return null;
+}
+
+/**
+ * A debug build on the phone keeps the desktop shell when this key is in
+ * `sessionStorage`. The device checks of ADR 0003 (`tools/verify-mobile-*.mjs`)
+ * set it and reload: until Arak passes K6 the release still ships the old
+ * narrow layout, they measure that layout, and a release cannot be driven over
+ * devtools. `sessionStorage` lasts across the reload and goes with the process,
+ * so the next start of the app is the mobile shell again and no setting is left
+ * behind. A release never reads it. The same name is in
+ * `tools/device-session.mjs`.
+ */
+const DESKTOP_SHELL_KEY = 'ulEditor.debug.desktopShell';
+
+function keptOnDesktop(): boolean {
+  try {
+    return sessionStorage.getItem(DESKTOP_SHELL_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function renderDesktop(): void {
+  root.render(
+    <StrictMode>
+      <App shell={shell} />
+    </StrictMode>,
+  );
+}
+
+/*
+ * Both halves of the condition are constants Vite writes into the bundle, so in
+ * a release build this reads `if (false)`, and the mobile shell's code is not in
+ * the build at all: not a chunk, not a line. Proved by `verify-mobile-common`,
+ * which looks for it in a release build's files.
+ */
+if (import.meta.env.DEV || __TAURI_DEBUG__) {
+  const mobile = mobileShell();
+  if (mobile) {
+    import('./mobile/MobileApp.js')
+      .then(({ MobileApp }) => {
+        root.render(
+          <StrictMode>
+            <MobileApp shell={shell} requested={mobile.requested} />
+          </StrictMode>,
+        );
+      })
+      /* A debug build whose mobile shell does not load still opens a document:
+         the desktop's, with the failure reported. */
+      .catch((error: unknown) => {
+        record(error, { where: 'starting the mobile shell' });
+        renderDesktop();
+      });
+  } else {
+    renderDesktop();
+  }
+} else {
+  renderDesktop();
+}
 
 /*
  * The check for a new version, after the interface exists rather than before it.

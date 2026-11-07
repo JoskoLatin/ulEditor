@@ -20,6 +20,7 @@
     "@uleditor/editor-pdf": "workspace:*",
     "@uleditor/editor-vector": "workspace:*",
     "@uleditor/i18n": "workspace:*",
+    "@uleditor/mobile-core": "workspace:*",
     "@uleditor/plugin-sdk": "workspace:*",
     "@uleditor/reader-core": "workspace:*",
     "@uleditor/text-export": "workspace:*",

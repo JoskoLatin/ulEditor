@@ -68,6 +68,16 @@ export type NotificationLevel = 'info' | 'warning' | 'error';
 export interface NotificationAction {
   label: string;
   run(): void | Promise<void>;
+  /**
+   * This is the answer that means Cancel: the one that leaves everything as it
+   * was. On a phone Back runs it, and a question with no action marked stays
+   * where it is rather than being answered on the person's behalf (ADR 0009).
+   * Marked by meaning, not found by its place in the list: the order of the
+   * buttons is a matter of layout, and a question that one day put "Discard"
+   * first would otherwise throw work away on a gesture made a hundred times a
+   * day. The desktop draws it like any other action.
+   */
+  cancel?: true;
 }
 
 export interface NotificationService {

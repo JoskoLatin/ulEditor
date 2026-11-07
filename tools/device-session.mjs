@@ -153,13 +153,30 @@ export async function installApk(apk) {
 }
 
 /**
+ * Kept in `sessionStorage`, it tells a debug build to stay on the desktop shell
+ * for this run of the app. The same name is in `packages/shell-ui/src/main.tsx`,
+ * and `verify-mobile-common` proves the two agree.
+ */
+export const DESKTOP_SHELL_KEY = 'ulEditor.debug.desktopShell';
+
+/** The root of the phone's own shell (ADR 0009). */
+const MOBILE_SHELL = '[data-ul-role="mobile-shell"]';
+
+/**
  * Brings the application up on the device and returns the attached page.
  *
- * @param {{ port?: number, timeoutMs?: number }} [opts]
+ * `shell`: which shell to measure. A debug build after ADR 0009's K3 starts the
+ * phone's own shell; `'desktop'` (the default) has it reload into the desktop
+ * shell, the layout a release still ships until K6, which the checks of ADR
+ * 0003 measure. An older build has only the desktop shell and needs nothing.
+ * `'mobile'` waits for the phone's shell instead.
+ *
+ * @param {{ port?: number, timeoutMs?: number, shell?: 'desktop' | 'mobile' }} [opts]
  */
 export async function startDevice(opts = {}) {
   const port = opts.port ?? 9400;
   const timeoutMs = opts.timeoutMs ?? 90000;
+  const shell = opts.shell ?? 'desktop';
 
   // A clean start: otherwise we attach to the previous instance and measure the old layout.
   await adb('shell', 'am', 'force-stop', PACKAGE);
@@ -179,7 +196,13 @@ export async function startDevice(opts = {}) {
         const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
         const context = browser.contexts()[0];
         const page = context?.pages()[0] ?? (await context.waitForEvent('page'));
-        await page.waitForSelector('.shell', { timeout: 30000 });
+        await page.waitForSelector(`.shell, ${MOBILE_SHELL}`, { timeout: 30000 });
+        if (shell === 'desktop' && (await page.$(MOBILE_SHELL))) {
+          await page.evaluate((key) => sessionStorage.setItem(key, '1'), DESKTOP_SHELL_KEY);
+          await page.reload();
+          await page.waitForSelector('.shell', { timeout: 30000 });
+        }
+        if (shell === 'mobile') await page.waitForSelector(MOBILE_SHELL, { timeout: 30000 });
         return { browser, page, port };
       }
     } catch (err) {

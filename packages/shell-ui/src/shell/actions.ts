@@ -557,7 +557,7 @@ function confirmDiscard(shell: Shell, tab: TabState): Promise<'save' | 'discard'
       'warning',
       t('{name} has unsaved changes.', { name: tab.name }),
       [
-        { label: t('Cancel'), run: () => (handle.dispose(), resolve('cancel')) },
+        { label: t('Cancel'), cancel: true, run: () => (handle.dispose(), resolve('cancel')) },
         { label: t('Discard'), run: () => (handle.dispose(), resolve('discard')) },
         { label: t('Save'), run: () => (handle.dispose(), resolve('save')) },
       ],
@@ -668,7 +668,7 @@ function askOverwrite(shell: Shell, name: string): Promise<'overwrite' | 'cancel
       'warning',
       t('{name} was changed outside ulEditor since it was opened.', { name }),
       [
-        { label: t('Cancel'), run: () => (handle.dispose(), resolve('cancel')) },
+        { label: t('Cancel'), cancel: true, run: () => (handle.dispose(), resolve('cancel')) },
         { label: t('Overwrite'), run: () => (handle.dispose(), resolve('overwrite')) },
       ],
     );

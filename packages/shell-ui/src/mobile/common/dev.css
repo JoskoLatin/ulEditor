@@ -1,0 +1,142 @@
+/*
+ * The development view of the mobile shell (DevView.tsx). Not a design: enough
+ * to read and to tap, from the shell's own tokens, and gone with the view when
+ * Arak comes in. Touch targets are 44 px, as the brief asks of every screen.
+ */
+
+.m-dev {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+}
+
+.m-dev button,
+.m-dev input {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.m-dev button:disabled {
+  color: var(--ink-faint);
+}
+
+.m-dev-banner {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  border: 1px dashed var(--warn);
+  background: var(--warn-wash);
+  font-size: var(--fs-sm);
+}
+
+.m-tool-row,
+.m-dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.m-dev-find,
+.m-dev-layer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-raised);
+}
+
+.m-dev-find input {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-dev-library {
+  max-height: 22vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.m-dev-library p,
+.m-dev-layer p {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.m-dev-item {
+  text-align: start;
+}
+
+.m-dev-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--rule);
+}
+
+.m-dev-empty {
+  margin: auto;
+  padding: 24px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.m-dev-readout {
+  margin: 0;
+  padding: 0 10px;
+  color: var(--ink-soft);
+  font-size: var(--fs-sm);
+}
+
+/* Above the keyboard: `--kb-inset` is the keyboard's height, 0 when it is down. */
+.m-dev-questions {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--kb-inset, 0px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  pointer-events: none;
+}
+
+.m-dev-question {
+  pointer-events: auto;
+  padding: 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.m-dev-question[data-level='warning'] {
+  border-color: var(--warn);
+}
+
+.m-dev-question[data-level='error'] {
+  border-color: var(--danger);
+}
+
+.m-dev-question p {
+  margin: 0 0 6px;
+}

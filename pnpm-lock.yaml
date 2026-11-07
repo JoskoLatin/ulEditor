@@ -352,6 +352,9 @@ importers:
       '@uleditor/i18n':
         specifier: workspace:*
         version: link:../i18n
+      '@uleditor/mobile-core':
+        specifier: workspace:*
+        version: link:../mobile-core
       '@uleditor/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
