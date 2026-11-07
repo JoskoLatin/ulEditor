@@ -100,7 +100,14 @@ export function Library() {
       <ul className="library-list">
         {shown.map((item) => (
           <li key={item.uri}>
-            <button className="library-item" onClick={() => void openUri(shell, item.uri, { adopt: true })}>
+            {/* `data-format` is the format as the scan decided it, for the
+                device check to tell documents from photos: the filter's labels
+                are translated, and there is no filter at all with one format. */}
+            <button
+              className="library-item"
+              data-format={item.format}
+              onClick={() => void openUri(shell, item.uri, { adopt: true })}
+            >
               <FormatIcon family={FORMATS[item.format].family} size={17} />
               <span className="library-name">{item.name}</span>
               <span className="library-meta">

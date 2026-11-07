@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The debug build's own name, so it is not mistaken for the release beside it. -->
+<resources>
+    <string name="app_name">"ulEditor debug"</string>
+    <string name="main_activity_title">"ulEditor debug"</string>
+</resources>

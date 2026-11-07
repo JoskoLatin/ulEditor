@@ -53,6 +53,18 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            applicationIdSuffix = ".debug"
+            // The debug build installs beside the release instead of over it
+            // (ADR 0003, step 1). Under the release's ID, putting it on a phone
+            // meant uninstalling the release, and its data with it, since the
+            // two are signed with different keys. The suffix itself is
+            // `bundle.android.debugApplicationIdSuffix` in tauri.conf.json: the
+            // Tauri CLI writes the `applicationIdSuffix` line above from it on
+            // every Android build, and deletes one written here by hand.
+            // `namespace` stays as it is: it is the Kotlin package and the JNI
+            // path, not the identity on the device. Its own name sits in
+            // `src/debug/res/values`, so the two icons can be told apart.
+            versionNameSuffix = "-debug"
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true

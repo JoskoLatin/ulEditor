@@ -9,16 +9,27 @@
  * not the device.
  *
  * It measures rather than looks: the insets are read out of the webview, text
- * wrapping is counted in lines, and positions are compared in pixels.
+ * wrapping is counted in lines, and positions are compared in pixels. Every
+ * press is a tap by finger (`tap` in device-session.mjs), not a mouse click,
+ * and the first one is checked for having arrived as a touch at all.
  *
  *   node tools/verify-mobile-layout.mjs [--skip-install]
+ *
+ * With more than one phone attached, `ANDROID_SERIAL` names the one.
  */
 
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 
-import { startDevice, stopDevice, installApk, deviceScreenshot } from './device-session.mjs';
+import {
+  startDevice,
+  stopDevice,
+  installApk,
+  deviceScreenshot,
+  tap,
+  tapOn,
+} from './device-session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHOTS = resolve(ROOT, 'tools/screenshots');
@@ -59,13 +70,13 @@ try {
      looked at, not the number of clicks. */
   const panelOpen = async () => (await page.locator('.sidebar').count()) > 0;
   for (let guard = 0; guard < 5 && (await panelOpen()); guard++) {
-    await page.locator('.view-btn').first().click();
+    await tapOn(page.locator('.view-btn'));
     await page.waitForTimeout(400);
   }
 
   /* The welcome screen is what is measured, so no document may be open. */
   for (let guard = 0; guard < 20 && (await page.locator('.tab').count()) > 0; guard++) {
-    await page.locator('.tab .close').first().click();
+    await tapOn(page.locator('.tab .close'));
     await page.waitForTimeout(250);
   }
 
@@ -184,7 +195,7 @@ try {
 
   /* ── the panel drops from above ─────────────────────────────────────── */
 
-  await page.locator('.view-btn').first().click();
+  await tapOn(page.locator('.view-btn'));
   await page.waitForSelector('.sidebar', { timeout: 8000 });
 
   const panel = await page.evaluate(() => {
@@ -216,8 +227,31 @@ try {
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-panel.png'));
 
-  await page.mouse.click(panel.viewportW / 2, panel.bottom + strip / 2);
+  /*
+   * Proof that the tap is a finger: what a touchscreen sends, and no pointer
+   * from a mouse. Without it the check below would pass on a mouse click too
+   * and say nothing about touch.
+   */
+  await page.evaluate(() => {
+    window.__ulInput = [];
+    for (const type of ['touchstart', 'touchend', 'pointerdown', 'click']) {
+      addEventListener(
+        type,
+        (e) => window.__ulInput.push(e.pointerType ? `${type}:${e.pointerType}` : type),
+        { capture: true },
+      );
+    }
+  });
+  await tap(page, panel.viewportW / 2, panel.bottom + strip / 2);
   await page.waitForTimeout(400);
+  const input = await page.evaluate(() => window.__ulInput);
+  check(
+    'the tap arrived as a finger',
+    input.includes('touchstart') &&
+      input.includes('pointerdown:touch') &&
+      !input.some((e) => e.endsWith(':mouse')),
+    input.join(' → ') || 'no events',
+  );
   check('a tap below the panel closes it', (await page.locator('.sidebar').count()) === 0);
 
   await deviceScreenshot(resolve(SHOTS, 'mobile-welcome.png'));
