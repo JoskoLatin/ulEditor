@@ -55,6 +55,7 @@
     "verify:search": "node tools/verify-project-search.mjs",
     "verify:mobile": "node tools/verify-mobile-layout.mjs",
     "verify:library": "node tools/verify-mobile-library.mjs",
+    "verify:mobile-core": "node tools/verify-mobile-core.mjs",
     "verify:pdf-editing": "node tools/verify-pdf-editing.mjs",
     "verify:docx": "node tools/verify-docx-edit.mjs",
     "verify:insert": "node tools/verify-docx-insert.mjs",
