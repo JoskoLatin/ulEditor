@@ -4,11 +4,28 @@
 narrowed, the debug build beside the release for the device loop, no Play and
 no `content://` in this phase, the rejected cards closed, iOS out. Question 3
 was settled by ADR 0005, accepted the same day.
+**Amended by ADR 0009** (2026-11-07): the phone gets a mobile shell of its
+own: step 1 is done, and steps 2–9 are carried out as ADR 0009's steps
+K1–K10, as the table after this header says. The rest of this ADR is as it was.
 **Date:** 2026-10-06
 **Context:** card 444. The candidates were phase 4 (444, 466), the conversion
 service (447), opt-in telemetry (446), the Office engines (104, 105, 106),
 OpenDocument text to Word's level (459) and the save record by token (495).
 Decided by the architect on Opus.
+
+## Amended by ADR 0009 (2026-11-07)
+
+| Step here | ADR 0009 |
+| --- | --- |
+| 1. The device loop | done (afcf9d6, 2026-11-07) |
+| 2. The baseline, measured | K1, unchanged |
+| 3. Editing begins with a tap | replaced: on touch, a tap names an `EditTarget` (K4); the double-click on the desktop stays |
+| 4. Enter, Backspace and Delete from `beforeinput` | not needed on the phone in the first version: nothing is typed into `contenteditable` there, and the field commits on `submit` or a button; it stays a card for a desktop with a touch screen |
+| 5. A toolbar that keeps the focus | the tool row in `mobile/common`; its design note is K0's |
+| 6. The keyboard does not cover the text | measured in K2, built in K3 (`keyboard.ts`, and `MainActivity.kt` if K2 says so) |
+| 7. PDF by touch | K4, unchanged in purpose |
+| 8. Say what does not work | K6: the mobile shell never offers "Open folder", and "Open files" works through the library or is not shown |
+| 9. Independent review, then a tag | K10, over more |
 
 ## Decision
 
