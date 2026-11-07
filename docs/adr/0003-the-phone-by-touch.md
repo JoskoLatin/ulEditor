@@ -160,6 +160,23 @@ are called done.
    The Android package budget is set here: **50 MB** for the release APK
    (45.7 MB at v0.5.0). The other figures become budgets only once they have
    been measured.
+
+   Measured on 2026-11-07 (ADR 0009 K1), release v0.6.4 on a Pixel 8 Pro
+   (GrapheneOS, Android 17, Vanadium WebView 156), installed beside the debug
+   build for the measurement and removed afterwards:
+
+   | Figure | Value |
+   | --- | --- |
+   | Release APK (arm64-v8a and armeabi-v7a) | 46.3 MB |
+   | Cold start to the activity's first frame, `am start -W` `TotalTime`, five runs after `force-stop` | median 479 ms (470 to 484) |
+   | Memory 15 s after a cold start, idle on the start screen, `dumpsys meminfo` PSS | the app's process 234 MB (Java heap 34 MB, graphics 86 MB); its WebView renderer 99 MB |
+
+   Not yet measured: the largest PDFs, the largest `.docx` and `.xlsx`, and
+   typing. The release build has no devtools socket, so they need the
+   interface driven by taps from outside, or an equivalent measurement in a
+   build that is not a debug build; how is still to be settled. The cold
+   start above stops at the activity's first frame, not at the interface
+   being ready.
 3. **Editing begins with a tap.** *[F2]* In `editor-office`, a touch opens a run
    or a cell for typing, without waiting for a `dblclick` that may never come.
    With a mouse, a single click still selects text. A device check taps a run
