@@ -595,6 +595,7 @@ independent security review before they are called done.
 | **K1** | The baseline of ADR 0003 step 2, on the release APK as it is today: cold start, the WebView's memory over the largest real PDFs, opening the largest real `.docx` and `.xlsx`, typing in Markdown, the APK's size | F2 | the figures are written into ADR 0003 |
 | **K2** | Measured on the device, in the debug build, on the Pixel 8 Pro and the Redmi: the six questions in *Measured on the device* below | F0, then F2 | every question has a measured answer on both phones, written below. **If the keyboard (a) cannot be made to work, everything stops**: all three concepts depend on it |
 | **K3** | The shared layer: `packages/mobile-core` with its `MODUL.md`, `mobile/common`, `Pane` moved out, the entry in `main.tsx` (debug build only), `cancel` on `NotificationAction` | F2 | level A green, and each rule's mutation red; the desktop's `verify:all` and the desktop session checks unchanged |
+| **K6a** | **Arak for reading, before K4** (Čovik, 2026-11-08, O12): *zid*, the sheet, the corner, *stol* with *hrpa*, *crta* for the search; open, read, find a word, several documents, Back, the questions drawn; Arak's tokens, light and dark, on the system's faces; still the debug build only | F2 | level C green for reading in the browser (448 and 360 px, light and dark) and on both phones by touch. A document is edited the way its editor allows today until K4; Arak offers no editing of its own |
 | **K4** | `touch.ts`, and the editors that take it: `editor-office` (a word in `.docx` and `.odt`, a cell and its preview in `.xlsx` and `.ods`), `editor-pdf` (ADR 0003 step 7, tools, pages), `editor-markdown` (the note, its tools), and `packages/ocr` moved out of `editor-image` | F2, and **F4** for the contract | level B green over the fixtures and at least ten documents from the corpus, read back byte for byte; `verify-office-editing` (the double-click) unchanged; the review passed |
 | **K5** | Writing new files on Android (an amendment to ADR 0005: Rust's own folder, `Documents/ulEditor/`), the camera through the system's app, the picture deleted afterwards, `file_paths.xml` narrowed, the Android WebView's way out to the network measured (`tools/verify-mobile-egress.mjs`), whether the release runs without `INTERNET` (O10), and opening the system's all-files screen | **F4** | a check on the device shows: nothing created outside the folder, nothing overwritten, no picture left behind, the way out measured and written down; the independent review passes |
 | **K6** | **Arak, to the end:** the four uses, the library without permission, Back, the questions, a note's draft | F2 | level C green in the browser (448 and 360 px, light and dark) and on both phones; ADR 0003's "How we will know" done by touch over real files; Čovik uses it for about a week. Then the release on Android starts the mobile shell, and `verify-mobile-layout.mjs` is deleted |
@@ -729,6 +730,12 @@ merge.
 | O9 | Spelling, "Open with", "Share" | After the first version, each with an ADR of its own. |
 | O10 | `INTERNET` in the release manifest | Removed, if K5 shows the release runs without it: the strongest closing of the way out on Android. |
 | O11 | The hand | One shared setting, left or right. |
+
+On 2026-11-08 Čovik answered one more:
+
+| | Question | Answer |
+| --- | --- | --- |
+| O12 | The order: Arak at the end of K4 and K5, or Arak for reading first | **Arak for reading first (K6a).** The phone shows the new interface after one step rather than three; reading, the first use, needs nothing from `touch.ts` or from K5. Editing, the note and OCR follow through K4, K5 and the rest of K6. |
 
 ## Sources
 
