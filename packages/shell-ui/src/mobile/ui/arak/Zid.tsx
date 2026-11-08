@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { FORMATS, type FormatId } from '@uleditor/plugin-sdk';
 import { getLocale, t } from '@uleditor/i18n';
 
@@ -17,6 +17,59 @@ export function Page({ format, small = false }: { format: FormatId; small?: bool
       <FormatMark family={family} size={small ? 28 : 48} />
       {!small && <span className="arak-page-label">{formatLabel(format)}</span>}
     </span>
+  );
+}
+
+/**
+ * A file name with a break allowed after each `_`, `-` and `.`, so that a long
+ * name wraps between its parts ("IMG_20261020_" / "041430.jpg") rather than
+ * inside a number or before the last letter of its extension.
+ */
+function Breakable({ name }: { name: string }) {
+  const parts = name.split(/(?<=[_\-.])/);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {index > 0 && <wbr />}
+          {part}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Pictures are not what the wall is for. On the Redmi, measured on
+ * 2026-11-08, 400 of the 444 files the library found were the camera's own
+ * photographs, and in pages of half a screen each they buried the 44
+ * documents. So the wall lays out the documents, and the pictures wait behind
+ * one button with their count, opened on a tap.
+ */
+function isPicture(item: LibraryItem): boolean {
+  return item.format === 'image';
+}
+
+function Tiles({ items, folderOf, onOpenItem }: { items: LibraryItem[]; folderOf: Map<string, string>; onOpenItem(item: LibraryItem): void }) {
+  return (
+    <div className="arak-cols">
+      {items.map((item) => (
+        <button
+          key={item.uri}
+          className="arak-tile"
+          data-ul-role="library-row"
+          data-name={item.name}
+          data-format={item.format}
+          onClick={() => onOpenItem(item)}
+        >
+          <Page format={item.format} />
+          <span className="arak-tile-name">
+            <Breakable name={item.name} />
+          </span>
+          <span className="arak-tile-meta">{folderOf.get(item.uri) || formatLabel(item.format)}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -47,15 +100,17 @@ export function Zid({
   onOpenItem(item: LibraryItem): void;
   onOpenTab(tab: TabState): void;
 }) {
-  const groups = useMemo(
-    () =>
-      groupByDate(library.items, new Date(), getLocale(), {
-        today: t('Today'),
-        week: t('This week'),
-        undated: t('No date'),
-      }),
-    [library.items],
-  );
+  const [showPictures, setShowPictures] = useState(false);
+  const documents = useMemo(() => library.items.filter((item) => !isPicture(item)), [library.items]);
+  const pictures = useMemo(() => library.items.filter(isPicture), [library.items]);
+  const byDate = (items: readonly LibraryItem[]) =>
+    groupByDate(items, new Date(), getLocale(), {
+      today: t('Today'),
+      week: t('This week'),
+      undated: t('No date'),
+    });
+  const groups = useMemo(() => byDate(documents), [documents]);
+  const pictureGroups = useMemo(() => (showPictures ? byDate(pictures) : []), [pictures, showPictures]);
   const folderOf = useMemo(() => new Map(library.items.map((item) => [item.uri, item.folder])), [library.items]);
 
   return (
@@ -110,7 +165,7 @@ export function Zid({
           {library.error}
         </p>
       )}
-      {library.phase === 'done' && !library.error && !library.blocked && library.total === 0 && (
+      {library.phase === 'done' && !library.error && !library.blocked && documents.length === 0 && (
         <p className="arak-wall-note" data-ul-role="library-state">
           {t('No documents found on this device.')}
         </p>
@@ -121,24 +176,31 @@ export function Zid({
           <h2 className="arak-group-title" data-ul-role="wall-group-title">
             {group.title}
           </h2>
-          <div className="arak-cols">
-            {group.items.map((item) => (
-              <button
-                key={item.uri}
-                className="arak-tile"
-                data-ul-role="library-row"
-                data-name={item.name}
-                data-format={item.format}
-                onClick={() => onOpenItem(item)}
-              >
-                <Page format={item.format} />
-                <span className="arak-tile-name">{item.name}</span>
-                <span className="arak-tile-meta">{folderOf.get(item.uri) || formatLabel(item.format)}</span>
-              </button>
-            ))}
-          </div>
+          <Tiles items={group.items} folderOf={folderOf} onOpenItem={onOpenItem} />
         </section>
       ))}
+
+      {pictures.length > 0 && (
+        <section className="arak-wall-pictures">
+          <button
+            className="arak-pill"
+            data-ul-role="wall-pictures"
+            data-count={pictures.length}
+            aria-expanded={showPictures}
+            onClick={() => setShowPictures((shown) => !shown)}
+          >
+            {showPictures ? t('Hide pictures') : t('Pictures · {count}', { count: pictures.length })}
+          </button>
+          {pictureGroups.map((group) => (
+            <section key={group.id} className="arak-wall-group" data-ul-role="wall-group" data-group={`pictures-${group.id}`}>
+              <h2 className="arak-group-title" data-ul-role="wall-group-title">
+                {group.title}
+              </h2>
+              <Tiles items={group.items} folderOf={folderOf} onOpenItem={onOpenItem} />
+            </section>
+          ))}
+        </section>
+      )}
     </main>
   );
 }

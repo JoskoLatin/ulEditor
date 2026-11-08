@@ -670,6 +670,8 @@
   "This week": "Ovaj tjedan",
   "No date": "Bez datuma",
   "All documents": "Svi dokumenti",
+  "Pictures · {count}": "Slike · {count}",
+  "Hide pictures": "Sakrij slike",
   "Android is hiding your documents": "Android skriva tvoje dokumente",
   "In Android's settings, find the permissions of ulEditor:": "U Androidovim postavkama pronađi dozvole za ulEditor:",
   "Turn on access to all files.": "Uključi pristup svim datotekama.",

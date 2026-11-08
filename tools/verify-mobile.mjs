@@ -294,7 +294,12 @@ async function runScenario(browser, url, size, scheme, scenario) {
           },
           { list: files, blocked: step.blocked === true },
         );
-        await page.waitForFunction((n) => document.querySelectorAll('[data-ul-role="library-row"]').length === n, files.length);
+        /* Every file is either a page on the wall or counted behind the pictures' button. */
+        await page.waitForFunction((n) => {
+          const rows = document.querySelectorAll('[data-ul-role="library-row"]').length;
+          const waiting = document.querySelector('[data-ul-role="wall-pictures"][aria-expanded="false"]');
+          return rows + Number(waiting?.getAttribute('data-count') ?? 0) === n;
+        }, files.length);
       } else if (step.do) {
         await driver.run(step).catch((error) => {
           throw new Error(`${where} (${step.do}): ${String(error?.message ?? error).split('\n')[0]}`);

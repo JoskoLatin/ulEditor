@@ -122,6 +122,11 @@
   contain-intrinsic-size: auto 640px;
 }
 
+/* The pictures, behind one button after the documents. */
+.arak-wall-pictures {
+  margin-top: 28px;
+}
+
 .arak-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

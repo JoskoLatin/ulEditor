@@ -85,6 +85,9 @@ export function arakDriver(page, { timeout = 15000 } = {}) {
           title: one('wall-group-title', group)?.textContent ?? '',
           names: all('library-row', group).map((row) => row.dataset.name),
         })),
+        pictures: one('wall-pictures')
+          ? { count: Number(one('wall-pictures').dataset.count), shown: one('wall-pictures').getAttribute('aria-expanded') === 'true' }
+          : null,
         permission: permission
           ? { controls: [...permission.querySelectorAll('button, a, input')].map((control) => control.dataset.ulRole ?? '?') }
           : null,
@@ -132,6 +135,9 @@ export function arakDriver(page, { timeout = 15000 } = {}) {
     },
     async dismissHint() {
       await tap('hint-dismiss');
+    },
+    async togglePictures() {
+      await tap('wall-pictures');
     },
     openTools,
     async closeTools() {

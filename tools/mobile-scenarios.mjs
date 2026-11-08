@@ -39,9 +39,16 @@ export const FIXTURES = {
   docx: { name: 'Letter.docx', folder: 'Documents', modified: '2026-11-03T16:00:00+01:00', bytes: () => makeDocx() },
   xlsx: { name: 'Budget.xlsx', folder: 'Documents', modified: '2026-10-12T09:00:00+02:00', bytes: () => makeXlsx() },
   old: { name: 'Report.pdf', folder: 'Download', modified: '2025-06-20T12:00:00+02:00', bytes: () => makePdf('Report') },
+  /* A camera's photograph, as a phone holds hundreds of: one pixel of PNG. */
+  photo: {
+    name: 'IMG_20261104_181502.png',
+    folder: 'DCIM/Camera',
+    modified: '2026-11-04T18:15:02+01:00',
+    bytes: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  },
 };
 
-const ALL = ['pdf', 'md', 'docx', 'xlsx', 'old'];
+const ALL = ['pdf', 'md', 'docx', 'xlsx', 'old', 'photo'];
 
 export const SCENARIOS = [
   {
@@ -58,9 +65,26 @@ export const SCENARIOS = [
             { id: '2026-10', title: 'Listopad', names: ['Budget.xlsx'] },
             { id: '2025-06', title: 'Lipanj 2025.', names: ['Report.pdf'] },
           ],
+          pictures: { count: 1, shown: false },
         },
       },
       { shot: 'zid' },
+      /* Pictures wait behind their button, and come out on a tap, by date as the documents do. */
+      { do: 'togglePictures' },
+      {
+        expect: {
+          pictures: { count: 1, shown: true },
+          groups: [
+            { id: 'today' },
+            { id: 'week' },
+            { id: '2026-10' },
+            { id: '2025-06' },
+            { id: 'pictures-week', title: 'Ovaj tjedan', names: ['IMG_20261104_181502.png'] },
+          ],
+        },
+      },
+      { do: 'togglePictures' },
+      { expect: { pictures: { count: 1, shown: false } } },
       { do: 'openFromLibrary', name: 'Six pages.pdf' },
       { expect: { place: 'document', front: 'Six pages.pdf', shown: true, hint: 'pdf', layers: 1, entries: 1 } },
       { shot: 'list-ceduljica' },
