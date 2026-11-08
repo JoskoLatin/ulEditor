@@ -223,7 +223,7 @@ try {
 
   /* ── the development build, as the Pixel's viewport ─────────────────── */
 
-  const context = await browser.newContext({ viewport: { width: 448, height: 997 }, hasTouch: true });
+  const context = await browser.newContext({ viewport: { width: 448, height: 997 }, hasTouch: true, locale: 'en-US' });
   const page = await context.newPage();
   const origin = new URL(devUrl).origin;
   const errors = [];
@@ -492,7 +492,7 @@ try {
 
   /* ── who gets the mobile shell ──────────────────────────────────────── */
 
-  const plain = await browser.newContext({ viewport: { width: 448, height: 997 } });
+  const plain = await browser.newContext({ viewport: { width: 448, height: 997 }, locale: 'en-US' });
   const other = await plain.newPage();
   const shellAt = async (url) => {
     await other.goto(url);
@@ -522,13 +522,18 @@ try {
    * shells come up regardless, which is all that is asked here; the refusals
    * are expected, so this page's console is not counted.
    */
-  const asApp = async (url, android, keepDesktop = false) => {
+  const asApp = async (url, android, keepDesktop = false, { locale, storedLocale } = {}) => {
     const app = await browser.newContext({
       viewport: { width: 448, height: 997 },
       ...(android
         ? { userAgent: 'Mozilla/5.0 (Linux; Android 17; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36' }
         : {}),
+      /* English unless the language is what is checked: without it Playwright takes the computer's. */
+      locale: locale ?? 'en-US',
     });
+    if (storedLocale) {
+      await app.addInitScript((value) => localStorage.setItem('uleditor.settings', JSON.stringify({ locale: value })), storedLocale);
+    }
     await app.addInitScript(() => {
       const refuse = () => Promise.reject(new Error('no core behind this page'));
       window.__TAURI_INTERNALS__ = {
@@ -549,9 +554,11 @@ try {
       await appPage.reload();
       await appPage.waitForSelector(`.shell, ${role('mobile-shell')}`, { timeout: 20000 });
     }
+    if (locale) await appPage.waitForSelector(role('wall'), { timeout: 20000 }).catch(() => {});
     const result = await appPage.evaluate(() => ({
       mobile: document.querySelector('[data-ul-role="mobile-shell"]')?.getAttribute('data-ui') ?? null,
       desktop: document.querySelector('.shell') !== null,
+      wall: document.querySelector('[data-ul-role="wall"]')?.getAttribute('aria-label') ?? null,
     }));
     await app.close();
     return result;
@@ -559,6 +566,11 @@ try {
   if (debugUrl) {
     found = await asApp(debugUrl, true);
     check('a debug build in the app on Android starts the mobile shell, Arak by default', found.mobile === 'arak' && !found.desktop, JSON.stringify(found));
+    /* The phone's language when none was chosen (measured: a Pixel in Croatian reports hr-HR). */
+    found = await asApp(debugUrl, true, false, { locale: 'hr-HR' });
+    check('with no language chosen, the mobile shell speaks the phone\'s', found.wall === 'Svi dokumenti', JSON.stringify(found));
+    found = await asApp(debugUrl, true, false, { locale: 'hr-HR', storedLocale: 'en' });
+    check('a language chosen in the settings wins over the phone\'s', found.wall === 'All documents', JSON.stringify(found));
     found = await asApp(debugUrl, true, true);
     check('a device check can keep a debug build on the desktop shell for that run', found.desktop && found.mobile === null, JSON.stringify(found));
     found = await asApp(debugUrl, false);
@@ -572,7 +584,7 @@ try {
   /* ── the release has none of it ─────────────────────────────────────── */
 
   if (releaseUrl) {
-    const release = await browser.newContext({ viewport: { width: 448, height: 997 } });
+    const release = await browser.newContext({ viewport: { width: 448, height: 997 }, locale: 'en-US' });
     const releasePage = await release.newPage();
     const chunks = [];
     releasePage.on('request', (request) => {

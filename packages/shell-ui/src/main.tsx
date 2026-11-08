@@ -381,7 +381,10 @@ if (import.meta.env.DEV || __TAURI_DEBUG__) {
   const mobile = mobileShell();
   if (mobile) {
     import('./mobile/MobileApp.js')
-      .then(({ MobileApp }) => {
+      .then(({ MobileApp, localeForPhone }) => {
+        /* Before the first render, as `setLocale` asks: nothing has been
+           translated yet, the desktop's `App` was never drawn. */
+        setLocale(localeForPhone(shell));
         root.render(
           <StrictMode>
             <MobileApp shell={shell} requested={mobile.requested} />

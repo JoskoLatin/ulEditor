@@ -4,3 +4,4 @@
  * while the interfaces come in beside it under `ui/`.
  */
 export { MobileApp } from './common/MobileApp.js';
+export { localeForPhone } from './common/locale.js';
