@@ -121,6 +121,9 @@ export class Themes implements ThemeService {
     if (this.#preference === 'system') root.removeAttribute('data-theme');
     else root.setAttribute('data-theme', this.#preference);
     this.#kind = this.#resolve();
+    /* The scheme as resolved, whichever way it was: the mobile interfaces key
+       their colours on it (ADR 0009), so each is written once per scheme. */
+    root.dataset.scheme = this.#kind;
     this.#tokens = this.#readTokens();
   }
 

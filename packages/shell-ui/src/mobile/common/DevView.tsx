@@ -20,12 +20,13 @@ const TEST_LAYER = 'dev-layer';
 /**
  * **The development view: not an interface, and not a design.**
  *
- * It stands in for Arak, Palac and Četiri boje until each is built (ADR 0009,
- * K6 to K8), and it is here so that the shared layer can be driven end to end
- * before any of them exists: the library, a document on `DocumentStage`, Back
- * through `history`, the questions, `--kb-inset`, the tool row and the swipe.
- * It starts in a debug build only, as the whole mobile shell does until Arak
- * passes K6, and it goes when Arak comes in.
+ * It stands in for Palac and Četiri boje until each is built (ADR 0009, K7 and
+ * K8); Arak has been itself since K6a. It is here so that the shared layer can
+ * be driven end to end apart from any interface: the library, a document on
+ * `DocumentStage`, Back through `history`, the questions, `--kb-inset`, the
+ * tool row and the swipe. It starts in a debug build only, as the whole mobile
+ * shell does until Arak passes K6, and it goes when the last interface comes
+ * in.
  *
  * Everything a check finds, it finds by a `data-ul-role` marker, as the
  * interfaces' drivers will (ADR 0009, "Testing"). The two test questions and

@@ -4,7 +4,9 @@
  * `packages/mobile-core` holds the rules and is checked in Node
  * (`verify-mobile-core.mjs`). This checks the other half: the adapters in
  * `shell-ui/src/mobile/common` that tie those rules to the window, driven
- * through the development view the mobile shell starts until Arak exists.
+ * through the development view the mobile shell starts for an interface not
+ * built yet (`?ui=palac` until K7). Arak itself is checked by
+ * `tools/verify-mobile.mjs --ui=arak`.
  *
  * - **Back through `history`**: a layer opened pushes one entry and Back closes
  *   it; a question answered by Back runs the action marked as its cancel, even
@@ -27,7 +29,8 @@
  *   node tools/verify-mobile-common.mjs [--headed]
  *   node tools/verify-mobile-common.mjs --url <development build>
  *     --release-url <release build> --release-dist <its folder>
- *     [--debug-url <debug build> --debug-dist <its folder>] [--headed]
+ *     [--debug-url <debug build> --debug-dist <its folder>]
+ *     [--dev-dist <the development build's folder>] [--headed]
  *
  * With no `--url` it builds the three itself, from the tree as it is, into a
  * folder of its own under the system's temp, serves each with `vite preview`
@@ -148,6 +151,9 @@ async function until(condition, timeout = 8000) {
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The lazy chunks of the mobile shell: the shell, the development view and each interface. */
+const CHUNKS = /MobileApp|DevView|Arak/;
+
 /** Through a real `drop`, the way `verify-ui.mjs` hands the shell a document. */
 async function dropFile(page, name, text) {
   await page.evaluate(
@@ -195,12 +201,14 @@ let releaseUrl = option('--release-url');
 let releaseDist = option('--release-dist');
 let debugUrl = option('--debug-url');
 let debugDist = option('--debug-dist');
+let developmentDist = option('--dev-dist');
 let browser;
 
 try {
   if (!devUrl) {
     scratch = await mkdtemp(join(tmpdir(), 'uleditor-mobile-common-'));
     const development = join(scratch, 'development');
+    developmentDist = development;
     releaseDist = join(scratch, 'release');
     debugDist = join(scratch, 'debug');
     console.log(`Building the release, debug and development builds into ${scratch} …`);
@@ -232,7 +240,7 @@ try {
   });
 
   await page.goto('about:blank');
-  await page.goto(withUi(devUrl, 'arak'));
+  await page.goto(withUi(devUrl, 'palac'));
   await page.waitForSelector(role('mobile-shell'), { timeout: 20000 });
 
   const entered = await page.evaluate(() => ({
@@ -241,8 +249,8 @@ try {
     desktop: document.querySelector('.shell') !== null,
   }));
   check(
-    '?ui=arak starts the mobile shell over the web host, not the desktop one',
-    entered.shellUi === 'arak' && entered.ui === 'arak' && !entered.desktop,
+    '?ui=palac starts the mobile shell over the web host, not the desktop one',
+    entered.shellUi === 'palac' && entered.ui === 'palac' && !entered.desktop,
     JSON.stringify(entered),
   );
   check('it says it is the development view', (await count(page, role('dev-banner'))) === 1);
@@ -496,8 +504,11 @@ try {
   };
   let found = await shellAt(withUi(devUrl, null));
   check('a narrow browser without ?ui= stays on the desktop shell', found.desktop && found.mobile === null, JSON.stringify(found));
-  found = await shellAt(withUi(devUrl, 'palac'));
-  check('?ui=palac names the interface', found.mobile === 'palac' && !found.desktop, JSON.stringify(found));
+  found = await shellAt(withUi(devUrl, 'boje'));
+  check('?ui=boje names the interface', found.mobile === 'boje' && !found.desktop, JSON.stringify(found));
+  found = await shellAt(withUi(devUrl, 'arak'));
+  const arakItself = await other.evaluate(() => document.querySelector('[data-ul-role="dev-banner"]') === null);
+  check('?ui=arak starts Arak itself, not the development view', found.mobile === 'arak' && !found.desktop && arakItself, JSON.stringify(found));
   found = await shellAt(withUi(devUrl, 'kartice'));
   check('?ui= with a name that is not an interface stays on the desktop shell', found.desktop && found.mobile === null, JSON.stringify(found));
   await plain.close();
@@ -565,7 +576,7 @@ try {
     const releasePage = await release.newPage();
     const chunks = [];
     releasePage.on('request', (request) => {
-      if (/MobileApp|DevView/.test(request.url())) chunks.push(request.url());
+      if (CHUNKS.test(request.url())) chunks.push(request.url());
     });
     await releasePage.goto(withUi(releaseUrl, 'arak'));
     await releasePage.waitForSelector(`.shell, ${role('mobile-shell')}`, { timeout: 20000 });
@@ -586,15 +597,18 @@ try {
    * `main.tsx` is two constants, so a release build drops the mobile shell
    * whole. These markers are strings only the mobile shell's code holds.
    */
-  const MARKERS = ['ulLayers', '--kb-inset', 'mobile-shell', 'm-dev-stage'];
-  const scan = async (dir) => {
+  const MARKERS = ['ulLayers', '--kb-inset', 'mobile-shell', 'm-dev-stage', 'arak-corner', 'arak-crta'];
+  /* The library a browser check stands in for (`libraryForChecks` in
+     `MobileApp.tsx`): in a development build only, never in an APK's. */
+  const CHECK_ONLY = ['ul-check-library'];
+  const scan = async (dir, markers = MARKERS) => {
     const assets = join(dir, 'assets');
     const names = (await readdir(assets)).filter((name) => /\.(js|css)$/.test(name));
     const hits = [];
     for (const name of names) {
-      if (/MobileApp|DevView/.test(name)) hits.push(name);
+      if (CHUNKS.test(name)) hits.push(name);
       const text = await readFile(join(assets, name), 'utf8');
-      for (const marker of MARKERS) if (text.includes(marker)) hits.push(`${name}: ${marker}`);
+      for (const marker of markers) if (text.includes(marker)) hits.push(`${name}: ${marker}`);
     }
     return { files: names.length, hits };
   };
@@ -612,6 +626,19 @@ try {
       MARKERS.every((marker) => markers.has(marker)),
       [...markers].join(', '),
     );
+    const chunkNames = hits.filter((hit) => !hit.includes(': '));
+    check('and Arak comes as a chunk of its own', chunkNames.some((name) => /Arak/.test(name)), chunkNames.join(', '));
+  }
+  for (const [label, dir] of [['release', releaseDist], ['debug', debugDist]]) {
+    if (!dir) continue;
+    const { hits } = await scan(dir, CHECK_ONLY);
+    const found = hits.filter((hit) => hit.includes(': '));
+    check(`the library stood in for by checks is not in the ${label} build`, found.length === 0, found.join(', '));
+  }
+  if (developmentDist) {
+    const { hits } = await scan(developmentDist, CHECK_ONLY);
+    const found = hits.filter((hit) => hit.includes(': '));
+    check('and it is in the development build, so its absence means something', found.length > 0, found.join(', '));
   }
 } finally {
   await browser?.close();

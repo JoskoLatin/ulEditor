@@ -1,0 +1,754 @@
+/*
+ * Arak's look (ADR 0009), after the prototype in
+ * tools/screenshots/mobile-od-nule/koncept-2: the desk, the paper, the stamp's
+ * ink for what the program writes, the marker for a hit.
+ *
+ * Every colour is a token from tokens.css (generated from tokens.json); none
+ * is written here, and tools/verify-mobile-tokens.mjs fails if one is. The
+ * faces are the system's (O6): a condensed sans where the system has one.
+ *
+ * Only Arak's own elements are styled. The document's stage holds the editors'
+ * DOM, which keeps its own styles: nothing here reaches into it, and nothing is
+ * set on the root that the editors would inherit (a font, a colour).
+ */
+
+.arak {
+  --arak-top: env(safe-area-inset-top, 0px);
+  --arak-bottom: env(safe-area-inset-bottom, 0px);
+  /* The strip above the keyboard, its own height; the part of the screen's
+     bottom inset it has to clear when the keyboard is down, nothing when up. */
+  --arak-crta-h: 118px;
+  --arak-crta-pad: max(0px, calc(var(--arak-bottom) - var(--kb-inset, 0px)));
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--stol);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.arak-wall,
+.arak-desk,
+.arak-crta,
+.arak-questions,
+.arak-hint,
+.arak-corner {
+  font-family: var(--arak-face);
+  font-stretch: 87.5%;
+  font-size: 17px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+:is(.arak-tile, .arak-tool, .arak-all, .arak-corner, .arak-lifted, .arak-pill, .arak-square, .arak-text-button, .arak-hint-ok) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-stretch: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+:is(.arak-tile, .arak-tool, .arak-pill, .arak-square, .arak-text-button):disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.arak-wall :focus-visible,
+.arak-desk :focus-visible {
+  outline: 3px solid var(--signir);
+  outline-offset: 2px;
+}
+
+.arak-crta :focus-visible,
+.arak-questions :focus-visible,
+.arak-hint :focus-visible,
+.arak-corner:focus-visible {
+  outline: 3px solid var(--zig);
+  outline-offset: 2px;
+}
+
+.arak-icon {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── zid, the wall ───────────────────────────────────────────────────── */
+
+.arak-wall {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(var(--arak-top) + 10px) 16px calc(var(--arak-bottom) + 48px);
+  background: var(--stol);
+  color: var(--stol-ink);
+  scrollbar-width: none;
+}
+
+.arak-wall[data-hidden] {
+  visibility: hidden;
+}
+
+.arak-group-title {
+  margin: 30px 0 14px;
+  font-size: 34px;
+  font-weight: 600;
+  font-stretch: 80%;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.arak-small-title {
+  margin: 20px 0 10px;
+  color: var(--stol-ink-soft);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.arak-wall-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 640px;
+}
+
+.arak-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 22px 14px;
+  align-items: start;
+}
+
+.arak-tile {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+
+.arak-page {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  width: 100%;
+  aspect-ratio: 1 / 1.414;
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--zig);
+  box-shadow: var(--shadow-md);
+  transition: transform 0.12s;
+}
+
+.arak-tile:active .arak-page {
+  transform: translateY(1px) scale(0.985);
+}
+
+.arak-page-label {
+  padding: 0 8px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.arak-tile-name {
+  display: -webkit-box;
+  margin-top: 9px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.22;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.arak-tile-meta {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--stol-ink-soft);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.arak-tile.small {
+  flex: none;
+  width: 84px;
+}
+
+.arak-tile.small .arak-tile-name {
+  font-size: 14px;
+}
+
+.arak-wall-pile,
+.arak-pile {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.arak-wall-pile {
+  margin: 0 -16px;
+  padding: 4px 16px 6px;
+}
+
+.arak-wall-note {
+  margin: 24px 4px;
+  color: var(--stol-ink-soft);
+}
+
+/* The no-permission sheet: a page of its own at the top of the wall. */
+.arak-permission {
+  margin: 8px 0 6px;
+  padding: 22px 20px 20px;
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-md);
+}
+
+.arak-permission h2 {
+  margin: 0 0 12px;
+  color: var(--zig);
+  font-size: 26px;
+  font-weight: 600;
+  font-stretch: 80%;
+  line-height: 1.12;
+}
+
+.arak-permission p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.arak-permission ol {
+  margin: 14px 0 18px;
+  padding: 0;
+  list-style: none;
+  counter-reset: arak-step;
+}
+
+.arak-permission li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+  line-height: 1.45;
+  counter-increment: arak-step;
+}
+
+.arak-permission li::before {
+  content: counter(arak-step);
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--zig-wash);
+  color: var(--zig);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.arak-permission b {
+  overflow-wrap: anywhere;
+}
+
+/* ── the sheet ───────────────────────────────────────────────────────── */
+
+.arak-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  transform-origin: 0 0;
+  transition: transform 0.38s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.arak-sheet[data-shown='false'] {
+  visibility: hidden;
+}
+
+/* Lifted by the corner: smaller, up and to the left, the desk under it. The
+   transform makes the sheet the containing block of anything fixed inside an
+   editor; while lifted, nothing inside is reachable anyway (`inert`). */
+.arak-sheet[data-lifted] {
+  transform: translate(16px, calc(var(--arak-top) + 18px)) scale(0.42) rotate(-1.6deg);
+}
+
+.arak-paper {
+  position: absolute;
+  inset: 0;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.arak-sheet[data-lifted] .arak-paper {
+  box-shadow: var(--lifted-shadow);
+}
+
+.arak-stage {
+  position: absolute;
+  top: var(--arak-top);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* With the strip up, the stage ends where the strip begins, so a hit the editor
+   reveals lands in what can be seen (ADR 0009: the editors do not honour a
+   covered part of the screen until K4). */
+.arak[data-place='find'] .arak-stage {
+  bottom: calc(var(--kb-inset, 0px) + var(--arak-crta-h) + var(--arak-crta-pad));
+}
+
+.arak-lifted {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+}
+
+/* ugao, the folded corner */
+.arak-corner {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 84px;
+  height: 84px;
+}
+
+.arak-fold {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: var(--arak-corner);
+  height: var(--arak-corner);
+  overflow: visible;
+}
+
+.arak-fold-under {
+  fill: var(--stol);
+}
+
+.arak-fold-edge {
+  fill: none;
+  stroke: var(--ugao-edge);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.arak-corner-count {
+  position: absolute;
+  top: calc(100% - var(--arak-corner) + 7px);
+  left: calc(100% - var(--arak-corner) + 6px);
+  width: 22px;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+}
+
+.arak-corner-dot {
+  position: absolute;
+  top: calc(100% - var(--arak-corner) + 10px);
+  left: calc(100% - var(--arak-corner) + 30px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--unsaved);
+}
+
+/* ceduljica, the first-time hint */
+.arak-hint {
+  position: absolute;
+  right: 18px;
+  bottom: calc(var(--arak-bottom) + 112px);
+  z-index: 3;
+  width: min(76%, 300px);
+  padding: 16px 16px 10px;
+  background: var(--ceduljica);
+  color: var(--ceduljica-ink);
+  box-shadow: var(--ceduljica-shadow);
+  transform: rotate(1.3deg);
+}
+
+.arak-hint p {
+  margin: 0;
+  line-height: 1.42;
+}
+
+.arak-hint-ok {
+  min-width: 64px;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 0 18px;
+  border-radius: 22px;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+  font-weight: 600;
+}
+
+.arak-hint-arrow {
+  position: absolute;
+  right: 30px;
+  bottom: -66px;
+  width: 60px;
+  height: 66px;
+  overflow: visible;
+  color: var(--zig);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── stol, the desk ──────────────────────────────────────────────────── */
+
+.arak-desk {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--stol);
+  color: var(--stol-ink);
+}
+
+.arak-desk-info {
+  position: absolute;
+  top: calc(var(--arak-top) + 20px);
+  right: 16px;
+  left: calc(36px + 42vw);
+}
+
+.arak-desk-info h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 22px;
+  font-weight: 600;
+  font-stretch: 80%;
+  line-height: 1.12;
+}
+
+.arak-desk-info p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--stol-ink-soft);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.arak-desk-info .arak-desk-state {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+  color: var(--stol-ink);
+}
+
+.arak-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--stol-unsaved);
+}
+
+.arak-desk-info .arak-desk-tip {
+  margin-top: 14px;
+  font-size: 14px;
+}
+
+.arak-desk-lower {
+  position: absolute;
+  top: calc(var(--arak-top) + 18px + 42vh + 22px);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 10px calc(var(--arak-bottom) + 16px);
+  border-top: 1px solid var(--stol-line);
+}
+
+.arak-tools {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.arak-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-height: 76px;
+  padding: 4px 2px;
+  border-radius: 14px;
+  color: var(--stol-ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.arak-tool:active:not(:disabled) {
+  background: var(--stol-field);
+}
+
+.arak-desk-label {
+  margin: 14px 6px 8px;
+  color: var(--stol-ink-soft);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.arak-pile {
+  gap: 12px;
+  padding: 2px 6px 8px;
+}
+
+.arak-pile .arak-tile.small {
+  width: 76px;
+}
+
+.arak-all {
+  flex: none;
+  width: 76px;
+  color: var(--stol-ink);
+}
+
+.arak-all-box {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  aspect-ratio: 1 / 1.414;
+  border: 1.5px dashed var(--stol-ink-soft);
+  border-radius: 4px;
+}
+
+/* ── crta, the strip above the keyboard ──────────────────────────────── */
+
+.arak-crta {
+  position: fixed;
+  right: 0;
+  bottom: var(--kb-inset, 0px);
+  left: 0;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  height: calc(var(--arak-crta-h) + var(--arak-crta-pad));
+  margin: 0;
+  padding: 8px 10px calc(10px + var(--arak-crta-pad));
+  border-top: 2px solid var(--zig);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+
+.arak-crta-row {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  height: 48px;
+  min-width: 0;
+}
+
+.arak-crta-row.small {
+  justify-content: space-between;
+  height: 44px;
+}
+
+.arak-crta-lead {
+  display: grid;
+  place-items: center;
+  margin-left: 4px;
+  color: var(--zig);
+}
+
+.arak-field {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 2px solid var(--zig);
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 19px;
+  appearance: none;
+}
+
+/* The line under it is the field's focus: a ring round it as well would be two. */
+.arak-field:focus-visible {
+  outline: none;
+  border-bottom-width: 3px;
+}
+
+.arak-field::placeholder {
+  color: var(--ink-soft);
+}
+
+.arak-field::-webkit-search-cancel-button {
+  display: none;
+}
+
+.arak-count {
+  min-width: 58px;
+  color: var(--ink-soft);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.arak .m-tool-row {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.arak-square {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  color: var(--zig);
+}
+
+.arak-crta-where {
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 4px;
+  color: var(--ink-soft);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arak-text-button {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 22px;
+  color: var(--zig);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ── the shell's questions ───────────────────────────────────────────── */
+
+.arak-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: var(--overlay-scrim);
+}
+
+.arak-questions {
+  position: fixed;
+  right: 0;
+  bottom: var(--kb-inset, 0px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--kb-inset, 0px) - var(--arak-top));
+  overflow-y: auto;
+}
+
+.arak-question {
+  padding: 16px 16px calc(14px + var(--arak-crta-pad));
+  border-top: 2px solid var(--zig);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+
+.arak-question.notice {
+  border-top-color: var(--rule-strong);
+}
+
+.arak-question p {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.arak-question ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  color: var(--ink-soft);
+  font-size: 16px;
+}
+
+.arak-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.arak-pill {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: 24px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.arak-pill.main {
+  background: var(--zig);
+  color: var(--zig-ink);
+}
+
+.arak-pill.second {
+  background: var(--surface);
+  color: var(--zig);
+  box-shadow: inset 0 0 0 1.5px var(--zig);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arak-sheet,
+  .arak-page {
+    transition: none;
+  }
+}

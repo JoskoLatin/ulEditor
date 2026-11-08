@@ -7,8 +7,10 @@ import { registerCommands } from '../../shell/commands.js';
 import { ShellContext } from '../../shell/context.js';
 import { watchForPastCrashes } from '../../shell/crash.js';
 import { routeExternalLinks } from '../../shell/lifecycle.js';
+import { useLibrary } from '../../shell/library.js';
 import { restoreSession, watchSession } from '../../shell/session.js';
 import { watchBack } from './history.js';
+import { watchOpenDocuments } from './open-documents.js';
 import { watchQuestions } from './questions.js';
 import { settingsStore } from './settings.js';
 import { watchKeyboard } from './viewport.js';
@@ -20,16 +22,18 @@ export interface InterfaceProps {
 }
 
 /**
- * The interfaces this build has: none yet. Each comes in with its own step,
- * Arak in K6, Palac in K7, Četiri boje in K8 (ADR 0009), each as a lazy chunk
- * of its own, so that only the chosen one is loaded on the phone. Until then
- * all three are the development view, which is not one of them.
+ * The interfaces this build has. Each comes in with its own step, Arak in K6
+ * (reading first, K6a), Palac in K7, Četiri boje in K8 (ADR 0009), each as a
+ * lazy chunk of its own, so that only the chosen one is loaded on the phone.
+ * Until Palac and Četiri boje are built, their names start the development
+ * view, which is not one of them, so the shared layer can still be driven
+ * apart from any interface (`?ui=palac` in a development build).
  */
-const BUILT: readonly InterfaceId[] = [];
+const BUILT: readonly InterfaceId[] = ['arak'];
 
 const DevView = lazy(() => import('./DevView.js'));
 const INTERFACES: Record<InterfaceId, ComponentType<InterfaceProps>> = {
-  arak: DevView,
+  arak: lazy(() => import('../ui/arak/Arak.js')),
   palac: DevView,
   boje: DevView,
 };
@@ -78,6 +82,12 @@ export function MobileApp({ shell, requested }: { shell: Shell; requested: Inter
   useEffect(() => watchBack(), []);
   useEffect(() => watchKeyboard(), []);
   useEffect(() => watchQuestions(shell), [shell]);
+  useEffect(() => watchOpenDocuments(), []);
+
+  /* `import.meta.env.DEV` is a constant a build writes in: in a debug or a
+     release build this is `false`, `libraryForChecks` is never named, and none
+     of it is in the files (`tools/verify-mobile-common.mjs` looks). */
+  useEffect(() => (import.meta.env.DEV && shell.platform === 'web' ? libraryForChecks(shell) : undefined), [shell]);
 
   /* Files dropped onto the window, on the web host only: that is how a check
      in a browser hands the shell a document, as it does the desktop's
@@ -108,4 +118,48 @@ export function MobileApp({ shell, requested }: { shell: Shell; requested: Inter
       </Suspense>
     </ShellContext.Provider>
   );
+}
+
+/** One file a check puts into the library, with the folder Rust would have found it in. */
+interface CheckedFile {
+  file: File;
+  folder: string;
+}
+
+/**
+ * The library, stood in for by a browser check: development builds over the
+ * web host only (ADR 0009, level C).
+ *
+ * The web host cannot look at a device (`scanLibrary` says so and lists
+ * nothing), and Android hiding the documents cannot happen in a browser at all.
+ * So a check sends `ul-check-library` with the files: they are registered with
+ * the host as dropped files are, **not opened**, and become the library with
+ * the dates they carry (`File.lastModified`), as `scan_library` hands it over;
+ * `blocked` stands in for Android hiding them. What an interface does with the
+ * library from there is the same code the phone runs.
+ */
+function libraryForChecks(shell: Shell): () => void {
+  const onCheck = (event: Event) => {
+    const detail = (event as CustomEvent<{ files?: CheckedFile[]; blocked?: boolean }>).detail;
+    const files = Array.isArray(detail?.files) ? detail.files : [];
+    if (!shell.fs.adoptFiles) return;
+    void shell.fs.adoptFiles(files.map((entry) => entry.file)).then((docs) =>
+      useLibrary.setState({
+        phase: 'done',
+        error: null,
+        blocked: detail?.blocked === true,
+        truncated: false,
+        items: docs.map((doc, index) => ({
+          uri: doc.uri,
+          name: doc.name,
+          format: doc.detection.format,
+          size: doc.stat.size,
+          modified: doc.stat.modified ?? undefined,
+          folder: files[index]?.folder ?? '',
+        })),
+      }),
+    );
+  };
+  window.addEventListener('ul-check-library', onCheck);
+  return () => window.removeEventListener('ul-check-library', onCheck);
 }
