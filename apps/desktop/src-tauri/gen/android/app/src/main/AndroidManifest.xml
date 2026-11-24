@@ -45,6 +45,190 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="text/markdown" />
+                <data android:pathPattern=".*\\.md" />
+                <data android:pathPattern=".*\\.markdown" />
+                <data android:pathPattern=".*\\.mdx" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="text/plain" />
+                <data android:pathPattern=".*\\.txt" />
+                <data android:pathPattern=".*\\.log" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.tsv" />
+                <data android:pathPattern=".*\\.ini" />
+                <data android:pathPattern=".*\\.cfg" />
+                <data android:pathPattern=".*\\.conf" />
+                <data android:pathPattern=".*\\.properties" />
+                <data android:pathPattern=".*\\.env" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="text/plain" />
+                <data android:pathPattern=".*\\.ts" />
+                <data android:pathPattern=".*\\.tsx" />
+                <data android:pathPattern=".*\\.js" />
+                <data android:pathPattern=".*\\.jsx" />
+                <data android:pathPattern=".*\\.mjs" />
+                <data android:pathPattern=".*\\.cjs" />
+                <data android:pathPattern=".*\\.json" />
+                <data android:pathPattern=".*\\.rs" />
+                <data android:pathPattern=".*\\.py" />
+                <data android:pathPattern=".*\\.html" />
+                <data android:pathPattern=".*\\.css" />
+                <data android:pathPattern=".*\\.xml" />
+                <data android:pathPattern=".*\\.yaml" />
+                <data android:pathPattern=".*\\.yml" />
+                <data android:pathPattern=".*\\.toml" />
+                <data android:pathPattern=".*\\.sh" />
+                <data android:pathPattern=".*\\.bat" />
+                <data android:pathPattern=".*\\.cmd" />
+                <data android:pathPattern=".*\\.ps1" />
+                <data android:pathPattern=".*\\.sql" />
+                <data android:pathPattern=".*\\.go" />
+                <data android:pathPattern=".*\\.java" />
+                <data android:pathPattern=".*\\.c" />
+                <data android:pathPattern=".*\\.cpp" />
+                <data android:pathPattern=".*\\.h" />
+                <data android:pathPattern=".*\\.rb" />
+                <data android:pathPattern=".*\\.php" />
+                <data android:pathPattern=".*\\.swift" />
+                <data android:pathPattern=".*\\.lua" />
+                <data android:pathPattern=".*\\.diff" />
+                <data android:pathPattern=".*\\.patch" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/pdf" />
+                <data android:pathPattern=".*\\.pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:pathPattern=".*\\.epub" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:pathPattern=".*\\.docx" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/msword" />
+                <data android:pathPattern=".*\\.doc" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/rtf" />
+                <data android:pathPattern=".*\\.rtf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:pathPattern=".*\\.odt" />
+                <data android:pathPattern=".*\\.ott" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:pathPattern=".*\\.ods" />
+                <data android:pathPattern=".*\\.ots" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:pathPattern=".*\\.xlsx" />
+                <data android:pathPattern=".*\\.xls" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="image/svg+xml" />
+                <data android:pathPattern=".*\\.svg" />
+                <data android:pathPattern=".*\\.svgz" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="model/gltf+json" />
+                <data android:pathPattern=".*\\.stl" />
+                <data android:pathPattern=".*\\.obj" />
+                <data android:pathPattern=".*\\.ply" />
+                <data android:pathPattern=".*\\.gltf" />
+                <data android:pathPattern=".*\\.glb" />
+                <data android:pathPattern=".*\\.3mf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="image/png" />
+                <data android:pathPattern=".*\\.png" />
+                <data android:pathPattern=".*\\.jpg" />
+                <data android:pathPattern=".*\\.jpeg" />
+                <data android:pathPattern=".*\\.gif" />
+                <data android:pathPattern=".*\\.webp" />
+                <data android:pathPattern=".*\\.bmp" />
+                <data android:pathPattern=".*\\.avif" />
+            </intent-filter>
+            
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
         <provider
