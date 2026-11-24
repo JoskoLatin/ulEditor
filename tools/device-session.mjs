@@ -178,6 +178,8 @@ export async function startDevice(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 90000;
   const shell = opts.shell ?? 'desktop';
 
+  await screenReady();
+
   // A clean start: otherwise we attach to the previous instance and measure the old layout.
   await adb('shell', 'am', 'force-stop', PACKAGE);
   await adb('shell', 'monkey', '-p', PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
@@ -196,13 +198,19 @@ export async function startDevice(opts = {}) {
         const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
         const context = browser.contexts()[0];
         const page = context?.pages()[0] ?? (await context.waitForEvent('page'));
-        await page.waitForSelector(`.shell, ${MOBILE_SHELL}`, { timeout: 30000 });
-        if (shell === 'desktop' && (await page.$(MOBILE_SHELL))) {
-          await page.evaluate((key) => sessionStorage.setItem(key, '1'), DESKTOP_SHELL_KEY);
-          await page.reload();
+        /* Attached, not visible: which shell came up is all that is asked here,
+           and whether anything is visible depends on the screen as well (see
+           `screenReady`). */
+        await page.waitForSelector(`.shell, ${MOBILE_SHELL}`, { state: 'attached', timeout: 30000 });
+        if (shell === 'desktop') {
+          if (await page.$(MOBILE_SHELL)) {
+            await page.evaluate((key) => sessionStorage.setItem(key, '1'), DESKTOP_SHELL_KEY);
+            await page.reload();
+          }
           await page.waitForSelector('.shell', { timeout: 30000 });
+        } else {
+          await page.waitForSelector(MOBILE_SHELL, { state: 'attached', timeout: 30000 });
         }
-        if (shell === 'mobile') await page.waitForSelector(MOBILE_SHELL, { timeout: 30000 });
         return { browser, page, port };
       }
     } catch (err) {
@@ -212,6 +220,29 @@ export async function startDevice(opts = {}) {
   }
 
   throw lastError ?? new Error('the WebView never opened a devtools socket');
+}
+
+/**
+ * The screen on and unlocked, or a plain refusal.
+ *
+ * With the screen off or the lock screen in front, the app's WebView has no
+ * size, every element in it has no box, and a check waiting for something
+ * visible runs out after its 30 s with a message that names a selector, not
+ * the cause. Measured on the Pixel, 2026-11-08: `mWakefulness=Dozing`,
+ * `isKeyguardShowing=true`, and the shell's root "hidden" 45 times over. So
+ * the screen is woken here, and a lock screen, which needs the owner's PIN,
+ * stops the check with what to do.
+ */
+async function screenReady() {
+  const power = await adb('shell', 'dumpsys', 'power');
+  if (!/mWakefulness=Awake/.test(power)) {
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP');
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  const windows = await adb('shell', 'dumpsys', 'window');
+  if (/isKeyguardShowing=true/.test(windows)) {
+    throw new Error('the phone is locked: unlock its screen (and keep it on, e.g. "Stay awake" in the developer options) and run the check again');
+  }
 }
 
 /**
